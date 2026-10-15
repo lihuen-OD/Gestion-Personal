@@ -55,7 +55,6 @@ const envSchema = z.object({
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   REFRESH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
-  JSON_BODY_LIMIT: z.string().default("40mb"),
   STORAGE_PROVIDER: z.enum(["local", "cloudinary", "google_drive"]).default("local"),
   // Etapa 15D.2 (docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md): opcionales,
   // sin default — sólo afectan qué provider recibe un upload NUEVO por

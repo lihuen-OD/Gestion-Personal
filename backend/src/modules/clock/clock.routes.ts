@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { env } from "../../config/env";
 import { createRateLimiter } from "../../middlewares/rateLimiter";
 import { asyncHandler } from "../../shared/http/asyncHandler";
+import { CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES, jsonBody } from "../../shared/http/bodyLimits";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { authenticatedClockDevice, requireClockDevice } from "../clock-devices/clockDeviceAuthentication";
@@ -41,5 +42,7 @@ export const clockRouter = Router();
 clockRouter.use(clockDevicePublicRouter);
 clockRouter.get("/employees", ...clockOperationalGuards, validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(clockController.searchEmployees));
 clockRouter.post("/status", ...clockOperationalGuards, validateBody(clockByEmployeeSchema), asyncHandler(clockController.status));
-clockRouter.post("/photo-punch", ...clockOperationalGuards, validateBody(clockPhotoPunchSchema), asyncHandler(clockController.photoPunch));
+// F11: la foto se parsea recién con el dispositivo autenticado y dentro de su
+// cupo (el parser global de 1 MiB saltea esta ruta, ver shared/http/bodyLimits.ts).
+clockRouter.post("/photo-punch", ...clockOperationalGuards, jsonBody(CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES), validateBody(clockPhotoPunchSchema), asyncHandler(clockController.photoPunch));
 clockRouter.get("/attempts/:requestId", ...clockOperationalGuards, asyncHandler(clockController.attemptStatus));

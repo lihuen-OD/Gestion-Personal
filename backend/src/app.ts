@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { parseCorsOrigins } from "./config/corsOrigins";
 import { env } from "./config/env";
+import { requestBodyLimits } from "./shared/http/bodyLimits";
 import { trustProxySetting } from "./shared/http/clientIp";
 import { requestLogger } from "./middlewares/requestLogger";
 import { apiRouter } from "./routes";
@@ -38,7 +39,10 @@ export function createApp() {
       legacyHeaders: false,
     }),
   );
-  app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
+  // F11: guarda de Content-Length + parser JSON de 1 MiB. Las dos rutas de
+  // body grande lo parsean ellas mismas después de sus guardas
+  // (shared/http/bodyLimits.ts).
+  app.use(...requestBodyLimits(env.API_PREFIX));
   app.use(requestLogger);
   app.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");

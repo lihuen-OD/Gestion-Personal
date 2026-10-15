@@ -2,6 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../../middlewares/auth";
 import { requireAnyRole } from "../../middlewares/authorization";
 import { asyncHandler } from "../../shared/http/asyncHandler";
+import { EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES, jsonBody } from "../../shared/http/bodyLimits";
 import { roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
@@ -233,9 +234,13 @@ employeesRouter.post(
 // Etapa 15D.4 (docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md): antes
 // sólo RRHH podía llegar acá. La autorización real (scope del empleado +
 // category.uploadRoles) se resuelve en employeesService.createDocument.
+// F11: el documento (base64, hasta 35 MiB) se parsea recién después de
+// autenticar y del rol; el parser global de 1 MiB saltea esta ruta (ver
+// shared/http/bodyLimits.ts).
 employeesRouter.post(
   "/:id/documents",
   requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  jsonBody(EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES),
   validateBody(createEmployeeDocumentSchema),
   asyncHandler(employeesController.createDocument),
 );

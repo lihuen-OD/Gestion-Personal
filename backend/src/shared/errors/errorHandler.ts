@@ -2,15 +2,20 @@ import type { ErrorRequestHandler } from "express";
 import { isProduction } from "../../config/env";
 import { auditService } from "../../modules/audit/audit.service";
 import { AppError } from "./AppError";
+import { bodyParserError } from "./bodyParserErrors";
 import { describeRequestPath } from "../audit/technicalIds";
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
+  // F11: un body demasiado grande o mal formado es un error del cliente (413,
+  // 400, 415), no un 500. No se registra: el error de body-parser trae el body
+  // crudo (puede ser una foto de fichada o un documento).
+  const clientBodyError = bodyParserError(error);
   const appError =
     error instanceof AppError
       ? error
-      : new AppError("Unexpected server error", 500, "INTERNAL_ERROR");
+      : clientBodyError ?? new AppError("Unexpected server error", 500, "INTERNAL_ERROR");
 
-  if (!isProduction) {
+  if (!isProduction && !clientBodyError) {
     console.error(error);
   }
 
