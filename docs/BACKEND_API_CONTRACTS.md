@@ -22,6 +22,31 @@ Todas las respuestas siguen el patrón:
 }
 ```
 
+### Tamaño del body y errores de body (F11)
+
+El body JSON se limita por ruta (`backend/src/shared/http/bodyLimits.ts`):
+
+| Ruta | Límite | Cuándo se parsea |
+|---|---|---|
+| Todas las demás | 1 MiB | Antes del routing (parser global) |
+| `POST /api/clock/photo-punch` | 6 MiB | Después del límite por IP, `requireClockDevice()` y el límite por dispositivo |
+| `POST /api/employees/:id/documents` | 36 MiB | Después de `requireAuth` y del rol |
+
+Un `Content-Length` declarado por encima del límite de su ruta se rechaza
+antes de leer el body (y se cierra la conexión); un body chunked lo corta el
+límite del parser. Errores, siempre con el formato `{ error: { code, message } }`
+y nunca 500:
+
+| Status | Código | Cuándo |
+|---|---|---|
+| 413 | `PAYLOAD_TOO_LARGE` | Body por encima del límite de su ruta |
+| 400 | `INVALID_JSON` | JSON mal formado |
+| 400 | `INVALID_REQUEST_BODY` | Body que no coincide con su `Content-Length` o request interrumpida |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Codificación o charset del body no soportados |
+
+En las dos rutas de body grande, un request sin credencial responde 401 sin
+que su body se lea. `JSON_BODY_LIMIT` ya no existe.
+
 Los listados grandes pueden incluir metadatos de paginación sin cambiar `data`:
 
 ```json
@@ -673,6 +698,7 @@ Body:
 Notas:
 
 - `fileBase64` permite enviar el archivo desde frontend sin depender de multipart.
+- F11: esta ruta acepta un body de hasta 36 MiB (archivo de hasta 25 MiB en base64) y lo parsea recién después de `requireAuth` y del rol; el resto de la API, 1 MiB (ver "Tamaño del body y errores de body").
 - Qué provider recibe el archivo lo decide el backend internamente (Etapa 15D.2, `docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md`): `DOCUMENT_STORAGE_PROVIDER` para documentos de legajo, con fallback a `DEFAULT_STORAGE_PROVIDER` y luego a `STORAGE_PROVIDER` si no están configuradas — no es un valor que el cliente pueda elegir.
 - `storageKey` sigue disponible para integraciones futuras donde el archivo ya venga subido por otro canal.
 - Rol (Etapa 15D.4, `docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`): `NIVEL_1_RRHH`/`NIVEL_2_SUPERVISION`/`NIVEL_3_CARGA_HORARIA` pueden llegar a la ruta; la autorización real es por categoría — RRHH siempre puede, los demás sólo si `categoryId` referencia una categoría existente cuyo `uploadRoles` incluye su rol **y** el legajo está dentro de su alcance (`employeeAccessWhere`). `categoryId` inexistente responde `404 DOCUMENT_CATEGORY_NOT_FOUND`; sin permiso de categoría responde `403 DOCUMENT_UPLOAD_FORBIDDEN` — ambos antes de tocar storage, para no dejar un archivo huérfano subido.
@@ -1178,35 +1204,24 @@ Rechazo:
 
 **Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
-### Fichador (`clock`, F7) y alias legacy
+### Fichador (`clock`, F7)
 
-Módulo `backend/src/modules/clock/` (F7 de `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`, §26): capa de transporte del kiosco sobre el núcleo de fichada de `time-entries` (no tiene servicio propio). Monta el namespace del dispositivo `/api/clock/*` —el enrolamiento de `clock-devices` (`/device/*`, ver "Dispositivos de fichada") más las cuatro rutas operativas— y el mismo montaje se reutiliza como alias legacy bajo `/api/time-entries/clock/*`.
+Módulo `backend/src/modules/clock/` (F7 de `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`, §26): capa de transporte del kiosco sobre el núcleo de fichada de `time-entries` (no tiene servicio propio). Monta el namespace del dispositivo `/api/clock/*`: el enrolamiento de `clock-devices` (`/device/*`, ver "Dispositivos de fichada"), el heartbeat (F9) y las cuatro rutas operativas.
 
 ```txt
 GET  /api/clock/employees?search=
 POST /api/clock/status
 POST /api/clock/photo-punch
 GET  /api/clock/attempts/:requestId?employeeId=
-
-# Alias legacy (deprecado desde F7, se retira en F11; la PWA ya no lo usa desde F8):
-GET  /api/time-entries/clock/employees?search=
-POST /api/time-entries/clock/status
-POST /api/time-entries/clock/photo-punch
-GET  /api/time-entries/clock/attempts/:requestId?employeeId=
 ```
 
-Los dos namespaces son **el mismo código**: mismas guardas (con las mismas instancias de limitadores, así que el cupo por IP y por dispositivo es uno solo entre ambos), misma validación, mismo controller (`clock.controller.ts`) y mismo servicio (`timeEntriesService`). Request y response son idénticos. Sólo difieren en:
+**El alias legacy `/api/time-entries/clock/*` se retiró en F11** (plan §30): había quedado desde F7 para la PWA de F6 y la PWA no lo usa desde F8. Sus cuatro rutas responden `404 ROUTE_NOT_FOUND`, con o sin credencial, igual que cualquier otra ruta bajo ese prefijo.
 
-| | `/api/clock/*` | `/api/time-entries/clock/*` (legacy) |
-|---|---|---|
-| `source` de la fichada (`AttendancePunch` de esa fichada; `WorkShift` si la fichada lo abre) | `KIOSK` | `PUBLIC_CLOCK_PHOTO` (comportamiento F6) |
-| Header de respuesta | — | `Deprecation: @1791849600` (RFC 9745, 2026-10-13; no expuesto por CORS) |
+Semántica de `source` (F7.1): `AttendancePunch.source` = canal de **esa** fichada; `WorkShift.source` = canal que **originó** la jornada (nunca se reescribe); `TimeEntry.source` = `WorkShift.source`. Toda fichada nueva es `KIOSK`. `PUBLIC_CLOCK_PHOTO` queda como valor histórico (fichadas del alias y del fichador de F6): una jornada histórica `PUBLIC_CLOCK_PHOTO` todavía abierta y cerrada por `/api/clock` queda con salida `KIOSK` y jornada y horas `PUBLIC_CLOCK_PHOTO`; en un rollover, la jornada vieja y su `TimeEntry` de 0 h conservan su source y la nueva es `KIOSK`. El `source` lo decide el servidor, nunca el cliente: cualquier `source` o `deviceId` del body se descarta (el schema no los acepta). Las fichadas históricas no se reescriben (no hay backfill).
 
-Semántica de `source` (F7.1): `AttendancePunch.source` = canal de **esa** fichada; `WorkShift.source` = canal que **originó** la jornada (nunca se reescribe); `TimeEntry.source` = `WorkShift.source`. Una jornada abierta por el alias legacy y cerrada por `/api/clock` queda con salida `KIOSK` y jornada y horas `PUBLIC_CLOCK_PHOTO`; en un rollover, la jornada vieja y su `TimeEntry` de 0 h conservan su source y la nueva usa el del canal actual. El `source` lo decide la **ruta**, nunca el cliente: cualquier `source` o `deviceId` del body se descarta (el schema no los acepta). Las fichadas históricas no se reescriben (no hay backfill). Un reintento idempotente (mismo `requestId` y payload, mismo dispositivo) devuelve el resultado guardado aunque llegue por el otro namespace.
+Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). `photo-punch` parsea su body (hasta 6 MiB) recién después de esas guardas (ver "Tamaño del body y errores de body"). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
 
-Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
-
-Errores de dispositivo y de fichada (comunes a los dos namespaces):
+Errores de dispositivo y de fichada:
 
 | Status | Código | Cuándo |
 |---|---|---|
@@ -1217,8 +1232,9 @@ Errores de dispositivo y de fichada (comunes a los dos namespaces):
 | 409 | `CLOCK_PUNCH_COOLDOWN` | (F7) Fichada **distinta** (otro `requestId`) del mismo empleado dentro de `CLOCK_PUNCH_COOLDOWN_SECONDS` de su última fichada, o mientras otra fichada suya se está confirmando. Trae `error.retryAfterSeconds` |
 | 409 | `CLOCK_IDEMPOTENCY_KEY_REUSED` | `requestId` ya usado con otro payload o por otro dispositivo |
 | 429 | (rate limiter) | Cupo por IP o por dispositivo agotado |
+| 503 | `CLOCK_TEMPORARY_FAILURE` | La fichada no se confirmó (por ejemplo, falló la escritura de la jornada o de su auditoría, F11): no quedó nada registrado y el intento queda `FAILED` |
 
-**Cooldown (F7).** Ventana mínima entre dos fichadas distintas del mismo empleado, desde cualquier dispositivo y por cualquiera de los dos namespaces: cuenta toda `AttendancePunch` no `RECHAZADA` del empleado con `timestamp` > hora del servidor − `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60; 0 lo desactiva). Nunca usa el reloj del dispositivo. No es la idempotencia: un reintento del mismo `requestId` se resuelve antes y nunca recibe cooldown. Se evalúa después de la validación facial y del estado del legajo, y **antes** de las reglas de jornada (un ingreso repetido dentro de la ventana responde cooldown, no `CLOCK_ALREADY_OPEN`) y de guardar la foto. El intento rechazado queda `FAILED` con `CLOCK_PUNCH_COOLDOWN`/409, su `deviceId`, `employeeId` y `requestId`; reintentarlo con el mismo `requestId` repite el mismo 409 **con el mismo `retryAfterSeconds` original** (F7.1: queda guardado en el intento, no se recalcula con el reloj); una fichada nueva necesita un `requestId` nuevo. `GET …/attempts/:requestId` de ese intento devuelve `status: FAILED`, `response: null` y `error: { code, message, httpStatus, retryAfterSeconds }`; un intento fallido por otro motivo no trae `retryAfterSeconds`. No genera `AuditLog` (como el resto de los rechazos de fichada).
+**Cooldown (F7).** Ventana mínima entre dos fichadas distintas del mismo empleado, desde cualquier dispositivo: cuenta toda `AttendancePunch` no `RECHAZADA` del empleado con `timestamp` > hora del servidor − `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60; 0 lo desactiva). Nunca usa el reloj del dispositivo. No es la idempotencia: un reintento del mismo `requestId` se resuelve antes y nunca recibe cooldown. Se evalúa después de la validación facial y del estado del legajo, y **antes** de las reglas de jornada (un ingreso repetido dentro de la ventana responde cooldown, no `CLOCK_ALREADY_OPEN`) y de guardar la foto. El intento rechazado queda `FAILED` con `CLOCK_PUNCH_COOLDOWN`/409, su `deviceId`, `employeeId` y `requestId`; reintentarlo con el mismo `requestId` repite el mismo 409 **con el mismo `retryAfterSeconds` original** (F7.1: queda guardado en el intento, no se recalcula con el reloj); una fichada nueva necesita un `requestId` nuevo. `GET …/attempts/:requestId` de ese intento devuelve `status: FAILED`, `response: null` y `error: { code, message, httpStatus, retryAfterSeconds }`; un intento fallido por otro motivo no trae `retryAfterSeconds`. No genera `AuditLog` (como el resto de los rechazos de fichada).
 
 ```json
 {
@@ -1232,7 +1248,7 @@ Errores de dispositivo y de fichada (comunes a los dos namespaces):
 
 `retryAfterSeconds` (entero 1..ventana, calculado con la hora del servidor) es un campo público de `AppError`: a diferencia de `details`, el `errorHandler` lo devuelve también en production. El mensaje no incluye horas, segundos ni ids; la UI del kiosco (F8) arma su texto con `retryAfterSeconds`.
 
-Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Zona · Establecimiento`. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
+Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Zona · Establecimiento`. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
 Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
@@ -1917,8 +1933,8 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 - Invalida las cachés de Asistencia.
 
 Desde F6 la misma credencial individual es la única que autentica las rutas
-operativas `/api/clock/*` (F7) y su alias legacy `/api/time-entries/clock/*`
-(sólo `ACTIVE`; ver "Fichador (`clock`, F7) y alias legacy"). Desde F7 el
+operativas `/api/clock/*` (F7; el alias `/api/time-entries/clock/*` se retiró
+en F11) (sólo `ACTIVE`; ver "Fichador (`clock`, F7)"). Desde F7 el
 router de enrolamiento se monta dentro de `clockRouter` (módulo `clock`), con
 las mismas rutas y límites.
 

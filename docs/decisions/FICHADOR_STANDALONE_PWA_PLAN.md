@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **F10 cerrada** (2026-10-15): pantalla encendida mientras el kiosco opera, cámara por fichada con la foto congelada durante el envío y pausa al pasar a segundo plano, jerarquía de acciones y guía de instalación y Acceso guiado; la validación en iPad real queda para F12 ([§29](#29-f10--operación-de-kiosco-pantalla-cámara-e-instalación)); F10.1 libera la cámara en el acto si no llega a arrancar o el detector no carga (§29.15). **Próxima etapa: F11, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **F10 cerrada** (2026-10-15): pantalla encendida mientras el kiosco opera, cámara por fichada con la foto congelada durante el envío y pausa al pasar a segundo plano, jerarquía de acciones y guía de instalación y Acceso guiado; la validación en iPad real queda para F12 ([§29](#29-f10--operación-de-kiosco-pantalla-cámara-e-instalación)); F10.1 libera la cámara en el acto si no llega a arrancar o el detector no carga (§29.15). **F11 cerrada** (2026-10-15): retiro del alias `/time-entries/clock/*` y del `/fichador` del admin, límites de body por ruta con parseo después de autenticar, CSP del fichador enforced y auditoría de fichada en la misma transacción; `kioskId`, la clave no exportable y el rate limit compartido quedan diferidos con su razón ([§30](#30-f11--hardening-y-retiro-del-legado)). **Próxima etapa: F12 (piloto), pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1669,8 +1669,8 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | **Cerrada** el 2026-10-14 (§27) |
 | F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | **Cerrada** el 2026-10-14 (§28). "Cambiar sector" se implementó como cambiar **establecimiento**: M2 retiró el sector del dispositivo |
 | F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | **Cerrada** el 2026-10-15 (§29). La cámara sigue abriéndose por fichada; la validación en iPad real pasa a F12 (§29.13) |
-| F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
-| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5). Incluye la validación en iPad real que F10 no pudo hacer (§29.13) | F13 | Pendiente |
+| F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | **Cerrada** el 2026-10-15 (§30). El criterio de 7 días no aplicó (nunca hubo rollout, §30.3). `kioskId` (migración), la clave no exportable (cambio de protocolo) y el store compartido (una sola instancia) quedan diferidos |
+| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5). Incluye la validación en iPad real que F10 no pudo hacer (§29.13) y la CSP enforced en Safari (§30.6) | F13 | Pendiente |
 | F13 | Rollout a producción, con aprobación explícita para migraciones | F14 | Pendiente |
 | F14 | Reconocimiento facial: proyecto aparte, requiere definición legal | F15 | Fuera de esta iniciativa |
 
@@ -3149,3 +3149,407 @@ cambios de negocio ni del flujo de fichada.
   `streamRef` (mostraría "ocupada") o si se saca la guarda de corrida
   detenida. El caso sin elemento de video no tiene test: forzarlo exige
   falsear el render del modal. Usa la misma salida que `play()`.
+
+## 30. F11 — Hardening y retiro del legado
+
+Implementada el 2026-10-15 sobre `main` (a partir de `2abcde5`). Sin
+migraciones ni cambios de schema. Producción no se tocó. En staging sólo hubo
+lecturas.
+
+| Punto | Estado |
+|---|---|
+| Alias HTTP `/api/time-entries/clock/*` | **Retirado** (§30.3) |
+| `/fichador` del admin | **Retirado** (§30.4) |
+| Límites de body | **Implementado** (§30.5) |
+| CSP del fichador | **Implementado** (enforced, §30.6) |
+| Auditoría de fichada no diferida | **Implementado** (§30.7) |
+| `AttendancePunch.kioskId` | **Diferido**: necesita una migración autorizada (§30.8) |
+| `CryptoKey` no exportable | **Diferido**: cambia el protocolo (§30.9) |
+| Rate limit multi-instancia | **Mantenido** en memoria, decisión documentada (§30.10) |
+| `TRUST_PROXY_HOPS` | **Sin cambios**: se mide en el primer deploy (§18.5) |
+| `PUBLIC_CLOCK_PHOTO` | **Mantenido** como valor histórico |
+
+### 30.1 Diagnóstico inicial
+
+- **Legado que existía:**
+  - el alias `/api/time-entries/clock/*` (cuatro rutas, el mismo montaje que
+    `/api/clock/*` con source `PUBLIC_CLOCK_PHOTO` y header `Deprecation`);
+  - la página informativa `/fichador` del admin, en sus variantes pública e
+    interna, sin entrada en el menú;
+  - `AttendancePunch.kioskId`;
+  - las guardas y tests del token compartido retirado en F6.
+- **Consumidores en `main`:** ninguno. El bundle del fichador ya prohibía el
+  alias desde F8; el admin y los scripts de staging usan `/api/clock`. Sólo
+  lo referenciaban tests y docs.
+- **Consumidor fuera de `main`:** la rama `development` todavía tiene el
+  fichador de F6, que llama al alias. Corre contra el backend de esa misma
+  rama, que conserva su propio alias, así que el retiro en `main` no lo
+  afecta hasta que las ramas se reconcilien (riesgo en §30.14).
+- **Deploy real:** no existe (§18.5, §20.12). No hay kioscos instalados ni
+  marcadores apuntando al admin.
+
+### 30.2 Evidencia de staging (sólo lectura)
+
+Script de `SELECT` en una transacción `READ ONLY` contra el staging del
+fichador (`ep-gentle-resonance`):
+
+| Dato | Valor |
+|---|---|
+| `AttendancePunch` | 81 en total; `kioskId` no nulo: **0**; con `deviceId`: 2 |
+| Fichadas por source | `PUBLIC_CLOCK_PHOTO` 69, `PORTAL_DNI` 7, `ADMIN` 4, `KIOSK` 1 |
+| Jornadas por source | `PUBLIC_CLOCK_PHOTO` 47, `KIOSK` 1 |
+| Fichadas por el alias después del cutover F8 (2026-10-14) | **0** |
+| `ClockDevice` | 8, todos `REVOKED`; **ninguno `ACTIVE`** que pudiera autenticarse en el alias |
+| Fotos de fichada (`StorageFile` `FICHADAS`) | 92; p50 36 KB, p95 40 KB, máximo **52,9 KB** |
+| Miniaturas | 76; máximo **6,6 KB** |
+| Fichadas con dispositivo con su `AuditLog` | 2 de 2. La de F6 tiene el texto anterior a F7, "Ingreso publico con foto…" |
+
+### 30.3 Alias HTTP — retirado
+
+**Decisión sobre "7 días sin tráfico" (§25.1): opción A, no aplica.** Nunca
+hubo rollout. Lo que importa es si algún cliente real podía usar el alias, y
+la respuesta es no:
+
+- no hay deploy;
+- en staging no hubo tráfico por el alias desde F8;
+- en staging no queda ningún dispositivo `ACTIVE`;
+- producción no tiene `ClockDevice` (F4 sólo se migró en staging), así que
+  nadie puede autenticarse ahí.
+
+No se afirma una medición de 7 días que no existe.
+
+**Se retiró:**
+
+- el montaje de las cuatro rutas en `time-entries`;
+- `markLegacyClockRoute` y el header `Deprecation`;
+- `mountClockOperationalRoutes`: las rutas se montan directo en `clockRouter`;
+- el `source` por ruta: el controller fija `KIOSK` y `ClockPunchSource` es
+  sólo `KIOSK`;
+- los tests exclusivos del alias.
+
+**Se mantuvo:**
+
+- el cierre explícito `timeEntriesRouter.all(["/clock", "/clock/*"],
+  notFoundHandler)`: todo `/time-entries/clock/*` responde `404
+  ROUTE_NOT_FOUND`, con o sin credencial, y nunca cae en `requireAuth` ni en
+  `/:id`. El 404 es el genérico del proyecto y no dice que la ruta existió;
+- `PUBLIC_CLOCK_PHOTO` en el enum, en Asistencia ("Fichador con foto") y en
+  los datos;
+- la semántica de F7.1: una jornada histórica `PUBLIC_CLOCK_PHOTO` abierta se
+  cierra o reemplaza por `/api/clock` conservando su source.
+
+**Tests:**
+
+- el contrato F6 del dispositivo (credenciales, presencia, cupos) se movió de
+  `time-entries/timeEntries.clockRoutes.test.ts` a
+  `clock/clockOperational.routes.test.ts`, contra `/api/clock`;
+- nuevos tests fijan el alias en 404, con y sin credencial, sin llamar al
+  repositorio de dispositivos;
+- la integración con PostgreSQL siembra las jornadas `PUBLIC_CLOCK_PHOTO`
+  históricas con el repositorio y verifica que el alias no escribe nada.
+
+**Mutación:** volver a montar `clockRouter` bajo `/time-entries/clock` hace
+fallar 13 tests.
+
+### 30.4 `/fichador` del admin — retirado
+
+Desde F6 sólo informaba dónde se ficha, no estaba en el menú y no hay deploy
+con kioscos que la tengan guardada.
+
+- **Se retiró:** las dos rutas, `TimeClockMovedPage` con su test y su CSS.
+- **Ahora `/fichador` se comporta como cualquier ruta desconocida:** login
+  sin sesión, redirección al inicio con sesión.
+- **Journey de performance:** conserva la zona "I. Fichador" como retirada,
+  sin nada que medir.
+- **Tests nuevos:** ningún nivel del menú ofrece `/fichador`, y `/fichador`
+  sin sesión muestra el login (pasa a fallar si se vuelve a montar la
+  página).
+- **Visual:** sin revisión. No cambió ninguna entrada de menú ni pantalla.
+
+### 30.5 Límites de body — implementado
+
+Antes había un único `express.json({ limit: "40mb" })` global. Cualquier
+ruta, con o sin credencial, parseaba hasta 40 MB antes de su guarda. Además,
+los errores de body-parser llegaban como **500** (el `errorHandler` sólo
+conocía `AppError`).
+
+| Ruta | Límite | Cálculo | Se parsea |
+|---|---|---|---|
+| Resto de la API | 1 MiB | El body normal más grande son las operaciones masivas (≤ 1000 ids, ~100 KB) | Antes del routing |
+| `POST /api/clock/photo-punch` | 6 MiB | Schema: foto ≤ 4.500.000 caracteres + miniatura ≤ 600.000 ≈ 5,1 MB. Real: JPEG de 800 px a calidad 0,84, ≤ 53 KB (≤ 71 KB en base64) más miniatura ≤ 7 KB | Después del límite por IP, `requireClockDevice()` y el límite por dispositivo |
+| `POST /api/employees/:id/documents` | 36 MiB | Archivo ≤ 25 MiB → `fileBase64` ≤ 35 MiB más metadatos | Después de `requireAuth` y del rol |
+
+El límite de la foto sigue al schema, para que el parser nunca rechace algo
+que el schema acepta. Bajar el schema al tamaño real sería un cambio de
+contrato y no se hizo en F11.
+
+- **Mecanismo** (`shared/http/bodyLimits.ts`):
+  - una guarda de `Content-Length` rechaza con 413 un tamaño declarado por
+    encima del límite de su ruta, sin leer el body, y cierra la conexión;
+  - el parser global de 1 MiB saltea las dos rutas grandes, que montan
+    `jsonBody(limit)` después de sus guardas;
+  - un body chunked (sin `Content-Length`) lo corta el límite propio de cada
+    parser.
+- **Una desincronización falla cerrada:**
+  - una ruta en la tabla sin `jsonBody` responde 400 (body sin parsear);
+  - un `jsonBody` sin entrada en la tabla queda cortado en 1 MiB.
+- **Errores** (`shared/errors/bodyParserErrors.ts`):
+  - `413 PAYLOAD_TOO_LARGE`;
+  - `400 INVALID_JSON` e `INVALID_REQUEST_BODY`;
+  - `415 UNSUPPORTED_MEDIA_TYPE`;
+  - nunca 500. No se loguean: el error de body-parser trae el body crudo.
+- **`JSON_BODY_LIMIT` se eliminó.** Los límites siguen a los schemas, y un
+  `.env` con `40mb` ya no puede reabrir el agujero. Una línea vieja en un
+  `.env` local se ignora.
+- **Tests** (`app.bodyLimits.test.ts` sobre la app real, más
+  `bodyLimits.test.ts`):
+  - body normal, foto real, máximo del schema por encima de 1 MiB;
+  - JSON inválido de 2 MB sin credencial → 401 (no se parsea);
+  - JSON mal formado → 400;
+  - `Content-Length` excesivo con y sin auth → 413;
+  - chunked excesivo → 413;
+  - ruta normal autenticada con body grande → 413;
+  - documentos por encima de 1 MiB → al servicio, sin sesión → 401, más de
+    36 MiB → 413;
+  - el match de las rutas (mayúsculas, barra final, método, prefijo).
+- **Mutaciones:** cada una hace fallar tests:
+  - parser global de 40 MB;
+  - sin el mapeo de errores;
+  - foto sin su parser;
+  - foto parseada antes de autenticar.
+
+### 30.6 CSP y headers — CSP del fichador enforced
+
+- La CSP de F2/F3 sólo admite `'self'`, el origin del API del entorno y
+  `'wasm-unsafe-eval'`. No tiene `unsafe-inline`, `unsafe-eval`, wildcards ni
+  terceros. Ahora sale como `Content-Security-Policy`, no Report-Only.
+- `securityHeaders()` es la fuente única del `_headers` del hosting y de
+  `vite preview`. Así el build local y la PWA E2E corren con la misma
+  política.
+- `vite dev` no manda CSP, porque HMR y React Refresh usan scripts inline. La
+  política de producción no se relaja por eso.
+- `connect-src` sale del mismo `VITE_API_URL` que ve el bundle (`loadEnv`).
+  Con la CSP enforced, una diferencia bloquearía todo el API.
+- Se quitó `interest-cohort=()` de `Permissions-Policy`: es FLoC, ya
+  abandonado, y hace que Chrome loguee un error. `camera=(self)` sigue.
+- **E2E nuevo** (`e2e/csp.pwa.ts`, contra el build real):
+  - el header es enforced;
+  - la app, el service worker y el detector **real** de MediaPipe cargan sin
+    violaciones;
+  - sin `'wasm-unsafe-eval'` el detector no carga y el test falla
+    (verificado);
+  - los tests unitarios fallan con `'unsafe-eval'`, con un wildcard o si la
+    CSP vuelve a Report-Only.
+- **Diferido a F12:** Safari/iPad sobre HTTPS. Si Safari bloqueara algo, el
+  piloto lo ve al configurar el primer equipo, porque el detector no carga.
+  No hay pérdida de datos.
+- **Admin:** no tiene configuración de hosting en el repo. Su CSP se define
+  con su deploy (**diferido**).
+- **Backend:** mantiene los defaults de `helmet()` (CSP para JSON, HSTS,
+  nosniff, frame protection). Sin cambios.
+
+### 30.7 Auditoría de fichada — implementada en la transacción
+
+**Antes:** `scheduleClockAudit` hacía un `setTimeout` de 500 ms, con `unref`,
+y un `register` sin `await`. La fichada respondía 201 antes de escribir el
+`AuditLog`. Una caída del proceso en esa ventana, o un insert fallido, dejaba
+la fichada sin auditoría y sólo un `console.error`.
+
+En staging no se perdió ninguna (§30.2): era un riesgo latente.
+
+**Opciones evaluadas:**
+
+| Opción | Evaluación |
+|---|---|
+| **A, misma transacción** | Elegida. Ya es el patrón del proyecto: `auditService.registerWithin`, usado en org-structure, positions y employees |
+| B, `await` después del commit | Sigue perdiendo la auditoría si el proceso cae entre el commit y el insert, y no tiene una respuesta buena si el insert falla después del commit |
+| C, outbox | Excesivo para un solo insert |
+
+**Implementación:**
+
+- Las tres transacciones de fichada (`createOpenWorkShift`,
+  `rolloverExpiredOpenWorkShift`, `closeOpenWorkShift`) reciben un
+  `ClockPunchAuditWriter` y lo ejecutan adentro, con la jornada ya escrita.
+- Los cachés derivados de la auditoría se limpian después del commit.
+- El cierre manual de RRHH no pasa writer: audita aparte, como antes.
+
+**Política si la auditoría falla:**
+
+1. la transacción entera se revierte: no hay fichada ni jornada;
+2. la evidencia se compensa;
+3. el intento queda `FAILED` con `503 CLOCK_TEMPORARY_FAILURE`;
+4. un reintento del mismo `requestId` repite ese resultado;
+5. un `requestId` nuevo (la próxima intención de la PWA) ficha de cero.
+
+Nunca hay dos fichadas ni dos auditorías. La PWA trata ese 503 como "no se
+registró", porque tiene código `CLOCK_*` (F8).
+
+**Costo:** un `INSERT` más dentro de la transacción, en vez del mismo
+`INSERT` 500 ms después y afuera. Medido contra PostgreSQL local: +0,22 ms en
+p50 (1,16 → 1,38 ms) por transacción de ingreso. Contra una base remota es
+aproximadamente un round trip. Sin N+1 ni hashes extra.
+
+**Tests:**
+
+- **servicio:**
+  - writer en ingreso, salida y rollover;
+  - sin timers;
+  - cachés después del commit;
+  - falla de auditoría → revertida y intento `FAILED`;
+- **PostgreSQL** (`clock_it`):
+  - auditoría presente apenas responde el 201, sin esperas;
+  - exactamente una por fichada (ingreso y salida);
+  - falla inyectada en `registerWithin` → sin fichada, jornada ni
+    auditoría, evidencia `DELETED`, reintento sin duplicar, `requestId`
+    nuevo con una sola auditoría.
+
+**Mutaciones:**
+
+- auditoría fuera de la transacción y sin `await` → fallan 2 tests de
+  PostgreSQL;
+- sin limpiar cachés → falla 1;
+- ingreso sin writer → fallan 2.
+
+**No se tocó:** la deuda de `expireOpenWorkShifts`, que escribe horas sin
+`AuditLog` (`PERFORMANCE_STANDARDS.md` §10). Es otro camino, el job de
+vencimiento, y sigue pendiente de su propia etapa.
+
+### 30.8 `AttendancePunch.kioskId` — diferido (checkpoint)
+
+**Auditoría del campo:**
+
+- `String?`, sin default, FK ni índice;
+- ningún lector ni escritor en el código, ni exportaciones o reportes que lo
+  usen;
+- sólo lo menciona `clockDevice.schema.test.ts`, que fija que F4 no lo
+  borró;
+- en staging, 0 valores en 81 fichadas;
+- la migración F4 aborta si encuentra valores.
+
+Retirarlo es seguro en staging, pero **es una migración**: también correría
+en producción en F13, donde no se puede verificar sin autorización. F11 no
+crea migraciones sin autorización explícita, así que no se creó.
+
+**Propuesta para cuando se autorice** (etapa propia, también se puede hacer
+junto con la migración de producción de F13):
+
+1. migración con guarda: `RAISE EXCEPTION` si `count(*) WHERE "kioskId" IS
+   NOT NULL > 0`, igual que F4;
+2. `DROP COLUMN` sólo si pasa;
+3. actualizar `clockDevice.schema.test.ts` y `DATABASE_STANDARDS.md`.
+
+Sin backfill a `deviceId`: no hay relación demostrable entre los dos campos.
+
+### 30.9 `CryptoKey` no exportable — evaluado, diferido
+
+**Hoy:** el secreto (32 bytes aleatorios) vive en IndexedDB, viaja en cada
+request y el backend guarda sólo su SHA-256. Quien pueda ejecutar JS en el
+origin del fichador o leer su almacenamiento puede copiarlo y usarlo desde
+otro lado hasta que RRHH revoque el equipo.
+
+**Opciones:**
+
+| Opción | Evaluación |
+|---|---|
+| Cifrar el secreto con una `CryptoKey` no exportable guardada en la misma IndexedDB | Teatro de seguridad. `extractable: false` impide exportar la clave, no usarla: cualquier código del origin que lee IndexedDB también puede llamar `decrypt` |
+| Par ECDSA P-256 con la privada no exportable | Mejora real: el secreto no se puede copiar a otro equipo y un XSS sólo puede usarla mientras corre ahí. Pero cambia el protocolo |
+
+El cambio de protocolo incluye:
+
+- registrar la clave pública en el enrolamiento;
+- firmar cada request (método, ruta, timestamp, hash del body) y protegerla
+  contra replay;
+- verificar la firma en el backend;
+- re-enrolar los equipos existentes.
+
+**Decisión:** diferido a una etapa propia después del piloto. Necesita
+evidencia de iPad real sobre la persistencia de una `CryptoKey` en IndexedDB
+en el modo instalado, y vale la pena sólo si el piloto confirma el modelo de
+amenaza. No hubo prueba en iOS: no se afirma compatibilidad.
+
+### 30.10 Rate limit multi-instancia — mantenido en memoria
+
+**Implementación:** `express-rate-limit` con el store en memoria por
+proceso. Cupos:
+
+- global de la API;
+- login y refresh;
+- enrolamiento (registro, estado, refresco y resolución);
+- fichador: por IP antes de autenticar y por dispositivo después;
+- heartbeat, con instancias propias.
+
+Con el retiro del alias, cada ruta del fichador tiene un solo montaje: ya no
+hay buckets compartidos entre namespaces que cuidar.
+
+**Impacto:**
+
+- con una instancia, los cupos son exactos;
+- con N instancias, cada una cuenta aparte (cupo efectivo N×);
+- un reinicio los resetea.
+
+**Decisión:** mantener mientras el backend corra en una instancia (Render,
+§15). Pasar a más de una exige antes un store compartido para **todos** los
+limitadores. No hay infraestructura compartida hoy y no se agrega Redis sólo
+por esto. Quedó documentado en `SECURITY_STANDARDS.md`.
+
+### 30.11 Variables
+
+| Variable | Estado |
+|---|---|
+| `CLOCK_DEVICE_TOKEN` | Ningún lector; no está en el schema de env (Zod ignora claves desconocidas) ni en `.env.example`. Quedan sólo las guardas que prueban que ya no autentica y el chequeo de build que rechaza `VITE_CLOCK_DEVICE_TOKEN`. El `backend/.env` local del usuario (no versionado) todavía tiene la línea: conviene borrarla, no se tocó |
+| `JSON_BODY_LIMIT` | Eliminada (§30.5) |
+| `CLOCK_*`, `RATE_LIMIT_*`, `TRUST_PROXY_HOPS`, `CLIENT_IP_DIAGNOSTICS_ENABLED` | Todas con consumidores; sin cambios |
+| Fichador | Sólo `VITE_API_URL` |
+
+### 30.12 Inventario final de endpoints del fichador
+
+**Públicos (enrolamiento, cada uno con su límite):**
+
+- `POST /api/clock/device/register`, sin credencial;
+- `GET /api/clock/device/status`, cualquier estado;
+- `POST /api/clock/device/pairing-code/refresh`, cualquier estado.
+
+**Operativos, sólo `ACTIVE`:**
+
+- `POST /api/clock/heartbeat`;
+- `GET /api/clock/employees`;
+- `POST /api/clock/status`;
+- `POST /api/clock/photo-punch`;
+- `GET /api/clock/attempts/:requestId`.
+
+**Administración RRHH** (`requireAuth` + rol), bajo `/api/clock-devices`:
+
+- `GET /`;
+- `POST /resolve-pairing`;
+- `GET /:id`;
+- `POST /:id/activate`;
+- `PATCH /:id`;
+- `POST /:id/revoke`;
+- `DELETE /:id` (sólo un pendiente sin historia).
+
+**Legacy:** ninguno. Todo `/api/time-entries/clock/*` responde 404.
+
+### 30.13 Validación final
+
+| App | Resultado |
+|---|---|
+| Backend | typecheck, build y 2939 tests (33 opt-in salteados) en verde. PostgreSQL real: `clock.integration` 14/14 y `clockDevices.integration` 6/6 |
+| Admin | typecheck, build y 1245 tests en verde |
+| Fichador | `tsc -b`, typecheck de E2E y 234 tests en verde (incluye 36 de scripts); build con aislamiento del bundle; E2E 19/19; PWA E2E 3/3 |
+
+`git diff --check` limpio. Las mutaciones están en cada sección.
+
+### 30.14 Pendiente y riesgos para F12
+
+- **Safari/iPad:** CSP enforced, Wake Lock, cámara y Acceso guiado (§29.13).
+- **Persistencia de IndexedDB en iOS:** si el sistema borra el
+  almacenamiento del ícono instalado, el equipo pierde su credencial y hay
+  que reconfigurarlo. Observarlo en el piloto; evaluar
+  `navigator.storage.persist()` si pasa.
+- **`TRUST_PROXY_HOPS`:** se mide en el primer deploy (bloqueante, §18.5).
+- **Reconciliación de `development` con `main`:**
+  - el fichador de `development` (F6) llama al alias retirado;
+  - al integrar las ramas, el fichador tiene que salir de `main`;
+  - `check-bundle-isolation` rechaza el build si el alias vuelve al bundle.
+- **`kioskId`:** migración con guarda cuando se autorice (§30.8).
+- **Deuda:** `expireOpenWorkShifts` sin auditoría.

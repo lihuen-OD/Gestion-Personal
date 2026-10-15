@@ -27,8 +27,12 @@ CORS_ORIGIN=http://localhost:5173
 JWT_ACCESS_SECRET="valor-local-seguro"
 JWT_REFRESH_SECRET="valor-local-seguro"
 STORAGE_PROVIDER=local
-JSON_BODY_LIMIT=40mb
 ```
+
+`JSON_BODY_LIMIT` ya no existe (F11): los límites de body están fijos en
+`backend/src/shared/http/bodyLimits.ts` (1 MiB general, 6 MiB la foto de
+fichada, 36 MiB los documentos). Si tu `backend/.env` todavía lo tiene, se
+ignora; se puede borrar.
 
 Instalar dependencias:
 
@@ -141,8 +145,8 @@ npm run dev
 
 App React/Vite independiente que sólo contiene el fichador (F1 de
 `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`). No necesita el frontend
-administrativo levantado. Desde F6 el `/fichador` del admin ya no ficha: sólo
-informa que se usa esta app.
+administrativo levantado. El admin no tiene fichador: desde F11 tampoco tiene
+la ruta `/fichador`.
 
 Crear `fichador/.env` (gitignoreado) a partir de `fichador/.env.example`:
 
@@ -249,11 +253,10 @@ búsqueda: el fichador se cierra y muestra "Dispositivo deshabilitado".
 
 ### API del fichador y cooldown (F7/F8)
 
-El backend sirve las rutas operativas en `/api/clock/*` (fichadas `KIOSK`) y
-mantiene `/api/time-entries/clock/*` como alias deprecado del mismo código
-(fichadas `PUBLIC_CLOCK_PHOTO`). Desde F8 la PWA llama sólo a `/api/clock/*`.
-El alias queda para clientes viejos hasta F11. Las dos rutas comparten
-credencial y cupos.
+El backend sirve las rutas operativas sólo en `/api/clock/*` (fichadas
+`KIOSK`). El alias `/api/time-entries/clock/*` se retiró en F11 y responde 404.
+Un fichador de una rama anterior a F8 (por ejemplo `development`, que todavía
+tiene el de F6) sólo funciona contra el backend de esa misma rama.
 
 Cooldown: dos fichadas **distintas** del mismo empleado separadas por menos de
 `CLOCK_PUNCH_COOLDOWN_SECONDS` (default 60, en `backend/.env`) responden
@@ -310,6 +313,20 @@ CLOCK_DEVICES_IT_DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it_de
 **Tests unitarios del fichador.** Ya no pueden salir a la red: un `fetch` que
 el test no stubbea falla como "sin conexión" (`src/test/setupTests.ts`). Así
 el heartbeat del Gate nunca llega a un backend real en `localhost`.
+
+### Hardening del fichador (F11)
+
+**CSP.** Desde F11 la CSP del fichador es enforced. `npm run dev` no la manda
+(HMR usa scripts inline); para probar con la política real usar el build:
+`npm run build && npx vite preview`, que sirve los mismos headers que el
+hosting. `npm run e2e:pwa` incluye `e2e/csp.pwa.ts`: la app y el detector real
+cargan sin violaciones.
+
+**Auditoría de fichada.** Se escribe en la misma transacción que la fichada:
+el `AuditLog` existe apenas la fichada responde 201, sin demoras.
+
+**Body.** Un body por encima del límite de su ruta responde `413
+PAYLOAD_TOO_LARGE` y un JSON mal formado `400 INVALID_JSON` (antes, 500).
 
 ### Operación de kiosco (F10)
 

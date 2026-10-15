@@ -212,9 +212,15 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
 ### Fichadas de kiosco y cooldown (F7, sin migración)
 
 - Las fichadas nuevas que entran por `/api/clock/*` se guardan con
-  `WorkShiftSource.KIOSK`; el alias legacy `/time-entries/clock/*` sigue
-  escribiendo `PUBLIC_CLOCK_PHOTO` hasta su retiro (F11). No hay backfill:
-  `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO` existentes no cambian.
+  `WorkShiftSource.KIOSK`. El alias legacy `/time-entries/clock/*`, que
+  escribía `PUBLIC_CLOCK_PHOTO`, se retiró en F11 sin migración:
+  `PUBLIC_CLOCK_PHOTO` sigue siendo un valor válido del enum para la
+  historia. No hay backfill: `ADMIN`, `PORTAL_DNI` y los `PUBLIC_CLOCK_PHOTO`
+  existentes no cambian.
+- `AttendancePunch.kioskId` sigue en el schema (F11 lo dejó diferido): no
+  tiene lectores ni escritores y en staging está en `NULL` en todas las
+  fichadas. Retirarlo es una migración con guarda (abortar si hubiera algún
+  valor) que necesita autorización propia (plan §30.8).
 - Semántica de `source` (F7.1, válida para todos los caminos):
   `AttendancePunch.source` = canal de esa fichada; `WorkShift.source` = canal
   que originó la jornada (nunca se reescribe al cerrarla); `TimeEntry.source`

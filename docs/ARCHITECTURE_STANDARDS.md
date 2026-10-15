@@ -75,11 +75,11 @@ autentica las rutas de fichada; el núcleo de la fichada sigue en
 de transporte del kiosco: sólo `clock.routes.ts` + `clock.controller.ts`, sin
 servicio ni repositorio propios (excepción deliberada al patrón de arriba: el
 núcleo de la fichada —idempotencia, cooldown, jornada, evidencia— vive en
-`timeEntriesService` y no se duplica). Es dueño del namespace `/api/clock/*`
-y exporta `mountClockOperationalRoutes`, que `time-entries` reutiliza para el
-alias legacy `/time-entries/clock/*` (se retira en F11). El `source` de la
-fichada (`KIOSK` vs. `PUBLIC_CLOCK_PHOTO`) lo fija la ruta que monta el
-handler, nunca el cliente.
+`timeEntriesService` y no se duplica). Es dueño del namespace `/api/clock/*`,
+el único del fichador desde F11: el alias legacy `/time-entries/clock/*` se
+retiró y `time-entries` sólo lo cierra con un 404. El `source` de la fichada
+(`KIOSK`) lo fija el controller, nunca el cliente; `PUBLIC_CLOCK_PHOTO` queda
+como valor histórico.
 
 Known deviation: `workforce-management` does not have its own repository layer yet (calls Prisma directly from the service) — do not copy that pattern for new modules.
 
