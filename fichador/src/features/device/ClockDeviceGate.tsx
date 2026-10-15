@@ -5,6 +5,7 @@ import { clockDeviceApiService, type ClockDeviceState } from "../../services/api
 import { clockDeviceSession, type ClockDeviceAuthFailure } from "../../services/api/clockDeviceSession";
 import { clockDeviceStorage, type StoredClockDeviceIdentity } from "./clockDeviceStorage";
 import { useClockDeviceHeartbeat } from "./useClockDeviceHeartbeat";
+import { useClockWakeLock } from "./useClockWakeLock";
 
 const POLL_MS = 7_500;
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
@@ -106,8 +107,12 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
   }, [identity, device?.status, applyDevice]);
 
   // F9: con la sesión operativa abierta (ACTIVE) el equipo avisa que sigue
-  // conectado. PENDING, REVOKED o credencial perdida: no hay heartbeat.
-  useClockDeviceHeartbeat(device?.status === "ACTIVE" && !credentialLost);
+  // conectado. F10: mientras tanto también mantiene la pantalla encendida.
+  // PENDING, REVOKED o credencial perdida: ni heartbeat ni bloqueo de pantalla
+  // (al revocarse se liberan los dos).
+  const operational = device?.status === "ACTIVE" && !credentialLost;
+  useClockDeviceHeartbeat(operational);
+  useClockWakeLock(operational);
 
   const configure = async () => {
     setBusy(true); setError("");
