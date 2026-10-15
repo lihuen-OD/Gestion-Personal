@@ -60,6 +60,37 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   }
 
   const punchesOf = (employeeKey: string) => m.prisma.attendancePunch.findMany({ where: { employeeId: employees[employeeKey]! }, orderBy: { timestamp: "asc" } });
+  const attemptOf = (requestId: string) => m.prisma.clockPunchAttempt.findUniqueOrThrow({ where: { requestId } });
+
+  async function dropCompletionFailureInjection() {
+    try {
+      await holder.$executeRawUnsafe(`DROP TRIGGER IF EXISTS f111_fail_completion ON "ClockPunchAttempt"`);
+    } finally {
+      await holder.$executeRawUnsafe(`DROP FUNCTION IF EXISTS f111_fail_completion()`);
+    }
+  }
+
+  /**
+   * F11.1: hace fallar DE VERDAD, dentro de PostgreSQL, la escritura de COMPLETED de un intento
+   * (trigger BEFORE UPDATE sólo para ese requestId y ese estado). FAILED sigue pudiendo escribirse.
+   */
+  async function withCompletionFailure<T>(requestId: string, run: () => Promise<T>) {
+    if (!/^[0-9a-f-]{36}$/i.test(requestId)) throw new Error("requestId inválido para el trigger de prueba");
+    await dropCompletionFailureInjection();
+    try {
+      await holder.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION f111_fail_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.status = 'COMPLETED' AND NEW."requestId" = '${requestId}' THEN
+            RAISE EXCEPTION 'F11.1 test: completion write failed';
+          END IF;
+          RETURN NEW;
+        END $$`);
+      await holder.$executeRawUnsafe(`CREATE TRIGGER f111_fail_completion BEFORE UPDATE ON "ClockPunchAttempt" FOR EACH ROW EXECUTE FUNCTION f111_fail_completion()`);
+      return await run();
+    } finally {
+      await dropCompletionFailureInjection();
+    }
+  }
 
   beforeAll(async () => {
     const parsed = new URL(url!);
@@ -94,7 +125,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "WorkShift_one_open_per_employee" ON "WorkShift"("employeeId") WHERE status = 'ABIERTO' AND "endAt" IS NULL`);
 
     await prisma.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
-    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "rollover", "retryMeta", "auditDown"].entries()) {
+    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "rollover", "retryMeta", "auditDown", "completionIn", "completionOut", "completionRollover", "expiredAttempt", "sameRequest"].entries()) {
       const created = await prisma.employee.create({ data: { legajo: `IT-${index + 1}`, cuil: `20-${index + 1}`, dni: `${index + 1}`, firstName: "Prueba", lastName: `IT ${key}` } });
       employees[key] = created.id;
     }
@@ -208,11 +239,14 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     m.env.CLOCK_PUNCH_COOLDOWN_SECONDS = 2;
     try {
       await sleep(2_200);
-      const exit = await call("POST", "/clock/photo-punch", deviceA, body("race", "OUT"));
+      const exitBody = body("race", "OUT");
+      const exit = await call("POST", "/clock/photo-punch", deviceA, exitBody);
       expect(exit.status).toBe(201);
       const punches = await punchesOf("race");
       expect(punches.map((punch) => [punch.type, punch.source])).toEqual([["INGRESO", "KIOSK"], ["SALIDA", "KIOSK"]]);
       expect(punches[1]!.deviceId).toBe(deviceA.id);
+      // F11.1: la salida confirmó su intento con exactamente lo que respondió.
+      expect(await attemptOf(exitBody.requestId)).toMatchObject({ status: "COMPLETED", httpStatus: 200, response: exit.data });
       const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.race! } });
       expect(shift!.status).not.toBe("ABIERTO");
       // F11: exactamente una auditoría por fichada confirmada (ingreso + salida), apenas responde.
@@ -367,9 +401,12 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   it("rollover: jornada legacy histórica vencida + IN por /api/clock → la vieja y su TimeEntry 0 h quedan PUBLIC_CLOCK_PHOTO; la fichada y la jornada nuevas son KIOSK", async () => {
     const oldShiftId = await clockInAndAge("rollover", "historicalLegacy", deviceA, 21 * 60);
 
-    const entry = await call("POST", "/clock/photo-punch", deviceB, body("rollover", "IN"));
+    const entryBody = body("rollover", "IN");
+    const entry = await call("POST", "/clock/photo-punch", deviceB, entryBody);
     expect(entry.status).toBe(201);
     expect(entry.data!.previousOpenShift).toMatchObject({ id: oldShiftId, status: "FALTA_SALIDA" });
+    // F11.1: el intento del rollover quedó COMPLETED con lo que respondió (incluye la jornada anterior).
+    expect(await attemptOf(entryBody.requestId)).toMatchObject({ status: "COMPLETED", response: entry.data });
 
     const old = await sourcesOf(oldShiftId);
     expect(old).toMatchObject({ status: "FALTA_SALIDA", shift: "PUBLIC_CLOCK_PHOTO", start: "PUBLIC_CLOCK_PHOTO" });
@@ -408,5 +445,124 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(reused).toMatchObject({ status: 409, error: { code: "CLOCK_IDEMPOTENCY_KEY_REUSED" } });
     expect(reused.error).not.toHaveProperty("retryAfterSeconds");
     expect(await punchesOf("retryMeta")).toHaveLength(1);
+  });
+
+  // ── F11.1 (plan §30.15): el intento se confirma en la misma transacción que la fichada ──
+
+  it("si falla la escritura de COMPLETED de un ingreso, se revierte todo: sin fichada, jornada ni auditoría; intento FAILED 503; evidencia compensada; el reintento repite el error y un requestId nuevo ficha", async () => {
+    const auditsBefore = await m.prisma.auditLog.count();
+    const failing = body("completionIn", "IN");
+
+    const response = await withCompletionFailure(failing.requestId, () => call("POST", "/clock/photo-punch", deviceA, failing));
+
+    expect(response).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+    expect(await punchesOf("completionIn")).toHaveLength(0);
+    expect(await m.prisma.workShift.count({ where: { employeeId: employees.completionIn! } })).toBe(0);
+    expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
+    expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
+    const evidence = await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionIn!, module: "FICHADAS" } });
+    expect(evidence.length).toBeGreaterThanOrEqual(1);
+    expect(evidence.every((file) => file.status === "DELETED")).toBe(true);
+    expect(await call("GET", `/clock/attempts/${failing.requestId}?employeeId=${employees.completionIn}`, deviceA)).toMatchObject({ status: 200, data: { status: "FAILED", response: null, error: { code: "CLOCK_TEMPORARY_FAILURE" } } });
+
+    // Mismo requestId: el mismo error guardado, sin volver a fichar.
+    expect(await call("POST", "/clock/photo-punch", deviceA, failing)).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+    expect(await punchesOf("completionIn")).toHaveLength(0);
+
+    // requestId nuevo (la próxima intención): ficha, con su intento COMPLETED y una sola auditoría.
+    const fresh = body("completionIn", "IN");
+    const ok = await call("POST", "/clock/photo-punch", deviceA, fresh);
+    expect(ok.status).toBe(201);
+    expect(await attemptOf(fresh.requestId)).toMatchObject({ status: "COMPLETED", httpStatus: 200, response: ok.data });
+    expect(await call("GET", `/clock/attempts/${fresh.requestId}?employeeId=${employees.completionIn}`, deviceA)).toMatchObject({ status: 200, data: { status: "COMPLETED", response: ok.data, error: null } });
+    expect(await punchesOf("completionIn")).toHaveLength(1);
+    expect(await m.prisma.auditLog.count({ where: { entity: "WorkShift", entityId: ok.data!.workShift.id } })).toBe(1);
+  });
+
+  it("si falla la escritura de COMPLETED de una salida, la jornada sigue ABIERTA: sin SALIDA, sin horas ni tramos, sin auditoría nueva; después sale bien", async () => {
+    const workShiftId = await clockInAndAge("completionOut", "kiosk", deviceA, 90);
+    const auditsBefore = await m.prisma.auditLog.count({ where: { entityId: workShiftId } });
+    const evidenceBefore = new Set((await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionOut!, module: "FICHADAS" }, select: { id: true } })).map(({ id }) => id));
+    const failing = body("completionOut", "OUT");
+
+    expect(await withCompletionFailure(failing.requestId, () => call("POST", "/clock/photo-punch", deviceB, failing))).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+
+    expect(await m.prisma.workShift.findUniqueOrThrow({ where: { id: workShiftId } })).toMatchObject({ status: "ABIERTO", endAt: null, endPunchId: null });
+    expect((await punchesOf("completionOut")).map((punch) => punch.type)).toEqual(["INGRESO"]);
+    expect(await m.prisma.timeEntry.count({ where: { workShiftId } })).toBe(0);
+    expect(await m.prisma.timeSegment.count({ where: { workShiftId } })).toBe(0);
+    expect(await m.prisma.auditLog.count({ where: { entityId: workShiftId } })).toBe(auditsBefore);
+    expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
+    const failedEvidence = (await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionOut!, module: "FICHADAS" } })).filter(({ id }) => !evidenceBefore.has(id));
+    expect(failedEvidence.length).toBeGreaterThanOrEqual(1);
+    expect(failedEvidence.every((file) => file.status === "DELETED")).toBe(true);
+
+    const exitBody = body("completionOut", "OUT");
+    const exit = await call("POST", "/clock/photo-punch", deviceB, exitBody);
+    expect(exit.status).toBe(201);
+    expect((await m.prisma.workShift.findUniqueOrThrow({ where: { id: workShiftId } })).status).toBe("PROCESADO");
+    expect(await attemptOf(exitBody.requestId)).toMatchObject({ status: "COMPLETED", response: exit.data });
+  });
+
+  it("si falla la escritura de COMPLETED en un rollover, la jornada vencida sigue ABIERTA: sin olvido de salida, sin TimeEntry de 0 h ni jornada nueva", async () => {
+    const oldShiftId = await clockInAndAge("completionRollover", "kiosk", deviceA, 21 * 60);
+    const auditsBefore = await m.prisma.auditLog.count();
+    const evidenceBefore = new Set((await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionRollover!, module: "FICHADAS" }, select: { id: true } })).map(({ id }) => id));
+    const failing = body("completionRollover", "IN");
+
+    expect(await withCompletionFailure(failing.requestId, () => call("POST", "/clock/photo-punch", deviceB, failing))).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
+
+    expect(await m.prisma.workShift.findUniqueOrThrow({ where: { id: oldShiftId } })).toMatchObject({ status: "ABIERTO" });
+    expect(await m.prisma.workShift.count({ where: { employeeId: employees.completionRollover! } })).toBe(1);
+    expect(await m.prisma.timeEntry.count({ where: { workShiftId: oldShiftId } })).toBe(0);
+    expect(await m.prisma.timeSegment.count({ where: { workShiftId: oldShiftId } })).toBe(0);
+    expect(await punchesOf("completionRollover")).toHaveLength(1);
+    expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
+    expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
+    const failedEvidence = (await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionRollover!, module: "FICHADAS" } })).filter(({ id }) => !evidenceBefore.has(id));
+    expect(failedEvidence.length).toBeGreaterThanOrEqual(1);
+    expect(failedEvidence.every((file) => file.status === "DELETED")).toBe(true);
+
+    const fresh = body("completionRollover", "IN");
+    const ok = await call("POST", "/clock/photo-punch", deviceB, fresh);
+    expect(ok.status).toBe(201);
+    expect(await m.prisma.workShift.findUniqueOrThrow({ where: { id: oldShiftId } })).toMatchObject({ status: "FALTA_SALIDA" });
+    expect(await attemptOf(fresh.requestId)).toMatchObject({ status: "COMPLETED", response: ok.data });
+  });
+
+  it("una fichada nunca se confirma contra un intento que ya no está PROCESSING (vencido por TTL) ni contra la clave de otro dispositivo: la transacción entera se revierte", async () => {
+    const employeeId = employees.expiredAttempt!;
+    const expired = randomUUID();
+    const processing = randomUUID();
+    await m.prisma.clockPunchAttempt.createMany({ data: [
+      { requestId: expired, employeeId, deviceId: deviceA.id, punchType: "INGRESO", requestHash: "h", status: "FAILED", errorCode: "CLOCK_ATTEMPT_TIMEOUT", httpStatus: 503 },
+      { requestId: processing, employeeId, deviceId: deviceA.id, punchType: "INGRESO", requestHash: "h" },
+    ] });
+    const attempt = (requestId: string, deviceId: string) => ({ requestId, deviceId, employeeId, punchType: "INGRESO" as const });
+    const open = (key: ReturnType<typeof attempt>) => m.repository.createOpenWorkShift({ employeeId, source: "KIOSK", startAt: new Date(), completeAttempt: (tx) => m.repository.completeClockPunchAttempt(key, { ok: true }, tx) });
+
+    await expect(open(attempt(expired, deviceA.id))).rejects.toThrow("CLOCK_ATTEMPT_NOT_PROCESSING");
+    await expect(open(attempt(processing, deviceB.id))).rejects.toThrow("CLOCK_ATTEMPT_NOT_PROCESSING");
+
+    expect(await punchesOf("expiredAttempt")).toHaveLength(0);
+    expect(await m.prisma.workShift.count({ where: { employeeId } })).toBe(0);
+    expect(await attemptOf(expired)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_ATTEMPT_TIMEOUT", response: null });
+    expect(await attemptOf(processing)).toMatchObject({ status: "PROCESSING", response: null });
+  });
+
+  it("el mismo requestId en paralelo: una sola fichada, una sola auditoría y el intento COMPLETED; el otro request recibe el resultado o 'en proceso'", async () => {
+    const same = body("sameRequest", "IN");
+
+    const results = await Promise.all([call("POST", "/clock/photo-punch", deviceA, same), call("POST", "/clock/photo-punch", deviceA, same)]);
+
+    expect(results.some((result) => result.status === 201)).toBe(true);
+    for (const result of results) {
+      expect([201, 409]).toContain(result.status);
+      if (result.status === 409) expect(result.error!.code).toBe("CLOCK_ATTEMPT_PROCESSING");
+    }
+    expect(await punchesOf("sameRequest")).toHaveLength(1);
+    const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.sameRequest! } });
+    expect(await m.prisma.auditLog.count({ where: { entity: "WorkShift", entityId: shift!.id } })).toBe(1);
+    expect(await attemptOf(same.requestId)).toMatchObject({ status: "COMPLETED" });
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { ClockPunchAttemptNotProcessing, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 
@@ -56,8 +56,9 @@ vi.mock("../../shared/prisma/client", () => {
       hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
       employeeWorkRegime: { findFirst: vi.fn() },
       attendancePunch: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
-      // F7.1: persistencia del error público de un intento.
-      clockPunchAttempt: { update: vi.fn() },
+      // F7.1: persistencia del error público de un intento. F11.1: el paso a
+      // FAILED es condicional (updateMany) y relee el intento.
+      clockPunchAttempt: { update: vi.fn(), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findUnique: vi.fn() },
       attendanceInactivityIncident: { findMany: vi.fn(), count: vi.fn() },
       // Etapa 11A: create()/update() manuales resuelven el multiplicador de
       // Horas Especiales vía `prisma` directo (no `tx`) — ver comentario de
@@ -121,7 +122,7 @@ const mockedPrisma = prisma as unknown as {
   hourConcept: { findFirst: Mock; findMany: Mock };
   employeeWorkRegime: { findFirst: Mock };
   attendancePunch: { findMany: Mock; count: Mock; findFirst: Mock };
-  clockPunchAttempt: { update: Mock };
+  clockPunchAttempt: { update: Mock; updateMany: Mock; findUnique: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
   employeePositionPeriod: { findMany: Mock };
@@ -1867,8 +1868,8 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
 describe("F7.1 — failClockPunchAttempt persiste sólo metadata pública", () => {
   it("con retryAfterSeconds lo guarda en response bajo `error`", async () => {
     await timeEntriesRepository.failClockPunchAttempt("req-1", { code: "CLOCK_PUNCH_COOLDOWN", message: "m", httpStatus: 409, retryAfterSeconds: 42 });
-    expect(mockedPrisma.clockPunchAttempt.update).toHaveBeenCalledWith({
-      where: { requestId: "req-1" },
+    expect(mockedPrisma.clockPunchAttempt.updateMany).toHaveBeenCalledWith({
+      where: { requestId: "req-1", status: "PROCESSING" },
       data: { status: "FAILED", errorCode: "CLOCK_PUNCH_COOLDOWN", errorMessage: "m", httpStatus: 409, completedAt: expect.any(Date), response: { error: { retryAfterSeconds: 42 } } },
     });
   });
@@ -1876,7 +1877,63 @@ describe("F7.1 — failClockPunchAttempt persiste sólo metadata pública", () =
   it("sin retryAfterSeconds (o inválido) no toca response", async () => {
     await timeEntriesRepository.failClockPunchAttempt("req-2", { code: "CLOCK_ALREADY_OPEN", message: "m", httpStatus: 409 });
     await timeEntriesRepository.failClockPunchAttempt("req-3", { code: "X", message: "m", httpStatus: 409, retryAfterSeconds: Number.NaN });
-    for (const [call] of mockedPrisma.clockPunchAttempt.update.mock.calls) expect(call.data).not.toHaveProperty("response");
+    for (const [call] of mockedPrisma.clockPunchAttempt.updateMany.mock.calls) expect(call.data).not.toHaveProperty("response");
+  });
+});
+
+// F11.1 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30.15). La atomicidad
+// real (rollback de fichada, auditoría e intento) está probada contra
+// PostgreSQL en clock/clock.integration.test.ts.
+describe("F11.1 — estados del intento de fichada", () => {
+  const key = { requestId: "req-1", deviceId: "device-1", employeeId: "employee-1", punchType: "INGRESO" as const };
+
+  it("failClockPunchAttempt sólo pasa a FAILED un PROCESSING (nunca pisa un COMPLETED) y devuelve el intento como quedó", async () => {
+    mockedPrisma.clockPunchAttempt.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockedPrisma.clockPunchAttempt.findUnique.mockResolvedValueOnce({ requestId: "req-1", status: "COMPLETED" });
+
+    const current = await timeEntriesRepository.failClockPunchAttempt("req-1", { code: "CLOCK_TEMPORARY_FAILURE", message: "m", httpStatus: 503 });
+
+    expect(mockedPrisma.clockPunchAttempt.updateMany.mock.calls[0]![0].where).toEqual({ requestId: "req-1", status: "PROCESSING" });
+    expect(mockedPrisma.clockPunchAttempt.update).not.toHaveBeenCalled();
+    expect(current).toEqual({ requestId: "req-1", status: "COMPLETED" });
+  });
+
+  it("completeClockPunchAttempt escribe en la transacción recibida, sólo desde PROCESSING y con la clave completa", async () => {
+    const db = { clockPunchAttempt: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) } };
+
+    await timeEntriesRepository.completeClockPunchAttempt(key, { workShift: { id: "shift-1" } }, db as never);
+
+    expect(db.clockPunchAttempt.updateMany).toHaveBeenCalledWith({
+      where: { ...key, status: "PROCESSING" },
+      data: { status: "COMPLETED", response: { workShift: { id: "shift-1" } }, completedAt: expect.any(Date), errorCode: null, errorMessage: null, httpStatus: 200 },
+    });
+    expect(mockedPrisma.clockPunchAttempt.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("completeClockPunchAttempt lanza si el intento ya no está PROCESSING (vencido, de otro dispositivo, otro tipo): la fichada se revierte", async () => {
+    const db = { clockPunchAttempt: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) } };
+    await expect(timeEntriesRepository.completeClockPunchAttempt(key, {}, db as never)).rejects.toBeInstanceOf(ClockPunchAttemptNotProcessing);
+  });
+
+  it("createOpenWorkShift corre la auditoría y después la confirmación del intento, en su transacción y con la jornada creada", async () => {
+    const created = { id: "shift-new", startAt: new Date("2026-10-15T11:00:00.000Z") };
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue(created);
+    const audit = vi.fn().mockResolvedValue(undefined);
+    const completeAttempt = vi.fn().mockResolvedValue(undefined);
+
+    await expect(timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: created.startAt, audit, completeAttempt })).resolves.toBe(created);
+
+    expect(audit).toHaveBeenCalledWith(mockedPrisma.__tx, created);
+    expect(completeAttempt).toHaveBeenCalledWith(mockedPrisma.__tx, created);
+    expect(audit.mock.invocationCallOrder[0]!).toBeLessThan(completeAttempt.mock.invocationCallOrder[0]!);
+  });
+
+  it("si la confirmación del intento falla, createOpenWorkShift propaga el error (la transacción no se confirma)", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await expect(timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date(), completeAttempt: () => Promise.reject(new ClockPunchAttemptNotProcessing("req-1")) })).rejects.toBeInstanceOf(ClockPunchAttemptNotProcessing);
   });
 });
 

@@ -9,7 +9,7 @@ import { timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesExportToCsv, timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
-import { evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
+import { evaluateShiftEntry, evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { notifyUsers } from "../workforce-management/workforce.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -1796,6 +1796,149 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       await timeEntriesService.clockStatusByEmployee({ employeeId: activeEmployee.id });
 
       expect(mockedAuditRegister).not.toHaveBeenCalled();
+    });
+  });
+
+  // F11.1 (plan §30.15): el intento pasa a COMPLETED con el resultado DENTRO de
+  // la transacción de la fichada. El repositorio está mockeado: se toma el
+  // writer `completeAttempt` que recibió y se lo corre con una tx falsa y la
+  // fila de la jornada, como haría la transacción real.
+  describe("F11.1 — el intento se confirma en la transacción de la fichada", () => {
+    const fakeTx = { marker: "tx" };
+    // El repositorio está mockeado: misma forma que ClockPunchAttemptNotProcessing.
+    const attemptNotProcessing = () => Object.assign(new Error("CLOCK_ATTEMPT_NOT_PROCESSING"), { name: "ClockPunchAttemptNotProcessing" });
+    const ATTEMPT_KEY = (punchType: "INGRESO" | "SALIDA") => ({ requestId: "55555555-5555-4555-8555-555555555555", deviceId: CLOCK_DEVICE_ID, employeeId: activeEmployee.id, punchType });
+    async function completionWrittenBy(repoFn: Mock, workShiftRow: Record<string, unknown>) {
+      const { completeAttempt, audit } = repoFn.mock.calls[0]![0] as { completeAttempt?: (tx: unknown, row: unknown) => Promise<unknown>; audit?: unknown };
+      expect(audit).toEqual(expect.any(Function));
+      expect(completeAttempt).toEqual(expect.any(Function));
+      await completeAttempt!(fakeTx, workShiftRow);
+      expect(repo.completeClockPunchAttempt).toHaveBeenCalledTimes(1);
+      const [key, response, tx] = repo.completeClockPunchAttempt.mock.calls[0]!;
+      expect(tx).toBe(fakeTx);
+      return { key, response };
+    }
+
+    it("ingreso: guarda en el intento exactamente el resultado que responde (serializado), con su clave completa", async () => {
+      const row = { id: "shift-1", startAt: new Date(), startPunchId: null };
+      repo.createOpenWorkShift.mockResolvedValueOnce(row);
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context());
+
+      const { key, response } = await completionWrittenBy(repo.createOpenWorkShift, row);
+      expect(key).toEqual(ATTEMPT_KEY("INGRESO"));
+      expect(response).toEqual(JSON.parse(JSON.stringify(result)));
+      expect(JSON.stringify(response)).not.toMatch(/photo|thumbnail|base64|tokenHash|secret|"dni"/i);
+    });
+
+    it("salida: guarda la jornada cerrada y los tramos públicos, sin TimeEntry/TimeSegment internos", async () => {
+      const startAt = openShift().startAt;
+      const row = { id: "shift-open", startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null };
+      repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: row, entries: [{ id: "te-1" }], timeSegments: [{ id: "ts-1" }] });
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]));
+
+      const { key, response } = await completionWrittenBy(repo.closeOpenWorkShift, row);
+      expect(key).toEqual(ATTEMPT_KEY("SALIDA"));
+      expect(response).toEqual(JSON.parse(JSON.stringify(result)));
+      expect(response).toMatchObject({ workShift: { id: "shift-open", totalMinutes: 60 } });
+      expect(response).not.toHaveProperty("entries");
+      expect(response).not.toHaveProperty("timeSegments");
+    });
+
+    it("nuevo ingreso tras un olvido de salida (rollover): el resultado guardado incluye la jornada anterior", async () => {
+      const row = { id: "shift-new", startAt: new Date(), startPunchId: null };
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce(row);
+      const expired = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60_000), hourConcept: normalConcept };
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context([expired]));
+
+      const { response } = await completionWrittenBy(repo.rolloverExpiredOpenWorkShift, row);
+      expect(response).toEqual(JSON.parse(JSON.stringify(result)));
+      expect(response).toMatchObject({ previousOpenShift: { id: "shift-excedida", status: "FALTA_SALIDA" }, workShift: { id: "shift-new" } });
+    });
+
+    it("el camino idempotente ya no confirma el intento afuera de la transacción", async () => {
+      repo.findClockValidationContext.mockResolvedValue(context());
+      repo.createClockPunchAttempt.mockResolvedValueOnce({});
+      repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+
+      await timeEntriesService.clockPhotoPunchIdempotent(punch("IN"), KIOSK_CLOCK_ORIGIN);
+
+      // El writer no se ejecutó (repositorio mockeado) y nadie más confirmó.
+      expect(repo.completeClockPunchAttempt).not.toHaveBeenCalled();
+      expect(repo.failClockPunchAttempt).not.toHaveBeenCalled();
+    });
+
+    it("si la confirmación del intento falla, la fichada se revierte: 503, intento FAILED, evidencia compensada, sin cachés ni miniatura", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout"] });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const input = punch("IN");
+      repo.findClockValidationContext.mockResolvedValue(context());
+      repo.createClockPunchAttempt.mockResolvedValueOnce({});
+      repo.createOpenWorkShift.mockRejectedValueOnce(attemptNotProcessing());
+      repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", errorMessage: "x", httpStatus: 503, response: null });
+
+      await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_TEMPORARY_FAILURE" });
+
+      expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, expect.objectContaining({ code: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503 }));
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedClearAuditCaches).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(evaluateShiftEntry).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it("si el intento ya estaba FAILED por otra vía (TTL vencido) la fichada se revierte y responde ese mismo error, el de un reintento", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const input = punch("IN");
+      repo.findClockValidationContext.mockResolvedValue(context());
+      repo.createClockPunchAttempt.mockResolvedValueOnce({});
+      repo.createOpenWorkShift.mockRejectedValueOnce(attemptNotProcessing());
+      repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, status: "FAILED", errorCode: "CLOCK_ATTEMPT_TIMEOUT", errorMessage: "La fichada no pudo confirmarse dentro del tiempo esperado. Iniciá un nuevo intento.", httpStatus: 503, response: null });
+
+      await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_ATTEMPT_TIMEOUT" });
+      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      errorSpy.mockRestore();
+    });
+
+    it("un paso posterior al commit que falla no presenta como fallida una fichada confirmada: responde el resultado guardado", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const input = punch("IN");
+      const stored = { employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez" }, workShift: { id: "shift-1", startAt: "2026-10-15T11:00:00.000Z" } };
+      repo.findClockValidationContext.mockResolvedValue(context());
+      repo.createClockPunchAttempt.mockResolvedValueOnce({});
+      repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+      vi.mocked(evaluateShiftEntry).mockRejectedValueOnce(new Error("alert insert failed"));
+      repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, status: "COMPLETED", response: stored });
+
+      const result = await timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN);
+
+      expect(result).toMatchObject({ workShift: { id: "shift-1" } });
+      // La evidencia de una fichada confirmada nunca se compensa.
+      expect(mockedDeleteManaged).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith("CLOCK_PUNCH_POST_COMMIT_STEP_FAILED", expect.objectContaining({ requestId: input.requestId }));
+      errorSpy.mockRestore();
+    });
+
+    it("salida: un paso posterior al commit que falla nunca compensa la evidencia de la salida confirmada", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open", startAt: openShift().startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null } });
+      vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("exit evaluation failed"));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]))).resolves.toMatchObject({ workShift: { id: "shift-open" } });
+      expect(mockedDeleteManaged).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it("GET attempts: un PROCESSING vencido que justo se confirmó queda COMPLETED (la expiración nunca pisa una fichada confirmada)", async () => {
+      const input = punch("IN");
+      repo.findClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, employeeId: input.employeeId, deviceId: CLOCK_DEVICE_ID, status: "PROCESSING", startedAt: new Date(Date.now() - 10 * 60_000), response: null });
+      repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, employeeId: input.employeeId, deviceId: CLOCK_DEVICE_ID, status: "COMPLETED", response: { workShift: { id: "shift-1" } } });
+
+      const status = await timeEntriesService.clockPunchAttemptStatus(input.requestId, input.employeeId, CLOCK_DEVICE_ID);
+
+      expect(status).toMatchObject({ status: "COMPLETED", response: { workShift: { id: "shift-1" } }, error: null });
     });
   });
 });
