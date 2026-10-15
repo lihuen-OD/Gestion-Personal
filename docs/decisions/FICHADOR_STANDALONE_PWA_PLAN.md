@@ -3553,3 +3553,60 @@ por esto. Quedó documentado en `SECURITY_STANDARDS.md`.
   - `check-bundle-isolation` rechaza el build si el alias vuelve al bundle.
 - **`kioskId`:** migración con guarda cuando se autorice (§30.8).
 - **Deuda:** `expireOpenWorkShifts` sin auditoría.
+
+### 30.15 F11.1 — confirmación atómica del intento
+
+**Causa y ventana anterior.** F11 hizo atómicas la fichada y su `AuditLog`,
+pero `ClockPunchAttempt` pasaba de `PROCESSING` a `COMPLETED` después del
+commit y su error se limitaba a un log. Una caída en ese `UPDATE` podía dejar
+la fichada, la jornada y la auditoría confirmadas mientras recovery seguía
+viendo `PROCESSING` y luego la declaraba no confirmada.
+
+**Invariante nueva.** Ingreso, salida y rollover escriben `AttendancePunch`,
+`WorkShift`, las horas/tramos que correspondan, `AuditLog` y
+`ClockPunchAttempt COMPLETED + response` dentro de la misma transacción. La
+confirmación exige `requestId`, `employeeId`, `deviceId`, `punchType` y estado
+`PROCESSING`; actualizar una cantidad distinta de una fila aborta todo. Un
+attempt vencido por TTL o ya terminal nunca se resucita ni puede confirmar
+una fichada nueva.
+
+El resultado persistido se construye con los mismos builders que el resultado
+público. Incluye `previousOpenShift` en rollover y excluye foto/thumbnail,
+DNI completo, credenciales y filas internas. `storedAttemptResponse()` sigue
+proyectando intentos históricos al contrato vigente.
+
+**Fallos y efectos posteriores.** Si falla auditoría o `COMPLETED`, la
+transacción revierte, la evidencia original se compensa, el intento pasa a
+`FAILED` con `503 CLOCK_TEMPORARY_FAILURE` y el mismo `requestId` reproduce
+ese error. Thumbnail, invalidaciones de cache y evaluaciones best-effort sólo
+empiezan después del commit. Si `failClockPunchAttempt` también falla por una
+caída de base, puede quedar `PROCESSING` hasta que el mantenimiento/consulta
+por TTL vuelva a intentar marcarlo `FAILED`; agregar retries durables queda
+diferido porque requiere un mecanismo nuevo y no afecta la atomicidad de la
+fichada.
+
+**Concurrencia.** El índice único de `requestId`, el advisory lock por
+empleado, el cooldown authoritative dentro de la transacción y el índice de
+una sola jornada abierta siguen vigentes. Dos requests con el mismo
+`requestId` producen una fichada y una auditoría; el segundo obtiene el
+resultado terminal o `CLOCK_ATTEMPT_PROCESSING`. Requests distintos del mismo
+empleado conservan las garantías de F7.
+
+**Validación PostgreSQL y mutaciones.** `clock.integration.test.ts` cubre IN,
+OUT, rollover, TTL/dispositivo ajeno y mismo `requestId` concurrente con un
+trigger temporal restringido al UUID objetivo. El helper elimina trigger y
+función antes y en `finally`, incluso si falla la instalación parcial. Tres
+corridas consecutivas dieron 19/19 y `clockDevices.integration.test.ts` dio
+6/6; al finalizar quedaron 0 triggers y 0 funciones `f111_fail_completion`.
+Las mutaciones de quitar el writer transaccional, tragar su error o permitir
+completar sin `PROCESSING` fueron detectadas. Mover auditoría después de
+`COMPLETED` mantuvo el rollback ante fallo porque ambas escrituras siguen en
+la misma transacción; se conserva el orden negocio → auditoría → completion
+por claridad.
+
+**Performance.** Se agregó un único `UPDATE ClockPunchAttempt` al final de la
+transacción crítica. No cambió ningún timeout: ingreso/rollover mantienen el
+default y salida conserva `timeout: 10_000`. No hay N+1 ni consultas nuevas
+dentro del lock aparte de ese update fail-closed; la integración local no
+mostró una ampliación relevante del tiempo total frente al ruido normal de
+I/O. No se agregó cache, dependencia ni migración.
