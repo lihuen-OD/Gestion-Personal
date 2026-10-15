@@ -1,18 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, KeyRound, MonitorSmartphone, RefreshCw, ShieldAlert, WifiOff } from "lucide-react";
+import { CheckCircle2, KeyRound, MonitorSmartphone, RefreshCw, ShieldAlert } from "lucide-react";
 import { ApiError, getUserErrorMessage } from "../../services/api/apiClient";
 import { clockDeviceApiService, type ClockDeviceState } from "../../services/api/clockDeviceApiService";
 import { clockDeviceSession, type ClockDeviceAuthFailure } from "../../services/api/clockDeviceSession";
 import { clockDeviceStorage, type StoredClockDeviceIdentity } from "./clockDeviceStorage";
+import { DeviceInstallHint, DeviceSetupChecklist } from "./DeviceSetupGuide";
 import { useClockDeviceHeartbeat } from "./useClockDeviceHeartbeat";
 import { useClockWakeLock } from "./useClockWakeLock";
 
 const POLL_MS = 7_500;
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
-
-function standaloneMode() {
-  return window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-}
 
 async function registerOnce() {
   registrationPromise ||= (async () => {
@@ -171,14 +168,17 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
 
   return <main className="device-gate"><section className="device-gate-card">
     <div className={`device-gate-icon ${danger ? "danger" : ""}`}>{revoked ? <ShieldAlert /> : credentialLost ? <KeyRound /> : loading ? <RefreshCw className="spin" /> : <MonitorSmartphone />}</div>
-    <p className="eyebrow">FICHADOR STANDALONE</p>
+    <p className="eyebrow">FICHADOR</p>
     <h1>{title}</h1>
     <p className="muted">{description}</p>
-    {!standaloneMode() && !loading && !danger ? <div className="device-policy"><WifiOff size={17} /><span>Para uso operativo, instalá la PWA en la pantalla de inicio. En desarrollo local podés continuar desde el navegador.</span></div> : null}
+    {/* F10: instalar antes de configurar (la configuración del navegador no pasa al ícono en iOS). */}
+    {!loading && !identity ? <DeviceInstallHint stage="setup" /> : null}
     {pending && pairing ? <div className="pairing-code" aria-label={`Código ${pairing.code}`}><small>CÓDIGO DE VINCULACIÓN</small><strong>{pairing.code}</strong><span>Vence a las {new Date(pairing.expiresAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span></div> : null}
     {pending && !pairing ? <div className="device-policy"><CheckCircle2 size={17} /><span>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</span></div> : null}
+    {pending ? <DeviceInstallHint stage="pending" /> : null}
     {error ? <p className="error">{error}</p> : null}
     {!loading && !identity ? <button className="button primary" disabled={busy} onClick={() => void configure()}>{busy ? "Configurando…" : "Configurar dispositivo"}</button> : null}
+    {!loading && !identity ? <DeviceSetupChecklist /> : null}
     {pending ? <button className="button subtle" disabled={busy} onClick={() => void refreshPairing()}>{busy ? "Generando…" : "Generar código nuevo"}</button> : null}
     {transientError ? <button className="button primary" disabled={busy} onClick={() => void retry()}>{busy ? "Verificando…" : "Reintentar"}</button> : null}
     {danger && !confirmingReset ? <button className="button subtle" onClick={() => setConfirmingReset(true)}>{revoked ? "Configurar como nuevo dispositivo" : "Reconfigurar dispositivo"}</button> : null}

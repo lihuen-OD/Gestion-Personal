@@ -504,3 +504,23 @@ html,body{
   .face-video-shell{width:min(100%,calc((100vh - 400px) * 4 / 3))!important;margin-inline:auto!important}
   .face-video-shell{width:min(100%,calc((100dvh - 400px) * 4 / 3))!important}
 }
+
+/* F10: guía de puesta en marcha en el Gate (configuración y espera). Tarjeta
+   breve con el mismo lenguaje que .device-policy; los pasos van numerados y la
+   lista completa queda plegada para no competir con la acción principal. */
+.setup-guide{width:100%;display:flex;align-items:flex-start;gap:10px;padding:14px;border:1px solid var(--color-border-default);border-radius:12px;background:var(--color-bg-subtle);color:var(--color-text-secondary);font-size:13px;line-height:1.5;text-align:left}
+.setup-guide>svg{flex:none;margin-top:2px;color:var(--color-primary)}
+.setup-guide>div{display:grid;gap:6px;min-width:0}
+.setup-guide b{color:var(--color-text-primary)}
+.setup-guide p{margin:0}
+.setup-guide ol{display:grid;gap:4px;margin:2px 0 0;padding-left:20px}
+.setup-guide-note{color:var(--color-text-secondary);font-size:12px}
+.setup-guide .setup-guide-install{justify-self:start;margin-top:4px}
+.setup-guide.done{border-color:var(--ds-emerald-200);background:var(--ds-emerald-50)}
+.setup-guide.done>svg{color:var(--ds-emerald-700)}
+.setup-guide.warning{border-color:var(--ds-amber-200);background:var(--ds-amber-50)}
+.setup-guide.warning>svg{color:var(--ds-amber-700)}
+.setup-checklist{width:100%;border-top:1px solid var(--color-border-default);padding-top:12px;text-align:left;font-size:13px;color:var(--color-text-secondary)}
+.setup-checklist summary{cursor:pointer;color:var(--color-primary);font-weight:650}
+.setup-checklist summary:focus-visible{outline:3px solid var(--ds-blue-600);outline-offset:2px;border-radius:4px}
+.setup-checklist ol{display:grid;gap:7px;margin:10px 0 0;padding-left:20px;line-height:1.5}
