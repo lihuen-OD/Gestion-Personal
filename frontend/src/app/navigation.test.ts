@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenNavigation, navigationForRole } from "./navigation";
+import { flattenNavigation, navByLevel, navigationForRole } from "./navigation";
 
 // Etapa 15M.17 (docs/PROJECT_UI_CONTEXT.md "Un único acceso principal por
 // módulo operativo"): "Exportación" es el acceso operativo del sidebar
@@ -29,5 +29,15 @@ describe("navigation — Etapa 15M.17 (el acceso a Exportación en el sidebar no
     const settingsLink = links.find((item) => item.label === "Configuración");
 
     expect(settingsLink?.href).toBe("/configuracion");
+  });
+});
+
+// F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): /fichador se
+// retiró del admin; el menú no puede volver a ofrecerlo en ningún nivel.
+describe("navigation — sin el fichador viejo del admin", () => {
+  it("ningún nivel ofrece /fichador", () => {
+    for (const items of Object.values(navByLevel)) {
+      expect(flattenNavigation(items).map((item) => item.href)).not.toContain("/fichador");
+    }
   });
 });

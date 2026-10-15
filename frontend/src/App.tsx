@@ -35,7 +35,6 @@ const UsersPage = lazy(() => import("./pages/UsersPage").then((module) => ({ def
 const AuditPage = lazy(() => import("./pages/AuditPage").then((module) => ({ default: module.AuditPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const ReportsPage = lazy(() => import("./pages/ReportsPage").then((module) => ({ default: module.ReportsPage })));
-const TimeClockMovedPage = lazy(() => import("./pages/TimeClockMovedPage").then((module) => ({ default: module.TimeClockMovedPage })));
 const MonthlyClosuresPage = lazy(() => import("./pages/MonthlyClosuresPage").then((module) => ({ default: module.MonthlyClosuresPage })));
 const NotificationsPage = lazy(() => import("./pages/NotificationsPage").then((module) => ({ default: module.NotificationsPage })));
 const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettingsPage").then((module) => ({ default: module.WorkScheduleSettingsPage })));
@@ -56,10 +55,9 @@ export function App() {
     return (
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          {/* F6 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md): las fichadas
-              exigen un ClockDevice individual, así que /fichador sólo informa
-              dónde se ficha ahora. La ruta se retira en F11 (plan §25). */}
-          <Route path="/fichador" element={<TimeClockMovedPage variant="public" />} />
+          {/* F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): el admin
+              ya no tiene /fichador; las fichadas se hacen sólo desde la app
+              fichador/ con un ClockDevice individual. */}
           <Route path="*" element={<LoginPage />} />
         </Routes>
       </Suspense>
@@ -72,7 +70,6 @@ export function App() {
     <AppShell>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/fichador" element={<TimeClockMovedPage variant="app" canManageDevices={level === 1} />} />
           <Route path="/" element={level === 3 ? <Navigate to="/gestion-horaria" /> : <DashboardPage />} />
           <Route path="/gestion-horaria" element={<HourlyManagementHomePage />} />
           <Route path="/legajos" element={<RoleRoute allowedLevels={[1, 2]}><EmployeesPage /></RoleRoute>} />

@@ -645,17 +645,12 @@ test("workforce management performance journey — recorrido macro de Gestión h
   skip("Marcar como leída / Ver detalle", ZONE.notificaciones, "Prohibido por defecto — ambos disparan POST /workforce/notifications/:id/read (el link \"Ver detalle\" también, como efecto colateral de su onClick).", true);
 
   // ---------------------------------------------------------------------
-  // I. Fichador — desde F6 /fichador del admin es sólo una pantalla
-  // informativa: las fichadas exigen un ClockDevice individual y se hacen
-  // desde la app fichador/. Se mide la carga; el resto ya no existe acá.
+  // I. Fichador — F11 retiró /fichador del admin (desde F6 sólo informaba):
+  // las fichadas se hacen desde la app fichador/. La zona queda en el
+  // reporte, sin nada que medir.
   // ---------------------------------------------------------------------
-  await measure("Entrar a Fichador (carga inicial)", ZONE.fichador, false, async () => {
-    await page.goto("/fichador");
-    return { visibleLocator: page.locator("h1").first() };
-  });
-
-  for (const action of ["Buscar empleado en Fichador", "Marcar ingreso", "Marcar salida", "Capturar foto / enviar punch"]) {
-    skip(action, ZONE.fichador, "F6: /fichador del admin ya no ficha; la acción vive en la app fichador/ con un ClockDevice individual.");
+  for (const action of ["Entrar a Fichador (carga inicial)", "Buscar empleado en Fichador", "Marcar ingreso", "Marcar salida", "Capturar foto / enviar punch"]) {
+    skip(action, ZONE.fichador, "F11: el admin ya no tiene /fichador; las fichadas se hacen sólo desde la app fichador/ con un ClockDevice individual.");
   }
 
   // ---------------------------------------------------------------------

@@ -2383,11 +2383,6 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .org-editor-anchor{scroll-margin-top:84px}
 @media(max-width:1100px){.org-tree-layout{grid-template-columns:1fr;min-height:0}.org-tree{border-right:0;border-bottom:1px solid var(--color-border-light)}.org-detail{position:static}}
 @media(max-width:720px){.org-tree{padding:14px 12px}.org-tree-toolbar{flex-direction:column;align-items:stretch}.org-tree-toolbar-actions{width:100%}.org-tree-toolbar-actions .button{flex:1;min-width:0;padding-inline:8px}.org-tree-item{--indent:14px;gap:8px;padding-right:6px}.org-tree-meta .badge.success{display:none!important}.org-node-icon{width:26px;height:26px}}
-/* F6: /fichador del admin (TimeClockMovedPage, vista pública). Reusa el
-   layout del login; sólo fija el titular claro sobre el fondo oscuro y una
-   card de altura natural en una columna. */
-.clock-moved-page .login-brand h1{color:#fff}
-.clock-moved-page .login-card{align-self:center}
 /* A6 (ORG_LOCATION_REORGANIZATION.md §3.3): Datos Laborales — puesto y
    alcance de sólo lectura, ubicaciones con vigencia e información anterior
    pendiente de recarga. */
