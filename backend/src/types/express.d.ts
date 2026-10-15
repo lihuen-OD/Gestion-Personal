@@ -19,6 +19,7 @@ declare global {
         status: "PENDING" | "ACTIVE" | "REVOKED";
         name: string | null;
       };
+      clockPunchTimings?: { authMs?: number; parseMs?: number };
     }
   }
 }

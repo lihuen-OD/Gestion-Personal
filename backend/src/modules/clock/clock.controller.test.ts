@@ -20,9 +20,10 @@ function kioskReq(overrides: Partial<Request> = {}): Request {
 }
 
 function fakeRes(): Response {
-  const res: Partial<Response> = {};
+  const res: Partial<Response> = { statusCode: 200 };
   res.status = vi.fn().mockReturnValue(res);
   res.json = vi.fn().mockReturnValue(res);
+  res.once = vi.fn().mockReturnValue(res) as never;
   return res as Response;
 }
 

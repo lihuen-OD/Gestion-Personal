@@ -10,6 +10,7 @@ import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import { laborHistoryService } from "../labor-history/laborHistory.service";
+import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
 import type { HistoryReader } from "../labor-history/laborHistory.repository";
 import { evaluateRuleScope, scopeDimensionLabels, type EngineScopeHistory, type ScopeDimension } from "../labor-history/laborHistory.scope";
 import { ruleScopeOf } from "./specialHourRuleScope";
@@ -186,7 +187,8 @@ type PunchEvidenceInput = {
  *   nunca queda una fichada confirmada con el intento PROCESSING, ni un
  *   intento COMPLETED sin fichada.
  */
-export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShift: WorkShift) => Promise<unknown>;
+export type ClockPunchTransactionTimings = { auditMs: number; attemptCompletionMs: number };
+export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShift: WorkShift, timings?: ClockPunchTransactionTimings) => Promise<unknown>;
 
 export type ClockPunchAttemptKey = { requestId: string; deviceId: string; employeeId: string; punchType: "INGRESO" | "SALIDA" };
 
@@ -1674,8 +1676,12 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter }) {
-    return prisma.$transaction(async (tx) => {
+  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+    const startedAt = performance.now();
+    let callbackStartedAt = startedAt;
+    const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
+    const result = await prisma.$transaction(async (tx) => {
+      callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const punch = await tx.attendancePunch.create({
         data: {
@@ -1699,14 +1705,25 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
-      if (input.audit) await input.audit(tx, workShift);
-      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
+      if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
+      if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
     });
+    if (input.timingRequestId) {
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "attempt_completion", durationMs: timings.attemptCompletionMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_core", durationMs: performance.now() - callbackStartedAt, result: "success" });
+    }
+    return result;
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+    const startedAt = performance.now();
+    let callbackStartedAt = startedAt;
+    const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const newShift = await prisma.$transaction(async (tx) => {
+      callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       const previous = await tx.workShift.findFirst({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
@@ -1770,10 +1787,16 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
-      if (input.audit) await input.audit(tx, workShift);
-      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
+      if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
+      if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
     });
+    if (input.timingRequestId) {
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "attempt_completion", durationMs: timings.attemptCompletionMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_core", durationMs: performance.now() - callbackStartedAt, result: "success" });
+    }
 
     // Etapa 10B: mismo fix que expireOpenWorkShifts — este camino también
     // cierra la jornada vieja como FALTA_SALIDA sin pasar por
@@ -2134,6 +2157,7 @@ export const timeEntriesRepository = {
     // y no tiene intento de fichada).
     audit?: ClockPunchTransactionWriter;
     completeAttempt?: ClockPunchTransactionWriter;
+    timingRequestId?: string;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -2152,7 +2176,11 @@ export const timeEntriesRepository = {
     // sólo deduplica por las dudas, no cambia el conjunto real de fechas.
     const uniqueDates = [...new Map(input.segments.map((segment) => [segment.date.getTime(), segment.date])).values()];
 
-    return prisma.$transaction(async (tx) => {
+    const startedAt = performance.now();
+    let callbackStartedAt = startedAt;
+    const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
+    const result = await prisma.$transaction(async (tx) => {
+      callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
       // D-5: la salida se registra siempre, pero nunca carga horas en un
       // período enviado/aprobado: esas fechas quedan observadas para RRHH.
@@ -2358,8 +2386,8 @@ export const timeEntriesRepository = {
         await tx.specialHourRuleApplication.createMany({ data: pendingRuleApplications });
       }
 
-      if (input.audit) await input.audit(tx, workShift);
-      if (input.completeAttempt) await input.completeAttempt(tx, workShift);
+      if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
+      if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return { workShift, entries, timeSegments };
       // maxWait: cuánto puede esperar para conseguir una conexión del pool
       // (default 2000ms, mismo valor -- no era el problema real). timeout:
@@ -2369,6 +2397,13 @@ export const timeEntriesRepository = {
       // trabajo de arriba, no la solución principal (ver
       // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md §6/§10).
     }, { timeout: 10_000 });
+    if (input.timingRequestId) {
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "attempt_completion", durationMs: timings.attemptCompletionMs });
+      clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_core", durationMs: performance.now() - callbackStartedAt, result: "success" });
+    }
+    return result;
   },
 
   // autoApprovedByUserId != null => la edición la hizo RRHH (Etapa 6L.3):

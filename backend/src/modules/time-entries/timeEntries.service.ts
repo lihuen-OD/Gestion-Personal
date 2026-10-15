@@ -14,6 +14,7 @@ import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchTransactionWriter } from "./timeEntries.repository";
+import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
@@ -640,6 +641,7 @@ async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: strin
       punchType: input.punchType,
       faceValidationStatus: input.faceValidationStatus,
     },
+    telemetryRequestId: input.requestId,
   });
   const storagePerformance = {
     originalMs: Number((performance.now() - originalStarted).toFixed(1)),
@@ -702,6 +704,7 @@ function scheduleClockThumbnail(input: ClockPhotoPunchInput, thumbnail: Deferred
     }).then(async (stored) => {
     try {
       await timeEntriesRepository.linkClockPunchThumbnail(attendancePunchId, stored.id);
+      clockPunchMetric({ requestId: input.requestId, phase: "thumbnail", durationMs: performance.now() - started, bytes: thumbnail.buffer.length, provider: stored.storageProvider, result: "success" });
       console.info("CLOCK_PHOTO_THUMBNAIL_TIMING", { requestId: input.requestId, thumbnailMs: Number((performance.now() - started).toFixed(1)) });
     } catch (error) {
       await storageService.deleteManaged(stored.id).catch(() => undefined);
@@ -731,14 +734,19 @@ function scheduleClockThumbnail(input: ClockPhotoPunchInput, thumbnail: Deferred
  * Los cachés derivados de la auditoría se limpian después del commit.
  */
 function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin): ClockPunchTransactionWriter {
-  return (tx, workShift) => auditService.registerWithin(tx, {
+  return async (tx, workShift, timings) => {
+    const startedAt = performance.now();
+    const result = await auditService.registerWithin(tx, {
     ...audit,
     action: "CREATE",
     entity: "WorkShift",
     entityId: workShift.id,
     description,
     after: clockPunchAuditAfter(workShift.id, employeeId, origin),
-  });
+    });
+    if (timings) timings.auditMs += performance.now() - startedAt;
+    return result;
+  };
 }
 
 // Resultado público de una fichada (lo que responde photo-punch y lo que el
@@ -783,7 +791,12 @@ function clockExitResult(employee: ClockValidationContext, workShift: Pick<WorkS
  * auditoría e intento se confirman o se revierten juntos.
  */
 function clockAttemptCompletionWriter(key: ClockPunchAttemptKey, buildResult: (workShift: WorkShift) => unknown): ClockPunchTransactionWriter {
-  return (tx, workShift) => timeEntriesRepository.completeClockPunchAttempt(key, JSON.parse(JSON.stringify(buildResult(workShift))) as Prisma.InputJsonValue, tx);
+  return async (tx, workShift, timings) => {
+    const startedAt = performance.now();
+    const result = await timeEntriesRepository.completeClockPunchAttempt(key, JSON.parse(JSON.stringify(buildResult(workShift))) as Prisma.InputJsonValue, tx);
+    if (timings) timings.attemptCompletionMs += performance.now() - startedAt;
+    return result;
+  };
 }
 
 // El error guardado de un intento FAILED, tal como lo recibe un reintento del
@@ -1362,18 +1375,18 @@ export const timeEntriesService = {
     const deviceId = origin.device.id;
     const totalStarted = performance.now();
     const validationStarted = performance.now();
-    const validationContext = await resolveClockValidationContext(input.employeeId);
+    const validationContext = await measureClockPunchPhase({ requestId: input.requestId, phase: "employee_context" }, () => resolveClockValidationContext(input.employeeId));
     const contextMs = Number((performance.now() - validationStarted).toFixed(1));
     const requestHash = clockAttemptHash(input);
     const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
     try {
-      await timeEntriesRepository.createClockPunchAttempt({
+      await measureClockPunchPhase({ requestId: input.requestId, phase: "attempt_creation" }, () => timeEntriesRepository.createClockPunchAttempt({
         requestId: input.requestId,
         employeeId: input.employeeId,
         deviceId,
         punchType,
         requestHash,
-      });
+      }));
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
       const existing = await timeEntriesRepository.findClockPunchAttempt(input.requestId);
@@ -1547,6 +1560,7 @@ export const timeEntriesService = {
               cooldown,
               audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
               completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
+              timingRequestId: input.requestId,
             });
           } catch (error) {
             await cleanupClockEvidence(evidence);
@@ -1559,10 +1573,12 @@ export const timeEntriesService = {
             }
             throw error;
           }
+          const postCommitStartedAt = performance.now();
           clearAuditDerivedCaches();
           await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
           if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
           await evaluateShiftEntry(employee.id, workShift.id, now);
+          clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
           return clockEntryResult(employee, workShift, openShift);
         }
         if (exceededMinutes > MAX_SHIFT_MINUTES) {
@@ -1584,6 +1600,7 @@ export const timeEntriesService = {
           cooldown,
           audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
           completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
+          timingRequestId: input.requestId,
         });
       } catch (error) {
         await cleanupClockEvidence(evidence);
@@ -1593,9 +1610,11 @@ export const timeEntriesService = {
         }
         throw error;
       }
+      const postCommitStartedAt = performance.now();
       clearAuditDerivedCaches();
       if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
       await evaluateShiftEntry(employee.id, workShift.id, now);
+      clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
         punchType: input.punchType,
@@ -1637,6 +1656,7 @@ export const timeEntriesService = {
         cooldown,
         audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
+        timingRequestId: input.requestId,
       });
     } catch (error) {
       await cleanupClockEvidence(evidence);
@@ -1651,6 +1671,7 @@ export const timeEntriesService = {
     }
     // F11.1: desde acá la salida ya está confirmada (fichada, auditoría e
     // intento COMPLETED). Nada de lo que sigue compensa la evidencia.
+    const postCommitStartedAt = performance.now();
     clearAuditDerivedCaches();
     if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
     await syncAutomaticBreakdownsAfterProcessedShift({
@@ -1660,6 +1681,7 @@ export const timeEntriesService = {
       audit,
     });
     await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
+    clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
     console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
       requestId: input.requestId,
       punchType: input.punchType,

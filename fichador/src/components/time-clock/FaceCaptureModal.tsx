@@ -11,6 +11,7 @@ export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW
 export type FaceCaptureResult = {
   photo: string;
   thumbnail: string;
+  captureEncodeMs?: number;
   faceValidationStatus: FaceValidationStatus;
   faceDetectionScore?: number;
   device: {
@@ -337,6 +338,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
 
     // La imagen debe copiarse mientras el stream sigue activo. Detener la pista
     // antes de drawImage puede producir un JPEG vacío o casi vacío en algunos navegadores.
+    const captureStartedAt = performance.now();
     let photo: string;
     let thumbnail: string;
     try {
@@ -360,6 +362,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
     onConfirm({
       photo,
       thumbnail,
+      captureEncodeMs: performance.now() - captureStartedAt,
       faceValidationStatus: "VALID",
       faceDetectionScore: state.score,
       device: {

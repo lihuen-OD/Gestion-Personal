@@ -7,6 +7,7 @@ import { clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput } from "../time-entries/timeEntries.schemas";
 import { timeEntriesService } from "../time-entries/timeEntries.service";
+import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
 
 /**
  * Transporte HTTP del fichador (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
@@ -34,7 +35,13 @@ export const clockController = {
   // El source (KIOSK) lo fija este handler y el dispositivo sale de
   // requireClockDevice: el body no puede elegir ninguno de los dos.
   photoPunch: (async (req: Request, res: Response) => {
+    const requestStartedAt = performance.now();
     const device = authenticatedClockDevice(req);
+    const requestId = (req.body as ClockPhotoPunchInput).requestId;
+    const payloadBytes = Buffer.byteLength(JSON.stringify(req.body), "utf8");
+    clockPunchMetric({ requestId, phase: "payload", durationMs: 0, bytes: payloadBytes });
+    clockPunchMetric({ requestId, phase: "auth", durationMs: req.clockPunchTimings?.authMs || 0 });
+    clockPunchMetric({ requestId, phase: "parse", durationMs: req.clockPunchTimings?.parseMs || 0, bytes: payloadBytes });
     const result = await timeEntriesService.clockPhotoPunchIdempotent(
       req.body as ClockPhotoPunchInput,
       { device: { id: device.id, name: device.name }, source: "KIOSK" },
@@ -42,6 +49,12 @@ export const clockController = {
     );
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
+    res.once("finish", () => clockPunchMetric({
+      requestId,
+      phase: "http_response_write",
+      durationMs: performance.now() - requestStartedAt,
+      result: res.statusCode < 400 ? "success" : "error",
+    }));
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 

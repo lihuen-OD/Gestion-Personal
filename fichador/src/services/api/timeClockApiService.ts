@@ -136,12 +136,20 @@ export const timeClockApiService = {
   // El payload es exactamente el que armó la PWA: nunca `source` ni
   // `deviceId` (los decide el backend por la ruta y la credencial).
   async photoPunch(input: ClockPhotoPunchInput) {
-    const response = await clockDeviceRequest<ClockInResponse | ClockOutResponse>(clockEndpoints.photoPunch, {
-      method: "POST",
-      body: input,
-      signal: AbortSignal.timeout(PHOTO_PUNCH_TIMEOUT_MS),
-    });
-    return response.data;
+    const startedAt = performance.now();
+    const bytes = new Blob([JSON.stringify(input)]).size;
+    try {
+      const response = await clockDeviceRequest<ClockInResponse | ClockOutResponse>(clockEndpoints.photoPunch, {
+        method: "POST",
+        body: input,
+        signal: AbortSignal.timeout(PHOTO_PUNCH_TIMEOUT_MS),
+      });
+      console.info(JSON.stringify({ level: "info", event: "clock_punch_timing", requestId: input.requestId, phase: "request_total", durationMs: Number((performance.now() - startedAt).toFixed(1)), bytes, result: "success" }));
+      return response.data;
+    } catch (error) {
+      console.info(JSON.stringify({ level: "info", event: "clock_punch_timing", requestId: input.requestId, phase: "request_total", durationMs: Number((performance.now() - startedAt).toFixed(1)), bytes, result: "error" }));
+      throw error;
+    }
   },
 
   async attemptStatus(requestId: string, employeeId: string) {

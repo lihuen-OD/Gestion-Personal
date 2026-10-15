@@ -31,6 +31,22 @@ const clockOperationalGuards: RequestHandler[] = [
   }),
 ];
 
+function measureMiddleware(phase: "authMs" | "parseMs", middleware: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    const startedAt = performance.now();
+    middleware(req, res, (error?: unknown) => {
+      req.clockPunchTimings = { ...(req.clockPunchTimings || {}), [phase]: performance.now() - startedAt };
+      next(error);
+    });
+  };
+}
+
+const clockPhotoPunchGuards: RequestHandler[] = [
+  clockOperationalGuards[0]!,
+  measureMiddleware("authMs", clockOperationalGuards[1]!),
+  clockOperationalGuards[2]!,
+];
+
 /**
  * Namespace del dispositivo, `/api/clock/*`: enrolamiento (F5, cualquier
  * estado autenticado, ver clockDevices.routes.ts) y las cuatro rutas
@@ -44,5 +60,5 @@ clockRouter.get("/employees", ...clockOperationalGuards, validateQuery(clockEmpl
 clockRouter.post("/status", ...clockOperationalGuards, validateBody(clockByEmployeeSchema), asyncHandler(clockController.status));
 // F11: la foto se parsea recién con el dispositivo autenticado y dentro de su
 // cupo (el parser global de 1 MiB saltea esta ruta, ver shared/http/bodyLimits.ts).
-clockRouter.post("/photo-punch", ...clockOperationalGuards, jsonBody(CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES), validateBody(clockPhotoPunchSchema), asyncHandler(clockController.photoPunch));
+clockRouter.post("/photo-punch", ...clockPhotoPunchGuards, measureMiddleware("parseMs", jsonBody(CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES)), validateBody(clockPhotoPunchSchema), asyncHandler(clockController.photoPunch));
 clockRouter.get("/attempts/:requestId", ...clockOperationalGuards, asyncHandler(clockController.attemptStatus));

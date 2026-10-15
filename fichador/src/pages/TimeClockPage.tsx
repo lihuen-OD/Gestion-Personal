@@ -322,6 +322,9 @@ export function TimeClockPage() {
     if (!selected || punch?.step !== "capturing" || submitLock.current) return;
     const { punchType, requestId } = punch;
     const employee = selected;
+    const perceivedStartedAt = performance.now();
+    const payloadBytes = new Blob([capture.photo, capture.thumbnail]).size;
+    console.info(JSON.stringify({ level: "info", event: "clock_punch_timing", requestId, phase: "capture_encode", durationMs: Number((capture.captureEncodeMs ?? 0).toFixed(1)), bytes: payloadBytes, result: "success" }));
     // Antes de enviar (caso A): sin red, nada sale y el intento se descarta.
     if (!navigator.onLine) {
       finishIntent();
@@ -354,6 +357,7 @@ export function TimeClockPage() {
       },
     );
     window.clearTimeout(slowTimer);
+    console.info(JSON.stringify({ level: "info", event: "clock_punch_timing", requestId, phase: "total_perceived", durationMs: Number((performance.now() - perceivedStartedAt).toFixed(1)), bytes: payloadBytes, result: outcome.kind === "success" ? "success" : "error" }));
     if (!alive.current) return;
     finishIntent();
     showOutcome(outcome, punchType, employee);

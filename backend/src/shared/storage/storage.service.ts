@@ -13,6 +13,7 @@ import type {
   StorageObjectResult,
   StorageProvider,
 } from "./storage.types";
+import { clockPunchMetric } from "../observability/clockPunchTelemetry";
 
 function providerByEnvName(name: string | undefined): StorageProvider {
   if (name === "google_drive") return googleDriveStorageProvider;
@@ -111,9 +112,19 @@ export const storageService = {
 
     const fileName = safeFileName(input.fileName);
     const selectedProvider = uploadProviderFor(input.module);
-    const uploaded = await selectedProvider.upload({ ...input, fileName });
+    const uploadStartedAt = performance.now();
+    let uploaded: StorageObjectResult;
     try {
-      return await storageFilesRepository.create({
+      const { telemetryRequestId: _telemetryRequestId, ...providerInput } = input;
+      uploaded = await selectedProvider.upload({ ...providerInput, fileName });
+      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: selectedProvider === googleDriveStorageProvider ? "google_drive" : selectedProvider === cloudinaryStorageProvider ? "cloudinary" : "local", result: "success" });
+    } catch (error) {
+      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: selectedProvider === googleDriveStorageProvider ? "google_drive" : selectedProvider === cloudinaryStorageProvider ? "cloudinary" : "local", result: "error" });
+      throw error;
+    }
+    try {
+      const insertStartedAt = performance.now();
+      const stored = await storageFilesRepository.create({
         storageProvider: providerName(uploaded.provider),
         storageKey: uploaded.storageKey,
         driveFileId: uploaded.driveFileId || null,
@@ -138,6 +149,8 @@ export const storageService = {
         checksum: input.buffer ? checksum(input.buffer) : null,
         metadata: { ...(input.metadata || {}), ...cloudinaryMetadataFrom(uploaded) },
       });
+      if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "storage_file_insert", durationMs: performance.now() - insertStartedAt, provider: uploaded.provider, result: "success" });
+      return stored;
     } catch (error) {
       try {
         // Compensar con el MISMO provider que acaba de recibir el upload —

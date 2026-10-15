@@ -44,6 +44,8 @@ export interface StorageObjectResult {
 }
 
 export interface ManagedStorageObjectInput extends StorageObjectInput {
+  /** Correlation only; never persisted or sent to the provider. */
+  telemetryRequestId?: string;
   module: StorageModule;
   entityType: StorageEntityType;
   entityId: string;
