@@ -221,8 +221,11 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
         return;
       }
 
+      // Stream de ESTA corrida: distingue si falló getUserMedia o lo posterior,
+      // aun después de que stopCamera() haya soltado streamRef.
+      let stream: MediaStream | null = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "user",
             width: { ideal: 1280 },
@@ -238,14 +241,21 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
         setCameraLabel(stream.getVideoTracks()[0]?.label || undefined);
 
         const video = videoRef.current;
-        if (!video) return;
+        // Sin el elemento de video la cámara no es usable: misma salida que un play() fallido.
+        if (!video) throw new Error("Sin elemento de video para la cámara.");
         video.srcObject = stream;
         await video.play();
       } catch (error) {
+        // Quien detuvo esta corrida (desmontaje o segundo plano) ya apagó la
+        // cámara; un stopCamera() acá podría apagar la de una corrida nueva.
+        if (stopped()) return;
+        // F10.1: si la cámara no llegó a un estado usable, todo stream obtenido
+        // se libera ya, no al cerrar el modal.
+        stopCamera();
         // Con el stream ya obtenido, la falla es de reproducción (play()), no
         // de permisos/dispositivo: no se la presenta como cámara ocupada.
-        const message = streamRef.current ? CAMERA_MESSAGES.unexpected : cameraErrorMessage(error);
-        if (!stopped()) setState({ status: "CAMERA_ERROR", message, valid: false });
+        const message = stream ? CAMERA_MESSAGES.unexpected : cameraErrorMessage(error);
+        setState({ status: "CAMERA_ERROR", message, valid: false });
         return;
       }
 
@@ -286,7 +296,11 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
         };
         detect();
       } catch {
-        if (!stopped()) setState({ status: "CAMERA_ERROR", message: CAMERA_MESSAGES.detectorUnavailable, valid: false });
+        if (stopped()) return;
+        // F10.1: sin detector no hay confirmación posible (confirm exige una
+        // detección válida): la cámara no queda encendida sin propósito.
+        stopCamera();
+        setState({ status: "CAMERA_ERROR", message: CAMERA_MESSAGES.detectorUnavailable, valid: false });
       }
     }
 

@@ -257,6 +257,64 @@ describe("FaceCaptureModal — ciclo de vida de la cámara (F10)", () => {
     expect(openCache).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
+
+  // F10.1: si la cámara no llega a un estado usable, el stream obtenido se
+  // libera en el acto, no recién al cerrar el modal.
+  it("play() falla con la cámara ya obtenida: la libera en el acto, sin detector, y no la presenta como cámara ocupada", async () => {
+    vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(new DOMException("The play() request was interrupted", "AbortError"));
+    vi.mocked(FilesetResolver.forVisionTasks).mockClear();
+    vi.mocked(FaceDetector.createFromOptions).mockClear();
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    const { unmount } = render(<FaceCaptureModal punchType="IN" onCancel={onCancel} onConfirm={onConfirm} />);
+
+    expect(await screen.findByText(CAMERA_MESSAGES.unexpected)).toBeInTheDocument();
+    expect(screen.queryByText(CAMERA_MESSAGES.busy)).not.toBeInTheDocument();
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    expect((document.querySelector("video") as HTMLVideoElement).srcObject).toBeNull();
+    expect(FilesetResolver.forVisionTasks).not.toHaveBeenCalled();
+    expect(FaceDetector.createFromOptions).not.toHaveBeenCalled();
+
+    // El modal sigue usable: no se puede confirmar, sí cancelar.
+    expect(screen.getByRole("button", { name: /Confirmar ingreso/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("play() falla porque la cámara ya se pausó (segundo plano): queda el aviso de pausa y no se apaga dos veces", async () => {
+    let rejectPlay!: (error: unknown) => void;
+    vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(() => new Promise((_, reject) => { rejectPlay = reject; }));
+    render(<FaceCaptureModal punchType="IN" onCancel={vi.fn()} onConfirm={vi.fn()} onInterrupted={vi.fn()} />);
+    await waitFor(() => expect(HTMLMediaElement.prototype.play).toHaveBeenCalled());
+
+    setVisibility("hidden");
+    await act(async () => { rejectPlay(new DOMException("interrupted", "AbortError")); });
+
+    expect(screen.getByText("La cámara se pausó. Volvé a iniciar la captura.")).toBeInTheDocument();
+    expect(screen.queryByText(CAMERA_MESSAGES.unexpected)).not.toBeInTheDocument();
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["no carga el runtime", () => vi.mocked(FilesetResolver.forVisionTasks).mockRejectedValue(new Error("network"))],
+    ["no se puede crear el detector", () => vi.mocked(FaceDetector.createFromOptions).mockRejectedValue(new Error("gpu"))],
+  ])("el detector de rostros %s con la cámara abierta: la apaga en el acto (sin detector no hay confirmación posible)", async (_label, fail) => {
+    fail();
+    const onConfirm = vi.fn();
+    const { unmount } = render(<FaceCaptureModal punchType="IN" onCancel={vi.fn()} onConfirm={onConfirm} />);
+
+    expect(await screen.findByText(CAMERA_MESSAGES.detectorUnavailable)).toBeInTheDocument();
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    expect((document.querySelector("video") as HTMLVideoElement).srcObject).toBeNull();
+    expect(screen.getByRole("button", { name: /Confirmar ingreso/ })).toBeDisabled();
+    unmount();
+    expect(stops[0]).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 describe("cameraErrorMessage — permiso denegado en iPad/iPhone (F10)", () => {

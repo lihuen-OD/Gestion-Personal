@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **F10 cerrada** (2026-10-15): pantalla encendida mientras el kiosco opera, cámara por fichada con la foto congelada durante el envío y pausa al pasar a segundo plano, jerarquía de acciones y guía de instalación y Acceso guiado; la validación en iPad real queda para F12 ([§29](#29-f10--operación-de-kiosco-pantalla-cámara-e-instalación)). **Próxima etapa: F11, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **F10 cerrada** (2026-10-15): pantalla encendida mientras el kiosco opera, cámara por fichada con la foto congelada durante el envío y pausa al pasar a segundo plano, jerarquía de acciones y guía de instalación y Acceso guiado; la validación en iPad real queda para F12 ([§29](#29-f10--operación-de-kiosco-pantalla-cámara-e-instalación)); F10.1 libera la cámara en el acto si no llega a arrancar o el detector no carga (§29.15). **Próxima etapa: F11, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -3119,3 +3119,33 @@ mensajes del detector parpadean con luz real.
 - F12: la validación en iPad real de §29.13.
 - Sigue documentada la deuda de `expireOpenWorkShifts` (auditoría y caché,
   `PERFORMANCE_STANDARDS.md` §10).
+
+### 29.15 F10.1 — La cámara se libera también si no llega a arrancar
+
+Revisión posterior a F10 (2026-10-15), sólo en `FaceCaptureModal`. Sin
+cambios de negocio ni del flujo de fichada.
+
+- **Borde:** con la cámara ya concedida, si `video.play()` fallaba o no había
+  elemento de video, el modal mostraba el error, pero el stream quedaba
+  encendido hasta cerrarlo. Lo mismo pasaba si el detector de rostros no
+  cargaba: la cámara seguía encendida sin poder confirmar, porque `confirm`
+  exige una detección válida.
+- **Ahora:** en los tres casos, el mismo `stopCamera()` la apaga en el acto
+  (tracks, `srcObject` y detector) antes de mostrar el mensaje.
+- **Mensajes sin cambios:** una falla de `getUserMedia` usa
+  `cameraErrorMessage` (permiso, sin cámara, ocupada). Una falla posterior
+  muestra `unexpected` y nunca "cámara ocupada". El detector sigue con
+  `detectorUnavailable`.
+- **Si la corrida ya se había detenido** (desmontaje, StrictMode o segundo
+  plano), el catch no vuelve a apagar nada ni cambia el estado: el aviso de
+  cámara pausada se mantiene.
+- **Tests:** 4 nuevos en `FaceCaptureModal.test.tsx`:
+  - `play()` falla: la cámara se apaga, sin detector, con el modal
+    cancelable;
+  - `play()` falla después de pausarse;
+  - el detector falla en sus dos puntos de carga.
+
+  Pasan a fallar si se saca cada `stopCamera()`, si el mensaje se decide por
+  `streamRef` (mostraría "ocupada") o si se saca la guarda de corrida
+  detenida. El caso sin elemento de video no tiene test: forzarlo exige
+  falsear el render del modal. Usa la misma salida que `play()`.
