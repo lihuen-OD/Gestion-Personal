@@ -134,7 +134,7 @@ describe("F9 — POST /api/clock/heartbeat", () => {
     expect(await heartbeat({ authorization: credential(ACTIVE) })).toMatchObject({ status: 403, error: { code: "CLOCK_DEVICE_REVOKED" } });
   });
 
-  it("no existe en el alias legacy /time-entries/clock", async () => {
+  it("no existe bajo /time-entries/clock (alias legacy retirado en F11)", async () => {
     const response = await fetch(`${baseUrl}/time-entries/clock/heartbeat`, { method: "POST", headers: { authorization: credential(ACTIVE) } });
     expect(response.status).toBe(404);
     expect(clockDevicesRepository.recordHeartbeat).not.toHaveBeenCalled();

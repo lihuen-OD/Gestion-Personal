@@ -33,23 +33,23 @@ beforeEach(() => {
 });
 
 describe("clockController.photoPunch — origen decidido por la ruta y la autenticación (F6/F7)", () => {
-  it.each(["KIOSK", "PUBLIC_CLOCK_PHOTO"] as const)("pasa al servicio el dispositivo autenticado y el source %s de la ruta", async (source) => {
-    await clockController.photoPunch(source)(kioskReq(), fakeRes());
+  it("pasa al servicio el dispositivo autenticado y el source KIOSK (único canal desde F11)", async () => {
+    await clockController.photoPunch(kioskReq(), fakeRes());
     expect(service.clockPhotoPunchIdempotent).toHaveBeenCalledWith(
       expect.anything(),
-      { device: { id: kioskDevice.id, name: kioskDevice.name }, source },
+      { device: { id: kioskDevice.id, name: kioskDevice.name }, source: "KIOSK" },
       expect.objectContaining({ userId: null, ipAddress: "127.0.0.1", userAgent: "kiosk-agent" }),
     );
   });
 
   it("un deviceId o source del body no cambian el origen", async () => {
-    await clockController.photoPunch("KIOSK")(kioskReq({ body: { deviceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", source: "ADMIN" } }), fakeRes());
+    await clockController.photoPunch(kioskReq({ body: { deviceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", source: "ADMIN" } }), fakeRes());
     const [, origin] = service.clockPhotoPunchIdempotent.mock.calls[0]!;
     expect(origin).toEqual({ device: { id: kioskDevice.id, name: kioskDevice.name }, source: "KIOSK" });
   });
 
   it("sin req.clockDevice (ruta mal montada) falla cerrado con 401 y no llama al servicio", async () => {
-    await expect(clockController.photoPunch("KIOSK")(kioskReq({ clockDevice: undefined }), fakeRes())).rejects.toMatchObject({ statusCode: 401, code: "CLOCK_DEVICE_INVALID_CREDENTIAL" });
+    await expect(clockController.photoPunch(kioskReq({ clockDevice: undefined }), fakeRes())).rejects.toMatchObject({ statusCode: 401, code: "CLOCK_DEVICE_INVALID_CREDENTIAL" });
     expect(service.clockPhotoPunchIdempotent).not.toHaveBeenCalled();
   });
 
@@ -57,7 +57,7 @@ describe("clockController.photoPunch — origen decidido por la ruta y la autent
   // por-legajo además de time-entries, sin ampliar a todo employees (14C.2).
   it("limpia time-entries y sólo la grilla horaria del empleado, y responde 201", async () => {
     const res = fakeRes();
-    await clockController.photoPunch("KIOSK")(kioskReq(), res);
+    await clockController.photoPunch(kioskReq(), res);
     expect(clearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
     expect(clearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
     expect(clearEmployeeReadCaches).not.toHaveBeenCalled();

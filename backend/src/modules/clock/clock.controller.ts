@@ -6,13 +6,13 @@ import { authenticatedClockDevice } from "../clock-devices/clockDeviceAuthentica
 import { clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput } from "../time-entries/timeEntries.schemas";
-import { timeEntriesService, type ClockPunchSource } from "../time-entries/timeEntries.service";
+import { timeEntriesService } from "../time-entries/timeEntries.service";
 
 /**
  * Transporte HTTP del fichador (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
- * §26). Lo usan los dos namespaces: `/api/clock/*` y el legacy
- * `/api/time-entries/clock/*`. El núcleo de la fichada sigue en
- * timeEntriesService; acá sólo se arma el contexto autenticado.
+ * §26) en `/api/clock/*`, su único namespace desde F11. El núcleo de la
+ * fichada sigue en timeEntriesService; acá sólo se arma el contexto
+ * autenticado.
  */
 export const clockController = {
   searchEmployees: (async (req, res) => {
@@ -31,19 +31,19 @@ export const clockController = {
   // invalida la grilla por-legajo además de las cachés de time-entries — la
   // misma invalidación acotada que create()/update() (Etapa 14C.2).
   //
-  // `source` lo fija la ruta que monta el handler y el dispositivo sale de
+  // El source (KIOSK) lo fija este handler y el dispositivo sale de
   // requireClockDevice: el body no puede elegir ninguno de los dos.
-  photoPunch: (source: ClockPunchSource) => async (req: Request, res: Response) => {
+  photoPunch: (async (req: Request, res: Response) => {
     const device = authenticatedClockDevice(req);
     const result = await timeEntriesService.clockPhotoPunchIdempotent(
       req.body as ClockPhotoPunchInput,
-      { device: { id: device.id, name: device.name }, source },
+      { device: { id: device.id, name: device.name }, source: "KIOSK" },
       requestAuditContext(req),
     );
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
     res.status(201).json({ data: result });
-  },
+  }) satisfies RequestHandler,
 
   attemptStatus: (async (req, res) => {
     const employeeId = typeof req.query.employeeId === "string" ? req.query.employeeId : "";

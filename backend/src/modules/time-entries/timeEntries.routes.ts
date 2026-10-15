@@ -6,7 +6,6 @@ import { notFoundHandler } from "../../shared/errors/notFoundHandler";
 import { roles } from "../../shared/security/roles";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
-import { markLegacyClockRoute, mountClockOperationalRoutes } from "../clock/clock.routes";
 import { timeEntriesController } from "./timeEntries.controller";
 import {
   attendanceSummaryQuerySchema,
@@ -27,18 +26,13 @@ import {
 
 export const timeEntriesRouter = Router();
 
-// LEGACY (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26): las rutas
-// del fichador se movieron a /api/clock/* (módulo clock). Éstas son un alias
-// del MISMO montaje (guardas y cupos compartidos, mismo controller y
-// servicio) que conserva el comportamiento de F6 —fichadas con source
-// PUBLIC_CLOCK_PHOTO— mientras la PWA sigue llamándolas. F8 migra la PWA y
-// F11 las retira. No agregar features acá.
-//
-// F0: estas cuatro rutas son TODO lo que el fichador necesita. El namespace
-// se cierra con un 404 explícito: cualquier otro /clock/* -- incluidas las
-// rutas sin foto retiradas en F0 -- responde 404 con o sin credencial, y
-// nunca cae en el requireAuth ni en las rutas paramétricas (/:id) de abajo.
-mountClockOperationalRoutes(timeEntriesRouter, { prefix: "/clock", source: "PUBLIC_CLOCK_PHOTO", before: [markLegacyClockRoute] });
+// El fichador opera sólo en /api/clock/* (módulo clock). F11
+// (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30) retiró el alias legacy
+// /time-entries/clock/* que F7 había dejado para la PWA de F6. El namespace
+// queda cerrado con un 404 explícito: cualquier /clock/* -- las cuatro rutas
+// del alias y las rutas sin foto retiradas en F0 -- responde ROUTE_NOT_FOUND
+// con o sin credencial, y nunca cae en el requireAuth ni en las rutas
+// paramétricas (/:id) de abajo. No volver a montar rutas de fichada acá.
 timeEntriesRouter.all(["/clock", "/clock/*"], notFoundHandler);
 
 timeEntriesRouter.use(requireAuth);

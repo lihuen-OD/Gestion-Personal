@@ -32,7 +32,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-function preflight(origin: string, path = "/time-entries/clock/photo-punch") {
+function preflight(origin: string, path = "/clock/photo-punch") {
   return fetch(`${baseUrl}${path}`, {
     method: "OPTIONS",
     headers: {
@@ -56,7 +56,7 @@ describe("CORS para dos sitios independientes (admin + fichador)", () => {
   });
 
   it("el preflight de las demás rutas del fichador (GET con Authorization) también pasa", async () => {
-    for (const path of ["/time-entries/clock/employees", "/time-entries/clock/attempts/22222222-2222-4222-8222-222222222222", "/clock/device/status"]) {
+    for (const path of ["/clock/employees", "/clock/attempts/22222222-2222-4222-8222-222222222222", "/clock/device/status"]) {
       const response = await fetch(`${baseUrl}${path}`, {
         method: "OPTIONS",
         headers: { origin: FICHADOR, "access-control-request-method": "GET", "access-control-request-headers": "authorization, x-clock-app-version" },

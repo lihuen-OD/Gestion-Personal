@@ -2,7 +2,8 @@
  * F7 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26) contra PostgreSQL REAL: namespace
  * `/api/clock/*`, source KIOSK, cooldown entre fichadas distintas y su concurrencia. Todo pasa
  * por la app real (createApp, requireClockDevice, controller, servicio, repositorio, auditoría);
- * sólo el storage de fotos se reemplaza por filas StorageFile locales.
+ * sólo el storage de fotos se reemplaza por filas StorageFile locales. F11 (§30): el alias legacy
+ * `/time-entries/clock/*` ya no existe; las jornadas PUBLIC_CLOCK_PHOTO son sólo historia.
  *
  * Opt-in: sólo corre con `CLOCK_IT_DATABASE_URL` → `localhost`, base `clock_it*`, con el schema de
  * este commit (`DATABASE_URL=<url> npx prisma db push --skip-generate`). VACÍA la base al empezar.
@@ -91,7 +92,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "WorkShift_one_open_per_employee" ON "WorkShift"("employeeId") WHERE status = 'ABIERTO' AND "endAt" IS NULL`);
 
     await prisma.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
-    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "legacyBoth", "rollover", "retryMeta"].entries()) {
+    for (const [index, key] of ["race", "legacy", "parallelA", "parallelB", "lockHeld", "lockFree", "txRace", "cutover", "kioskBoth", "rollover", "retryMeta"].entries()) {
       const created = await prisma.employee.create({ data: { legajo: `IT-${index + 1}`, cuil: `20-${index + 1}`, dni: `${index + 1}`, firstName: "Prueba", lastName: `IT ${key}` } });
       employees[key] = created.id;
     }
@@ -225,14 +226,14 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(results.map((result) => result.status)).toEqual([201, 201]);
   });
 
-  it("el alias legacy guarda PUBLIC_CLOCK_PHOTO y comparte el cooldown con el namespace nuevo", async () => {
-    const legacy = await call("POST", "/time-entries/clock/photo-punch", deviceA, body("legacy", "IN"));
-    expect(legacy.status).toBe(201);
-    expect((await punchesOf("legacy"))[0]).toMatchObject({ source: "PUBLIC_CLOCK_PHOTO", deviceId: deviceA.id });
-
-    const kiosk = await call("POST", "/clock/photo-punch", deviceB, body("legacy", "OUT"));
-    expect(kiosk).toMatchObject({ status: 409, error: { code: "CLOCK_PUNCH_COOLDOWN" } });
-    expect(await punchesOf("legacy")).toHaveLength(1);
+  it("F11: el alias legacy retirado responde 404 y no escribe nada (ni fichada, ni intento, ni auditoría)", async () => {
+    const auditsBefore = await m.prisma.auditLog.count();
+    const request = body("legacy", "IN");
+    expect(await call("POST", "/time-entries/clock/photo-punch", deviceA, request)).toMatchObject({ status: 404, error: { code: "ROUTE_NOT_FOUND" } });
+    expect(await call("GET", `/time-entries/clock/attempts/${request.requestId}?employeeId=${employees.legacy}`, deviceA)).toMatchObject({ status: 404, error: { code: "ROUTE_NOT_FOUND" } });
+    expect(await punchesOf("legacy")).toHaveLength(0);
+    expect(await m.prisma.clockPunchAttempt.count({ where: { requestId: request.requestId } })).toBe(0);
+    expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
   });
 
   it("con el lock de un empleado tomado por otra transacción, su fichada falla al instante y la de otro empleado pasa", async () => {
@@ -274,15 +275,30 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   });
 
   // ── F7.1 (plan §26.12): source de la jornada a través del cutover legacy → /api/clock ──
+  // Desde F11 el alias no existe: una jornada PUBLIC_CLOCK_PHOTO abierta sólo puede ser
+  // HISTÓRICA (abierta antes del retiro). Se siembra con el repositorio, igual que la dejaba
+  // el alias, y se cierra o reemplaza por /api/clock.
 
   /**
-   * Fichada de ingreso REAL por HTTP y después se adelanta la jornada `minutes` hacia atrás
-   * en esta base de test (inicio y fichada de ingreso), para que la salida produzca tramos y
-   * TimeEntry reales (una jornada de segundos no genera horas) y quede fuera del cooldown.
+   * Ingreso y después se adelanta la jornada `minutes` hacia atrás en esta base de test
+   * (inicio y fichada de ingreso), para que la salida produzca tramos y TimeEntry reales (una
+   * jornada de segundos no genera horas) y quede fuera del cooldown. `kiosk` ficha por HTTP;
+   * `historicalLegacy` siembra la jornada PUBLIC_CLOCK_PHOTO que dejaba el alias retirado.
    */
-  async function clockInAndAge(employeeKey: string, path: string, device: Device, minutes: number) {
-    const entry = await call("POST", path, device, body(employeeKey, "IN"));
-    expect(entry.status).toBe(201);
+  async function clockInAndAge(employeeKey: string, entry: "kiosk" | "historicalLegacy", device: Device, minutes: number) {
+    if (entry === "kiosk") {
+      expect((await call("POST", "/clock/photo-punch", device, body(employeeKey, "IN"))).status).toBe(201);
+    } else {
+      const normal = (await m.prisma.hourConcept.findFirst({ where: { code: "HC-NORMAL" } }))!;
+      await m.repository.createOpenWorkShift({
+        employeeId: employees[employeeKey]!,
+        hourConceptId: normal.id,
+        hourConceptName: normal.name,
+        source: "PUBLIC_CLOCK_PHOTO",
+        startAt: new Date(),
+        punchEvidence: { deviceId: device.id, faceDetected: true, faceValidationStatus: "VALID" },
+      });
+    }
     const shift = (await m.prisma.workShift.findFirst({ where: { employeeId: employees[employeeKey]!, status: "ABIERTO" } }))!;
     const startAt = new Date(shift.startAt.getTime() - minutes * 60_000);
     await m.prisma.workShift.update({ where: { id: shift.id }, data: { startAt } });
@@ -296,13 +312,12 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   }
 
   it.each([
-    ["legacy IN → KIOSK OUT (cutover): la salida es KIOSK pero la jornada y sus horas conservan PUBLIC_CLOCK_PHOTO", "cutover", "/time-entries/clock/photo-punch", "/clock/photo-punch", { start: "PUBLIC_CLOCK_PHOTO", end: "KIOSK", shift: "PUBLIC_CLOCK_PHOTO" }],
-    ["KIOSK IN → KIOSK OUT: todo KIOSK", "kioskBoth", "/clock/photo-punch", "/clock/photo-punch", { start: "KIOSK", end: "KIOSK", shift: "KIOSK" }],
-    ["legacy IN → legacy OUT: todo PUBLIC_CLOCK_PHOTO", "legacyBoth", "/time-entries/clock/photo-punch", "/time-entries/clock/photo-punch", { start: "PUBLIC_CLOCK_PHOTO", end: "PUBLIC_CLOCK_PHOTO", shift: "PUBLIC_CLOCK_PHOTO" }],
-  ] as const)("%s", async (_label, employeeKey, inPath, outPath, expected) => {
-    const workShiftId = await clockInAndAge(employeeKey, inPath, deviceA, 90);
+    ["jornada legacy histórica → KIOSK OUT (cutover): la salida es KIOSK pero la jornada y sus horas conservan PUBLIC_CLOCK_PHOTO", "cutover", "historicalLegacy", { start: "PUBLIC_CLOCK_PHOTO", end: "KIOSK", shift: "PUBLIC_CLOCK_PHOTO" }],
+    ["KIOSK IN → KIOSK OUT: todo KIOSK", "kioskBoth", "kiosk", { start: "KIOSK", end: "KIOSK", shift: "KIOSK" }],
+  ] as const)("%s", async (_label, employeeKey, entry, expected) => {
+    const workShiftId = await clockInAndAge(employeeKey, entry, deviceA, 90);
 
-    const exit = await call("POST", outPath, deviceB, body(employeeKey, "OUT"));
+    const exit = await call("POST", "/clock/photo-punch", deviceB, body(employeeKey, "OUT"));
     expect(exit.status).toBe(201);
 
     const sources = await sourcesOf(workShiftId);
@@ -314,8 +329,8 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect((await m.prisma.attendancePunch.findUnique({ where: { id: (await m.prisma.workShift.findUnique({ where: { id: workShiftId } }))!.endPunchId! } }))!.deviceId).toBe(deviceB.id);
   });
 
-  it("rollover: jornada legacy vencida + IN por /api/clock → la vieja y su TimeEntry 0 h quedan PUBLIC_CLOCK_PHOTO; la fichada y la jornada nuevas son KIOSK", async () => {
-    const oldShiftId = await clockInAndAge("rollover", "/time-entries/clock/photo-punch", deviceA, 21 * 60);
+  it("rollover: jornada legacy histórica vencida + IN por /api/clock → la vieja y su TimeEntry 0 h quedan PUBLIC_CLOCK_PHOTO; la fichada y la jornada nuevas son KIOSK", async () => {
+    const oldShiftId = await clockInAndAge("rollover", "historicalLegacy", deviceA, 21 * 60);
 
     const entry = await call("POST", "/clock/photo-punch", deviceB, body("rollover", "IN"));
     expect(entry.status).toBe(201);

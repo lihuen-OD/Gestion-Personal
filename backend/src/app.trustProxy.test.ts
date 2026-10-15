@@ -86,7 +86,7 @@ async function seenIp(baseUrl: string, forwardedFor?: string) {
 // intento consume el cupo de la IP efectiva (401 mientras queda cupo, 429
 // después). Es la capa que frena la fuerza bruta de credenciales.
 async function searchAs(baseUrl: string, forwardedFor: string) {
-  const response = await fetch(`${baseUrl}/time-entries/clock/employees?search=ana`, {
+  const response = await fetch(`${baseUrl}/clock/employees?search=ana`, {
     headers: { "x-forwarded-for": forwardedFor },
   });
   return response.status;
@@ -181,7 +181,7 @@ describe("4/5. rate limiting del fichador por IP real (capa previa a la autentic
 describe("6. IP que llega a AttendancePunch.ipAddress", () => {
   it("la fichada recibe como ipAddress la IP efectiva del cliente, no la del proxy ni una enviada por el cliente", async () => {
     const baseUrl = await startApp(3);
-    const response = await fetch(`${baseUrl}/time-entries/clock/photo-punch`, {
+    const response = await fetch(`${baseUrl}/clock/photo-punch`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

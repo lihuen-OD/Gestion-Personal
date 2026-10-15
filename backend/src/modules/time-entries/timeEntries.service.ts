@@ -527,10 +527,11 @@ type ClockValidationContext = NonNullable<Awaited<ReturnType<typeof timeEntriesR
 
 /**
  * F7: canal por el que llega una fichada de dispositivo. Lo decide la RUTA,
- * nunca el body: `/api/clock/*` → KIOSK; `/time-entries/clock/*` (legacy,
- * se retira en F11) → PUBLIC_CLOCK_PHOTO, como hasta F6.
+ * nunca el body. Desde F11 la única ruta es `/api/clock/*` → KIOSK: el alias
+ * `/time-entries/clock/*` (PUBLIC_CLOCK_PHOTO) se retiró. PUBLIC_CLOCK_PHOTO
+ * sigue siendo un valor histórico válido de fichadas, jornadas y horas.
  */
-export type ClockPunchSource = Extract<WorkShiftSource, "KIOSK" | "PUBLIC_CLOCK_PHOTO">;
+export type ClockPunchSource = Extract<WorkShiftSource, "KIOSK">;
 
 /** Quién registra la fichada: el ClockDevice autenticado (actor técnico, nunca un User) y su canal. */
 export type ClockPunchOrigin = {

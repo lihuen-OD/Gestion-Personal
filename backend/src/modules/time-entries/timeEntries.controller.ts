@@ -10,8 +10,8 @@ function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
 }
 
-// Los handlers del fichador (/clock/*) viven en modules/clock/clock.controller.ts
-// desde F7: los comparten /api/clock/* y el alias legacy /time-entries/clock/*.
+// Los handlers del fichador viven en modules/clock/clock.controller.ts desde
+// F7 y se sirven sólo en /api/clock/* desde F11.
 export const timeEntriesController = {
   list: (async (req, res) => {
     const key = userScopedCacheKey(req);

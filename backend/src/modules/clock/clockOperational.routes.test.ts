@@ -4,24 +4,32 @@ import express, { type ErrorRequestHandler } from "express";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "../../config/env";
 import { AppError } from "../../shared/errors/AppError";
+import { notFoundHandler } from "../../shared/errors/notFoundHandler";
 import { generateClockDeviceSecret, hashClockDeviceSecret } from "../../shared/security/clockDeviceCredentials";
 import { clockDevicesRepository } from "../clock-devices/clockDevices.repository";
-import { timeEntriesRouter } from "./timeEntries.routes";
-import { timeEntriesService } from "./timeEntries.service";
+import { timeEntriesRouter } from "../time-entries/timeEntries.routes";
+import { timeEntriesService } from "../time-entries/timeEntries.service";
+import { clockRouter } from "./clock.routes";
 
 /**
- * Prueba a nivel HTTP (router real de Express, servicio y repositorio de
- * dispositivos mockeados) el contrato de las cuatro rutas del fichador:
+ * Prueba a nivel HTTP (routers reales de Express, servicio y repositorio de
+ * dispositivos mockeados) el contrato de las cuatro rutas operativas del
+ * fichador en `/api/clock/*`:
  *
  * - F0: las rutas de fichada sin foto ya no existen (404 con o sin
- *   credencial) y el namespace /clock queda cerrado.
+ *   credencial) y los namespaces quedan cerrados.
  * - F6: cada ruta exige un ClockDevice ACTIVE autenticado individualmente
  *   (`Authorization: ClockDevice <id>.<secret>`); el token compartido
  *   `x-clock-device-token` ya no autentica nada y el deviceId que llega al
  *   servicio sale de la autenticación, nunca del body.
+ * - F11: el alias legacy `/api/time-entries/clock/*` ya no existe: 404
+ *   ROUTE_NOT_FOUND con o sin credencial, sin llegar nunca al servicio.
+ *
+ * (Hasta F11 este archivo era time-entries/timeEntries.clockRoutes.test.ts y
+ * probaba el contrato sobre el alias legacy.)
  */
 
-vi.mock("./timeEntries.service", () => ({
+vi.mock("../time-entries/timeEntries.service", () => ({
   timeEntriesService: {
     clockSearch: vi.fn(),
     clockStatusByEmployee: vi.fn(),
@@ -74,11 +82,13 @@ const testErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
 beforeAll(async () => {
   const app = express();
   app.use(express.json());
+  app.use("/api/clock", clockRouter);
   app.use("/api/time-entries", timeEntriesRouter);
+  app.use(notFoundHandler);
   app.use(testErrorHandler);
   server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", () => resolve()));
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/time-entries`;
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 });
 
 afterAll(async () => {
@@ -138,13 +148,13 @@ function serviceCalls() {
 }
 
 describe("F0 — rutas de fichada sin foto retiradas", () => {
-  const retired = [
-    { path: "/clock/in", body: { employeeId: EMPLOYEE_ID } },
-    { path: "/clock/out", body: { employeeId: EMPLOYEE_ID } },
-    { path: "/clock/status-by-dni", body: { dni: "30123456" } },
-    { path: "/clock/in-by-dni", body: { dni: "30123456" } },
-    { path: "/clock/out-by-dni", body: { dni: "30123456" } },
-  ];
+  const retired = ["/clock", "/time-entries/clock"].flatMap((namespace) => [
+    { path: `${namespace}/in`, body: { employeeId: EMPLOYEE_ID } },
+    { path: `${namespace}/out`, body: { employeeId: EMPLOYEE_ID } },
+    { path: `${namespace}/status-by-dni`, body: { dni: "30123456" } },
+    { path: `${namespace}/in-by-dni`, body: { dni: "30123456" } },
+    { path: `${namespace}/out-by-dni`, body: { dni: "30123456" } },
+  ]);
 
   it.each(retired)("POST $path responde 404 aun con un dispositivo ACTIVE", async ({ path, body }) => {
     expect(await call("POST", path, { authorization: credential(ACTIVE), body })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
@@ -159,10 +169,29 @@ describe("F0 — rutas de fichada sin foto retiradas", () => {
     expect(serviceCalls()).toBe(0);
   });
 
-  it("una ruta /clock/* desconocida responde 404 y nunca cae en requireAuth (ni con un Bearer cualquiera)", async () => {
-    expect(await call("POST", "/clock/anything", { authorization: credential(ACTIVE), body: {} })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
-    expect(await call("GET", "/clock", { authorization: credential(ACTIVE) })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
-    expect(await call("POST", "/clock/in", { authorization: "Bearer not-a-real-jwt", body: { employeeId: EMPLOYEE_ID } })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+  it("una ruta /time-entries/clock/* desconocida responde 404 y nunca cae en requireAuth (ni con un Bearer cualquiera)", async () => {
+    expect(await call("POST", "/time-entries/clock/anything", { authorization: credential(ACTIVE), body: {} })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+    expect(await call("GET", "/time-entries/clock", { authorization: credential(ACTIVE) })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+    expect(await call("POST", "/time-entries/clock/in", { authorization: "Bearer not-a-real-jwt", body: { employeeId: EMPLOYEE_ID } })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+  });
+});
+
+// F11 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §30): el alias legacy
+// se retiró. Si alguien lo vuelve a montar, estos tests fallan.
+describe("F11 — el alias legacy /api/time-entries/clock/* ya no existe", () => {
+  it.each(operationalRoutes)("$name por el alias, con un ACTIVE válido → 404 ROUTE_NOT_FOUND sin ejecutar nada", async ({ method, path, body }) => {
+    expect(await call(method, `/time-entries${path}`, { authorization: credential(ACTIVE), body })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+    expect(serviceCalls()).toBe(0);
+  });
+
+  it.each(operationalRoutes)("$name por el alias, sin credencial → 404 (no 401: la ruta no existe)", async ({ method, path, body }) => {
+    expect(await call(method, `/time-entries${path}`, { body })).toMatchObject({ status: 404, code: "ROUTE_NOT_FOUND" });
+  });
+
+  it("el alias no autentica ni marca presencia del dispositivo", async () => {
+    for (const { method, path, body } of operationalRoutes) await call(method, `/time-entries${path}`, { authorization: credential(STALE), body });
+    expect(clockDevicesRepository.findCredentialById).not.toHaveBeenCalled();
+    expect(clockDevicesRepository.touchIfStale).not.toHaveBeenCalled();
   });
 });
 
@@ -204,8 +233,8 @@ describe("F6 — el dispositivo autenticado es la única fuente de deviceId", ()
     const result = await call("POST", "/clock/photo-punch", { authorization: credential(ACTIVE), body: { ...validPunch, deviceId: OTHER_ACTIVE.id, source: "KIOSK" } });
     expect(result.status).toBe(201);
     const [input, origin] = vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mock.calls[0]!;
-    // F7: el alias legacy conserva el source de F6; el body no lo cambia.
-    expect(origin).toEqual({ device: { id: ACTIVE.id, name: "Kiosco" }, source: "PUBLIC_CLOCK_PHOTO" });
+    // El canal lo fija la ruta (KIOSK); el body no lo cambia.
+    expect(origin).toEqual({ device: { id: ACTIVE.id, name: "Kiosco" }, source: "KIOSK" });
     expect(input).not.toHaveProperty("deviceId");
     expect(input).not.toHaveProperty("source");
   });

@@ -12,9 +12,9 @@ import { timeEntriesService } from "../time-entries/timeEntries.service";
 /**
  * F7 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26) sobre la app real
  * (createApp: CORS, limitadores, routers, errorHandler): el namespace
- * `/api/clock/*` y el alias legacy `/api/time-entries/clock/*` son el MISMO
- * montaje — misma autenticación, mismos cupos, mismo controller — y sólo
- * difieren en el source que la ruta asigna a la fichada.
+ * `/api/clock/*`, su autenticación, su cupo y el source KIOSK. F11 (§30)
+ * retiró el alias legacy `/api/time-entries/clock/*`: sobre la app real
+ * responde 404 ROUTE_NOT_FOUND, sin header de deprecación.
  * Servicios y repositorio de dispositivos mockeados: nada toca una base.
  */
 
@@ -124,10 +124,10 @@ describe.each(routes)("F7 — $name (namespace nuevo) exige un ClockDevice ACTIV
     expect(serviceCalls()).toBe(0);
   });
 
-  it("el alias legacy /time-entries/clock/* opera igual y avisa que está deprecado (RFC 9745)", async () => {
+  it("F11: el alias legacy /time-entries/clock/* ya no existe (404, sin header de deprecación, sin ejecutar nada)", async () => {
     const result = await call(method, `/time-entries${path}`, { authorization: credential(ACTIVE), body });
-    expect(result.status).toBe(ok);
-    expect(result.deprecation).toBe("@1791849600");
+    expect(result).toMatchObject({ status: 404, error: { code: "ROUTE_NOT_FOUND" }, deprecation: null });
+    expect(serviceCalls()).toBe(0);
   });
 });
 
@@ -138,11 +138,6 @@ describe("F7 — source decidido por la ruta, dispositivo por la autenticación"
     expect(origin).toEqual({ device: { id: ACTIVE.id, name: "Pañol 01" }, source: "KIOSK" });
     expect(input).not.toHaveProperty("source");
     expect(input).not.toHaveProperty("deviceId");
-  });
-
-  it("POST /api/time-entries/clock/photo-punch (legacy) → PUBLIC_CLOCK_PHOTO", async () => {
-    await call("POST", "/time-entries/clock/photo-punch", { authorization: credential(ACTIVE), body: validPunch });
-    expect(vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mock.calls[0]![1]).toEqual({ device: { id: ACTIVE.id, name: "Pañol 01" }, source: "PUBLIC_CLOCK_PHOTO" });
   });
 
   it("attempts consulta en nombre del dispositivo autenticado (aislamiento F6)", async () => {
@@ -172,19 +167,20 @@ describe("F7 — convivencia con el enrolamiento y cierre del namespace", () => 
   });
 });
 
-describe("F7 — un único cupo por dispositivo entre los dos namespaces", () => {
-  it("agotar el cupo por el alias legacy también bloquea /api/clock (no se duplica), y no afecta a otro dispositivo", async () => {
+describe("F7 — cupo por dispositivo", () => {
+  it("un único cupo por dispositivo entre las cuatro rutas: agotarlo bloquea a ese dispositivo y no a otro", async () => {
     for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
-      const path = index % 2 === 0 ? "/time-entries/clock/employees?search=ana" : "/clock/employees?search=ana";
-      expect((await call("GET", path, { authorization: credential(SHARED_QUOTA) })).status).toBe(200);
+      const result = index % 2 === 0
+        ? await call("GET", "/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })
+        : await call("POST", "/clock/status", { authorization: credential(SHARED_QUOTA), body: { employeeId: EMPLOYEE_ID } });
+      expect(result.status).toBe(200);
     }
     expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })).status).toBe(429);
-    expect((await call("GET", "/time-entries/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })).status).toBe(429);
+    expect((await call("POST", "/clock/status", { authorization: credential(SHARED_QUOTA), body: { employeeId: EMPLOYEE_ID } })).status).toBe(429);
     expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(OTHER_ACTIVE) })).status).toBe(200);
   });
 
-  it("los dos namespaces anuncian el mismo cupo por dispositivo", async () => {
+  it("anuncia el cupo por dispositivo", async () => {
     expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(ACTIVE) })).rateLimit).toBe(String(env.CLOCK_RATE_LIMIT_MAX));
-    expect((await call("GET", "/time-entries/clock/employees?search=ana", { authorization: credential(ACTIVE) })).rateLimit).toBe(String(env.CLOCK_RATE_LIMIT_MAX));
   });
 });

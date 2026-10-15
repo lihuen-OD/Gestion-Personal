@@ -81,11 +81,8 @@ describe("F6 — aislamiento entre identidad de dispositivo y sesión de usuario
   });
 
   it.each([
-    ["GET", "/time-entries/clock/employees?search=ana", undefined],
-    ["POST", "/time-entries/clock/status", { employeeId: EMPLOYEE_ID }],
-    ["POST", "/time-entries/clock/photo-punch", { requestId: REQUEST_ID, employeeId: EMPLOYEE_ID, punchType: "IN", photo: `data:image/jpeg;base64,${"A".repeat(400)}`, faceValidationStatus: "VALID" }],
-    ["GET", `/time-entries/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, undefined],
-    // F7: namespace nuevo del dispositivo.
+    // Único namespace del dispositivo desde F11 (el alias /time-entries/clock/*
+    // se retiró: ver modules/clock/clockOperational.routes.test.ts).
     ["GET", "/clock/employees?search=ana", undefined],
     ["POST", "/clock/status", { employeeId: EMPLOYEE_ID }],
     ["POST", "/clock/photo-punch", { requestId: REQUEST_ID, employeeId: EMPLOYEE_ID, punchType: "IN", photo: `data:image/jpeg;base64,${"A".repeat(400)}`, faceValidationStatus: "VALID" }],

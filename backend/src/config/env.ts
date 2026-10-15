@@ -26,7 +26,7 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
-  // F6: cupo de /time-entries/clock/* POR DISPOSITIVO autenticado (ClockDevice).
+  // F6: cupo de las rutas operativas de /api/clock/* POR DISPOSITIVO autenticado (ClockDevice).
   CLOCK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
   // F6: cupo por IP previo a la autenticación (fuerza bruta de credenciales).
   // Más alto que el de dispositivo: varios kioscos pueden salir por la misma IP.

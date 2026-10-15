@@ -49,8 +49,8 @@ const adminMarkers = [
 // F6: el token compartido del kiosco fue retirado. Ningún rastro de esa
 // credencial (header ni variable) puede volver al bundle.
 const retiredCredentialMarkers = ["x-clock-device-token", "VITE_CLOCK_DEVICE_TOKEN"];
-// F8: la PWA usa sólo el namespace del dispositivo /api/clock/*. El alias
-// legacy sigue en el backend hasta F11, pero el cliente no puede volver a
+// F8: la PWA usa sólo el namespace del dispositivo /api/clock/*. F11 retiró
+// el alias legacy del backend (responde 404); el cliente no puede volver a
 // llamarlo (ni como fallback).
 const legacyNamespaceMarkers = ["/time-entries/clock", "time-entries"];
 // Prueba de vida: si el build no contiene el fichador, sus rutas de
