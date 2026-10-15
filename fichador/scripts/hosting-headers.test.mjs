@@ -1,9 +1,15 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+// @vitest-environment node
+// (F11: importa `vite` para loadEnv, que no corre bajo jsdom.)
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertDeployEnv,
+  buildApiUrl,
   contentSecurityPolicy,
   hostingHeaders,
+  securityHeaders,
 } from "./hosting-headers.mjs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -29,6 +35,16 @@ describe("CSP del fichador", () => {
     expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
 
+  it("F11: ninguna directiva tiene wildcard ni esquemas abiertos; todo cae en 'self' por defecto", () => {
+    for (const part of csp.split("; ")) {
+      expect(part, part).not.toMatch(/(^|\s)(\*|https?:|wss?:)(\s|$)/);
+      expect(part, part).not.toMatch(/\*\./);
+    }
+    expect(directive(csp, "default-src")).toBe("default-src 'self'");
+    expect(directive(csp, "object-src")).toBe("object-src 'none'");
+    expect(directive(csp, "base-uri")).toBe("base-uri 'self'");
+  });
+
   it("F3: sin ningún origin de terceros (MediaPipe e Inter son self-hosted); sólo 'self' y el backend", () => {
     const origins = csp.match(/https?:\/\/[^\s;]+/g) || [];
     expect(origins).toEqual(["https://api-test.example.com"]);
@@ -47,9 +63,19 @@ describe("_headers generado", () => {
     expect(headers).toMatch(/Permissions-Policy: camera=\(self\), microphone=\(\)/);
   });
 
-  it("la CSP sale en modo Report-Only hasta validarla en Safari/iPad sobre HTTPS", () => {
-    expect(headers).toContain("Content-Security-Policy-Report-Only: ");
-    expect(headers).not.toMatch(/^\s+Content-Security-Policy: /m);
+  it("F11: la CSP sale enforced (ya no Report-Only)", () => {
+    expect(headers).toContain(`  Content-Security-Policy: ${contentSecurityPolicy("https://api-test.example.com/api")}\n`);
+    expect(headers).not.toContain("Report-Only");
+  });
+
+  it("es la misma política que sirve `vite preview` (una sola fuente)", () => {
+    for (const [name, value] of Object.entries(securityHeaders("https://api-test.example.com/api"))) {
+      expect(headers).toContain(`  ${name}: ${value}\n`);
+    }
+  });
+
+  it("sin directivas de Permissions-Policy obsoletas (interest-cohort hace loguear un error a Chrome)", () => {
+    expect(headers).not.toContain("interest-cohort");
   });
 
   it("service worker, manifest y MediaPipe se revalidan siempre (F3)", () => {
@@ -110,5 +136,34 @@ describe("netlify.toml del fichador", () => {
   it("deploy previews y branch deploys desactivados mientras exista el token compartido", () => {
     expect(toml).toMatch(/\[context\.deploy-preview\]\s+ignore = "exit 0"/);
     expect(toml).toMatch(/\[context\.branch-deploy\]\s+ignore = "exit 0"/);
+  });
+});
+
+// F11: con la CSP enforced, connect-src tiene que ser el mismo API que ve el
+// bundle; si no, todas las llamadas quedarían bloqueadas.
+describe("buildApiUrl — el API del header es el del bundle", () => {
+  let root;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    if (root) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("toma VITE_API_URL del .env del modo, como Vite", () => {
+    root = mkdtempSync(join(tmpdir(), "fichador-env-"));
+    writeFileSync(join(root, ".env.production"), "VITE_API_URL=https://api-env.example.com/api\n");
+    expect(buildApiUrl("production", root)).toBe("https://api-env.example.com/api");
+  });
+
+  it("process.env gana sobre el .env (variables del hosting)", () => {
+    root = mkdtempSync(join(tmpdir(), "fichador-env-"));
+    writeFileSync(join(root, ".env"), "VITE_API_URL=https://api-env.example.com/api\n");
+    vi.stubEnv("VITE_API_URL", "https://api-hosting.example.com/api");
+    expect(buildApiUrl("production", root)).toBe("https://api-hosting.example.com/api");
+  });
+
+  it("sin variable, el mismo default que src/services/api/apiClient.ts", () => {
+    root = mkdtempSync(join(tmpdir(), "fichador-env-"));
+    vi.stubEnv("VITE_API_URL", "");
+    expect(buildApiUrl("production", root)).toBe("http://localhost:4002/api");
   });
 });

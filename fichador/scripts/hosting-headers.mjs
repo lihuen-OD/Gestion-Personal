@@ -2,12 +2,23 @@
 // Genera dist/_headers (formato Netlify / Cloudflare Pages) al final del
 // build. Se genera en vez de versionarse fijo porque la CSP necesita el
 // origin del backend de cada entorno (VITE_API_URL), igual que el bundle.
+import { loadEnv } from "vite";
 
 // F3: MediaPipe (WASM + modelo) e Inter son self-hosted, así que la CSP ya
 // no tiene ningún origin de terceros: sólo 'self' y el backend del entorno.
 
 export function apiOrigin(apiUrl) {
   return new URL(apiUrl).origin;
+}
+
+/**
+ * La URL del API que ve el bundle (`import.meta.env.VITE_API_URL`): .env del
+ * modo más process.env, con el mismo default que src/services/api/apiClient.ts.
+ * F11: con la CSP enforced, un connect-src distinto del API del bundle
+ * bloquearía todas las llamadas, así que el header sale de la misma fuente.
+ */
+export function buildApiUrl(mode, root) {
+  return loadEnv(mode, root, "VITE_").VITE_API_URL || "http://localhost:4002/api";
 }
 
 /**
@@ -35,15 +46,32 @@ export function contentSecurityPolicy(apiUrl) {
   ].join("; ");
 }
 
+/**
+ * Headers de seguridad de todo el sitio. Los usan el `_headers` del hosting y
+ * `vite preview` (vite.config.ts), así el build local y la PWA E2E corren con
+ * la misma política que el deploy.
+ *
+ * F11 (plan §30): la CSP pasa de Report-Only a enforced. Se validó contra el
+ * build real en Chromium (la PWA, el service worker y MediaPipe cargan sin
+ * violaciones, e2e/csp.pwa.ts); la verificación en Safari/iPad queda en la
+ * checklist del piloto (F12).
+ */
+export function securityHeaders(apiUrl) {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Frame-Options": "DENY",
+    "Strict-Transport-Security": "max-age=31536000",
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=(), usb=()",
+    "Content-Security-Policy": contentSecurityPolicy(apiUrl),
+  };
+}
+
 export function hostingHeaders(apiUrl) {
+  const security = Object.entries(securityHeaders(apiUrl)).map(([name, value]) => `  ${name}: ${value}`).join("\n");
   return `# Generado por fichador/scripts/hosting-headers.mjs — no editar a mano.
 /*
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: strict-origin-when-cross-origin
-  X-Frame-Options: DENY
-  Strict-Transport-Security: max-age=31536000
-  Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
-  Content-Security-Policy-Report-Only: ${contentSecurityPolicy(apiUrl)}
+${security}
 
 # Assets con hash de Vite: nunca cambian de contenido para la misma URL.
 /assets/*

@@ -35,6 +35,6 @@
   to = "/index.html"
   status = 200
 
-# Los headers (seguridad, CSP report-only, cache) los genera el build en
-# dist/_headers: la CSP depende del origin del backend de cada entorno.
+# Los headers (seguridad, CSP enforced desde F11, cache) los genera el build
+# en dist/_headers: la CSP depende del origin del backend de cada entorno.
 # Ver scripts/hosting-headers.mjs.
