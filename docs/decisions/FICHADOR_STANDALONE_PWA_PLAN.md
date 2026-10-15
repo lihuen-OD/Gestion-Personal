@@ -1,6 +1,6 @@
 # Fichador como app independiente (PWA) — Etapa 1: diagnóstico y plan
 
-> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **Próxima etapa: F10, pendiente de aprobación.**
+> Estado: plan aprobado. **F0 cerrada para el entorno de desarrollo actual** (2026-10-06, ver [§18](#18-f0--implementación-y-resultado)); la medición de `TRUST_PROXY_HOPS` es requisito previo del primer deploy real del backend. F1 cerrada (2026-10-06, [§19](#19-f1--fichador-standalone-implementación)). **F2 cerrada a nivel de repositorio: READY FOR DEPLOY — validación real de infraestructura diferida** (2026-10-06, [§20](#20-f2--despliegue-independiente), decisión en §20.12); no bloquea el desarrollo local. **F3 implementada en local** (2026-10-06, [§21](#21-f3--pwa-local)). **F4 cerrada y migrada únicamente en staging** (2026-10-06, [§22](#22-f4--modelo-persistente-clockdevice)). **F5 implementada: enrolamiento individual y administración RRHH** ([§23](#23-f5--enrolamiento-y-administración-de-dispositivos)). **F6 cerrada definitivamente** (2026-10-07): autenticación individual obligatoria, validada con una fichada real controlada en staging ([§24](#24-f6--autenticación-individual-obligatoria-en-las-fichadas), §24.9). **F7 cerrada** (2026-10-13): `/api/clock/*` en paralelo con el legacy, `source = KIOSK`, cooldown y auditoría con el dispositivo como actor técnico, validada con una fichada real en staging ([§26](#26-f7--contrato-operativo-de-kiosco-backend)). **F7.1 cerrada** (2026-10-13): hardening de transición antes de F8 —el source de la jornada sobrevive al cutover legacy → `/api/clock` y el reintento idempotente de un cooldown conserva `retryAfterSeconds`— (§26.12–§26.13). **F8 cerrada** (2026-10-14): la PWA usa sólo `/api/clock/*`, recupera un resultado incierto con el mismo `requestId` (reenvío ante `404`), muestra el cooldown con cuenta regresiva y confirma con la hora del servidor antes de volver sola al inicio ([§27](#27-f8--cutover-del-cliente-a-apiclock)); F8.1 agrega una espera local corta si un cooldown llega sin `retryAfterSeconds` (§27.11). **F9 cerrada** (2026-10-14): heartbeat del dispositivo, conectividad derivada en el panel de RRHH, edición de nombre y establecimiento, limpieza de solicitudes `PENDING` abandonadas y "Kiosco · <dispositivo>" en Asistencia, validada en staging ([§28](#28-f9--heartbeat-y-gestión-operativa-de-dispositivos)). **F10 cerrada** (2026-10-15): pantalla encendida mientras el kiosco opera, cámara por fichada con la foto congelada durante el envío y pausa al pasar a segundo plano, jerarquía de acciones y guía de instalación y Acceso guiado; la validación en iPad real queda para F12 ([§29](#29-f10--operación-de-kiosco-pantalla-cámara-e-instalación)). **Próxima etapa: F11, pendiente de aprobación.**
 > Los §1–§17 son el diagnóstico read-only original sobre `main @ 697968a` y describen el estado **previo** a F0 (por ejemplo, las rutas sin foto de §2 ya no existen).
 > **Numeración:** la secuencia vigente de etapas es la de [§25](#25-secuencia-vigente-de-etapas-reconciliada-el-2026-10-07). Los números F6–F15 de §17 y las referencias a etapas futuras dentro de §12–§23 usan la numeración **original** y se leen con la tabla de equivalencias de §25.1.
 
@@ -1668,9 +1668,9 @@ ejecutado. No se implementó ninguna etapa nueva al reconciliar.
 | F7 | Contrato operativo de kiosco (backend): `/api/clock/*` convive con `/time-entries/clock/*`; `source = KIOSK` en las fichadas nuevas de dispositivo; cooldown entre fichadas distintas; auditoría con el dispositivo como actor; matriz de staging en el namespace nuevo. ("Kiosco · <dispositivo>" en Asistencia se movió a F9, §26.11) | resto de F8 | **Cerrada** el 2026-10-13 (§26) |
 | F8 | Cutover del cliente: la PWA usa sólo `/api/clock/*`; reenvío con el mismo `requestId` ante 404 (§14.3); el kiosco nunca queda bloqueado; confirmación con la hora del servidor y retorno automático | F9 | **Cerrada** el 2026-10-14 (§27) |
 | F9 | Heartbeat y gestión operativa de dispositivos: ping con `serverTime` y estado sin conexión (§13, §14.4); conectividad derivada en el panel; renombrar y cambiar sector; limpieza automática de `PENDING` vencidos; Asistencia muestra "Kiosco · <dispositivo>" (movido desde F7) | F10 + lo pendiente de la gestión de F5/F6 originales (`rename`, limpieza de pendientes, conectividad) | **Cerrada** el 2026-10-14 (§28). "Cambiar sector" se implementó como cambiar **establecimiento**: M2 retiró el sector del dispositivo |
-| F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | Pendiente |
+| F10 | Cámara y operación de kiosco: Wake Lock, cámara abierta vs. por fichada, permiso en standalone, instrucciones de instalación ("Agregar a inicio") y de Acceso guiado | F11 + instrucciones de instalación de F7 (hoy sólo hay un aviso genérico en el Gate) | **Cerrada** el 2026-10-15 (§29). La cámara sigue abriéndose por fichada; la validación en iPad real pasa a F12 (§29.13) |
 | F11 | Hardening y retiro del legado: retirar `/time-entries/clock/*` tras 7 días sin tráfico; retirar la ruta `/fichador` del admin y `AttendancePunch.kioskId`; límite de body antes de autenticar (R9); CSP enforced; auditoría de fichada no diferida; evaluar `CryptoKey` no exportable; store compartido de rate limit si hay más de una instancia (§25.3) | resto de F12 | Pendiente |
-| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5) | F13 | Pendiente |
+| F12 | Piloto: 1 iPad, 1 establecimiento, 2 semanas. Prerrequisitos: infraestructura real (§20.9) y `TRUST_PROXY_HOPS` medido (§18.5). Incluye la validación en iPad real que F10 no pudo hacer (§29.13) | F13 | Pendiente |
 | F13 | Rollout a producción, con aprobación explícita para migraciones | F14 | Pendiente |
 | F14 | Reconocimiento facial: proyecto aparte, requiere definición legal | F15 | Fuera de esta iniciativa |
 
@@ -2881,5 +2881,241 @@ No se creó ninguna fichada ni alerta.
 - Sin etapa asignada:
   - `role="dialog"` en el `Modal` compartido del admin;
   - un snapshot del nombre del dispositivo por fichada, si el negocio lo pide.
+- Sigue documentada la deuda de `expireOpenWorkShifts` (auditoría y caché,
+  `PERFORMANCE_STANDARDS.md` §10).
+
+## 29. F10 — Operación de kiosco: pantalla, cámara e instalación
+
+Implementada el 2026-10-15 sobre `main` (a partir de `d03ee79`). Sólo cambia
+el fichador: sin backend, sin migraciones y sin dependencias nuevas. Las rutas
+legacy siguen vivas y producción no se tocó. La validación en un iPad real
+queda para F12 (§29.12).
+
+### 29.1 Decisiones
+
+| Tema | Propuesta original | F10 |
+|---|---|---|
+| Cámara | Abierta todo el día o por fichada | **Por fichada**, como hasta ahora. Abierta todo el día deja la luz de la cámara encendida frente a quien pasa, gasta batería y CPU (el detector corre en loop) e iOS corta el stream en segundo plano de todos modos |
+| Pantalla encendida | Wake Lock | Wake Lock **best-effort**, sin UI ni reintentos en loop |
+| Imagen durante el envío | — | La foto tomada queda congelada (antes se veía el video en negro) |
+| Selector de cámara | — | No: no hay evidencia de que haga falta. Sigue `facingMode: "user"` |
+| Orientación | — | Libre (`orientation: "any"` en el manifest, sin cambios) |
+| Instalación | Instrucciones "Agregar a inicio" | Tarjeta en la configuración inicial, con pasos de iOS sólo en iOS |
+| Acceso guiado | Instrucciones | Sólo texto. No es un control de seguridad |
+| Mensajes del detector | — | Sin histéresis: no hubo evidencia de parpadeo. Se observa en el piloto (F12) |
+
+### 29.2 Pantalla encendida
+
+- `useClockWakeLock` (`features/device/`) lo monta `ClockDeviceGate` con la
+  misma condición que el heartbeat: equipo `ACTIVE` y sesión abierta. No hay
+  Wake Lock en la configuración, en `PENDING`, en `REVOKED` ni sin credencial.
+- Pide `navigator.wakeLock.request("screen")` sólo con la página visible.
+  - El sistema lo libera al pasar a segundo plano; al volver se pide de nuevo.
+  - Nunca hay dos pedidos a la vez, y un pedido que se resuelve después de
+    desmontar se libera en el acto.
+- Sin la API (o si el sistema la rechaza, por ejemplo con batería baja) no
+  hace nada: no muestra errores y no reintenta. En desarrollo deja un
+  `console.info` con el nombre del error.
+- Al revocar el equipo, el Gate bloquea y el hook se desmonta: libera el lock.
+- Es best-effort: el bloqueo automático del iPad puede seguir apagando la
+  pantalla. La guía de preparación pide dejar el equipo conectado a la
+  corriente.
+
+### 29.3 Ciclo de vida de la cámara
+
+- Se abre al iniciar cada fichada y se cierra siempre del mismo modo
+  (`stopCamera`, idempotente): cancela el loop, cierra el detector, detiene los
+  tracks y desconecta el video. Corre al confirmar, cancelar, cerrar,
+  desmontar, perder la credencial y pasar a segundo plano.
+- **Foto congelada.** Al confirmar, la foto capturada reemplaza al video y la
+  cámara se apaga en el mismo momento. Queda a la vista en "Registrando
+  fichada…", "Verificando…" y "Confirmando…".
+  - Vive sólo en memoria, en el estado del modal, durante esa intención. No se
+    guarda en `localStorage`, IndexedDB, Cache Storage ni archivos.
+  - Si el resultado es definitivo (éxito, cooldown, rechazo, no confirmado),
+    el modal se cierra y la foto se descarta con él.
+  - La recuperación de F8 (mismo `requestId`, reenvío ante `404`) no reabre la
+    cámara, no vuelve a correr el detector y no genera otro `requestId`.
+- **Espejo.** La vista previa y la foto congelada se ven en espejo, como un
+  espejo real. La evidencia enviada se captura en orientación natural, sin
+  transformar el canvas (test de `captureCompressedPhoto`).
+- Una cámara que termina de abrir después de que el modal se cerró se apaga
+  en el acto, y un detector creado tarde se cierra.
+
+### 29.4 Segundo plano durante la captura
+
+Si el fichador pasa a segundo plano con la cámara abierta y sin confirmar:
+
+1. se apaga la cámara y se invalida la captura;
+2. se descarta la intención: su `requestId` nunca se envió;
+3. al volver, el fichador muestra "La cámara se pausó. Volvé a iniciar la
+   captura." y **no reabre la cámara solo**;
+4. la próxima captura es una intención nueva, con otro `requestId`.
+
+Si ya se confirmó, la fichada sigue su curso: la cámara ya estaba apagada y el
+envío no depende de la visibilidad.
+
+### 29.5 Al volver a primer plano
+
+En este orden y sin depender uno de otro:
+
+1. heartbeat (F9);
+2. Wake Lock;
+3. la cámara **nunca** se reabre sola;
+4. una actualización pendiente se aplica sólo si el kiosco está ocioso (F3).
+   Cámara abierta, foto congelada, envío en curso o un aviso en pantalla
+   cuentan como ocupado.
+
+Sin conexión no cambió: no se abre la cámara ni sale ningún request (F8).
+
+### 29.6 Permiso de cámara
+
+Mensajes en lenguaje de uso, sin nombres técnicos de error. Con el permiso
+bloqueado en iOS: "El acceso a la cámara está bloqueado. Activalo desde
+Ajustes del dispositivo y volvé al fichador." Es genérico a propósito: la ruta
+exacta en Ajustes cambia entre versiones de iPadOS.
+
+### 29.7 Jerarquía de acciones
+
+Sólo cambia el énfasis visual; qué botón está habilitado sigue saliendo del
+estado del empleado (`canClockIn`/`canClockOut`).
+
+| Estado | Acción principal |
+|---|---|
+| Sin ingreso abierto | Marcar ingreso |
+| Ingreso abierto | Marcar salida |
+| Ingreso abierto vencido (> 20 h) | Marcar nuevo ingreso |
+
+"Actualizar estado" pasa a un ícono de refresco, que gira y queda
+deshabilitado mientras se actualiza.
+
+### 29.8 Instalación y preparación del equipo
+
+- **Configuración inicial**, en una tarjeta (no un banner):
+  - En el navegador: "Instalá el fichador en este equipo". Recomienda
+    instalar **antes** de configurar y abrir siempre desde el ícono.
+  - En iPad/iPhone suma los pasos: Compartir → "Agregar a pantalla de inicio"
+    → abrir desde el nuevo ícono, y aclara que lo configurado en el navegador
+    no pasa al ícono instalado.
+  - Si el navegador ofrece su propio aviso de instalación
+    (`beforeinstallprompt`, Chromium), aparece "Instalar en este equipo". Si
+    no, una indicación genérica del menú del navegador.
+  - Abierto desde el ícono instalado: "Fichador instalado en este equipo".
+- **Esperando aprobación** en iOS desde el navegador: aviso de que, si
+  después lo agregan a la pantalla de inicio, van a tener que configurarlo de
+  nuevo. En escritorio y Android no se muestra: el ícono instalado comparte el
+  almacenamiento del navegador.
+- **"Cómo dejar este equipo listo"** (desplegable): instalar, configurar con
+  el código de RRHH, permitir la cámara, Acceso guiado y corriente.
+- **Acceso guiado** se explica como ayuda de uso que se activa desde la
+  accesibilidad del iPad. La app no puede activarlo ni comprobarlo, y no
+  reemplaza la aprobación de RRHH ni el bloqueo del equipo.
+- **Sin traspaso de credenciales entre el navegador y el ícono instalado.**
+  No hay secretos en la URL, el portapapeles ni ningún almacenamiento
+  compartido. En iOS se configura de nuevo desde el ícono, y RRHH aprueba ese
+  equipo.
+- La pantalla no usa términos técnicos (PWA, service worker, IndexedDB, Wake
+  Lock, standalone). Hay un test que lo exige.
+- Detección:
+  - instalado: `display-mode: standalone` o `navigator.standalone`
+    (`pwa/platform.ts`);
+  - iOS: user agent, más `MacIntel` con pantalla táctil para el iPad que se
+    presenta como Mac. Se usa sólo para elegir el texto de instalación.
+
+### 29.9 Seguridad
+
+F10 no reintroduce:
+
+- token compartido;
+- JWT;
+- rutas de administración;
+- el namespace legacy en tiempo de ejecución;
+- un secreto en la URL o en logs;
+- una foto persistida en el equipo.
+
+`check-bundle-isolation` sigue en verde. MediaPipe queda en el chunk diferido
+de la cámara: el aviso de cámara pausada vive en `captureMessages.ts` para no
+arrastrarlo al bundle principal.
+
+### 29.10 Archivos
+
+| Área | Archivos |
+|---|---|
+| Nuevos | `pwa/platform.ts`, `pwa/installPrompt.ts`, `features/device/useClockWakeLock.ts`, `features/device/DeviceSetupGuide.tsx`, `components/time-clock/captureMessages.ts` |
+| Modificados | `features/device/ClockDeviceGate.tsx`, `components/time-clock/FaceCaptureModal.tsx`, `pages/TimeClockPage.tsx`, `main.tsx`, `styles.css` |
+| E2E | `e2e/punchFlow.spec.ts`, `e2e/kioskJourney.spec.ts` |
+
+### 29.11 Tests
+
+**Unitarios:** 224 en verde con `vitest run`: 194 de `src` y 30 de scripts.
+Son 49 nuevos:
+
+- Wake Lock (9): sólo con el equipo `ACTIVE` y la página visible, lo pide de
+  nuevo al volver, sin pedidos duplicados, lo libera al desmontar o si llega
+  tarde, y sin la API no hace nada;
+- detección de instalación e iOS, y aviso de instalación (11);
+- guía de instalación (9): iOS en el navegador, instalado, escritorio, botón
+  de instalación, aviso en `PENDING` y ningún término técnico;
+- Gate (7): Wake Lock en `ACTIVE`/`PENDING`/`REVOKED`, lo libera al revocar,
+  sin la API, guía en el navegador e instalado;
+- modal de cámara (8): foto congelada con la cámara apagada, evidencia en
+  orientación natural, segundo plano antes de confirmar, cámara que llega
+  tarde, limpieza al desmontar, captura nueva por intención, nada persistido y
+  permiso bloqueado en iOS;
+- página (5): jerarquía en los tres estados, ícono de refresco y aviso de
+  cámara pausada con `requestId` nuevo.
+
+**Además:** `tsc -b`, typecheck de E2E, build con aislamiento del bundle.
+
+**E2E:** 19/19 y PWA E2E 2/2. Nuevos o ampliados:
+
+- la foto congelada a la vista durante un envío lento, con el video
+  desconectado;
+- segundo plano con la cámara abierta: tracks detenidos, modal cerrado,
+  aviso, la cámara no se reabre, ninguna fichada enviada y la siguiente
+  captura funciona;
+- con un ingreso abierto, "Marcar salida" es la acción principal;
+- la configuración inicial recomienda instalar y no muestra términos
+  técnicos.
+
+### 29.12 Revisión visual
+
+Con un harness local (API mockeado, detector falso, cámara falsa de Chromium)
+se capturaron 75 pantallas:
+
+- **Tamaños de kiosco:** iPad vertical 820×1180, iPad horizontal 1180×820,
+  1024×768 y escritorio 1440×900.
+- **Pantallas de kiosco:** inicio, búsqueda, empleado seleccionado, ingreso
+  abierto, jornada vencida, cámara lista, foto congelada en el envío, éxito,
+  cooldown, sin conexión, cámara pausada, permiso denegado y revocado.
+- **Configuración** (también a 390 de ancho): navegador de escritorio,
+  navegador de iPad, instalado y esperando aprobación en iPad.
+- **Modal de cámara** a 390.
+
+Ninguna pantalla tiene scroll horizontal.
+
+Se encontró y corrigió un defecto: a 390 el ícono de "Registrando fichada…"
+se encogía hasta un punto porque el texto ocupaba el ancho. El ícono ya no se
+encoge (`.face-status > svg`).
+
+### 29.13 iPad real: diferido a F12
+
+No hubo un iPad disponible. **No se validó en un dispositivo iOS real:**
+
+- Wake Lock (su soporte en apps agregadas a la pantalla de inicio depende de
+  la versión de iPadOS);
+- el permiso de cámara en el modo instalado;
+- la pausa de la cámara al cambiar de app;
+- el aviso y los pasos de "Agregar a pantalla de inicio";
+- Acceso guiado.
+
+Todo eso pasa a la checklist del piloto (F12), junto con observar si los
+mensajes del detector parpadean con luz real.
+
+### 29.14 Pendiente (no es F10)
+
+- F11: retiro de `/time-entries/clock/*`, `AttendancePunch.kioskId` y el
+  `/fichador` del admin, más el hardening de body limit y CSP.
+- F12: la validación en iPad real de §29.13.
 - Sigue documentada la deuda de `expireOpenWorkShifts` (auditoría y caché,
   `PERFORMANCE_STANDARDS.md` §10).

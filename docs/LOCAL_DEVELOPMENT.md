@@ -311,6 +311,37 @@ CLOCK_DEVICES_IT_DATABASE_URL="postgresql://<usuario>@localhost:5432/clock_it_de
 el test no stubbea falla como "sin conexión" (`src/test/setupTests.ts`). Así
 el heartbeat del Gate nunca llega a un backend real en `localhost`.
 
+### Operación de kiosco (F10)
+
+**Pantalla encendida.** Con el equipo `ACTIVE` y la página visible, el
+fichador pide que la pantalla no se apague. Si el navegador no lo soporta o
+lo rechaza, no pasa nada; en desarrollo queda un `console.info`
+`CLOCK_WAKE_LOCK_UNAVAILABLE`.
+
+**Cámara.**
+
+- Se abre en cada fichada.
+- Al confirmar, la foto queda congelada mientras se registra.
+- Si se cambia de pestaña con la cámara abierta, se apaga y al volver aparece
+  "La cámara se pausó. Volvé a iniciar la captura.".
+
+Para ver la foto congelada sin un backend lento, usar el E2E
+`punchFlow.spec.ts` ("backend lento").
+
+**Guía de instalación.**
+
+- Se ve en la pantalla "Configurar este dispositivo", sin identidad
+  guardada. Para volver a verla, borrar los datos del sitio del origin 5175.
+- Los pasos de iOS se ven emulando un iPad en DevTools. El estado "instalado"
+  se ve instalando desde Chrome la app servida con `npm run build && npx vite
+  preview` (en `npm run dev` no hay manifest ni service worker).
+- En iOS, Safari y el ícono de inicio no comparten almacenamiento: un equipo
+  configurado en Safari se configura de nuevo desde el ícono y RRHH aprueba
+  esa nueva solicitud.
+
+**iPad real.** No se validó en F10; queda en la checklist del piloto (F12,
+plan §29.13).
+
 **Prisma Client y cambio de rama.** Después de cambiar de rama, si el
 `schema.prisma` cambió, correr `npx prisma generate` en `backend/` y
 reiniciar `tsx watch`, que no vigila `node_modules`. Si no, el backend puede

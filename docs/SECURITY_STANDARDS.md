@@ -120,6 +120,21 @@ RRHH device management (F9): `PATCH /api/clock-devices/:id`.
   only never-activated devices with no punches and no attempts; the
   conditions are repeated in every `DELETE`, and the FKs stay `Restrict`.
 
+Kiosk operation (F10, fichador only):
+
+- **Captured photo:** lives only in memory, in the capture modal's state for
+  that intent. It is never written to `localStorage`, IndexedDB, Cache
+  Storage or files, and it is discarded when the modal closes. The camera is
+  stopped as soon as the photo is captured, on cancel/close/unmount, on a lost
+  credential and when the app goes to the background.
+- **Browser vs installed app:** on iOS they do not share storage. The device
+  credential is **never** carried between them: no secret in URLs, query
+  strings, the clipboard or shared storage. The installed app enrolls as a new
+  device and RRHH approves it.
+- **Guided Access and Wake Lock:** these are usage aids. The app cannot
+  enable or verify Guided Access. Neither replaces RRHH approval, device
+  revocation or the device lock.
+
 Logging: request logs never include headers; `/health/client-ip` never echoes `Authorization`; the presence-update failure log carries only the device id and the error message; `CLOCK_ATTEMPT_FAILED` carries request/employee/device ids, source and the error code, never the photo, the credential or the token hash. A rejected device request (`403`) is recorded by the global "Acceso denegado" audit rule like any other forbidden request; searches, status reads and attempt polling add no audit noise. A punch that is confirmed writes exactly one `AuditLog` row (see "Technical actor" above).
 
 ### Individual device enrollment (F5)
