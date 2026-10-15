@@ -213,3 +213,80 @@ describe("ClockDeviceGate — heartbeat (F9)", () => {
     expect(clockDeviceSession.isActive()).toBe(true);
   });
 });
+
+// F10 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §29): la pantalla se
+// mantiene encendida sólo con la sesión operativa abierta.
+describe("ClockDeviceGate — pantalla activa (F10)", () => {
+  function stubWakeLock() {
+    const sentinels: Array<{ released: boolean; release: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn> }> = [];
+    const request = vi.fn(async () => {
+      const sentinel = { released: false, release: vi.fn(async () => { sentinel.released = true; }), addEventListener: vi.fn() };
+      sentinels.push(sentinel);
+      return sentinel;
+    });
+    Object.defineProperty(navigator, "wakeLock", { value: { request }, configurable: true });
+    return { request, sentinels };
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "wakeLock");
+  });
+
+  it("ACTIVE: pide mantener la pantalla encendida", async () => {
+    const { request } = stubWakeLock();
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+    await screen.findByText("Fichador de personal");
+    await waitFor(() => expect(request).toHaveBeenCalledWith("screen"));
+  });
+
+  it.each(["PENDING", "REVOKED"] as const)("%s: no la pide", async (status) => {
+    const { request } = stubWakeLock();
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device(status));
+    renderGate();
+    await screen.findByRole("heading", { name: status === "PENDING" ? "Esperando aprobación" : "Dispositivo deshabilitado" });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("al revocarse con la app abierta la libera junto con el fichador", async () => {
+    const { request, sentinels } = stubWakeLock();
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+    await screen.findByText("Fichador de personal");
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+
+    await nextOperationalRequest(403, "CLOCK_DEVICE_REVOKED");
+
+    expect(screen.getByRole("heading", { name: "Dispositivo deshabilitado" })).toBeInTheDocument();
+    await waitFor(() => expect(sentinels[0]!.release).toHaveBeenCalledTimes(1));
+  });
+
+  it("sin la API el fichador abre igual", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("ACTIVE"));
+    renderGate();
+    expect(await screen.findByText("Fichador de personal")).toBeInTheDocument();
+  });
+});
+
+describe("ClockDeviceGate — guía de puesta en marcha (F10)", () => {
+  it("sin identidad en el navegador: recomienda instalar antes de configurar, sin términos técnicos", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false }));
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(undefined);
+    renderGate();
+    expect(await screen.findByText("Instalá el fichador en este equipo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Configurar dispositivo" })).toBeInTheDocument();
+    expect(screen.getByText("Cómo dejar este equipo listo")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/PWA|standalone|STANDALONE/);
+  });
+
+  it("abierto desde el ícono instalado: lo confirma en vez de pedir instalar", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(undefined);
+    renderGate();
+    expect(await screen.findByText("Fichador instalado en este equipo")).toBeInTheDocument();
+    expect(screen.queryByText("Instalá el fichador en este equipo")).not.toBeInTheDocument();
+  });
+});

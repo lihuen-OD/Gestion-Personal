@@ -135,6 +135,10 @@ test("enrolamiento explícito: registra, muestra código y libera al ser aprobad
     return route.fulfill({ status: 404, json: { error: { code: "ROUTE_NOT_FOUND" } } });
   });
   await page.goto("/");
+  // F10: en el navegador recomienda instalar antes de configurar, sin términos técnicos.
+  await expect(page.getByText("Instalá el fichador en este equipo")).toBeVisible();
+  await expect(page.getByText("Cómo dejar este equipo listo")).toBeVisible();
+  expect(await page.locator("main").innerText()).not.toMatch(/PWA|standalone/i);
   await page.getByRole("button", { name: "Configurar dispositivo" }).click();
   await expect(page.getByText("ABCD-2345")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Esperando aprobación" })).toBeVisible();

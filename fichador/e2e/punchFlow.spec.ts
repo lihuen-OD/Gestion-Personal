@@ -14,7 +14,7 @@ type Handler = (route: Route, call: ApiCall, count: number) => Promise<void> | v
 
 const json = (route: Route, status: number, body: unknown) => route.fulfill({ status, json: body });
 
-async function openKiosk(page: Page, handlers: { punch?: Handler; attempt?: Handler; revokedOperational?: boolean } = {}) {
+async function openKiosk(page: Page, handlers: { punch?: Handler; attempt?: Handler; revokedOperational?: boolean; openShift?: { id: string; startAt: string } } = {}) {
   const calls: ApiCall[] = [];
   let punches = 0;
   let attempts = 0;
@@ -27,7 +27,7 @@ async function openKiosk(page: Page, handlers: { punch?: Handler; attempt?: Hand
     // F9: presencia del equipo, independiente de la fichada.
     if (path === "/clock/heartbeat") return json(route, 200, { data: { device: { id: "00000000-0000-4000-8000-000000000001", name: "TEST F8", status: "ACTIVE", establishment: null }, serverTime: new Date().toISOString() } });
     if (path === "/clock/employees") return json(route, 200, { data: [employee] });
-    if (path === "/clock/status") return json(route, 200, { data: { employee, openShift: null } });
+    if (path === "/clock/status") return json(route, 200, { data: { employee, openShift: handlers.openShift ?? null } });
     if (path === "/clock/photo-punch") {
       punches += 1;
       if (handlers.punch) return handlers.punch(route, call, punches);
@@ -208,6 +208,12 @@ test("backend lento (guardando la foto): la UI queda ocupada, avisa la demora y 
   await expect(busyButton).toBeDisabled();
   await expect(page.getByText(/Esto puede demorar unos segundos/)).toBeVisible({ timeout: 6_000 });
   await expect(page.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+  // F10: mientras se registra queda a la vista la foto tomada (no un video
+  // negro), con la cámara ya apagada.
+  const frozen = page.getByRole("img", { name: "Foto tomada para esta fichada" });
+  await expect(frozen).toBeVisible();
+  expect(await frozen.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+  expect(await page.locator("video.face-video").evaluate((video: HTMLVideoElement) => video.srcObject === null && video.classList.contains("is-frozen"))).toBe(true);
 
   await expect(page.getByText("Entrada registrada")).toBeVisible({ timeout: 10_000 });
   expect(punchBodies(calls)).toHaveLength(1);
@@ -237,4 +243,47 @@ test("sin conexión: no abre la cámara ni intenta fichar", async ({ page, conte
   await expect(page.getByRole("dialog", { name: "Confirmar fichada con foto" })).toHaveCount(0);
   expect(punchBodies(calls)).toHaveLength(0);
   await context.setOffline(false);
+});
+
+// F10 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §29)
+test("segundo plano con la cámara abierta: se apaga, avisa y no se reabre sola; la próxima captura es nueva", async ({ page }) => {
+  const calls = await openKiosk(page);
+  await selectEmployee(page);
+  await page.getByRole("button", { name: /Marcar ingreso/ }).click();
+  await expect(page.getByRole("button", { name: "Confirmar ingreso" })).toBeEnabled({ timeout: 30_000 });
+  await page.evaluate(() => {
+    const video = document.querySelector("video.face-video") as HTMLVideoElement;
+    (window as unknown as { __tracks: MediaStreamTrack[] }).__tracks = (video.srcObject as MediaStream).getTracks();
+  });
+
+  const setHidden = (hidden: boolean) => page.evaluate((value) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (value ? "hidden" : "visible") });
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => value });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, hidden);
+  await setHidden(true);
+
+  await expect(page.getByRole("dialog", { name: "Confirmar fichada con foto" })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __tracks: MediaStreamTrack[] }).__tracks.every((track) => track.readyState === "ended"))).toBe(true);
+
+  await setHidden(false);
+  await expect(page.getByText("La cámara se pausó. Volvé a iniciar la captura.")).toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(page.getByRole("dialog", { name: "Confirmar fichada con foto" })).toHaveCount(0);
+  expect(punchBodies(calls)).toHaveLength(0);
+
+  await captureAndConfirm(page);
+  await expect(page.getByText("Entrada registrada")).toBeVisible();
+  expect(punchBodies(calls)).toHaveLength(1);
+});
+
+test("con un ingreso abierto, 'Marcar salida' es la acción principal", async ({ page }) => {
+  await openKiosk(page, { openShift: { id: "shift-open", startAt: new Date(Date.now() - 3 * 3_600_000).toISOString() } });
+  await selectEmployee(page);
+  const salida = page.getByRole("button", { name: /Marcar salida/ });
+  const ingreso = page.getByRole("button", { name: /Marcar ingreso/ });
+  await expect(salida).toBeEnabled();
+  await expect(salida).toHaveClass(/\bprimary\b/);
+  await expect(ingreso).toBeDisabled();
+  await expect(ingreso).not.toHaveClass(/\bprimary\b/);
 });

@@ -16,8 +16,10 @@ vi.mock("../services/api/timeClockApiService", () => ({
 }));
 
 vi.mock("../components/time-clock/FaceCaptureModal", () => ({
-  FaceCaptureModal: ({ punchType, onConfirm, onCancel }: { punchType: "IN" | "OUT"; onConfirm: (capture: unknown) => void; onCancel: () => void }) => (
+  FaceCaptureModal: ({ punchType, onConfirm, onCancel, onInterrupted }: { punchType: "IN" | "OUT"; onConfirm: (capture: unknown) => void; onCancel: () => void; onInterrupted?: () => void }) => (
     <div data-testid="face-capture-modal">
+      {/* F10: simula que el fichador pasó a segundo plano con la cámara abierta. */}
+      <button onClick={() => onInterrupted?.()}>Interrumpir captura</button>
       <span>captura para {punchType}</span>
       <button
         onClick={() =>
@@ -697,5 +699,72 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
 
     const sent = vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0] as Record<string, unknown>;
     expect(Object.keys(sent).sort()).toEqual(["device", "employeeId", "faceDetectionScore", "faceValidationStatus", "photo", "punchType", "requestId", "thumbnail"]);
+  });
+});
+
+// F10 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §29): jerarquía de las
+// acciones según el estado del legajo, ícono de actualizar y cámara pausada.
+describe("TimeClockPage — F10: acción principal, actualizar estado y cámara pausada", () => {
+  const ingreso = () => screen.getByRole("button", { name: /Marcar (nuevo )?ingreso/i });
+  const salida = () => screen.getByRole("button", { name: /Marcar salida/i });
+
+  it("sin ingreso abierto: el ingreso es la acción principal", async () => {
+    mockNoOpenShift();
+    await selectEmployee();
+    expect(ingreso()).toHaveClass("primary");
+    expect(salida()).not.toHaveClass("primary");
+    expect(salida()).toBeDisabled();
+  });
+
+  it("con un ingreso abierto: la salida pasa a ser la principal y el ingreso queda deshabilitado y secundario", async () => {
+    mockOpenShift();
+    await selectEmployee();
+    expect(salida()).toHaveClass("primary");
+    expect(salida()).toBeEnabled();
+    expect(ingreso()).not.toHaveClass("primary");
+    expect(ingreso()).toBeDisabled();
+  });
+
+  it("con la jornada vencida (olvido de salida): 'Marcar nuevo ingreso' es la principal y la salida vieja no", async () => {
+    vi.mocked(timeClockApiService.status).mockResolvedValue({ employee: employeeMatch, openShift: { id: "shift-old", startAt: isoHoursAgo(21) } });
+    await selectEmployee();
+    expect(ingreso()).toHaveTextContent("Marcar nuevo ingreso");
+    expect(ingreso()).toHaveClass("primary");
+    expect(ingreso()).toBeEnabled();
+    expect(salida()).not.toHaveClass("primary");
+    expect(salida()).toBeDisabled();
+  });
+
+  it("'Actualizar estado' usa el ícono de actualizar (no una lupa) y conserva su nombre accesible", async () => {
+    mockNoOpenShift();
+    await selectEmployee();
+    const refresh = screen.getByRole("button", { name: "Actualizar estado" });
+    expect(refresh).toHaveAttribute("title", "Actualizar estado");
+    expect(refresh.querySelector("svg")).toHaveClass("lucide-refresh-cw");
+    expect(refresh.querySelector(".lucide-search")).toBeNull();
+  });
+
+  it("si la cámara se pausa (segundo plano) se descarta la intención, se avisa sin error y la próxima captura usa otro requestId", async () => {
+    const user = userEvent.setup();
+    mockNoOpenShift();
+    const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+    const uuid = vi.spyOn(crypto, "randomUUID").mockImplementation(() => ids.shift() as `${string}-${string}-${string}-${string}-${string}`);
+    vi.mocked(timeClockApiService.photoPunch).mockResolvedValue({ employee: employeeMatch, workShift: { id: "shift-1", startAt: nowIso() } });
+    await selectEmployee();
+
+    await user.click(ingreso());
+    await user.click(await screen.findByRole("button", { name: "Interrumpir captura" }));
+
+    expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("La cámara se pausó. Volvé a iniciar la captura.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(timeClockApiService.photoPunch).not.toHaveBeenCalled();
+
+    await user.click(ingreso());
+    expect(screen.queryByText("La cámara se pausó. Volvé a iniciar la captura.")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Confirmar captura" }));
+    await waitFor(() => expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0].requestId).toBe("22222222-2222-4222-8222-222222222222");
+    uuid.mockRestore();
   });
 });
