@@ -1310,6 +1310,8 @@ Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, fi
 
 Evidencia (F12-PERF-3/4, `docs/decisions/F12_PERF_3_4.md`): la foto se sube al primary de `PUNCH_PHOTO_STORAGE_PROVIDER` antes de la transacción, en la key `attendance/<año>/<mes>/<deviceId>/<requestId>.<ext>`. Su `StorageFile`, y con primary `neon_object_storage` su `StorageArchiveJob` hacia Google Drive, se escriben en la misma transacción que la fichada. Una fichada no confirmada no deja filas y su objeto se compensa. Google Drive nunca está en el camino del `201`. `thumbnail` se sigue validando, pero ya no se guarda.
 
+Post-proceso (PERF-5D, `docs/decisions/F12_PERF_5.md`): el `201` confirma fichada, jornada, `TimeEntry` y `TimeSegment` (con evidencia, auditoría e intento `COMPLETED`). Lo derivado ya no se calcula antes de responder: alertas de turno (`ShiftAlert`) y sus avisos (`SystemNotification`), la adopción del turno del ingreso (`WorkShift.shiftTemplateId`), el aviso `FALTA_SALIDA` y la resolución de `POSIBLE_OLVIDO_SALIDA` del rollover, y los desgloses automáticos de Motor B (`HourConceptBreakdown`). Ese trabajo queda en un job `ClockPunchPostProcessJob` (`ENTRY` / `ROLLOVER_ENTRY` / `EXIT`) escrito en la misma transacción que la fichada, y aparece segundos después. Una fichada nunca se confirma sin su job: si el job no se puede escribir, la fichada se revierte entera. Un fallo del post-proceso nunca invalida la fichada: el job reintenta con backoff y, agotado, queda `FAILED` (con `lastErrorCode`/`lastErrorMessage` y log `CLOCK_POSTPROCESS_FAILED`). La respuesta del endpoint no cambia.
+
 Etapa 6K — el fichador registra únicamente entrada/salida, nunca un tipo de jornada:
 
 - `hourConceptId` ya no se pide ni se manda desde la UI. El campo sigue existiendo en el schema como opcional, sólo por compatibilidad con clientes viejos; ya no hay `superRefine` que lo exija en `IN`.
@@ -1826,7 +1828,7 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación |
+| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. |
 | POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |

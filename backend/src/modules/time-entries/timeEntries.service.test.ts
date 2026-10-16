@@ -6,7 +6,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 import { prisma } from "../../shared/prisma/client";
 import { resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
-import { timeEntriesExportToCsv, timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
+import { timeEntriesExportToCsv, timeEntriesService, clockAttemptHash, notifyMissingExit, resolveShiftConcept } from "./timeEntries.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftEntry, evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
@@ -214,6 +214,20 @@ async function evidenceWrittenBy(repoFn: Mock, callIndex = 0) {
   const { prepareEvidence } = repoFn.mock.calls[callIndex]![0] as { prepareEvidence?: (tx: unknown, punchId: string) => Promise<Record<string, any>> };
   expect(prepareEvidence).toEqual(expect.any(Function));
   return prepareEvidence!(EVIDENCE_TX, EVIDENCE_PUNCH_ID);
+}
+
+// PERF-5D (docs/decisions/F12_PERF_5.md): el post-proceso de la fichada
+// (alertas, avisos, adopción de turno, Motor B) se encola en su transacción.
+// Igual que la evidencia, se corre el writer `postProcess` que recibió el
+// repositorio (mockeado) con una tx falsa y se devuelve la fila encolada.
+type EnqueuedPostProcessJob = { attendancePunchId: string; workShiftId: string; employeeId: string; kind: string; periods: string[]; payload: Record<string, any> };
+async function postProcessJobWrittenBy(repoFn: Mock, created: { attendancePunchId: string; workShiftId: string }, callIndex = 0): Promise<EnqueuedPostProcessJob> {
+  const { postProcess } = repoFn.mock.calls[callIndex]![0] as { postProcess?: (tx: unknown, created: unknown) => Promise<unknown> };
+  expect(postProcess).toEqual(expect.any(Function));
+  const create = vi.fn().mockResolvedValue({ id: "job-1" });
+  await postProcess!({ clockPunchPostProcessJob: { create } }, { attendancePunchId: created.attendancePunchId, workShift: { id: created.workShiftId } });
+  expect(create).toHaveBeenCalledTimes(1);
+  return create.mock.calls[0]![0].data as EnqueuedPostProcessJob;
 }
 
 // F6: id del ClockDevice autenticado; en producción sale de requireClockDevice.
@@ -855,27 +869,50 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     });
   });
 
-  describe("notifyMissingExit — Etapa 10E (best-effort: un fallo de notificación no rompe la fichada en vivo)", () => {
-    it("si notifyUsers falla durante el rollover automático, el ingreso igual se completa (no propaga la excepción)", async () => {
+  // PERF-5D: el aviso de falta de salida y la evaluación del ingreso nuevo ya
+  // no corren en el request del rollover; quedan en su job durable
+  // (ROLLOVER_ENTRY), probado en clockPunchPostProcess.worker.test.ts.
+  describe("rollover — PERF-5D: el post-proceso se encola en la transacción, no corre en el request", () => {
+    it("encola ROLLOVER_ENTRY con la jornada vencida (su startAt es el eventAt del aviso) y no notifica ni evalúa antes de responder", async () => {
       mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
       repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
-      mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([excedidaShift]));
 
       expect(result).toMatchObject({ previousOpenShift: { status: "FALTA_SALIDA" } });
+      const job = await postProcessJobWrittenBy(repo.rolloverExpiredOpenWorkShift, { attendancePunchId: "punch-in", workShiftId: "shift-new" });
+      expect(job).toMatchObject({
+        kind: "ROLLOVER_ENTRY",
+        attendancePunchId: "punch-in",
+        workShiftId: "shift-new",
+        employeeId: activeEmployee.id,
+        payload: { actualAt: expect.any(String), previousShift: { id: excedidaShift.id, startAt: excedidaShift.startAt.toISOString() } },
+      });
+      expect(job.periods).toEqual([expect.stringMatching(/^\d{4}-\d{2}$/)]);
+      expect(mockedNotifyUsers).not.toHaveBeenCalled();
+      expect(evaluateShiftEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("notifyMissingExit — Etapa 10E / PERF-5D", () => {
+    it("por defecto sigue siendo best-effort (cron de mantenimiento): un fallo de notifyUsers no se propaga", async () => {
+      mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await expect(notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt)).resolves.toBeUndefined();
+
       expect(errorSpy).toHaveBeenCalledWith("MISSING_EXIT_NOTIFY_FAILED", expect.objectContaining({ workShiftId: excedidaShift.id }));
       errorSpy.mockRestore();
     });
 
-    it("la notificación de falta de salida nace con eventAt = inicio de la jornada (no el momento del rollover)", async () => {
-      mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
-      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
+    it("desde el post-proceso durable escribe en la tx del paso con eventAt = inicio de la jornada, y con rethrow propaga el fallo (el paso se reintenta)", async () => {
+      const stepTx = { systemNotification: {} };
 
-      await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([excedidaShift]));
+      await notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt, { db: stepTx as never, rethrow: true });
+      expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }), stepTx);
 
-      expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }));
+      mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
+      await expect(notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt, { db: stepTx as never, rethrow: true })).rejects.toThrow("db hiccup");
     });
   });
 
@@ -900,29 +937,29 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
-    // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md)
-    it("llama a evaluateShiftExit una sola vez con los segmentos clasificados, sin un notifyClassificationAlerts separado (evita el aviso duplicado)", async () => {
+    // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md) + PERF-5D:
+    // una sola evaluación de salida con los segmentos clasificados, ahora en el
+    // job durable (sin un notifyClassificationAlerts separado).
+    it("encola la evaluación de salida (EXIT) con los segmentos clasificados, sin evaluarla ni notificar en el request", async () => {
       repo.closeOpenWorkShift.mockResolvedValueOnce(closedShiftResult());
 
       await timeEntriesService.clockPhotoPunch(punch("OUT"), RECEPTION_CLOCK_ORIGIN, undefined, context([recentOpenShift()]));
 
-      expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
-      const call = vi.mocked(evaluateShiftExit).mock.calls[0]!;
-      expect(call[0]).toBe(activeEmployee.id);
-      expect(call[1]).toBe("shift-open");
-      expect(call[3]).toEqual(expect.any(Array));
+      const job = await postProcessJobWrittenBy(repo.closeOpenWorkShift, { attendancePunchId: "punch-out", workShiftId: "shift-open" });
+      expect(job).toMatchObject({ kind: "EXIT", attendancePunchId: "punch-out", workShiftId: "shift-open", employeeId: activeEmployee.id });
+      expect(job.payload.segments.length).toBeGreaterThan(0);
+      for (const segment of job.payload.segments) expect(segment).toEqual({ startAt: expect.any(String), minutes: expect.any(Number), conceptStatus: expect.any(String) });
+      expect(evaluateShiftExit).not.toHaveBeenCalled();
       expect(notifyClassificationAlerts).not.toHaveBeenCalled();
     });
 
-    it("causa raíz del 503 reportado en POST /clock/photo-punch: si evaluateShiftExit falla, la salida igual se confirma", async () => {
+    it("causa raíz del 503 reportado en POST /clock/photo-punch: la evaluación de salida ya no corre antes de responder, así que no puede afectar la salida confirmada", async () => {
       repo.closeOpenWorkShift.mockResolvedValueOnce(closedShiftResult());
-      vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("fallo inesperado evaluando la salida"));
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const result = await timeEntriesService.clockPhotoPunch(punch("OUT"), RECEPTION_CLOCK_ORIGIN, undefined, context([recentOpenShift()]));
 
       expect(result.workShift.id).toBe("shift-open");
-      errorSpy.mockRestore();
+      expect(evaluateShiftExit).not.toHaveBeenCalled();
     });
   });
 });
@@ -1931,7 +1968,9 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       repo.findClockValidationContext.mockResolvedValue(context());
       repo.createClockPunchAttempt.mockResolvedValueOnce({});
       repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
-      vi.mocked(evaluateShiftEntry).mockRejectedValueOnce(new Error("alert insert failed"));
+      // PERF-5D: lo único que queda después del commit en el request es la
+      // invalidación de cachés; un fallo ahí no desconoce la fichada.
+      mockedClearAuditCaches.mockImplementationOnce(() => { throw new Error("cache clear failed"); });
       repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, status: "COMPLETED", response: stored });
 
       const result = await timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN);
@@ -1946,9 +1985,9 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
     it("salida: un paso posterior al commit que falla nunca compensa la evidencia de la salida confirmada", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open", startAt: openShift().startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null } });
-      vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("exit evaluation failed"));
+      mockedClearAuditCaches.mockImplementationOnce(() => { throw new Error("cache clear failed"); });
 
-      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]))).resolves.toMatchObject({ workShift: { id: "shift-open" } });
+      await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]))).rejects.toThrow("cache clear failed");
       expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
       errorSpy.mockRestore();
     });
@@ -2076,7 +2115,7 @@ describe("PERF-5A — salida sin lecturas redundantes", () => {
     env.CLOCK_PUNCH_COOLDOWN_SECONDS = originalCooldown;
   });
 
-  it("cierra sin pedir los TimeEntry de vuelta, con el kind de cada tramo, y evalúa la salida con la jornada que devolvió la transacción", async () => {
+  it("cierra sin pedir los TimeEntry de vuelta, con el kind de cada tramo, y deja la evaluación de salida en el job durable (PERF-5D)", async () => {
     const closed = { id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), endAt: new Date(), totalMinutes: 60, endPunchId: "punch-out", shiftTemplateId: "template-1" };
     repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: closed, entries: [], timeSegments: [] });
 
@@ -2086,7 +2125,10 @@ describe("PERF-5A — salida sin lecturas redundantes", () => {
     expect(call.returnEntries).toBe(false);
     expect(call.segments.length).toBeGreaterThan(0);
     for (const segment of call.segments) expect(segment.hourConceptKind).toBe("NORMAL");
-    expect(evaluateShiftExit).toHaveBeenCalledWith(activeEmployee.id, "shift-open", expect.any(Date), expect.any(Array), closed);
+    // PERF-5D: el job relee la jornada en la transacción de su paso (con el
+    // turno que adoptó el ingreso); acá no se evalúa.
+    expect(evaluateShiftExit).not.toHaveBeenCalled();
+    await expect(postProcessJobWrittenBy(repo.closeOpenWorkShift, { attendancePunchId: "punch-out", workShiftId: "shift-open" })).resolves.toMatchObject({ kind: "EXIT" });
   });
 });
 
@@ -2140,6 +2182,7 @@ describe("PERF-5B — contexto de la fichada y lecturas en paralelo", () => {
   it("un IN de un cliente viejo con hourConceptId pide ese concepto (y sigue rechazando uno que no sea la base)", async () => {
     repo.findClockValidationContext.mockResolvedValue(context());
     repo.findDefaultHourConcept.mockResolvedValueOnce({ hourConcept: { id: "concept-sereno", name: "Sereno", status: "ACTIVO", systemRole: null } });
+    repo.failClockPunchAttempt.mockResolvedValueOnce({});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await expect(timeEntriesService.clockPhotoPunchIdempotent({ ...punch("IN"), hourConceptId: "concept-sereno" }, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_HOUR_CONCEPT_NOT_ALLOWED" });
@@ -2819,6 +2862,28 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
       expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id, period: "2026-09" }));
     });
 
+    // PERF-5D: la evaluación de salida usa el turno que adoptó el ingreso, así
+    // que antes del cierre se procesa el post-proceso pendiente de esa jornada.
+    it("PERF-5D — procesa primero el post-proceso pendiente de la jornada y recién después la cierra", async () => {
+      repo.findWorkShiftForAdmin.mockResolvedValue(adminCloseFixture());
+      repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+      const settle = vi.fn().mockResolvedValue({ attempted: 1 });
+
+      await timeEntriesService.closeWorkShiftManually(
+        "shift-open",
+        { endAt: new Date("2026-09-10T16:00:00.000Z"), reason: "Ajuste" } as unknown as Parameters<typeof timeEntriesService.closeWorkShiftManually>[1],
+        adminUser,
+        undefined,
+        { settleClockPunchPostProcess: settle },
+      );
+
+      expect(settle).toHaveBeenCalledWith({ workShiftId: "shift-open" });
+      expect(settle.mock.invocationCallOrder[0]).toBeLessThan(repo.closeOpenWorkShift.mock.invocationCallOrder[0]!);
+      expect(evaluateShiftExit).toHaveBeenCalledTimes(1);
+      // El cierre manual sigue evaluando en línea, sin encolar.
+      expect((repo.closeOpenWorkShift.mock.calls[0]![0] as { postProcess?: unknown }).postProcess).toBeUndefined();
+    });
+
     it("un fallo de Motor B no bloquea el cierre administrativo (sigue devolviendo éxito)", async () => {
       repo.findWorkShiftForAdmin.mockResolvedValue(adminCloseFixture());
       repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
@@ -2843,7 +2908,8 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
       };
     }
 
-    it("SALIDA: dispara la sincronización tras cerrar la jornada", async () => {
+    // PERF-5D: Motor B sale del request; el job EXIT lo recalcula por período.
+    it("SALIDA: encola la sincronización (períodos de los tramos) en el job durable, sin recalcular antes de responder", async () => {
       repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
       const input = {
         requestId: "22222222-2222-2222-2222-222222222222",
@@ -2855,8 +2921,27 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
 
       await timeEntriesService.clockPhotoPunch(input, RECEPTION_CLOCK_ORIGIN, undefined, exitValidationContext() as never);
 
-      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledTimes(1);
-      expect(mockedRecalculateForEmployeePeriod).toHaveBeenCalledWith(expect.objectContaining({ employeeId: activeEmployee.id }));
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
+      const job = await postProcessJobWrittenBy(repo.closeOpenWorkShift, { attendancePunchId: "punch-out", workShiftId: "shift-open" });
+      expect(job).toMatchObject({ kind: "EXIT", employeeId: activeEmployee.id });
+      expect(job.periods).toHaveLength(1);
+    });
+
+    it("SALIDA que cruza de mes (31/08 22:00 → 01/09 06:00 ART): el job lleva ambos períodos, una vez cada uno", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-01T09:00:00.000Z"));
+      try {
+        repo.closeOpenWorkShift.mockResolvedValue({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
+        const input = { requestId: "44444444-4444-4444-8444-444444444444", employeeId: activeEmployee.id, punchType: "OUT" as const, photo: bigPhotoDataUrl(), faceValidationStatus: "VALID" as const };
+        const context = { ...activeEmployee, workShifts: [{ id: "shift-open", startAt: new Date("2026-09-01T01:00:00.000Z"), hourConcept: normalConcept }], hourConcepts: [] };
+
+        await timeEntriesService.clockPhotoPunch(input, RECEPTION_CLOCK_ORIGIN, undefined, context as never);
+
+        const job = await postProcessJobWrittenBy(repo.closeOpenWorkShift, { attendancePunchId: "punch-out", workShiftId: "shift-open" });
+        expect([...job.periods].sort()).toEqual(["2026-08", "2026-09"]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("E) INGRESO: nunca dispara la sincronización — la jornada queda ABIERTA, no PROCESADO", async () => {
@@ -2875,10 +2960,13 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
     });
   });
 
-  describe("D) clockPhotoPunch — un fallo de Motor B no bloquea la salida", () => {
-    it("PERIOD_CLOSED de Motor B: la salida igual se confirma (sigue devolviendo éxito)", async () => {
+  // PERF-5D: Motor B ya no corre en el request de la salida, así que ni un
+  // PERIOD_CLOSED ni un fallo suyo pueden afectarla; su manejo dentro del job
+  // (PERIOD_CLOSED da el paso por cumplido; otro error reintenta) se prueba en
+  // clockPunchPostProcess.worker.test.ts.
+  describe("D) clockPhotoPunch — Motor B fuera del request no bloquea la salida", () => {
+    it("la salida se confirma sin recalcular Motor B antes de responder", async () => {
       repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open" }, entries: [], timeSegments: [] });
-      mockedRecalculateForEmployeePeriod.mockRejectedValueOnce(new AppError("The period is closed for recalculation", 409, "PERIOD_CLOSED"));
       const input = {
         requestId: "55555555-5555-5555-5555-555555555555",
         employeeId: activeEmployee.id,
@@ -2895,6 +2983,7 @@ describe("Etapa 15M.2 — sincronización automática de HourConceptBreakdown al
       const result = await timeEntriesService.clockPhotoPunch(input, RECEPTION_CLOCK_ORIGIN, undefined, context as never);
 
       expect(result.workShift.id).toBe("shift-open");
+      expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
     });
   });
 

@@ -60,4 +60,21 @@ describe("automaticHourConceptBreakdownsRepository", () => {
       source: "AUTOMATIC", status: "BORRADOR", startAt: row.startAt, endAt: row.endAt, appliedMultiplier: 2,
     })] });
   });
+
+  // PERF-5D: el hook corre DENTRO de la transacción serializable, después de
+  // reemplazar los desgloses y con su resultado; si falla, nada se confirma.
+  it("afterWrite corre en la misma transacción serializable, después del reemplazo y con su resultado", async () => {
+    const tx = {
+      ...closureGuardMocks(),
+      hourConceptBreakdown: { deleteMany: vi.fn().mockResolvedValue({ count: 3 }), createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    };
+    (prisma.$transaction as Mock).mockImplementation(async (callback: (value: typeof tx) => unknown) => callback(tx));
+    const afterWrite = vi.fn().mockResolvedValue(undefined);
+
+    await expect(repository.replaceAutomatic("employee-1", "2026-08", [], null, afterWrite)).resolves.toEqual({ deleted: 3, created: 0 });
+
+    expect(afterWrite).toHaveBeenCalledWith(tx, { deleted: 3, created: 0 });
+    expect(afterWrite.mock.invocationCallOrder[0]).toBeGreaterThan(tx.hourConceptBreakdown.deleteMany.mock.invocationCallOrder[0]!);
+    expect((prisma.$transaction as Mock).mock.calls[0]![1]).toEqual({ isolationLevel: "Serializable" });
+  });
 });

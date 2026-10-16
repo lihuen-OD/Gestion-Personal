@@ -5,6 +5,7 @@ import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObs
 import { attendanceObservationsCache, attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
+import { drainClockPunchPostProcess } from "../clock/clockPunchPostProcess.worker";
 
 function userScopedCacheKey(req: Parameters<RequestHandler>[0]) {
   return `${req.user?.id || "anon"}:${req.user?.role || "none"}:${req.originalUrl}`;
@@ -129,7 +130,7 @@ export const timeEntriesController = {
   }) satisfies RequestHandler,
 
   closeWorkShiftManually: (async (req, res) => {
-    const result = await timeEntriesService.closeWorkShiftManually(requireParam(req, "id"), req.body as AdminCloseWorkShiftInput, req.user!, requestAuditContext(req));
+    const result = await timeEntriesService.closeWorkShiftManually(requireParam(req, "id"), req.body as AdminCloseWorkShiftInput, req.user!, requestAuditContext(req), { settleClockPunchPostProcess: (scope) => drainClockPunchPostProcess(scope, { waitMs: 5_000 }) });
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
     res.json({ data: result });

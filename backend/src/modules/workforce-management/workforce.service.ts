@@ -18,6 +18,7 @@ import { auditClosureRecalculations } from "./closureRecalculationAudit";
 import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpretation } from "./specialHourReinterpretation";
 import { describeReinterpretation, reinterpretationMetadata } from "./specialHourReinterpretationSummary";
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
+import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -49,10 +50,12 @@ async function ensureVisible(employeeIds: string[], user: Express.AuthUser) {
 // productor que la conoce (ShiftAlert.actualAt, WorkShift.startAt, ...). Se
 // persiste una sola vez y no se vuelve a derivar. Sin hecho propio se omite y
 // la DB usa el mismo instante que createdAt (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
-export async function notifyUsers(userIds: string[], input: { type: string; title: string; message: string; entityType?: string; entityId?: string; link?: string; priority?: string; eventAt?: Date }) {
+// `db`: PERF-5D — el post-proceso de una fichada la escribe en la transacción
+// de su paso (efectos + marca del paso juntos); el resto usa el cliente global.
+export async function notifyUsers(userIds: string[], input: { type: string; title: string; message: string; entityType?: string; entityId?: string; link?: string; priority?: string; eventAt?: Date }, db: Pick<PrismaTransactionClient, "systemNotification"> = prisma) {
   const recipients = Array.from(new Set(userIds.filter(Boolean)));
   if (!recipients.length) return;
-  await prisma.systemNotification.createMany({ data: recipients.map((recipientUserId) => ({ recipientUserId, ...input })) });
+  await db.systemNotification.createMany({ data: recipients.map((recipientUserId) => ({ recipientUserId, ...input })) });
 }
 
 export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
@@ -277,9 +280,17 @@ export const workforceService = {
   async closures(period: string, user: Express.AuthUser) {
     return prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, submittedBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
   },
-  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext) {
+  // `settleClockPunchPostProcess` (PERF-5D): lo pasa el controller (el worker
+  // del post-proceso de fichadas depende de este módulo; así no hay ciclo).
+  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { employeeIds: string[] }) => Promise<unknown> } = {}) {
     if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
     await ensureVisible(employeeIds, user);
+    // PERF-5D (docs/decisions/F12_PERF_5.md): Motor B de una salida corre en
+    // el post-proceso durable de la fichada. Antes del snapshot se procesa en
+    // línea lo pendiente de estos legajos (incluidos jobs FAILED); si algo
+    // sigue sin terminar, el envío se bloquea (409) en vez de cerrar con
+    // desgloses incompletos.
+    await hooks.settleClockPunchPostProcess?.({ employeeIds });
     // Snapshot de auditoría del cierre (closureSnapshot.ts): base, Horas
     // normales residuales, conceptos, total trabajado y equivalencia con el
     // mismo modelo y criterio de estado que la grilla por legajo.
@@ -288,6 +299,7 @@ export const workforceService = {
     // (carga, fichada, reinterpretación) puede intercalarse con el envío.
     const result = await execute(() => prisma.$transaction(async (tx) => {
       await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
+      await assertClockPunchPostProcessSettled(tx, employeeIds, period);
       const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
       const saved = [];
       for (const employeeId of employeeIds) {

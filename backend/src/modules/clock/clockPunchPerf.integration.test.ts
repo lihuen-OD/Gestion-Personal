@@ -9,6 +9,10 @@
  * BEGIN..COMMIT; POST = lo que el request todavía ejecuta después del COMMIT y antes de responder.
  * Los presupuestos son techos: bajar un número es una mejora, superarlo es una regresión.
  *
+ * PERF-5D: alertas, avisos, adopción de turno y Motor B corren en el post-proceso durable
+ * (ClockPunchPostProcessJob). El worker no corre dentro de la app de este test: cada caso procesa
+ * los jobs explícitamente antes del snapshot, que sigue siendo el mismo de antes de PERF-5.
+ *
  * Opt-in: sólo corre con `CLOCK_PERF_IT_DATABASE_URL` → `localhost`, base `clock_it*` PROPIA, con el
  * schema de este commit (`DATABASE_URL=<url> npx prisma db push --skip-generate`). VACÍA la base al
  * empezar. Nunca usa el DATABASE_URL del .env y verifica `current_database()` antes de escribir.
@@ -34,6 +38,7 @@ type Modules = {
   env: typeof import("../../config/env").env;
   prisma: typeof import("../../shared/prisma/client").prisma;
   repository: typeof import("../time-entries/timeEntries.repository").timeEntriesRepository;
+  worker: typeof import("./clockPunchPostProcess.worker");
 };
 
 // Techos de sentencias SQL por fase para este fixture (ver F12_PERF_5.md §Presupuesto).
@@ -41,10 +46,11 @@ type Modules = {
 // PERF-5A: IN 5/10/9, OUT 16/17/22, ROLLOVER 6/15/17.
 // PERF-5B: IN 4/10/9, OUT 15/17/22, ROLLOVER 5/15/17.
 // PERF-5C: IN 4/10/9, OUT 15/16/22, ROLLOVER 5/15/17.
+// PERF-5D: IN 4/11/0, OUT 15/17/0, ROLLOVER 5/16/0 (+1 en TX: el INSERT del job; POST = 0).
 const BUDGET = {
-  IN: { pre: 4, tx: 10, post: 9 },
-  OUT: { pre: 15, tx: 16, post: 22 },
-  ROLLOVER: { pre: 5, tx: 15, post: 17 },
+  IN: { pre: 4, tx: 11, post: 0 },
+  OUT: { pre: 15, tx: 17, post: 0 },
+  ROLLOVER: { pre: 5, tx: 16, post: 0 },
 } as const;
 
 function describeSql(sql: string): Statement {
@@ -71,6 +77,19 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
   let originalPunchPhotoProvider: Modules["env"]["PUNCH_PHOTO_STORAGE_PROVIDER"];
   let recording: Statement[] | null = null;
   const ids: Record<string, string> = {};
+  // PERF-5D: sentencias del post-proceso (fuera del request), sólo informativas.
+  const postProcessReport: Record<string, number> = {};
+
+  /** Procesa todo lo pendiente del outbox, como haría el worker después del 201. */
+  async function settlePostProcess(kind: string) {
+    recording = [];
+    const outcomes = await m.worker.processClockPunchPostProcessBatch(50);
+    postProcessReport[kind] = recording.length;
+    recording = null;
+    expect(outcomes.length, `${kind}: jobs procesados`).toBeGreaterThan(0);
+    expect(outcomes.every((outcome) => outcome.processed && outcome.status === "COMPLETED"), `${kind}: ${JSON.stringify(outcomes)}`).toBe(true);
+    expect(await holder.clockPunchPostProcessJob.count({ where: { status: { not: "COMPLETED" } } })).toBe(0);
+  }
 
   async function punch(employeeId: string, punchType: "IN" | "OUT") {
     // La presencia del dispositivo (touchIfStale, fire-and-forget) no debe ensuciar el conteo.
@@ -162,14 +181,15 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     }
     process.env.DATABASE_URL = url;
     delete (globalThis as { prisma?: unknown }).prisma;
-    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, credentials] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, credentials, worker] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
       import("../time-entries/timeEntries.repository"),
       import("../../shared/security/clockDeviceCredentials"),
+      import("./clockPunchPostProcess.worker"),
     ]);
-    m = { env, prisma, repository: timeEntriesRepository };
+    m = { env, prisma, repository: timeEntriesRepository, worker };
     const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
     if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
     holder = new PrismaClient({ datasourceUrl: url });
@@ -219,6 +239,7 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     expect(entry.status).toBe(201);
     report.IN = entry.phases;
     const workShiftId = entry.data.workShift.id as string;
+    await settlePostProcess("IN");
     const afterIn = await functionalSnapshot(workShiftId);
     expect(afterIn).toMatchSnapshot("after IN");
 
@@ -227,6 +248,7 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     expect(exit.status).toBe(201);
     report.OUT = exit.phases;
     expect(exit.data.workShift).toMatchObject({ id: workShiftId, totalMinutes: 90, totalHours: 1.5 });
+    await settlePostProcess("OUT");
     expect(await functionalSnapshot(workShiftId)).toMatchSnapshot("after OUT");
   });
 
@@ -238,6 +260,7 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     expect(entry.status).toBe(201);
     report.ROLLOVER = entry.phases;
     expect(entry.data.previousOpenShift).toMatchObject({ id: oldShiftId, status: "FALTA_SALIDA" });
+    await settlePostProcess("ROLLOVER");
     expect({ previous: await functionalSnapshot(oldShiftId), next: await functionalSnapshot(entry.data.workShift.id) }).toMatchSnapshot("rollover");
   });
 
@@ -303,6 +326,7 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
 
   it("presupuesto de sentencias SQL por fase (techos; ver F12_PERF_5.md)", () => {
     console.info("PERF5_QUERY_BUDGET", JSON.stringify(report));
+    console.info("PERF5_POSTPROCESS_STATEMENTS", JSON.stringify(postProcessReport));
     for (const [kind, budget] of Object.entries(BUDGET)) {
       const actual = report[kind];
       expect(actual, kind).toBeDefined();

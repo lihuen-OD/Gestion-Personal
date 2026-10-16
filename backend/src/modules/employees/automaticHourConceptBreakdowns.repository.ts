@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
 import type { CalculatedAutomaticBreakdown } from "./automaticHourConceptBreakdowns";
 
@@ -52,7 +52,11 @@ export const automaticHourConceptBreakdownsRepository = {
   // §14): sólo se regeneran los desgloses de conceptos activos. Los de un
   // concepto INACTIVO quedan tal cual — sin esto, la próxima jornada cerrada
   // en el período los borraba sin volver a crearlos.
-  replaceAutomatic(employeeId: string, period: string, rows: Array<CalculatedAutomaticBreakdown & { appliedMultiplier: number }>, createdByUserId?: string | null) {
+  // `afterWrite` (PERF-5D): corre en ESTA transacción después de reemplazar los
+  // desgloses — el post-proceso de una fichada escribe ahí la auditoría y la
+  // marca de su paso, así que efectos, auditoría y marca se confirman juntos
+  // (también en el reintento por conflicto de serialización).
+  replaceAutomatic(employeeId: string, period: string, rows: Array<CalculatedAutomaticBreakdown & { appliedMultiplier: number }>, createdByUserId?: string | null, afterWrite?: (tx: PrismaTransactionClient, outcome: { deleted: number; created: number }) => Promise<void>) {
     return prisma.$transaction(async (tx) => {
       // D-5: un recálculo automático nunca modifica un período protegido;
       // verificado dentro de la transacción (contempla un envío concurrente).
@@ -63,7 +67,9 @@ export const automaticHourConceptBreakdownsRepository = {
           data: rows.map((row) => ({ ...row, employeeId, source: "AUTOMATIC", status: "BORRADOR", createdByUserId: createdByUserId || null })),
         });
       }
-      return { deleted: deleted.count, created: rows.length };
+      const outcome = { deleted: deleted.count, created: rows.length };
+      if (afterWrite) await afterWrite(tx, outcome);
+      return outcome;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   },
 };

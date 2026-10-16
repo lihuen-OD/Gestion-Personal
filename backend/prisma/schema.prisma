@@ -197,6 +197,20 @@ enum StorageArchiveJobStatus {
   FAILED
 }
 
+// PERF-5D (docs/decisions/F12_PERF_5.md): post-proceso durable de una fichada.
+enum ClockPunchPostProcessKind {
+  ENTRY
+  EXIT
+  ROLLOVER_ENTRY
+}
+
+enum ClockPunchPostProcessJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 enum HourConceptKind {
   NORMAL
   EXTRA
@@ -888,6 +902,7 @@ model Employee {
   blockHistory              EmployeeBlockHistory[]
   novelties                 Novelty[]
   timeEntries               TimeEntry[]
+  clockPunchPostProcessJobs ClockPunchPostProcessJob[]
   hourConceptBreakdowns     HourConceptBreakdown[]
   workShifts                WorkShift[]
   attendancePunches         AttendancePunch[]
@@ -1616,17 +1631,18 @@ model WorkShift {
   closedAt          DateTime?              @db.Timestamptz(3)
   updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
 
-  employee              Employee               @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept           HourConcept?           @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
-  startPunch            AttendancePunch?       @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
-  endPunch              AttendancePunch?       @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
+  employee              Employee                   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept           HourConcept?               @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
+  startPunch            AttendancePunch?           @relation("WorkShiftStartPunch", fields: [startPunchId], references: [id], onDelete: SetNull)
+  endPunch              AttendancePunch?           @relation("WorkShiftEndPunch", fields: [endPunchId], references: [id], onDelete: SetNull)
   timeEntries           TimeEntry[]
   timeSegments          TimeSegment[]
   hourConceptBreakdowns HourConceptBreakdown[]
-  shiftTemplate         ShiftTemplate?         @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
+  shiftTemplate         ShiftTemplate?             @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
   shiftAlerts           ShiftAlert[]
-  createdBy             User?                  @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  reviewedBy            User?                  @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  postProcessJobs       ClockPunchPostProcessJob[]
+  createdBy             User?                      @relation("WorkShiftCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  reviewedBy            User?                      @relation("WorkShiftReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, startAt])
   @@index([hourConceptId])
@@ -2067,13 +2083,14 @@ model AttendancePunch {
   importedAt           DateTime?              @db.Timestamptz(3)
   createdAt            DateTime               @default(now()) @db.Timestamptz(3)
 
-  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  device          ClockDevice? @relation(fields: [deviceId], references: [id], onDelete: Restrict)
-  photoFile       StorageFile? @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
-  thumbnailFile   StorageFile? @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
-  startWorkShifts WorkShift[]  @relation("WorkShiftStartPunch")
-  endWorkShifts   WorkShift[]  @relation("WorkShiftEndPunch")
-  reviewedBy      User?        @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  employee        Employee                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  device          ClockDevice?              @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  photoFile       StorageFile?              @relation("AttendancePunchPhotoFile", fields: [photoFileId], references: [id], onDelete: SetNull)
+  thumbnailFile   StorageFile?              @relation("AttendancePunchThumbnailFile", fields: [thumbnailFileId], references: [id], onDelete: SetNull)
+  startWorkShifts WorkShift[]               @relation("WorkShiftStartPunch")
+  endWorkShifts   WorkShift[]               @relation("WorkShiftEndPunch")
+  postProcessJob  ClockPunchPostProcessJob?
+  reviewedBy      User?                     @relation(fields: [reviewedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, timestamp])
   @@index([status, timestamp])
@@ -2388,13 +2405,13 @@ model StorageFile {
   createdAt           DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt           DateTime          @updatedAt @db.Timestamptz(3)
 
-  employee                      Employee?          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  uploadedBy                    User?              @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-  deletedBy                     User?              @relation("StorageFileDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
-  employeeDocuments             EmployeeDocument[] @relation("EmployeeDocumentStorageFile")
-  attendancePunchPhotoLinks     AttendancePunch[]  @relation("AttendancePunchPhotoFile")
-  attendancePunchThumbnailLinks AttendancePunch[]  @relation("AttendancePunchThumbnailFile")
-  archiveJobs                    StorageArchiveJob[]
+  employee                      Employee?           @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  uploadedBy                    User?               @relation("StorageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  deletedBy                     User?               @relation("StorageFileDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  employeeDocuments             EmployeeDocument[]  @relation("EmployeeDocumentStorageFile")
+  attendancePunchPhotoLinks     AttendancePunch[]   @relation("AttendancePunchPhotoFile")
+  attendancePunchThumbnailLinks AttendancePunch[]   @relation("AttendancePunchThumbnailFile")
+  archiveJobs                   StorageArchiveJob[]
 
   @@index([storageProvider])
   @@index([storageKey])
@@ -2426,6 +2443,44 @@ model StorageArchiveJob {
   @@unique([sourceStorageFileId, targetProvider])
   @@index([status, nextAttemptAt])
   @@index([status, leaseExpiresAt])
+}
+
+// PERF-5D (docs/decisions/F12_PERF_5.md): outbox del trabajo derivado de una
+// fichada confirmada (adopción de turno, alertas, notificaciones, Motor B). Se
+// crea en la MISMA transacción que la fichada: fichada confirmada ⇒ job
+// durable. Lo procesa clockPunchPostProcess.worker fuera del HTTP 201, en
+// orden por jornada (un EXIT nunca corre antes que el ENTRY de su jornada).
+model ClockPunchPostProcessJob {
+  id                String                         @id @default(uuid())
+  attendancePunchId String                         @unique
+  workShiftId       String
+  employeeId        String
+  kind              ClockPunchPostProcessKind
+  status            ClockPunchPostProcessJobStatus @default(PENDING)
+  // Períodos (YYYY-MM) cuyos derivados escribe: el envío del cierre de esos
+  // períodos espera a que el job termine.
+  periods           String[]
+  payload           Json
+  // Pasos ya aplicados; cada paso se marca en la misma transacción que sus efectos.
+  stepsCompleted    String[]                       @default([])
+  attemptCount      Int                            @default(0)
+  nextAttemptAt     DateTime                       @default(now()) @db.Timestamptz(3)
+  leaseExpiresAt    DateTime?                      @db.Timestamptz(3)
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  startedAt         DateTime?                      @db.Timestamptz(3)
+  completedAt       DateTime?                      @db.Timestamptz(3)
+  createdAt         DateTime                       @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime                       @updatedAt @db.Timestamptz(3)
+
+  attendancePunch AttendancePunch @relation(fields: [attendancePunchId], references: [id], onDelete: Restrict)
+  workShift       WorkShift       @relation(fields: [workShiftId], references: [id], onDelete: Restrict)
+  employee        Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
+  @@index([workShiftId, createdAt])
+  @@index([employeeId, status])
 }
 
 model AuditLog {

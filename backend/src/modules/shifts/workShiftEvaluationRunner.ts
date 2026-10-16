@@ -1,5 +1,5 @@
 import type { WorkShift } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
@@ -98,6 +98,14 @@ const messageByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
     "La jornada registrada no tuvo superposición con el turno asignado para ese día.",
 };
 
+/**
+ * PERF-5D (docs/decisions/F12_PERF_5.md): el post-proceso durable de una fichada
+ * corre estas evaluaciones dentro de la transacción de su paso (`db`), junto con
+ * la marca del paso: un reintento nunca duplica alertas ni avisos. Las lecturas
+ * siguen yendo por el cliente global; sólo las escrituras usan `db`.
+ */
+export type ShiftEvaluationOptions = { db?: PrismaTransactionClient };
+
 export function toTemplateRef(template: ShiftTemplateLike): ShiftTemplateRef {
   return {
     id: template.id,
@@ -147,12 +155,14 @@ export async function createShiftAlert(input: {
   // docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md). Default `true`: no
   // cambia el comportamiento de ningún llamador existente que no lo pase.
   notify?: boolean;
+  db?: PrismaTransactionClient;
 }) {
   // El override solo existe para casos puntuales que ya tienen su propia
   // severidad de negocio explícita (ej. jornada abierta excedida bajo
   // régimen ALERT_ONLY) — no reemplaza la severidad por defecto del tipo.
   const severity = input.severity ?? severityByAlertType[input.type];
-  const alert = await prisma.shiftAlert.upsert({
+  const db = input.db ?? prisma;
+  const alert = await db.shiftAlert.upsert({
     where: { workShiftId_type: { workShiftId: input.workShiftId, type: input.type } },
     create: { employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity, scheduledAt: input.scheduledAt, actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined },
     update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes ?? undefined, severity, status: "PENDIENTE" },
@@ -174,8 +184,11 @@ export async function createShiftAlert(input: {
       eventAt: input.actualAt,
       link: "/asistencia",
       priority: "ALTA",
-    });
+    }, db);
   } catch (error) {
+    // PERF-5D: dentro de una transacción el fallo ya la abortó; se propaga y
+    // el paso entero (alerta + aviso) se reintenta junto.
+    if (input.db) throw error;
     console.error("SHIFT_ALERT_NOTIFY_FAILED", {
       severity: "warning",
       shiftAlertId: alert.id,
@@ -249,7 +262,8 @@ async function isOutOfShiftAlertSuppressed(employeeId: string, actualAt: Date, a
   return shouldSuppressMissingShiftAlert(regime);
 }
 
-export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date) {
+export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date, options: ShiftEvaluationOptions = {}) {
+  const db = options.db ?? prisma;
   const { employeeAssignments, activeTemplates } = await loadMatchingContext(employeeId);
   const match = matchShiftForEmployee({ actualAt, employeeAssignments, activeTemplates });
 
@@ -273,7 +287,7 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // como defensa en profundidad (nunca hace daño, documenta la invariante) —
   // no como el mecanismo que evita la adopción, que ahora es estructural.
   if (match.template && match.case !== "GENERAL_UNASSIGNED") {
-    await prisma.workShift.update({
+    await db.workShift.update({
       where: { id: workShiftId },
       data: { shiftTemplateId: match.template.id, maxAllowedMinutes: match.template.absoluteOpenShiftLimitMinutes },
     });
@@ -281,12 +295,12 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
 
   const configurationAlertType = alertTypeForMatch(match);
   if (configurationAlertType && !(await isOutOfShiftAlertSuppressed(employeeId, actualAt, configurationAlertType))) {
-    await createShiftAlert({ employeeId, workShiftId, type: configurationAlertType, actualAt, differenceMinutes: match.differenceMinutes });
+    await createShiftAlert({ employeeId, workShiftId, type: configurationAlertType, actualAt, differenceMinutes: match.differenceMinutes, db: options.db });
   }
 
   const punctuality = evaluateEntryPunctuality(match);
   if (punctuality.evaluated && punctuality.lateArrival) {
-    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_TARDE", actualAt, differenceMinutes: punctuality.differenceMinutes });
+    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_TARDE", actualAt, differenceMinutes: punctuality.differenceMinutes, db: options.db });
   }
   // Etapa 13A: contraparte del bloque anterior — ingreso antes del horario/
   // tolerancia del turno YA asignado al empleado (nunca contra un turno
@@ -296,7 +310,7 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // ni bloquear la fichada.
   if (punctuality.evaluated && punctuality.earlyArrival) {
     const severity = isEarlyArrivalReviewRequired(punctuality.differenceMinutes ?? 0) ? "ADVERTENCIA" : undefined;
-    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_ANTICIPADO", actualAt, differenceMinutes: punctuality.differenceMinutes, severity });
+    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_ANTICIPADO", actualAt, differenceMinutes: punctuality.differenceMinutes, severity, db: options.db });
   }
 
   // Etapa 13I (docs/decisions/SHIFT_REST_BETWEEN_SHIFTS_DISABLED_13I.md):
@@ -339,15 +353,15 @@ async function resolveMatchForExit(employeeId: string, shiftTemplateId: string |
 // solo actualiza su status — no-op si no había ninguna alerta PENDIENTE para
 // esta jornada, y nunca toca alertas de otro workShiftId/empleado (el
 // update siempre filtra por este workShiftId puntual).
-export async function resolveOpenShiftOverflowAlert(workShiftId: string, note: string) {
-  await prisma.shiftAlert.updateMany({
+export async function resolveOpenShiftOverflowAlert(workShiftId: string, note: string, db: Pick<PrismaTransactionClient, "shiftAlert"> = prisma) {
+  await db.shiftAlert.updateMany({
     where: { workShiftId, type: "POSIBLE_OLVIDO_SALIDA", status: "PENDIENTE" },
     data: { status: "RESUELTA", resolvedAt: new Date(), resolutionNote: note },
   });
 }
 
-async function resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId: string) {
-  await prisma.shiftAlert.updateMany({
+async function resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId: string, db: Pick<PrismaTransactionClient, "shiftAlert"> = prisma) {
+  await db.shiftAlert.updateMany({
     where: {
       workShiftId,
       type: { in: ["INGRESO_TARDE", "INGRESO_ANTICIPADO", "SALIDA_ANTICIPADA", "SALIDA_TARDIA"] },
@@ -371,7 +385,7 @@ async function applyClassificationAlerts(
   employeeId: string,
   workShiftId: string,
   segments: ClassifiedSegmentAlertInput[],
-  options: { notifyConceptoNoHabilitado: boolean },
+  options: { notifyConceptoNoHabilitado: boolean; db?: PrismaTransactionClient },
 ) {
   const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => segments.filter((segment) => segment.conceptStatus === status);
 
@@ -384,6 +398,7 @@ async function applyClassificationAlerts(
       actualAt: noHabilitado[0]!.startAt,
       differenceMinutes: noHabilitado.reduce((sum, segment) => sum + segment.minutes, 0),
       notify: options.notifyConceptoNoHabilitado,
+      db: options.db,
     });
   }
 
@@ -467,11 +482,14 @@ export async function evaluateShiftExit(
   // PERF-5A: la jornada recién cerrada, tal como la devolvió su transacción;
   // sin ella se lee de la base (cierres sin ese dato a mano).
   closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId">,
+  // PERF-5D: el post-proceso durable pasa su transacción y necesita que un
+  // fallo se propague (para reintentar el paso) en vez de quedar sólo logueado.
+  options: ShiftEvaluationOptions & { rethrow?: boolean } = {},
 ) {
   try {
-    const shift = closedShift ?? await prisma.workShift.findUnique({ where: { id: workShiftId } });
+    const shift = closedShift ?? await (options.db ?? prisma).workShift.findUnique({ where: { id: workShiftId } });
     if (!shift) return;
-    await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.");
+    await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.", options.db);
     // Etapa 13B: `resolveMatchForExit` nunca busca contra turnos ajenos — usa
     // exclusivamente `shift.shiftTemplateId`, ya resuelto en el ingreso
     // (Etapa 13A: siempre el turno propio del empleado cuando aplica ese
@@ -490,7 +508,7 @@ export async function evaluateShiftExit(
       // La alerta temprana de ingreso puede haber sido notificada y no puede
       // "desenviarse". Se conserva el historial, pero deja de quedar activa
       // como un hallazgo independiente al confirmarse la causa real.
-      await resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId);
+      await resolvePunctualityAlertsForOutOfShiftWorkday(workShiftId, options.db);
     }
     // Etapa 13E: defensa en profundidad -- un turno GENERAL_UNASSIGNED (ajeno)
     // nunca debe gobernar el mínimo/máximo de esta evaluación, ni siquiera si
@@ -529,27 +547,30 @@ export async function evaluateShiftExit(
         scheduledAt: overlap.scheduledStartAt ?? undefined,
         differenceMinutes: 0,
         notify: notifiableWinner === "JORNADA_FUERA_DE_TURNO",
+        db: options.db,
       });
     }
     if (!outsideShift && punctuality.earlyLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA" });
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA", db: options.db });
     }
     if (!outsideShift && punctuality.lateLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_TARDIA" });
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_TARDIA", db: options.db });
     }
     if (duration.insufficientHours) {
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_INSUFICIENTE" });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_INSUFICIENTE", db: options.db });
     }
     if (duration.extendedShift) {
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_EXTENDIDA" });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_EXTENDIDA", db: options.db });
     }
 
     if (classifiedSegments.length > 0) {
       await applyClassificationAlerts(employeeId, workShiftId, classifiedSegments, {
         notifyConceptoNoHabilitado: notifiableWinner === "CONCEPTO_NO_HABILITADO",
+        db: options.db,
       });
     }
   } catch (error) {
+    if (options.rethrow) throw error;
     console.error("EVALUATE_SHIFT_EXIT_FAILED", {
       severity: "critical",
       employeeId,

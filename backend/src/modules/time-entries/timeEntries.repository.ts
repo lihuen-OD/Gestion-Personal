@@ -39,6 +39,9 @@ import {
 import type { CreateTimeEntryInput, employeeRowSortKeys, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, timeEntryListSortKeys, UpdateTimeEntryInput } from "./timeEntries.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
+// Etapa 10B: nota de la alerta POSIBLE_OLVIDO_SALIDA resuelta por un rollover (también la usa el post-proceso durable, PERF-5D).
+export const ROLLOVER_OVERFLOW_RESOLUTION_NOTE = "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.";
+
 const timeEntryListOrderBy: SortOrderByMap<(typeof timeEntryListSortKeys)[number], Prisma.TimeEntryOrderByWithRelationInput> = {
   legajo: (order) => [{ employee: { legajo: order } }, { date: "desc" }],
   employee: (order) => [{ employee: { lastName: order } }, { employee: { firstName: order } }, { date: "desc" }],
@@ -196,6 +199,12 @@ export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShif
  * insertarlo) para que el StorageFile nazca vinculado, sin un UPDATE posterior.
  */
 export type ClockPunchEvidenceWriter = (tx: PrismaTransactionClient, attendancePunchId: string) => Promise<PunchEvidenceInput>;
+/**
+ * PERF-5D (docs/decisions/F12_PERF_5.md): encola en la MISMA transacción el
+ * post-proceso durable de la fichada (alertas, avisos, adopción de turno,
+ * Motor B). Nunca hay fichada confirmada sin su job ni job sin fichada.
+ */
+export type ClockPunchPostProcessWriter = (tx: PrismaTransactionClient, created: { attendancePunchId: string; workShift: WorkShift }) => Promise<unknown>;
 
 export type ClockPunchAttemptKey = { requestId: string; deviceId: string; employeeId: string; punchType: "INGRESO" | "SALIDA" };
 
@@ -1699,7 +1708,7 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -1733,6 +1742,7 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
+      if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
       if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
       if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
@@ -1747,7 +1757,7 @@ export const timeEntriesRepository = {
     return result;
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -1821,6 +1831,7 @@ export const timeEntriesRepository = {
           maxAllowedMinutes: 20 * 60,
         },
       });
+      if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
       if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
       if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
@@ -1836,15 +1847,18 @@ export const timeEntriesRepository = {
     // Etapa 10B: mismo fix que expireOpenWorkShifts — este camino también
     // cierra la jornada vieja como FALTA_SALIDA sin pasar por
     // evaluateShiftExit, así que una alerta POSIBLE_OLVIDO_SALIDA previa
-    // quedaría huérfana si no se resuelve acá explícitamente.
-    try {
-      await resolveOpenShiftOverflowAlert(input.openWorkShiftId, "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.");
-    } catch (error) {
-      console.error("CLOCK_WORK_SHIFT_ALERT_RESOLVE_FAILED", {
-        severity: "warning",
-        workShiftId: input.openWorkShiftId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    // quedaría huérfana si no se resuelve acá explícitamente. PERF-5D: con
+    // post-proceso durable lo resuelve su job (paso `overflow-resolution`).
+    if (!input.postProcess) {
+      try {
+        await resolveOpenShiftOverflowAlert(input.openWorkShiftId, ROLLOVER_OVERFLOW_RESOLUTION_NOTE);
+      } catch (error) {
+        console.error("CLOCK_WORK_SHIFT_ALERT_RESOLVE_FAILED", {
+          severity: "warning",
+          workShiftId: input.openWorkShiftId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     return newShift;
@@ -2193,6 +2207,8 @@ export const timeEntriesRepository = {
     // y no tiene intento de fichada).
     audit?: ClockPunchTransactionWriter;
     completeAttempt?: ClockPunchTransactionWriter;
+    // PERF-5D: sólo la salida del fichador; el cierre manual de RRHH evalúa en línea.
+    postProcess?: ClockPunchPostProcessWriter;
     timingRequestId?: string;
     // PERF-5B: resolución de Horas Especiales ya calculada por el fichador (en
     // paralelo con el upload de la foto) para las fechas de estos tramos. Sin
@@ -2442,6 +2458,7 @@ export const timeEntriesRepository = {
         await tx.specialHourRuleApplication.createMany({ data: pendingRuleApplications });
       }
 
+      if (input.postProcess) await input.postProcess(tx, { attendancePunchId: endPunchId, workShift });
       if (input.audit) await (input.timingRequestId ? input.audit(tx, workShift, timings) : input.audit(tx, workShift));
       if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return { workShift, entries, timeSegments };

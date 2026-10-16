@@ -26,6 +26,9 @@ Este fixture tiene menos destinatarios y alertas que staging, así que sus núme
 | PERF-5A | 5 / 10 / 9 = 24 | 16 / 17 / 22 = 55 | 6 / 15 / 17 = 38 |
 | PERF-5B | 4 / 10 / 9 = 23 | 15 / 17 / 22 = 54 | 5 / 15 / 17 = 37 |
 | PERF-5C | 4 / 10 / 9 = 23 | 15 / 16 / 22 = 53 | 5 / 15 / 17 = 37 |
+| PERF-5D | 4 / 11 / 0 = 15 | 15 / 17 / 0 = 32 | 5 / 16 / 0 = 21 |
+
+PERF-5D suma una sentencia a cada TX (el `INSERT` del job) y deja POST en 0. Lo que salió del request lo ejecuta el worker: en este fixture, 16 sentencias para el job del IN, 32 para el del OUT y 28 para el del rollover. Esas cifras incluyen el claim, el lock, la marca y el cierre de cada paso, y no forman parte del `201`.
 
 En producción, `clock_punch_query_budget` (`shared/observability/clockPunchQueryBudget.ts`) emite por fichada la cantidad de **operaciones Prisma** por fase. Usa AsyncLocalStorage, cuesta un contador por operación y nunca registra SQL, parámetros ni datos personales.
 
@@ -60,3 +63,81 @@ En producción, `clock_punch_query_budget` (`shared/observability/clockPunchQuer
   - dos cierres simultáneos de la misma jornada sin cooldown → uno escribe y el otro se revierte entero (1 SALIDA, 1 TimeEntry, 1 TimeSegment, `endPunchId` correcto);
   - cerrar una jornada ya cerrada no deja ninguna salida;
   - dos OUT HTTP simultáneos con `requestId` distintos → 201 + 409 y una sola salida y carga de horas.
+
+## PERF-5D — outbox durable del post-proceso
+
+El `201` espera sólo lo que confirma la fichada: `AttendancePunch`, `WorkShift`, `TimeEntry`, `TimeSegment`, aplicaciones de Horas Especiales, evidencia, `AuditLog` e intento `COMPLETED`. Todo eso queda en la transacción, como antes. Lo derivado pasa a un job durable y aparece segundos después:
+
+- alertas de turno y sus avisos;
+- adopción del turno en el ingreso;
+- aviso `FALTA_SALIDA` y resolución de `POSIBLE_OLVIDO_SALIDA` del rollover;
+- Motor B.
+
+La respuesta del endpoint no cambia.
+
+### Modelo
+
+`ClockPunchPostProcessJob` (migración `20261016150000_add_clock_punch_postprocess_job`, sólo aditiva):
+
+- **Columnas:** `attendancePunchId` (único), `workShiftId`, `employeeId`, `kind` (`ENTRY` | `ROLLOVER_ENTRY` | `EXIT`), `status` (`PENDING` | `PROCESSING` | `COMPLETED` | `FAILED`), `periods text[]`, `payload jsonb`, `stepsCompleted text[]`, `attemptCount`, `nextAttemptAt`, `leaseExpiresAt`, `lastErrorCode`, `lastErrorMessage`, `startedAt`, `completedAt`. Todos los instantes son `TIMESTAMPTZ(3)`.
+- **Índices:** `(status, nextAttemptAt)`, `(status, leaseExpiresAt)`, `(workShiftId, createdAt)` y `(employeeId, status)`.
+- **FKs:** `ON DELETE RESTRICT` hacia `AttendancePunch`, `WorkShift` y `Employee`, igual que el resto de la historia de un legajo.
+- **Aplicación:** aplicada a staging (rama `development`) el 2026-10-16. Producción y demo no están migradas.
+
+### Garantías
+
+- **Nace con la fichada.** `timeEntries.repository` recibe un writer `postProcess` y escribe el job dentro de la transacción del IN, del rollover y del OUT. Si el `INSERT` del job falla, la fichada se revierte entera (503 `CLOCK_TEMPORARY_FAILURE` y evidencia compensada). Nunca queda una fichada confirmada sin su job. El cierre manual de RRHH no encola: sigue evaluando en línea.
+- **No depende del proceso.** La garantía es la fila, nunca un `setTimeout`, una promesa suelta o un evento en memoria. El controller hace un `kick` al terminar la respuesta, pero sólo adelanta el tick si el worker corre en ese proceso. El worker (`clockPunchPostProcess.worker.ts`) arranca con `startAutomaticJobs`, sigue a `AUTOMATIC_JOBS_ENABLED` salvo que `CLOCK_POSTPROCESS_WORKER_ENABLED` lo fije, y tiene un intervalo de respaldo `CLOCK_POSTPROCESS_INTERVAL_MS` (5 s). En el primer tick recoge lo que una instancia anterior dejó `PENDING` o tomado con lease vencido.
+- **Orden ENTRY→EXIT por jornada.** Un job `EXIT` sólo se reclama cuando ningún job de entrada de su jornada está sin `COMPLETED`. Lo decide la misma sentencia del claim (`UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` con `NOT EXISTS`), así que el orden sobrevive reinicios, reintentos, backoff, leases vencidos y workers concurrentes. La evaluación de salida relee la jornada en la transacción de su paso, con el turno que adoptó el ingreso.
+- **Pasos idempotentes.** Cada paso abre una transacción y hace tres cosas:
+  1. Bloquea la fila del job y verifica que el lease siga siendo de su claim (fencing por `attemptCount`).
+  2. Ejecuta sus efectos.
+  3. Agrega su marca a `stepsCompleted` y renueva el lease.
+
+  Efectos y marca se confirman juntos: un reintento retoma desde el primer paso sin marca y nunca duplica alertas, avisos, desgloses ni auditoría. Los pasos son:
+  - `ENTRY`: `entry-evaluation`.
+  - `ROLLOVER_ENTRY`: `overflow-resolution`, `missing-exit-notice` y `entry-evaluation`.
+  - `EXIT`: `breakdowns:<período>` y `exit-evaluation`.
+
+  Mantienen el orden del post-commit anterior. Para escribir en la transacción del paso, `createShiftAlert`, `notifyUsers`, `evaluateShiftEntry`, `evaluateShiftExit`, `resolveOpenShiftOverflowAlert` y `notifyMissingExit` aceptan `db`. Dentro de un paso un fallo se propaga (`rethrow`) en vez de quedar sólo logueado.
+- **Motor B.** `recalculateForEmployeePeriod({ withinTransaction })` corre el hook dentro de su transacción serializable (`replaceAutomatic(…, afterWrite)`). La auditoría del recálculo (`registerWithin`) y la marca del paso se confirman con los desgloses, y se reintentan juntas ante P2034. Sin el hook, la llamada al repositorio y la auditoría quedan como antes. `PERIOD_CLOSED` conserva el criterio de 15M.1 §26: no se regenera, se loguea como warning y el paso se da por cumplido.
+- **Fallos.** La fichada nunca se invalida por su post-proceso. Un error vuelve el job a `PENDING` con backoff (5 s·2^(n-1), techo 15 min). Al intento 12, o con un payload inválido, queda `FAILED`, con `lastErrorCode`, `lastErrorMessage` (última línea, ≤ 500) y log crítico `CLOCK_POSTPROCESS_FAILED`. Un lease perdido no escribe nada (`CLOCK_POSTPROCESS_LEASE_LOST`). Al completar se borra del payload el contexto de auditoría (IP y user agent), que sólo hacía falta para los pasos.
+- **Cachés.** El request sigue limpiando lo necesario para ver la fichada: time-entries, grilla por legajo y auditoría. Al terminar el job se limpian los derivados: auditoría, alertas, notificaciones, time-entries y grilla. Lo que confirmó un paso ya se invalida aunque el job reintente.
+
+### Cierre mensual y exportaciones
+
+El snapshot del cierre lee `HourConceptBreakdown`, así que el cierre nunca debe congelar desgloses incompletos:
+
+1. `POST /workforce/closures/submit` procesa en línea, antes del snapshot, lo pendiente de esos legajos (`drainClockPunchPostProcess`). Cada job se intenta una vez, incluidos `FAILED` y en backoff. Sólo se espera, hasta 10 s, a los que otro worker tiene tomados.
+2. Dentro de la transacción, con el lock EXCLUSIVO de los períodos, `assertClockPunchPostProcessSettled` responde `409 CLOCK_POSTPROCESS_PENDING` si queda algún job sin terminar de ese período. Un OUT nuevo del período toma el lock SHARED y espera al envío, así que el conteo es definitivo.
+3. El drenado llega como hook desde el controller. Así `workforce.service` no importa el worker y no se agregan ciclos de imports.
+
+Las exportaciones definitivas exigen un cierre `APROBADO`, que pasó por esa guarda. La vista previa ya está marcada como no definitiva. El cierre manual de RRHH drena antes el post-proceso pendiente de su jornada (hasta 5 s), para evaluar la salida con el turno adoptado.
+
+### Residuales
+
+- Un IN concurrente con el envío del cierre no toma el lock del período, así que su job `ENTRY` puede quedar fuera del conteo. Sólo escribe alertas de una jornada todavía abierta, que el snapshot no lee.
+- Los jobs `COMPLETED` no se purgan todavía. La retención queda como deuda, igual que con `StorageArchiveJob`.
+- En un despliegue con varias instancias, los cachés en memoria siguen siendo por instancia. Esto ya pasaba antes y está acotado por los TTL.
+
+### Validación
+
+- **Unidad:**
+  - worker (pasos, orden, saltos por marca, reintento, `FAILED`, payload inválido, lease perdido, fencing al completar, `PERIOD_CLOSED`, drenado, kick y arranque);
+  - Motor B (hook dentro de la transacción, reintento P2034 con el mismo hook);
+  - envío del cierre (drenado después del alcance, 409);
+  - servicio de fichada (job encolado por tipo, períodos de una salida que cruza de mes, nada derivado en el request);
+  - `startAutomaticJobs`.
+- **PostgreSQL real** (`clockPunchPostProcess.integration.test.ts`):
+  - backend caído después del 201 y procesado por el próximo arranque;
+  - orden ENTRY→EXIT con el ingreso pendiente, en backoff o tomado (la salida anticipada sólo se detecta con el turno adoptado);
+  - crash en `PROCESSING`, lease vencido y fencing del worker viejo;
+  - falla de notificación (sin alerta huérfana; al reintentar, una alerta y un aviso por destinatario; re-entrega sin duplicados);
+  - falla de Motor B (desgloses y auditoría una sola vez);
+  - `FAILED` → cierre 409 → cierre OK al recuperarse;
+  - job tomado → 409 sin esperar de más;
+  - job imposible de encolar → fichada revertida;
+  - mismo `requestId` → un solo job;
+  - tres workers concurrentes → cada job una vez.
+- **Paridad funcional:** el snapshot de `clockPunchPerf.integration.test.ts` no cambió. Ese test procesa los jobs antes de tomar el snapshot.
+

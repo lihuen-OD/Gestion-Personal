@@ -12,12 +12,13 @@ import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { storageService, type PreparedManagedStorageUpload } from "../../shared/storage/storage.service";
 import { resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
-import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchTransactionWriter } from "./timeEntries.repository";
+import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchPostProcessWriter, ClockPunchTransactionWriter } from "./timeEntries.repository";
+import { enqueueClockPunchPostProcess, entryPostProcess, exitPostProcess, rolloverPostProcess, type ClockPunchPostProcessRequest } from "../clock/clockPunchPostProcess.payload";
 import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
-import { evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
@@ -887,16 +888,23 @@ function faceStatusObservation(status: ClockPhotoPunchInput["faceValidationStatu
   return labels[status];
 }
 
+// PERF-5D (docs/decisions/F12_PERF_5.md): el post-proceso de la fichada se
+// encola en su transacción; lo ejecuta clockPunchPostProcess.worker.
+function clockPostProcessWriter(employeeId: string, request: ClockPunchPostProcessRequest): ClockPunchPostProcessWriter {
+  return (tx, created) => enqueueClockPunchPostProcess(tx, { attendancePunchId: created.attendancePunchId, workShiftId: created.workShift.id, employeeId }, request);
+}
+
 // `startAt`: eventAt de la notificación — la jornada que quedó sin salida, no
 // el momento en que se detectó/cerró (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
-export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date) {
-  // Etapa 10E: best-effort — el rollover de clockPhotoPunch corre dentro de
-  // la request en vivo del fichador; un fallo acá (ej. problema transitorio
-  // de DB) no debe tirar abajo una fichada/rollover que ya se confirmó. El
-  // otro llamador (clockPunchMaintenance.ts, cron) ya tenía su propio
-  // try/catch por item — ese wrapper externo queda como defensa redundante,
-  // inofensiva. (F0 del fichador standalone retiró los caminos legacy sin
-  // foto clockInResolved/clockIn, que también lo llamaban.)
+// PERF-5D: el post-proceso durable del rollover pasa `db` (su transacción) y
+// `rethrow` (un fallo reintenta el paso en vez de quedar sólo logueado).
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification">; rethrow?: boolean } = {}) {
+  // Etapa 10E: best-effort — un fallo acá (ej. problema transitorio de DB)
+  // no debe tirar abajo una fichada/rollover que ya se confirmó. El otro
+  // llamador (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch
+  // por item — ese wrapper externo queda como defensa redundante, inofensiva.
+  // (F0 del fichador standalone retiró los caminos legacy sin foto
+  // clockInResolved/clockIn, que también lo llamaban.)
   try {
     await notifyUsers(await attendanceRecipients(employeeId), {
       type: "FALTA_SALIDA",
@@ -907,8 +915,9 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string,
       eventAt: startAt,
       link: "/asistencia",
       priority: "ALTA",
-    });
+    }, options.db);
   } catch (error) {
+    if (options.rethrow) throw error;
     console.error("MISSING_EXIT_NOTIFY_FAILED", {
       severity: "warning",
       workShiftId,
@@ -1127,7 +1136,10 @@ export const timeEntriesService = {
     };
   },
 
-  async closeWorkShiftManually(id: string, input: AdminCloseWorkShiftInput, user: Express.AuthUser, audit?: AuditContext) {
+  // `settleClockPunchPostProcess` (PERF-5D): lo pasa el controller. La
+  // evaluación de salida usa el turno que adoptó el ingreso, así que primero se
+  // procesa el post-proceso pendiente del ingreso de esta jornada.
+  async closeWorkShiftManually(id: string, input: AdminCloseWorkShiftInput, user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { workShiftId: string }) => Promise<unknown> } = {}) {
     assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
@@ -1137,6 +1149,7 @@ export const timeEntriesService = {
     if (before.timeEntries.some((entry) => entry.status === "APROBADO" || entry.status === "CERRADO")) {
       throw new AppError("La jornada tiene cargas aprobadas o cerradas.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
     }
+    await hooks.settleClockPunchPostProcess?.({ workShiftId: before.id });
 
     const hourConcept = await resolveShiftConcept(before.employeeId);
     const calculation = buildShiftSegments(before.startAt, input.endAt);
@@ -1591,6 +1604,7 @@ export const timeEntriesService = {
               cooldown,
               audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
               completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
+              postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift)),
               timingRequestId: input.requestId,
             });
           } catch (error) {
@@ -1604,10 +1618,10 @@ export const timeEntriesService = {
             }
             throw error;
           }
+          // PERF-5D: resolver la alerta de la jornada vencida, avisar la falta
+          // de salida y evaluar el ingreso nuevo quedan en su job durable.
           const postCommitStartedAt = performance.now();
           clearAuditDerivedCaches();
-          await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
-          await evaluateShiftEntry(employee.id, workShift.id, now);
           clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
           return clockEntryResult(employee, workShift, openShift);
         }
@@ -1630,6 +1644,7 @@ export const timeEntriesService = {
           cooldown,
           audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
           completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
+          postProcess: clockPostProcessWriter(employee.id, entryPostProcess(now)),
           timingRequestId: input.requestId,
         });
       } catch (error) {
@@ -1640,9 +1655,9 @@ export const timeEntriesService = {
         }
         throw error;
       }
+      // PERF-5D: la adopción de turno y las alertas de ingreso quedan en su job durable.
       const postCommitStartedAt = performance.now();
       clearAuditDerivedCaches();
-      await evaluateShiftEntry(employee.id, workShift.id, now);
       clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
         requestId: input.requestId,
@@ -1686,6 +1701,7 @@ export const timeEntriesService = {
         cooldown,
         audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
+        postProcess: clockPostProcessWriter(employee.id, exitPostProcess(now, classifiedSegments, classifiedSegments.map((segment) => periodFromCalendarDate(segment.date)), audit)),
         timingRequestId: input.requestId,
         returnEntries: false,
         specialHours,
@@ -1703,16 +1719,10 @@ export const timeEntriesService = {
     }
     // F11.1: desde acá la salida ya está confirmada (fichada, auditoría e
     // intento COMPLETED). Nada de lo que sigue compensa la evidencia.
+    // PERF-5D: Motor B (desgloses por período) y la evaluación de salida
+    // quedan en su job durable, que corre después del de entrada de la jornada.
     const postCommitStartedAt = performance.now();
     clearAuditDerivedCaches();
-    await syncAutomaticBreakdownsAfterProcessedShift({
-      employeeId: employee.id,
-      workShiftId: created.workShift.id,
-      segments: classifiedSegments,
-      audit,
-    });
-    // PERF-5A: la jornada recién cerrada ya viene de la transacción; no se relee.
-    await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments, created.workShift);
     clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
     console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
       requestId: input.requestId,

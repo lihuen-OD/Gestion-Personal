@@ -4,6 +4,7 @@ import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
+import { drainClockPunchPostProcess } from "../clock/clockPunchPostProcess.worker";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
@@ -30,7 +31,7 @@ export const workforceController = {
     res.json({data});
   }) satisfies RequestHandler,
   submit: (async (req,res)=>{
-    const data=await workforceService.submitClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req));
+    const data=await workforceService.submitClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req),{ settleClockPunchPostProcess: drainClockPunchPostProcess });
     clearMonthlyClosuresReadCaches();
     res.status(201).json({data});
   }) satisfies RequestHandler,

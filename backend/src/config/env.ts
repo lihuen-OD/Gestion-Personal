@@ -91,6 +91,12 @@ const envSchema = z.object({
   // HTTP. Por compatibilidad queda activa salvo opt-out explícito. Las copias
   // de QA que no deben mutar datos la fijan en false en su env no versionado.
   AUTOMATIC_JOBS_ENABLED: envBoolean.default(true),
+  // PERF-5D (docs/decisions/F12_PERF_5.md): worker del post-proceso durable de
+  // fichadas (alertas, notificaciones, adopción de turno, Motor B). Sin valor
+  // sigue a AUTOMATIC_JOBS_ENABLED; explícito permite correrlo en un backend
+  // de QA sin el resto de los schedulers.
+  CLOCK_POSTPROCESS_WORKER_ENABLED: envBoolean.optional(),
+  CLOCK_POSTPROCESS_INTERVAL_MS: z.coerce.number().int().positive().default(5_000),
   ATTENDANCE_INACTIVITY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(1),
   ATTENDANCE_INACTIVITY_CHECK_MINUTE: z.coerce.number().int().min(0).max(59).default(0),
   // Etapa 15M.19A (docs/decisions/DURABLE_ATTENDANCE_INACTIVITY_SCHEDULER_15M19A.md):

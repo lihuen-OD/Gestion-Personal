@@ -9,6 +9,7 @@ import type { ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInp
 import { timeEntriesService } from "../time-entries/timeEntries.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
 import { emitClockPunchQueryBudget, runWithClockPunchQueryBudget } from "../../shared/observability/clockPunchQueryBudget";
+import { kickClockPunchPostProcess } from "./clockPunchPostProcess.worker";
 
 /**
  * Transporte HTTP del fichador (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
@@ -28,10 +29,11 @@ export const clockController = {
   }) satisfies RequestHandler,
 
   // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): una
-  // salida cierra el WorkShift y crea/actualiza TimeEntry NORMAL_BASE (y
-  // dispara la sincronización automática de HourConceptBreakdown), así que
+  // salida cierra el WorkShift y crea/actualiza TimeEntry NORMAL_BASE, así que
   // invalida la grilla por-legajo además de las cachés de time-entries — la
-  // misma invalidación acotada que create()/update() (Etapa 14C.2).
+  // misma invalidación acotada que create()/update() (Etapa 14C.2). PERF-5D:
+  // lo derivado (alertas, avisos, desgloses de Motor B) lo escribe el job
+  // durable de la fichada, que invalida sus cachés al terminar.
   //
   // El source (KIOSK) lo fija este handler y el dispositivo sale de
   // requireClockDevice: el body no puede elegir ninguno de los dos.
@@ -60,12 +62,16 @@ export const clockController = {
     });
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
-    res.once("finish", () => clockPunchMetric({
-      requestId,
-      phase: "http_response_write",
-      durationMs: performance.now() - requestStartedAt,
-      result: res.statusCode < 400 ? "success" : "error",
-    }));
+    res.once("finish", () => {
+      clockPunchMetric({
+        requestId,
+        phase: "http_response_write",
+        durationMs: performance.now() - requestStartedAt,
+        result: res.statusCode < 400 ? "success" : "error",
+      });
+      // PERF-5D: sólo adelanta el worker; el job ya quedó durable en la transacción.
+      kickClockPunchPostProcess();
+    });
     res.status(201).json({ data: result });
   }) satisfies RequestHandler,
 

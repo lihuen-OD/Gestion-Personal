@@ -36,6 +36,8 @@ vi.mock("../../shared/prisma/client", () => ({
     // de notificaciones "no asistió" (entityType AttendanceInactivityIncident)
     // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
     attendanceInactivityIncident: { findMany: vi.fn() },
+    // PERF-5D: guarda del cierre contra post-proceso de fichadas sin terminar.
+    clockPunchPostProcessJob: { count: vi.fn().mockResolvedValue(0) },
     user: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
     // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
     $executeRaw: vi.fn().mockResolvedValue(0),
@@ -81,6 +83,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAlert: { findMany: Mock };
   workShift: { findMany: Mock };
   attendanceInactivityIncident: { findMany: Mock };
+  clockPunchPostProcessJob: { count: Mock };
   $executeRaw: Mock;
   $queryRawUnsafe: Mock;
   $transaction: Mock;
@@ -96,6 +99,7 @@ const supervisor = { id: "user-2", role: roles.supervision } as unknown as Expre
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.employee.findMany.mockResolvedValue([]);
+  mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValue(0);
   // Forma interactiva (callback con tx) o array, como Prisma.
   mockedPrisma.$transaction.mockImplementation((arg: unknown) => (typeof arg === "function" ? (arg as (tx: unknown) => unknown)(mockedPrisma) : Promise.all(arg as unknown[])));
 });
@@ -177,6 +181,41 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
         }),
       }),
     );
+  });
+
+  // PERF-5D (docs/decisions/F12_PERF_5.md): Motor B de una salida corre en el
+  // post-proceso durable de la fichada; el cierre nunca congela desgloses
+  // incompletos.
+  it("PERF-5D — submitClosures procesa antes el post-proceso pendiente de esos legajos (tras validar alcance)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
+    const settle = vi.fn().mockResolvedValue({ attempted: 1 });
+
+    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle });
+
+    expect(settle).toHaveBeenCalledWith({ employeeIds: ["emp-1"] });
+    expect(settle.mock.invocationCallOrder[0]).toBeGreaterThan(mockedPrisma.employee.count.mock.invocationCallOrder[0]!);
+    expect(settle.mock.invocationCallOrder[0]).toBeLessThan(mockedPrisma.$transaction.mock.invocationCallOrder[0]!);
+    expect(mockedPrisma.clockPunchPostProcessJob.count).toHaveBeenCalledWith({ where: { employeeId: { in: ["emp-1"] }, status: { not: "COMPLETED" }, periods: { has: "2026-08" } } });
+  });
+
+  it("PERF-5D — submitClosures se bloquea con 409 CLOCK_POSTPROCESS_PENDING si queda post-proceso sin terminar del período, sin escribir el cierre", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValue(2);
+
+    await expect(workforceService.submitClosures("2026-08", ["emp-1"], supervisor)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_POSTPROCESS_PENDING" });
+
+    expect(mockedPrisma.monthlyTimeClosure.upsert).not.toHaveBeenCalled();
+    expect(auditService.register).not.toHaveBeenCalled();
+  });
+
+  it("PERF-5D — un legajo fuera de alcance no dispara el procesamiento pendiente", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    const settle = vi.fn();
+
+    await expect(workforceService.submitClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle })).rejects.toMatchObject({ code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+    expect(settle).not.toHaveBeenCalled();
   });
 
   it("approveClosures registra un AuditLog por cada cierre aprobado", async () => {

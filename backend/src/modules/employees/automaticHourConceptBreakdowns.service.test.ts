@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { roles } from "../../shared/security/roles";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { automaticHourConceptBreakdownsRepository as repository } from "./automaticHourConceptBreakdowns.repository";
 import { automaticHourConceptBreakdownsService as service } from "./automaticHourConceptBreakdowns.service";
 import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.repository";
@@ -8,7 +8,7 @@ import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.
 vi.mock("./automaticHourConceptBreakdowns.repository", () => ({ automaticHourConceptBreakdownsRepository: {
   findEmployee: vi.fn(), findClosure: vi.fn(), findEligibleConcepts: vi.fn(), findProcessedShifts: vi.fn(), replaceAutomatic: vi.fn(),
 } }));
-vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
+vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn(), registerWithin: vi.fn() }, clearAuditDerivedCaches: vi.fn() }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
 
 const user = { id: "rrhh-1", role: roles.rrhh } as Express.AuthUser;
@@ -135,5 +135,54 @@ describe("automaticHourConceptBreakdownsService.recalculateForEmployeePeriod —
 
     expect(repo.findEmployee).toHaveBeenCalledTimes(1);
     expect(repo.replaceAutomatic).toHaveBeenCalledWith("employee-1", "2026-08", [], user.id);
+  });
+});
+
+// PERF-5D (docs/decisions/F12_PERF_5.md): el post-proceso durable de una salida
+// marca su paso dentro de la transacción serializable de Motor B.
+describe("automaticHourConceptBreakdownsService — withinTransaction (PERF-5D)", () => {
+  const TX = { marker: "motor-b-tx" };
+
+  beforeEach(() => {
+    repo.replaceAutomatic.mockImplementation(async (_employeeId, _period, rows, _createdBy, afterWrite) => {
+      const outcome = { deleted: 1, created: rows.length };
+      await afterWrite?.(TX as never, outcome);
+      return outcome;
+    });
+  });
+
+  it("audita con registerWithin y corre el hook en la MISMA transacción, y limpia los cachés de auditoría recién después", async () => {
+    const hook = vi.fn().mockResolvedValue(undefined);
+
+    const result = await service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08", audit: { ipAddress: "10.0.0.1" }, withinTransaction: hook });
+
+    expect(result).toEqual({ employeeId: "employee-1", period: "2026-08", processedShifts: 0, eligibleConcepts: 0, generated: 0, removed: 1 });
+    expect(auditService.registerWithin).toHaveBeenCalledWith(TX, expect.objectContaining({
+      action: "UPDATE", entity: "HourConceptBreakdown", entityId: "employee-1", ipAddress: "10.0.0.1",
+      description: "Recalculó desgloses automáticos de agosto de 2026", after: result,
+    }));
+    expect(hook).toHaveBeenCalledWith(TX);
+    expect(auditService.register).not.toHaveBeenCalled();
+    expect(vi.mocked(clearAuditDerivedCaches).mock.invocationCallOrder[0]).toBeGreaterThan(hook.mock.invocationCallOrder[0]!);
+  });
+
+  it("si el hook falla, la transacción (desgloses + auditoría) se revierte y el error se propaga para reintentar el paso", async () => {
+    await expect(service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08", withinTransaction: vi.fn().mockRejectedValue(new Error("lease lost")) })).rejects.toThrow("lease lost");
+
+    expect(auditService.register).not.toHaveBeenCalled();
+    expect(clearAuditDerivedCaches).not.toHaveBeenCalled();
+  });
+
+  it("ante un conflicto de serialización reintenta una vez con el mismo hook (efectos, auditoría y marca juntos)", async () => {
+    const { Prisma } = await import("@prisma/client");
+    const conflict = new Prisma.PrismaClientKnownRequestError("serialization", { code: "P2034", clientVersion: "0.0.0" });
+    const hook = vi.fn().mockResolvedValue(undefined);
+    repo.replaceAutomatic.mockRejectedValueOnce(conflict);
+
+    await service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08", withinTransaction: hook });
+
+    expect(repo.replaceAutomatic).toHaveBeenCalledTimes(2);
+    expect(repo.replaceAutomatic.mock.calls[0]![4]).toBe(repo.replaceAutomatic.mock.calls[1]![4]);
+    expect(hook).toHaveBeenCalledTimes(1);
   });
 });

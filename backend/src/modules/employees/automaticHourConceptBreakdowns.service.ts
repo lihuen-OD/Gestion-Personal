@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
-import { auditService } from "../audit/audit.service";
+import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
+import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "./employeeAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -18,6 +19,10 @@ export type RecalculateForEmployeePeriodInput = {
   period: string;
   createdByUserId?: string | null;
   audit?: AuditContext;
+  // PERF-5D: el post-proceso durable de una fichada marca su paso dentro de la
+  // misma transacción que reemplaza los desgloses; con este hook la auditoría
+  // del recálculo también se escribe ahí (y los cachés se limpian tras el commit).
+  withinTransaction?: (tx: PrismaTransactionClient) => Promise<void>;
 };
 
 /**
@@ -35,7 +40,7 @@ export type RecalculateForEmployeePeriodInput = {
  * como `syncAutomaticBreakdownsAfterProcessedShift` (`timeEntries.service.ts`,
  * sincronización automática post-cierre).
  */
-async function recalculateForEmployeePeriod({ employeeId, period, createdByUserId, audit }: RecalculateForEmployeePeriodInput) {
+async function recalculateForEmployeePeriod({ employeeId, period, createdByUserId, audit, withinTransaction }: RecalculateForEmployeePeriodInput) {
   // Etapa 15E: a diferencia de la carga MANUAL (ver validateManualBreakdownContext
   // en employees.service.ts), el recálculo AUTOMÁTICO sigue bloqueado sin
   // excepción para cualquier rol, RRHH incluido — es una regeneración
@@ -68,21 +73,36 @@ async function recalculateForEmployeePeriod({ employeeId, period, createdByUserI
   const multipliers = await resolveDoubleHourMultipliersByDate(employeeId, calculated.map((row) => row.date));
   const rows = calculated.map((row) => ({ ...row, appliedMultiplier: multipliers.get(calendarDateKey(row.date)) ?? 1 }));
 
+  const auditInput = (outcome: { deleted: number; created: number }) => {
+    const after = { employeeId, period, processedShifts: completeShifts.length, eligibleConcepts: assignments.length, generated: outcome.created, removed: outcome.deleted };
+    return { ...audit, action: "UPDATE" as const, entity: "HourConceptBreakdown", entityId: employeeId, description: `Recalculó desgloses automáticos de ${humanizePeriodEs(period)}`, after };
+  };
+  const afterWrite = withinTransaction
+    ? async (tx: PrismaTransactionClient, outcome: { deleted: number; created: number }) => {
+      await auditService.registerWithin(tx, auditInput(outcome));
+      await withinTransaction(tx);
+    }
+    : undefined;
+  // Sin hook, la llamada al repositorio queda idéntica a la previa a PERF-5D.
+  const replace = () => afterWrite
+    ? repository.replaceAutomatic(employeeId, period, rows, createdByUserId, afterWrite)
+    : repository.replaceAutomatic(employeeId, period, rows, createdByUserId);
   let result;
   try {
-    result = await repository.replaceAutomatic(employeeId, period, rows, createdByUserId);
+    result = await replace();
   } catch (error) {
     if (!isConcurrencyError(error)) throw error;
     try {
-      result = await repository.replaceAutomatic(employeeId, period, rows, createdByUserId);
+      result = await replace();
     } catch (retryError) {
       if (isConcurrencyError(retryError)) throw new AppError("Concurrent automatic recalculation; retry the operation", 409, "AUTOMATIC_BREAKDOWN_CONCURRENT_CONFLICT");
       throw retryError;
     }
   }
 
-  const response = { employeeId, period, processedShifts: completeShifts.length, eligibleConcepts: assignments.length, generated: result.created, removed: result.deleted };
-  await auditService.register({ ...audit, action: "UPDATE", entity: "HourConceptBreakdown", entityId: employeeId, description: `Recalculó desgloses automáticos de ${humanizePeriodEs(period)}`, after: response });
+  const response = auditInput(result).after;
+  if (withinTransaction) clearAuditDerivedCaches();
+  else await auditService.register(auditInput(result));
   return response;
 }
 
