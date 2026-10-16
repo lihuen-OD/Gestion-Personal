@@ -36,11 +36,6 @@ function employeeDocumentCategory(documentType?: string | null) {
 }
 
 export const storagePathBuilder = {
-  attendancePunch(date: Date) {
-    const parts = dateParts(date);
-    return assertSegments(["storage-sistema", "fichadas", parts.year, parts.month, parts.day]);
-  },
-
   employeeDocument(legajo: string, documentType?: string | null) {
     return assertSegments(["storage-sistema", "legajos", legajo, employeeDocumentCategory(documentType)]);
   },

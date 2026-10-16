@@ -189,6 +189,7 @@ type PunchEvidenceInput = {
  */
 export type ClockPunchTransactionTimings = { auditMs: number; attemptCompletionMs: number };
 export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShift: WorkShift, timings?: ClockPunchTransactionTimings) => Promise<unknown>;
+export type ClockPunchEvidenceWriter = (tx: PrismaTransactionClient) => Promise<PunchEvidenceInput>;
 
 export type ClockPunchAttemptKey = { requestId: string; deviceId: string; employeeId: string; punchType: "INGRESO" | "SALIDA" };
 
@@ -236,6 +237,12 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
     deviceId: evidence.deviceId || null,
     rawPayload: evidence.rawPayload,
   };
+}
+
+async function linkPunchEvidence(tx: PrismaTransactionClient, punchId: string, evidence?: PunchEvidenceInput) {
+  if (evidence?.photoFileId) {
+    await tx.storageFile.update({ where: { id: evidence.photoFileId }, data: { attendancePunchId: punchId } });
+  }
 }
 
 // F7 (clockPunchCooldown.ts): cooldown entre fichadas DISTINTAS del mismo
@@ -1568,13 +1575,6 @@ export const timeEntriesRepository = {
     });
   },
 
-  linkClockPunchThumbnail(attendancePunchId: string, thumbnailFileId: string) {
-    return prisma.$transaction([
-      prisma.attendancePunch.update({ where: { id: attendancePunchId }, data: { thumbnailFileId } }),
-      prisma.storageFile.update({ where: { id: thumbnailFileId }, data: { attendancePunchId } }),
-    ]);
-  },
-
   async expireOpenWorkShifts(now: Date) {
     const candidates = await prisma.workShift.findMany({
       where: { status: WorkShiftStatus.ABIERTO, endAt: null, startAt: { lt: now } },
@@ -1676,22 +1676,24 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const result = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
       const punch = await tx.attendancePunch.create({
         data: {
           employeeId: input.employeeId,
           type: "INGRESO",
           timestamp: input.startAt,
           source: input.source,
-          ...punchEvidenceData(input.punchEvidence),
+          ...punchEvidenceData(evidence),
         },
       });
+      await linkPunchEvidence(tx, punch.id, evidence);
 
       const workShift = await tx.workShift.create({
         data: {
@@ -1718,13 +1720,14 @@ export const timeEntriesRepository = {
     return result;
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const newShift = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
       const previous = await tx.workShift.findFirst({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         include: { hourConcept: true },
@@ -1771,9 +1774,10 @@ export const timeEntriesRepository = {
           timestamp: input.startAt,
           source: input.source,
           observation: "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
-          ...punchEvidenceData(input.punchEvidence),
+          ...punchEvidenceData(evidence),
         },
       });
+      await linkPunchEvidence(tx, punch.id, evidence);
 
       const workShift = await tx.workShift.create({
         data: {
@@ -2151,6 +2155,7 @@ export const timeEntriesRepository = {
     segments: Array<ClassifiedSegmentForPersistence>;
     observation?: string | null;
     punchEvidence?: PunchEvidenceInput;
+    prepareEvidence?: ClockPunchEvidenceWriter;
     // F7: sólo la salida del fichador; el cierre manual de RRHH no lo pasa.
     cooldown?: ClockPunchCooldownGuard;
     // F11/F11.1: sólo la salida del fichador (el cierre manual audita aparte
@@ -2182,6 +2187,7 @@ export const timeEntriesRepository = {
     const result = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
       // D-5: la salida se registra siempre, pero nunca carga horas en un
       // período enviado/aprobado: esas fechas quedan observadas para RRHH.
       const protectedPeriods = await findProtectedClosurePeriods(tx, uniqueDates.map((date) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(date) })));
@@ -2216,9 +2222,10 @@ export const timeEntriesRepository = {
           timestamp: input.endAt,
           source: input.source,
           observation: input.observation || null,
-          ...punchEvidenceData(input.punchEvidence),
+          ...punchEvidenceData(evidence),
         },
       });
+      await linkPunchEvidence(tx, endPunch.id, evidence);
 
       const workShift = await tx.workShift.update({
         where: { id: input.workShiftId },

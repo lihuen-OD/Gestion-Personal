@@ -1,9 +1,11 @@
 /**
  * F7 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §26) contra PostgreSQL REAL: namespace
  * `/api/clock/*`, source KIOSK, cooldown entre fichadas distintas y su concurrencia. Todo pasa
- * por la app real (createApp, requireClockDevice, controller, servicio, repositorio, auditoría);
- * sólo el storage de fotos se reemplaza por filas StorageFile locales. F11 (§30): el alias legacy
- * `/time-entries/clock/*` ya no existe; las jornadas PUBLIC_CLOCK_PHOTO son sólo historia.
+ * por la app real (createApp, requireClockDevice, controller, servicio, repositorio, auditoría,
+ * storage); sólo el object storage primario (Neon) se reemplaza por uno en memoria: StorageFile y
+ * StorageArchiveJob son filas reales escritas en la transacción de la fichada (F12-PERF-3/4,
+ * docs/decisions/F12_PERF_3_4.md). F11 (§30): el alias legacy `/time-entries/clock/*` ya no
+ * existe; las jornadas PUBLIC_CLOCK_PHOTO son sólo historia.
  *
  * Opt-in: sólo corre con `CLOCK_IT_DATABASE_URL` → `localhost`, base `clock_it*`, con el schema de
  * este commit (`DATABASE_URL=<url> npx prisma db push --skip-generate`). VACÍA la base al empezar.
@@ -15,12 +17,12 @@ import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ManagedStorageObjectInput } from "../../shared/storage/storage.types";
+import { inMemoryObjectStorage } from "../../shared/testing/inMemoryObjectStorage";
 
 const url = process.env.CLOCK_IT_DATABASE_URL;
 
-vi.mock("../../shared/storage/storage.service", () => ({
-  storageService: { uploadManaged: vi.fn(), deleteManaged: vi.fn() },
+vi.mock("../../shared/storage/neonObjectStorage.provider", async () => ({
+  neonObjectStorageProvider: (await import("../../shared/testing/inMemoryObjectStorage")).inMemoryObjectStorage.provider,
 }));
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -46,8 +48,9 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   const employees: Record<string, string> = {};
   let deviceA: Device;
   let deviceB: Device;
+  let originalPunchPhotoProvider: Modules["env"]["PUNCH_PHOTO_STORAGE_PROVIDER"];
 
-  const body = (employeeKey: string, punchType: "IN" | "OUT", requestId: string = randomUUID()) => ({ requestId, employeeId: employees[employeeKey]!, punchType, photo: PHOTO, faceValidationStatus: "VALID" });
+  const body =(employeeKey: string, punchType: "IN" | "OUT", requestId: string = randomUUID()) => ({ requestId, employeeId: employees[employeeKey]!, punchType, photo: PHOTO, faceValidationStatus: "VALID" });
 
   async function call(method: string, path: string, device: Device, payload?: unknown) {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -61,6 +64,16 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
 
   const punchesOf = (employeeKey: string) => m.prisma.attendancePunch.findMany({ where: { employeeId: employees[employeeKey]! }, orderBy: { timestamp: "asc" } });
   const attemptOf = (requestId: string) => m.prisma.clockPunchAttempt.findUniqueOrThrow({ where: { requestId } });
+
+  /**
+   * F12-PERF-3: una fichada no confirmada no deja StorageFile (se revirtió con la transacción)
+   * ni StorageArchiveJob, y su objeto primario — que sí llegó a subirse — quedó compensado.
+   */
+  async function expectEvidenceRolledBack(requestId: string, employeeKey: string) {
+    expect(inMemoryObjectStorage.keysFor(requestId)).toEqual({ uploaded: [expect.stringContaining(requestId)], stored: [] });
+    const files = await m.prisma.storageFile.findMany({ where: { employeeId: employees[employeeKey]!, module: "FICHADAS", storageKey: { contains: requestId } } });
+    expect(files).toHaveLength(0);
+  }
 
   async function dropCompletionFailureInjection() {
     try {
@@ -103,14 +116,13 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     // apuntaría al .env. Se descarta para que el import de abajo cree uno contra clock_it.
     delete (globalThis as { prisma?: unknown }).prisma;
 
-    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, { ClockPunchCooldownConflict }, credentials, { storageService }, { auditService }] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, { timeEntriesRepository }, { ClockPunchCooldownConflict }, credentials, { auditService }] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
       import("../time-entries/timeEntries.repository"),
       import("../time-entries/clockPunchCooldown"),
       import("../../shared/security/clockDeviceCredentials"),
-      import("../../shared/storage/storage.service"),
       import("../audit/audit.service"),
     ]);
     m = { createApp, env, prisma, repository: timeEntriesRepository, Conflict: ClockPunchCooldownConflict, auditService };
@@ -137,18 +149,8 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     deviceA = await device("TEST IT A");
     deviceB = await device("TEST IT B");
 
-    vi.mocked(storageService.uploadManaged).mockImplementation((async (input: ManagedStorageObjectInput) => prisma.storageFile.create({
-      data: {
-        storageProvider: "LOCAL", storageKey: `it/${randomUUID()}`, fileName: input.fileName, originalFileName: input.fileName, mimeType: input.mimeType,
-        extension: "jpg", sizeBytes: input.buffer?.length ?? 0, module: input.module, entityType: input.entityType, entityId: input.entityId,
-        employeeId: input.employeeId ?? null, attendancePunchId: input.attendancePunchId ?? null, isThumbnail: input.isThumbnail ?? false,
-        originalFileId: input.originalFileId ?? null, visibility: input.visibility ?? "SYSTEM_ONLY",
-      },
-    })) as never);
-    vi.mocked(storageService.deleteManaged).mockImplementation(async (id: string) => {
-      await prisma.storageFile.update({ where: { id }, data: { status: "DELETED", deletedAt: new Date() } });
-    });
-
+    originalPunchPhotoProvider = env.PUNCH_PHOTO_STORAGE_PROVIDER;
+    env.PUNCH_PHOTO_STORAGE_PROVIDER = "neon_object_storage";
     env.CLOCK_PUNCH_COOLDOWN_SECONDS = 60;
     server = createApp().listen(0);
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -156,7 +158,8 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   }, 60_000);
 
   afterAll(async () => {
-    await sleep(1_000); // miniatura diferida (750 ms) de la última fichada; la auditoría es transaccional (F11)
+    // Nada diferido que esperar: auditoría (F11) y evidencia (F12-PERF-3) son transaccionales.
+    if (m) m.env.PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhotoProvider;
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await m?.prisma.$disconnect();
     await holder?.$disconnect();
@@ -328,9 +331,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await m.prisma.workShift.count({ where: { employeeId: employees.auditDown! } })).toBe(0);
     expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
     expect(await m.prisma.clockPunchAttempt.findUnique({ where: { requestId: failing.requestId } })).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503 });
-    const evidence = await m.prisma.storageFile.findMany({ where: { employeeId: employees.auditDown!, module: "FICHADAS" } });
-    expect(evidence.length).toBeGreaterThanOrEqual(1);
-    expect(evidence.every((file) => file.status === "DELETED")).toBe(true);
+    await expectEvidenceRolledBack(failing.requestId, "auditDown");
 
     // Mismo requestId: devuelve el resultado guardado, sin volver a fichar.
     expect(await call("POST", "/clock/photo-punch", deviceA, failing)).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
@@ -460,9 +461,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await m.prisma.workShift.count({ where: { employeeId: employees.completionIn! } })).toBe(0);
     expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
     expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
-    const evidence = await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionIn!, module: "FICHADAS" } });
-    expect(evidence.length).toBeGreaterThanOrEqual(1);
-    expect(evidence.every((file) => file.status === "DELETED")).toBe(true);
+    await expectEvidenceRolledBack(failing.requestId, "completionIn");
     expect(await call("GET", `/clock/attempts/${failing.requestId}?employeeId=${employees.completionIn}`, deviceA)).toMatchObject({ status: 200, data: { status: "FAILED", response: null, error: { code: "CLOCK_TEMPORARY_FAILURE" } } });
 
     // Mismo requestId: el mismo error guardado, sin volver a fichar.
@@ -482,7 +481,6 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   it("si falla la escritura de COMPLETED de una salida, la jornada sigue ABIERTA: sin SALIDA, sin horas ni tramos, sin auditoría nueva; después sale bien", async () => {
     const workShiftId = await clockInAndAge("completionOut", "kiosk", deviceA, 90);
     const auditsBefore = await m.prisma.auditLog.count({ where: { entityId: workShiftId } });
-    const evidenceBefore = new Set((await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionOut!, module: "FICHADAS" }, select: { id: true } })).map(({ id }) => id));
     const failing = body("completionOut", "OUT");
 
     expect(await withCompletionFailure(failing.requestId, () => call("POST", "/clock/photo-punch", deviceB, failing))).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
@@ -493,9 +491,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await m.prisma.timeSegment.count({ where: { workShiftId } })).toBe(0);
     expect(await m.prisma.auditLog.count({ where: { entityId: workShiftId } })).toBe(auditsBefore);
     expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
-    const failedEvidence = (await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionOut!, module: "FICHADAS" } })).filter(({ id }) => !evidenceBefore.has(id));
-    expect(failedEvidence.length).toBeGreaterThanOrEqual(1);
-    expect(failedEvidence.every((file) => file.status === "DELETED")).toBe(true);
+    await expectEvidenceRolledBack(failing.requestId, "completionOut");
 
     const exitBody = body("completionOut", "OUT");
     const exit = await call("POST", "/clock/photo-punch", deviceB, exitBody);
@@ -507,7 +503,6 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
   it("si falla la escritura de COMPLETED en un rollover, la jornada vencida sigue ABIERTA: sin olvido de salida, sin TimeEntry de 0 h ni jornada nueva", async () => {
     const oldShiftId = await clockInAndAge("completionRollover", "kiosk", deviceA, 21 * 60);
     const auditsBefore = await m.prisma.auditLog.count();
-    const evidenceBefore = new Set((await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionRollover!, module: "FICHADAS" }, select: { id: true } })).map(({ id }) => id));
     const failing = body("completionRollover", "IN");
 
     expect(await withCompletionFailure(failing.requestId, () => call("POST", "/clock/photo-punch", deviceB, failing))).toMatchObject({ status: 503, error: { code: "CLOCK_TEMPORARY_FAILURE" } });
@@ -519,9 +514,7 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await punchesOf("completionRollover")).toHaveLength(1);
     expect(await m.prisma.auditLog.count()).toBe(auditsBefore);
     expect(await attemptOf(failing.requestId)).toMatchObject({ status: "FAILED", errorCode: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503, response: null });
-    const failedEvidence = (await m.prisma.storageFile.findMany({ where: { employeeId: employees.completionRollover!, module: "FICHADAS" } })).filter(({ id }) => !evidenceBefore.has(id));
-    expect(failedEvidence.length).toBeGreaterThanOrEqual(1);
-    expect(failedEvidence.every((file) => file.status === "DELETED")).toBe(true);
+    await expectEvidenceRolledBack(failing.requestId, "completionRollover");
 
     const fresh = body("completionRollover", "IN");
     const ok = await call("POST", "/clock/photo-punch", deviceB, fresh);
@@ -564,5 +557,81 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     const [shift] = await m.prisma.workShift.findMany({ where: { employeeId: employees.sameRequest! } });
     expect(await m.prisma.auditLog.count({ where: { entity: "WorkShift", entityId: shift!.id } })).toBe(1);
     expect(await attemptOf(same.requestId)).toMatchObject({ status: "COMPLETED" });
+
+    // F12-PERF-3/4: y un reintento secuencial del mismo requestId tampoco agrega nada.
+    expect((await call("POST", "/clock/photo-punch", deviceA, same)).status).toBe(201);
+    await expectOneEvidencePerRequest(same.requestId, "sameRequest", deviceA);
+  });
+
+  /**
+   * F12-PERF-3/4: un requestId confirmado produce como máximo 1 objeto primario, 1 StorageFile
+   * (NEON_OBJECT_STORAGE, vinculado a la fichada), 1 AttendancePunch, 1 AuditLog y 1
+   * StorageArchiveJob PENDING hacia Google Drive.
+   */
+  async function expectOneEvidencePerRequest(requestId: string, employeeKey: string, device: Device) {
+    const keys = inMemoryObjectStorage.keysFor(requestId);
+    expect(keys.uploaded).toHaveLength(1);
+    expect(keys.stored).toEqual(keys.uploaded);
+    expect(keys.uploaded[0]).toMatch(new RegExp(`^attendance/\\d{4}/\\d{2}/${device.id}/${requestId}\\.jpg$`));
+    const files = await m.prisma.storageFile.findMany({ where: { storageKey: keys.uploaded[0]! }, include: { archiveJobs: true } });
+    expect(files).toHaveLength(1);
+    const [file] = files;
+    expect(file).toMatchObject({ storageProvider: "NEON_OBJECT_STORAGE", module: "FICHADAS", status: "ACTIVE", employeeId: employees[employeeKey], checksum: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    const punches = await m.prisma.attendancePunch.findMany({ where: { photoFileId: file!.id } });
+    expect(punches).toHaveLength(1);
+    expect(file!.attendancePunchId).toBe(punches[0]!.id);
+    expect(punches[0]).toMatchObject({ photoStoragePath: keys.uploaded[0], photoUrl: null, thumbnailFileId: null });
+    const shiftId = punches[0]!.type === "INGRESO"
+      ? (await m.prisma.workShift.findFirstOrThrow({ where: { startPunchId: punches[0]!.id } })).id
+      : (await m.prisma.workShift.findFirstOrThrow({ where: { endPunchId: punches[0]!.id } })).id;
+    expect(await m.prisma.auditLog.count({ where: { entity: "WorkShift", entityId: shiftId } })).toBeGreaterThanOrEqual(1);
+    expect(file!.archiveJobs).toHaveLength(1);
+    expect(file!.archiveJobs[0]).toMatchObject({ targetProvider: "GOOGLE_DRIVE", status: "PENDING", attemptCount: 0 });
+  }
+
+  it("F12-PERF-3/4: IN y OUT confirmados dejan exactamente una evidencia primaria y un archive job cada uno", async () => {
+    const entry = body("kioskBoth", "IN");
+    // kioskBoth ya cerró su jornada en el test de cutover: este IN abre otra fuera del cooldown.
+    m.env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+    try {
+      expect((await call("POST", "/clock/photo-punch", deviceA, entry)).status).toBe(201);
+      await expectOneEvidencePerRequest(entry.requestId, "kioskBoth", deviceA);
+      const exit = body("kioskBoth", "OUT");
+      expect((await call("POST", "/clock/photo-punch", deviceB, exit)).status).toBe(201);
+      await expectOneEvidencePerRequest(exit.requestId, "kioskBoth", deviceB);
+    } finally {
+      m.env.CLOCK_PUNCH_COOLDOWN_SECONDS = 60;
+    }
+  });
+
+  it("F12-PERF-4: el claim del archive job es exclusivo, un lease vencido se reclama y el worker anterior ya no puede cerrarlo (fencing)", async () => {
+    const { storageArchiveRepository } = await import("../../shared/storage/storageArchive.repository");
+    const leaseMs = 120_000;
+    const target = (await m.prisma.storageArchiveJob.findFirstOrThrow({ where: { status: "PENDING" }, orderBy: { createdAt: "asc" } }))!;
+    // Sólo `target` queda reclamable en esta base de test.
+    await holder.storageArchiveJob.updateMany({ where: { id: { not: target.id } }, data: { nextAttemptAt: new Date(Date.now() + 24 * 60 * 60_000) } });
+    const now = new Date();
+
+    const claims = await Promise.all([storageArchiveRepository.claimNext(now, leaseMs), storageArchiveRepository.claimNext(now, leaseMs)]);
+    const won = claims.filter(Boolean);
+    expect(won).toHaveLength(1);
+    expect(won[0]).toMatchObject({ id: target.id, status: "PROCESSING", attemptCount: 1, sourceStorageFile: { id: target.sourceStorageFileId } });
+
+    // Lease vigente: nadie más lo toma.
+    expect(await storageArchiveRepository.claimNext(new Date(now.getTime() + leaseMs - 1_000), leaseMs)).toBeNull();
+    // Lease vencido: se reclama con un intento más.
+    const reclaimed = await storageArchiveRepository.claimNext(new Date(now.getTime() + leaseMs + 1_000), leaseMs);
+    expect(reclaimed).toMatchObject({ id: target.id, attemptCount: 2 });
+
+    // El worker del primer claim ya no puede cerrar el job; el del reclaim sí.
+    expect(await storageArchiveRepository.complete(target.id, 1, "drive-stale", new Date())).toEqual({ count: 0 });
+    expect(await storageArchiveRepository.retry(target.id, 1, new Date(), "X", "x")).toEqual({ count: 0 });
+    expect(await storageArchiveRepository.complete(target.id, 2, "drive-file", new Date())).toEqual({ count: 1 });
+    expect(await m.prisma.storageArchiveJob.findUniqueOrThrow({ where: { id: target.id } })).toMatchObject({ status: "COMPLETED", targetStorageKey: "drive-file", leaseExpiresAt: null });
+
+    // Un job COMPLETED nunca vuelve a reclamarse.
+    expect(await storageArchiveRepository.claimNext(new Date(now.getTime() + 10 * leaseMs), leaseMs)).toBeNull();
+    // Y su StorageFile primario no puede borrarse físicamente mientras tenga job (FK RESTRICT).
+    await expect(holder.storageFile.delete({ where: { id: target.sourceStorageFileId } })).rejects.toThrow();
   });
 });

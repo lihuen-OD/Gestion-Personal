@@ -47,6 +47,8 @@ vi.mock("../../shared/prisma/client", () => {
     // F7: lock no bloqueante del cooldown por empleado (pg_try_advisory_xact_lock).
     $queryRaw: vi.fn(),
     monthlyTimeClosure: { findMany: vi.fn().mockResolvedValue([]) },
+    // F12-PERF-3: vínculo StorageFile → AttendancePunch dentro de la transacción.
+    storageFile: { update: vi.fn() },
   };
   return {
     prisma: {
@@ -114,6 +116,7 @@ type TxMocks = {
   hourConceptBreakdown: { findMany: Mock };
   novelty: { findMany: Mock };
   employeePositionPeriod: { findMany: Mock };
+  storageFile: { update: Mock };
 };
 
 const mockedPrisma = prisma as unknown as {
@@ -1934,6 +1937,86 @@ describe("F11.1 — estados del intento de fichada", () => {
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
 
     await expect(timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date(), completeAttempt: () => Promise.reject(new ClockPunchAttemptNotProcessing("req-1")) })).rejects.toBeInstanceOf(ClockPunchAttemptNotProcessing);
+  });
+});
+
+// F12-PERF-3 (docs/decisions/F12_PERF_3_4.md): la evidencia (StorageFile +
+// archive job) se escribe con la MISMA tx que la fichada, después del guard del
+// cooldown y antes del AttendancePunch, que la referencia y queda vinculado.
+// El rollback real contra PostgreSQL está en clock/clock.integration.test.ts.
+describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fichada", () => {
+  const windowStart = new Date("2026-10-15T16:00:00.000Z");
+  const day = new Date("2026-10-15T00:00:00.000Z");
+  const evidence = { photoFileId: "file-1", photoStoragePath: "attendance/2026/10/device-1/req-1.jpg", faceDetected: true, faceValidationStatus: "VALID" as const, deviceId: "device-1", rawPayload: {} };
+
+  beforeEach(() => {
+    mockedPrisma.__tx.$queryRaw.mockResolvedValue([{ locked: true }]);
+    mockedPrisma.__tx.attendancePunch.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.storageFile.update.mockResolvedValue({});
+  });
+
+  it("ingreso: corre el writer con la tx después del cooldown y antes del punch, que lleva el photoFileId y queda vinculado", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+    const prepareEvidence = vi.fn().mockResolvedValue(evidence);
+
+    await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date("2026-10-15T16:01:00.000Z"), prepareEvidence, cooldown: { windowStart } });
+
+    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx);
+    expect(mockedPrisma.__tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(prepareEvidence.mock.invocationCallOrder[0]!);
+    expect(prepareEvidence.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.attendancePunch.create.mock.invocationCallOrder[0]!);
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "INGRESO", photoFileId: "file-1", photoStoragePath: evidence.photoStoragePath, deviceId: "device-1" }) });
+    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-1" } });
+  });
+
+  it("salida: el punch de SALIDA lleva la evidencia de la tx y queda vinculado", async () => {
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open" });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
+    const prepareEvidence = vi.fn().mockResolvedValue(evidence);
+
+    await timeEntriesRepository.closeOpenWorkShift({
+      workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
+      source: "KIOSK" as never, endAt: new Date("2026-10-15T17:00:00.000Z"), totalMinutes: 60,
+      segments: [{ date: day, startAt: new Date("2026-10-15T16:00:00.000Z"), endAt: new Date("2026-10-15T17:00:00.000Z"), minutes: 60, hours: 1, hourConceptId: "concept-normal", hourConceptName: "Hora normal" }],
+      prepareEvidence, cooldown: { windowStart },
+    });
+
+    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx);
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "SALIDA", photoFileId: "file-1" }) });
+    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-out" } });
+  });
+
+  it("rollover: el writer corre antes de leer o reclamar la jornada anterior y el ingreso nuevo queda vinculado", async () => {
+    mockedPrisma.__tx.workShift.findFirst.mockResolvedValue({ id: "shift-prev", startAt: new Date("2026-10-14T10:00:00.000Z"), source: "KIOSK", hourConcept: { id: "concept-normal", name: "Hora normal" } });
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-in" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+    const prepareEvidence = vi.fn().mockResolvedValue(evidence);
+
+    await timeEntriesRepository.rolloverExpiredOpenWorkShift({ openWorkShiftId: "shift-prev", employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date("2026-10-15T16:01:00.000Z"), missingOutObservation: "x", prepareEvidence });
+
+    expect(prepareEvidence.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.workShift.findFirst.mock.invocationCallOrder[0]!);
+    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-in" } });
+  });
+
+  it("si el writer falla, la fichada no se escribe y el error se propaga (la transacción se revierte)", async () => {
+    const prepareEvidence = vi.fn().mockRejectedValue(new Error("storage file insert failed"));
+
+    await expect(timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date(), prepareEvidence })).rejects.toThrow("storage file insert failed");
+
+    expect(mockedPrisma.__tx.attendancePunch.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.workShift.create).not.toHaveBeenCalled();
+  });
+
+  it("una fichada sin StorageFile (carga administrativa) no toca StorageFile", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "ADMIN" as never, startAt: new Date(), punchEvidence: { deviceId: null } });
+
+    expect(mockedPrisma.__tx.storageFile.update).not.toHaveBeenCalled();
   });
 });
 

@@ -3,7 +3,8 @@
  * conectividad derivada en el listado RRHH, edición con auditoría, "Kiosco · <dispositivo>" en
  * Asistencia (sin N+1) y limpieza de solicitudes PENDING abandonadas. Todo pasa por la app real
  * (createApp, requireClockDevice/requireAuth, controllers, servicios, repositorios, auditoría);
- * sólo el storage de fotos se reemplaza por filas StorageFile locales.
+ * sólo el object storage primario (Neon) se reemplaza por uno en memoria: StorageFile y
+ * StorageArchiveJob son filas reales (F12-PERF-3/4, docs/decisions/F12_PERF_3_4.md).
  *
  * Opt-in: sólo corre con `CLOCK_DEVICES_IT_DATABASE_URL` → `localhost`, base `clock_it*` PROPIA
  * (no la de clock.integration.test.ts: las dos vacían su base al empezar y pueden correr en
@@ -16,15 +17,13 @@ import { randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { ManagedStorageObjectInput } from "../../shared/storage/storage.types";
 
 const url = process.env.CLOCK_DEVICES_IT_DATABASE_URL;
 
-vi.mock("../../shared/storage/storage.service", () => ({
-  storageService: { uploadManaged: vi.fn(), deleteManaged: vi.fn() },
+vi.mock("../../shared/storage/neonObjectStorage.provider", async () => ({
+  neonObjectStorageProvider: (await import("../../shared/testing/inMemoryObjectStorage")).inMemoryObjectStorage.provider,
 }));
 
-const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const PHOTO = `data:image/jpeg;base64,${Buffer.alloc(6000, 1).toString("base64")}`;
 const HOUR = 60 * 60_000;
 
@@ -48,6 +47,7 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
   const employees: string[] = [];
   const establishments: Record<"norte" | "sur" | "inactivo", string> = { norte: "", sur: "", inactivo: "" };
   let queryLog: string[] = [];
+  let originalPunchPhotoProvider: Modules["env"]["PUNCH_PHOTO_STORAGE_PROVIDER"];
 
   async function device(name: string | null, status: "PENDING" | "ACTIVE" | "REVOKED", data: Json = {}): Promise<Device> {
     const secret = m.credentials.generateClockDeviceSecret();
@@ -76,13 +76,12 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
     // apuntaría al .env. Se descarta para que el import de abajo cree uno contra la base de prueba.
     delete (globalThis as { prisma?: unknown }).prisma;
 
-    const [{ createApp }, { env }, { prisma }, { clockDevicesService }, credentials, { storageService }] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, { clockDevicesService }, credentials] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
       import("./clockDevices.service"),
       import("../../shared/security/clockDeviceCredentials"),
-      import("../../shared/storage/storage.service"),
     ]);
     m = { createApp, env, prisma, service: clockDevicesService, credentials };
 
@@ -111,18 +110,8 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
     rrhhUserId = rrhh.id;
     token = jwt.sign({ sub: rrhh.id, email: rrhh.email, role: rrhh.role }, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
 
-    vi.mocked(storageService.uploadManaged).mockImplementation((async (input: ManagedStorageObjectInput) => holder.storageFile.create({
-      data: {
-        storageProvider: "LOCAL", storageKey: `it/${randomUUID()}`, fileName: input.fileName, originalFileName: input.fileName, mimeType: input.mimeType,
-        extension: "jpg", sizeBytes: input.buffer?.length ?? 0, module: input.module, entityType: input.entityType, entityId: input.entityId,
-        employeeId: input.employeeId ?? null, attendancePunchId: input.attendancePunchId ?? null, isThumbnail: input.isThumbnail ?? false,
-        originalFileId: input.originalFileId ?? null, visibility: input.visibility ?? "SYSTEM_ONLY",
-      },
-    })) as never);
-    vi.mocked(storageService.deleteManaged).mockImplementation(async (id: string) => {
-      await holder.storageFile.update({ where: { id }, data: { status: "DELETED", deletedAt: new Date() } });
-    });
-
+    originalPunchPhotoProvider = env.PUNCH_PHOTO_STORAGE_PROVIDER;
+    env.PUNCH_PHOTO_STORAGE_PROVIDER = "neon_object_storage";
     env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
     server = createApp().listen(0);
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -130,7 +119,8 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
   }, 60_000);
 
   afterAll(async () => {
-    await sleep(1_000); // miniatura diferida de la última fichada (la auditoría es transaccional desde F11)
+    // Nada diferido que esperar: auditoría (F11) y evidencia (F12-PERF-3) son transaccionales.
+    if (m) m.env.PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhotoProvider;
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await m?.prisma.$disconnect();
     await holder?.$disconnect();
@@ -214,7 +204,6 @@ describe.skipIf(!url)("F9 — dispositivos de fichada contra PostgreSQL local", 
     const others = [await device("TEST F9 Asistencia B", "ACTIVE"), await device("TEST F9 Asistencia C", "ACTIVE")];
     const punch = (entry: Device, employeeIndex: number) => call("POST", "/clock/photo-punch", { device: entry, body: { requestId: randomUUID(), employeeId: employees[employeeIndex]!, punchType: "IN", photo: PHOTO, faceValidationStatus: "VALID" } });
     const attendance = async () => {
-      await sleep(1_200); // deja terminar la miniatura y la auditoría diferidas antes de medir
       queryLog = [];
       const result = await call("GET", "/time-entries/attendance", { bearer: true });
       expect(result.status).toBe(200);

@@ -5,13 +5,12 @@ import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { storageService } from "../../shared/storage/storage.service";
-import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
+import { storageService, type PreparedManagedStorageUpload } from "../../shared/storage/storage.service";
 import { timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchTransactionWriter } from "./timeEntries.repository";
 import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
@@ -569,15 +568,8 @@ type ClockPhotoEvidence = {
   userAgent?: string | null;
   deviceId: string;
   rawPayload: Prisma.InputJsonValue;
+  preparedUpload: PreparedManagedStorageUpload;
   performance: { originalMs: number; thumbnailMs: number; totalMs: number; thumbnailDeferred: boolean };
-};
-
-type DeferredClockThumbnail = {
-  buffer: Buffer;
-  mimeType: string;
-  extension: string;
-  folderSegments: string[];
-  baseName: string;
 };
 
 const supportedClockPhotoMimes = new Set(["image/jpeg", "image/webp", "image/png"]);
@@ -611,52 +603,57 @@ function decodeClockPhoto(dataUrl: string, options?: { minBytes?: number; maxByt
   return { buffer, mimeType };
 }
 
-async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: string, timestamp: Date, audit?: AuditContext): Promise<{ evidence: ClockPhotoEvidence; thumbnail: DeferredClockThumbnail }> {
+/**
+ * F12-PERF-3 (docs/decisions/F12_PERF_3_4.md): sube sólo el objeto físico al
+ * primary, ANTES de la transacción. El StorageFile (y su StorageArchiveJob) se
+ * escriben dentro de la transacción de la fichada (clockEvidenceWriter); si la
+ * fichada no se confirma, cleanupClockEvidence borra el objeto por su key.
+ * La key `attendance/<año>/<mes>/<dispositivo>/<requestId>.<ext>` es
+ * determinista: un requestId produce a lo sumo un objeto primario, y no hay
+ * una carpeta por fichada (con Drive como primary, crearla estaría en el
+ * request). La miniatura ya no se guarda (nadie la servía); el contrato la
+ * sigue validando igual que antes.
+ */
+async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: string, timestamp: Date, audit?: AuditContext): Promise<ClockPhotoEvidence> {
   const storageStarted = performance.now();
   const { buffer, mimeType } = decodeClockPhoto(input.photo, { label: "foto de fichada" });
-  const thumbnailData = input.thumbnail || input.photo;
-  const { buffer: thumbnailBuffer, mimeType: thumbnailMimeType } = decodeClockPhoto(thumbnailData, {
+  decodeClockPhoto(input.thumbnail || input.photo, {
     label: "miniatura de fichada",
     minBytes: 500,
     maxBytes: 700_000,
   });
   const extension = mimeType === "image/webp" ? "webp" : mimeType === "image/png" ? "png" : "jpg";
-  const thumbnailExtension = thumbnailMimeType === "image/webp" ? "webp" : thumbnailMimeType === "image/png" ? "png" : "jpg";
-  const folderSegments = storagePathBuilder.attendancePunch(timestamp);
-  const baseName = `${input.employeeId}-${input.punchType.toLowerCase()}-${timestamp.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "z")}`;
+  const { year, month } = argentinaDateParts(timestamp);
+  const folderSegments = ["attendance", String(year), String(month).padStart(2, "0"), deviceId];
   const originalStarted = performance.now();
-  const stored = await storageService.uploadManaged({
+  const preparedUpload = await storageService.uploadManagedObject({
     buffer,
     mimeType,
     folderSegments,
-    fileName: `${baseName}.${extension}`,
+    fileName: `${input.requestId}.${extension}`,
     module: "FICHADAS",
     entityType: "ATTENDANCE_PUNCH",
     entityId: input.employeeId,
     employeeId: input.employeeId,
     visibility: "SYSTEM_ONLY",
     purpose: "punch-photo",
-    metadata: {
-      employeeId: input.employeeId,
-      punchType: input.punchType,
-      faceValidationStatus: input.faceValidationStatus,
-    },
+    metadata: { requestId: input.requestId, punchType: input.punchType },
     telemetryRequestId: input.requestId,
   });
   const storagePerformance = {
     originalMs: Number((performance.now() - originalStarted).toFixed(1)),
     thumbnailMs: 0,
     totalMs: Number((performance.now() - storageStarted).toFixed(1)),
-    thumbnailDeferred: true,
+    thumbnailDeferred: false,
   };
   console.info("CLOCK_PHOTO_STORAGE_TIMING", { requestId: input.requestId, ...storagePerformance });
 
   // IP, user-agent y dispositivo salen de la request autenticada, nunca del
   // body: `input.device` es sólo contexto informativo de la cámara.
-  return { evidence: {
-    photoUrl: stored.driveWebViewLink || null,
-    photoStoragePath: stored.storageKey,
-    photoFileId: stored.id,
+  return {
+    photoUrl: null,
+    photoStoragePath: preparedUpload.uploaded.storageKey,
+    photoFileId: null,
     thumbnailFileId: null,
     faceDetected: input.faceValidationStatus === "VALID",
     faceValidationStatus: input.faceValidationStatus,
@@ -673,53 +670,15 @@ async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: strin
       photo: {
         mimeType,
         bytes: buffer.length,
-        providerPath: stored.storageKey,
-        storageFileId: stored.id,
+        providerPath: preparedUpload.uploaded.storageKey,
+        storageFileId: null,
         thumbnailFileId: null,
-        thumbnailStatus: "PENDING",
+        thumbnailStatus: "NOT_STORED",
       },
     },
     performance: storagePerformance,
-  }, thumbnail: { buffer: thumbnailBuffer, mimeType: thumbnailMimeType, extension: thumbnailExtension, folderSegments, baseName } };
-}
-
-function scheduleClockThumbnail(input: ClockPhotoPunchInput, thumbnail: DeferredClockThumbnail, evidence: ClockPhotoEvidence, attendancePunchId: string) {
-  const timer = setTimeout(() => {
-    const started = performance.now();
-    void storageService.uploadManaged({
-    buffer: thumbnail.buffer,
-    mimeType: thumbnail.mimeType,
-    folderSegments: thumbnail.folderSegments,
-    fileName: `${thumbnail.baseName}-thumb.${thumbnail.extension}`,
-    module: "FICHADAS",
-    entityType: "ATTENDANCE_PUNCH",
-    entityId: input.employeeId,
-    employeeId: input.employeeId,
-    attendancePunchId,
-    visibility: "SYSTEM_ONLY",
-    isThumbnail: true,
-    originalFileId: evidence.photoFileId,
-    purpose: "punch-photo",
-    metadata: { employeeId: input.employeeId, punchType: input.punchType, originalFileId: evidence.photoFileId || "" },
-    }).then(async (stored) => {
-    try {
-      await timeEntriesRepository.linkClockPunchThumbnail(attendancePunchId, stored.id);
-      clockPunchMetric({ requestId: input.requestId, phase: "thumbnail", durationMs: performance.now() - started, bytes: thumbnail.buffer.length, provider: stored.storageProvider, result: "success" });
-      console.info("CLOCK_PHOTO_THUMBNAIL_TIMING", { requestId: input.requestId, thumbnailMs: Number((performance.now() - started).toFixed(1)) });
-    } catch (error) {
-      await storageService.deleteManaged(stored.id).catch(() => undefined);
-      throw error;
-    }
-    }).catch((error) => {
-      console.error("CLOCK_PHOTO_THUMBNAIL_FAILED", {
-        severity: "warning",
-        requestId: input.requestId,
-        attendancePunchId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }, 750);
-  timer.unref();
+    preparedUpload,
+  };
 }
 
 /**
@@ -826,17 +785,33 @@ export function clockAttemptHash(input: ClockPhotoPunchInput) {
 }
 
 async function cleanupClockEvidence(evidence: ClockPhotoEvidence) {
-  const ids = [evidence.thumbnailFileId, evidence.photoFileId].filter((id): id is string => Boolean(id));
-  const results = await Promise.allSettled(ids.map((id) => storageService.deleteManaged(id)));
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      console.error("CLOCK_STORAGE_COMPENSATION_FAILED", {
-        severity: "critical",
-        storageFileId: ids[index],
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      });
-    }
-  });
+  try {
+    await storageService.compensateManagedUpload(evidence.preparedUpload);
+  } catch (error) {
+    console.error("CLOCK_STORAGE_COMPENSATION_FAILED", {
+      severity: "critical",
+      requestId: evidence.preparedUpload.input.telemetryRequestId,
+      objectKey: evidence.preparedUpload.uploaded.storageKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * F12-PERF-3/4: corre dentro de la transacción de la fichada, antes de crear
+ * el AttendancePunch: StorageFile primario + StorageArchiveJob en la misma
+ * transacción que la fichada, su AuditLog y el intento COMPLETED.
+ */
+function clockEvidenceWriter(evidence: ClockPhotoEvidence) {
+  return async (tx: PrismaTransactionClient) => {
+    const stored = await storageService.persistManagedUploadWithArchive(evidence.preparedUpload, tx);
+    const rawPayload = evidence.rawPayload as Prisma.JsonObject;
+    return {
+      ...evidence,
+      photoFileId: stored.id,
+      rawPayload: { ...rawPayload, photo: { ...(rawPayload.photo as Prisma.JsonObject), storageFileId: stored.id } } as Prisma.InputJsonValue,
+    };
+  };
 }
 
 function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
@@ -1516,11 +1491,8 @@ export const timeEntriesService = {
       })()
       : null;
     let evidence: ClockPhotoEvidence;
-    let deferredThumbnail: DeferredClockThumbnail;
     try {
-      const storedPhoto = await storeClockPunchPhoto(input, origin.device.id, now, audit);
-      evidence = storedPhoto.evidence;
-      deferredThumbnail = storedPhoto.thumbnail;
+      evidence = await storeClockPunchPhoto(input, origin.device.id, now, audit);
     } catch (error) {
       if (error instanceof AppError && error.code.startsWith("CLOCK_PHOTO_")) {
         throw error;
@@ -1556,7 +1528,7 @@ export const timeEntriesService = {
               source: origin.source,
               startAt: now,
               missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
-              punchEvidence: evidence,
+              prepareEvidence: clockEvidenceWriter(evidence),
               cooldown,
               audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
               completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
@@ -1576,7 +1548,6 @@ export const timeEntriesService = {
           const postCommitStartedAt = performance.now();
           clearAuditDerivedCaches();
           await notifyMissingExit(employee.id, openShift.id, openShift.startAt);
-          if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
           await evaluateShiftEntry(employee.id, workShift.id, now);
           clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
           return clockEntryResult(employee, workShift, openShift);
@@ -1596,7 +1567,7 @@ export const timeEntriesService = {
           hourConceptName: selectedConcept.name,
           source: origin.source,
           startAt: now,
-          punchEvidence: evidence,
+          prepareEvidence: clockEvidenceWriter(evidence),
           cooldown,
           audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
           completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
@@ -1612,7 +1583,6 @@ export const timeEntriesService = {
       }
       const postCommitStartedAt = performance.now();
       clearAuditDerivedCaches();
-      if (workShift.startPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, workShift.startPunchId);
       await evaluateShiftEntry(employee.id, workShift.id, now);
       clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
       console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
@@ -1652,7 +1622,7 @@ export const timeEntriesService = {
         endAt: now,
         totalMinutes: calculation.totalMinutes,
         segments: classifiedSegments,
-        punchEvidence: evidence,
+        prepareEvidence: clockEvidenceWriter(evidence),
         cooldown,
         audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
@@ -1673,7 +1643,6 @@ export const timeEntriesService = {
     // intento COMPLETED). Nada de lo que sigue compensa la evidencia.
     const postCommitStartedAt = performance.now();
     clearAuditDerivedCaches();
-    if (created.workShift.endPunchId) scheduleClockThumbnail(input, deferredThumbnail, evidence, created.workShift.endPunchId);
     await syncAutomaticBreakdownsAfterProcessedShift({
       employeeId: employee.id,
       workShiftId: created.workShift.id,

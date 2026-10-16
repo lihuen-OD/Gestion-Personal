@@ -67,16 +67,16 @@ vi.mock("./timeEntries.repository", () => ({
 // fotográfica) llegan a este módulo — ningún test anterior en este archivo
 // alcanzaba ese camino (se resolvían antes por idempotencia). Se mockea acá
 // mismo, sin storage real, siguiendo el mismo criterio que
-// timeEntries.attendancePunchPhoto.test.ts.
+// timeEntries.attendancePunchPhoto.test.ts. F12-PERF-3: el objeto físico se
+// sube antes de la transacción (uploadManagedObject); el StorageFile y su
+// archive job se escriben dentro (persistManagedUploadWithArchive); una
+// fichada no confirmada compensa por key (compensateManagedUpload).
 vi.mock("../../shared/storage/storage.service", () => ({
   storageService: {
-    uploadManaged: vi.fn().mockResolvedValue({ id: "file-1", storageKey: "key-1", driveWebViewLink: null }),
-    deleteManaged: vi.fn().mockResolvedValue(undefined),
+    uploadManagedObject: vi.fn().mockResolvedValue({ input: {}, fileName: "req.jpg", uploaded: { provider: "neon_object_storage", storageKey: "key-1" }, selectedProvider: {} }),
+    persistManagedUploadWithArchive: vi.fn().mockResolvedValue({ id: "file-1", storageKey: "key-1", storageProvider: "NEON_OBJECT_STORAGE" }),
+    compensateManagedUpload: vi.fn().mockResolvedValue(undefined),
   },
-}));
-
-vi.mock("../../shared/storage/storagePathBuilder", () => ({
-  storagePathBuilder: { attendancePunch: vi.fn().mockReturnValue(["fichadas", "2026", "09"]) },
 }));
 
 // Etapa 15M.2 (docs/decisions/ATTENDANCE_AUTO_BREAKDOWN_SYNC_15M2.md): Motor B
@@ -190,11 +190,25 @@ const mockedClearAuditCaches = clearAuditDerivedCaches as unknown as Mock;
 const mockedNotifyClassificationAlerts = notifyClassificationAlerts as unknown as Mock;
 const mockedFindActiveRules = hourConceptsRepository.findActiveRules as unknown as Mock;
 const mockedFindEnabledConceptIds = hourConceptsRepository.findEnabledConceptIds as unknown as Mock;
-const mockedUploadManaged = storageService.uploadManaged as unknown as Mock;
-const mockedDeleteManaged = storageService.deleteManaged as unknown as Mock;
+const mockedUploadManagedObject = storageService.uploadManagedObject as unknown as Mock;
+const mockedPersistManagedUploadWithArchive = storageService.persistManagedUploadWithArchive as unknown as Mock;
+const mockedCompensateManagedUpload = storageService.compensateManagedUpload as unknown as Mock;
+// La compensación borra el objeto subido por su key (no hay StorageFile que
+// borrar: se revirtió con la transacción).
+const PREPARED_UPLOAD = expect.objectContaining({ uploaded: expect.objectContaining({ storageKey: "key-1" }) });
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
+}
+
+// F12-PERF-3: la evidencia de la fichada se arma DENTRO de la transacción. El
+// repositorio está mockeado: se corre el writer `prepareEvidence` que recibió
+// con una tx falsa, como haría la transacción real.
+const EVIDENCE_TX = { marker: "evidence-tx" };
+async function evidenceWrittenBy(repoFn: Mock, callIndex = 0) {
+  const { prepareEvidence } = repoFn.mock.calls[callIndex]![0] as { prepareEvidence?: (tx: unknown) => Promise<Record<string, any>> };
+  expect(prepareEvidence).toEqual(expect.any(Function));
+  return prepareEvidence!(EVIDENCE_TX);
 }
 
 // F6: id del ClockDevice autenticado; en producción sale de requireClockDevice.
@@ -759,7 +773,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       });
       expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
       expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
-      expect(mockedUploadManaged).not.toHaveBeenCalled();
+      expect(mockedUploadManagedObject).not.toHaveBeenCalled();
     });
 
     it("mapea una violación de unicidad concurrente (P2002) a 409 CLOCK_ALREADY_OPEN y compensa la evidencia ya guardada (regresión Bloque 1)", async () => {
@@ -769,7 +783,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
         statusCode: 409,
         code: "CLOCK_ALREADY_OPEN",
       });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     it("no mapea otros errores de Prisma distintos de P2002 (siguen propagándose sin transformarse en AppError)", async () => {
@@ -821,7 +835,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
       expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledTimes(1);
       expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.id, expect.any(Number), expect.any(Date));
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     it("Caso G — dos intentos seguidos bajo ALERT_ONLY nunca hacen rollover ni crean una segunda jornada", async () => {
@@ -867,7 +881,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
         code: "CLOCK_NO_OPEN_SHIFT",
       });
       expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
-      expect(mockedUploadManaged).not.toHaveBeenCalled();
+      expect(mockedUploadManagedObject).not.toHaveBeenCalled();
       expect(mockedRecalculateForEmployeePeriod).not.toHaveBeenCalled();
     });
 
@@ -878,7 +892,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
         statusCode: 409,
         code: "CLOCK_ALREADY_CLOSED",
       });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     // Etapa 13B (docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md)
@@ -984,10 +998,13 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
 
     await timeEntriesService.clockPhotoPunch(input, RECEPTION_CLOCK_ORIGIN, { ipAddress: "203.0.113.7", userAgent: "kiosk-agent" }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
 
-    expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
-      punchEvidence: expect.objectContaining({ ipAddress: "203.0.113.7", userAgent: "kiosk-agent", deviceId: CLOCK_DEVICE_ID }),
-    }));
+    const evidence = await evidenceWrittenBy(repo.createOpenWorkShift);
+    expect(evidence).toMatchObject({ ipAddress: "203.0.113.7", userAgent: "kiosk-agent", deviceId: CLOCK_DEVICE_ID });
     expect(JSON.stringify(repo.createOpenWorkShift.mock.calls[0]![0])).not.toMatch(/spoofed-agent|6\.6\.6\.6|eeeeeeee/);
+    expect(JSON.stringify(evidence)).not.toMatch(/spoofed-agent|6\.6\.6\.6|eeeeeeee/);
+    // Tampoco la key del objeto: sale del dispositivo autenticado.
+    expect(mockedUploadManagedObject.mock.calls[0]![0].folderSegments).toContain(CLOCK_DEVICE_ID);
+    expect(mockedUploadManagedObject.mock.calls[0]![0].folderSegments).not.toContain(OTHER_CLOCK_DEVICE_ID);
   });
 
   it("sin user-agent en la request no toma el del body", async () => {
@@ -1004,9 +1021,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
 
     await timeEntriesService.clockPhotoPunch(input, RECEPTION_CLOCK_ORIGIN, { ipAddress: "203.0.113.7", userAgent: null }, { ...activeEmployee, workShifts: [], hourConcepts: [] } as never);
 
-    expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
-      punchEvidence: expect.objectContaining({ userAgent: null, deviceId: CLOCK_DEVICE_ID }),
-    }));
+    expect(await evidenceWrittenBy(repo.createOpenWorkShift)).toMatchObject({ userAgent: null, deviceId: CLOCK_DEVICE_ID });
   });
 
   it("un intento guardado antes de F0 se proyecta al contrato público (sin DNI completo ni datos internos)", async () => {
@@ -1524,9 +1539,9 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
       await timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context());
 
-      const call = repo.createOpenWorkShift.mock.calls[0]![0] as { source: string; punchEvidence: { deviceId: string }; cooldown: { windowStart: Date } };
+      const call = repo.createOpenWorkShift.mock.calls[0]![0] as { source: string; cooldown: { windowStart: Date } };
       expect(call.source).toBe("KIOSK");
-      expect(call.punchEvidence.deviceId).toBe(CLOCK_DEVICE_ID);
+      expect((await evidenceWrittenBy(repo.createOpenWorkShift)).deviceId).toBe(CLOCK_DEVICE_ID);
       expect(call.cooldown.windowStart.getTime()).toBeGreaterThanOrEqual(before - 60_000);
       expect(call.cooldown.windowStart.getTime()).toBeLessThanOrEqual(Date.now() - 60_000);
     });
@@ -1554,7 +1569,8 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
       await timeEntriesService.clockPhotoPunch(spoofed, KIOSK_CLOCK_ORIGIN, undefined, context());
 
-      expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ source: "KIOSK", punchEvidence: expect.objectContaining({ deviceId: CLOCK_DEVICE_ID }) }));
+      expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ source: "KIOSK" }));
+      expect((await evidenceWrittenBy(repo.createOpenWorkShift)).deviceId).toBe(CLOCK_DEVICE_ID);
     });
   });
 
@@ -1567,7 +1583,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       expect(error).toBeInstanceOf(AppError);
       expect(error).toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 50 });
       expect((error as AppError).message).not.toMatch(/\d/); // sin segundos ni horas: se guarda y se repite
-      expect(mockedUploadManaged).not.toHaveBeenCalled();
+      expect(mockedUploadManagedObject).not.toHaveBeenCalled();
       expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
     });
 
@@ -1607,14 +1623,14 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       repo.createOpenWorkShift.mockRejectedValueOnce(new ClockPunchCooldownConflict(secondsAgo(0)));
 
       await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context())).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 60 });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     it("carrera: si otra fichada del empleado tiene el lock, cooldown inmediato con la ventana completa", async () => {
       repo.closeOpenWorkShift.mockRejectedValueOnce(new ClockPunchCooldownConflict(null));
 
       await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]))).rejects.toMatchObject({ code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 60 });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     it("carrera en el rollover también se mapea a cooldown con compensación", async () => {
@@ -1622,7 +1638,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       const expired = { id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60_000), hourConcept: normalConcept };
 
       await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context([expired]))).rejects.toMatchObject({ code: "CLOCK_PUNCH_COOLDOWN" });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
     });
 
     it("CLOCK_PUNCH_COOLDOWN_SECONDS=0 lo desactiva: ni consulta previa ni guard en la transacción", async () => {
@@ -1768,7 +1784,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
       await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context())).rejects.toThrow("audit insert failed");
 
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
       expect(mockedClearAuditCaches).not.toHaveBeenCalled();
       expect(mockedAuditRegister).not.toHaveBeenCalled();
     });
@@ -1882,7 +1898,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_TEMPORARY_FAILURE" });
 
       expect(repo.failClockPunchAttempt).toHaveBeenCalledWith(input.requestId, expect.objectContaining({ code: "CLOCK_TEMPORARY_FAILURE", httpStatus: 503 }));
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
       expect(mockedClearAuditCaches).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
       expect(evaluateShiftEntry).not.toHaveBeenCalled();
@@ -1898,7 +1914,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       repo.failClockPunchAttempt.mockResolvedValueOnce({ requestId: input.requestId, status: "FAILED", errorCode: "CLOCK_ATTEMPT_TIMEOUT", errorMessage: "La fichada no pudo confirmarse dentro del tiempo esperado. Iniciá un nuevo intento.", httpStatus: 503, response: null });
 
       await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_ATTEMPT_TIMEOUT" });
-      expect(mockedDeleteManaged).toHaveBeenCalledWith("file-1");
+      expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
       errorSpy.mockRestore();
     });
 
@@ -1916,7 +1932,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
       expect(result).toMatchObject({ workShift: { id: "shift-1" } });
       // La evidencia de una fichada confirmada nunca se compensa.
-      expect(mockedDeleteManaged).not.toHaveBeenCalled();
+      expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith("CLOCK_PUNCH_POST_COMMIT_STEP_FAILED", expect.objectContaining({ requestId: input.requestId }));
       errorSpy.mockRestore();
     });
@@ -1927,7 +1943,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       vi.mocked(evaluateShiftExit).mockRejectedValueOnce(new Error("exit evaluation failed"));
 
       await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]))).resolves.toMatchObject({ workShift: { id: "shift-open" } });
-      expect(mockedDeleteManaged).not.toHaveBeenCalled();
+      expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
       errorSpy.mockRestore();
     });
 
@@ -1947,6 +1963,94 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 // FAILED conserva la metadata pública del error (hoy retryAfterSeconds) para
 // que el reintento del mismo requestId y GET attempts reproduzcan exactamente
 // la respuesta original.
+// F12-PERF-3 (docs/decisions/F12_PERF_3_4.md): camino crítico PWA → primary
+// (un objeto, antes de la transacción) → transacción (StorageFile + archive
+// job + fichada + auditoría + intento) → 201. Google Drive nunca está acá.
+describe("F12-PERF-3 — evidencia primaria y su persistencia transaccional", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE" };
+  const REQUEST_ID = "66666666-6666-4666-8666-666666666666";
+  const punch = (punchType: "IN" | "OUT") => ({ requestId: REQUEST_ID, employeeId: activeEmployee.id, punchType, photo: bigPhotoDataUrl(), faceValidationStatus: "VALID" as const });
+  const context = (workShifts: unknown[] = []) => ({ ...activeEmployee, workShifts, hourConcepts: [] }) as never;
+  const openShift = () => ({ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept });
+  const expiredShift = () => ({ id: "shift-excedida", startAt: new Date(Date.now() - 21 * 60 * 60_000), hourConcept: normalConcept });
+  const originalCooldown = env.CLOCK_PUNCH_COOLDOWN_SECONDS;
+
+  beforeEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = originalCooldown;
+  });
+
+  it("sube un único objeto primario, antes de la transacción, con key determinista por dispositivo y requestId, sin carpeta por fichada (ni miniatura aunque venga en el payload)", async () => {
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+
+    await timeEntriesService.clockPhotoPunch({ ...punch("IN"), thumbnail: bigPhotoDataUrl() }, KIOSK_CLOCK_ORIGIN, undefined, context());
+
+    expect(mockedUploadManagedObject).toHaveBeenCalledTimes(1);
+    const upload = mockedUploadManagedObject.mock.calls[0]![0];
+    expect(upload).toMatchObject({ module: "FICHADAS", fileName: `${REQUEST_ID}.jpg`, mimeType: "image/jpeg", visibility: "SYSTEM_ONLY", purpose: "punch-photo", telemetryRequestId: REQUEST_ID });
+    expect(upload.folderSegments).toEqual(["attendance", expect.stringMatching(/^\d{4}$/), expect.stringMatching(/^\d{2}$/), CLOCK_DEVICE_ID]);
+    // Nada se persiste fuera de la transacción (el repositorio mockeado no corrió el writer).
+    expect(mockedPersistManagedUploadWithArchive).not.toHaveBeenCalled();
+    expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
+  });
+
+  it("una foto PNG conserva su extensión en la key", async () => {
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+    const png = `data:image/png;base64,${Buffer.alloc(6000, 1).toString("base64")}`;
+
+    await timeEntriesService.clockPhotoPunch({ ...punch("IN"), photo: png }, KIOSK_CLOCK_ORIGIN, undefined, context());
+
+    expect(mockedUploadManagedObject.mock.calls[0]![0]).toMatchObject({ fileName: `${REQUEST_ID}.png`, mimeType: "image/png" });
+  });
+
+  it.each([
+    ["ingreso", "IN", () => [] as unknown[], () => repo.createOpenWorkShift, () => repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null })],
+    ["salida", "OUT", () => [openShift()], () => repo.closeOpenWorkShift, () => repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open", startAt: openShift().startAt, endAt: new Date(), totalMinutes: 60, endPunchId: null } })],
+    ["rollover", "IN", () => [expiredShift()], () => repo.rolloverExpiredOpenWorkShift, () => repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null })],
+  ] as const)("%s: el writer persiste StorageFile + archive job con la tx de la fichada y la fichada lleva su photoFileId", async (_label, punchType, shifts, repoFn, arrange) => {
+    arrange();
+
+    await timeEntriesService.clockPhotoPunch(punch(punchType), KIOSK_CLOCK_ORIGIN, undefined, context(shifts()));
+
+    const evidence = await evidenceWrittenBy(repoFn());
+    expect(mockedPersistManagedUploadWithArchive).toHaveBeenCalledTimes(1);
+    expect(mockedPersistManagedUploadWithArchive).toHaveBeenCalledWith(PREPARED_UPLOAD, EVIDENCE_TX);
+    expect(evidence).toMatchObject({ photoFileId: "file-1", photoStoragePath: "key-1", photoUrl: null, thumbnailFileId: null, deviceId: CLOCK_DEVICE_ID });
+    expect(evidence.rawPayload.photo).toMatchObject({ storageFileId: "file-1", providerPath: "key-1", thumbnailStatus: "NOT_STORED" });
+  });
+
+  it("si la persistencia del StorageFile o del archive job falla dentro de la transacción, la fichada se revierte y el objeto se compensa", async () => {
+    mockedPersistManagedUploadWithArchive.mockRejectedValueOnce(new Error("archive job insert failed"));
+    repo.createOpenWorkShift.mockImplementationOnce(async (input: { prepareEvidence: (tx: unknown) => Promise<unknown> }) => {
+      await input.prepareEvidence(EVIDENCE_TX);
+      return { id: "shift-1", startAt: new Date(), startPunchId: null };
+    });
+
+    await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context())).rejects.toThrow("archive job insert failed");
+
+    expect(mockedCompensateManagedUpload).toHaveBeenCalledTimes(1);
+    expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
+    expect(mockedClearAuditCaches).not.toHaveBeenCalled();
+    expect(evaluateShiftEntry).not.toHaveBeenCalled();
+  });
+
+  it("si el upload primario falla, no se abre la transacción: 503 CLOCK_PHOTO_STORAGE_FAILED sin nada que compensar", async () => {
+    mockedUploadManagedObject.mockRejectedValueOnce(new AppError("Neon Object Storage timeout", 504, "STORAGE_NEON_TIMEOUT"));
+
+    await expect(timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context())).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_PHOTO_STORAGE_FAILED" });
+
+    expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+    expect(mockedPersistManagedUploadWithArchive).not.toHaveBeenCalled();
+    expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
+  });
+});
+
 describe("F7.1 — metadata pública del error en intentos idempotentes", () => {
   const ATTEMPT_ID = "77777777-7777-4777-8777-777777777777";
   const input = () => ({ ...clockPhotoPunchInput(), requestId: ATTEMPT_ID, punchType: "OUT" as const });
