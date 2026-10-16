@@ -168,12 +168,14 @@ export const hourConceptsRepository = {
           loadMode: { in: ["AUTOMATIC", "BOTH"] },
         },
       },
-      include: { hourConcept: { select: { name: true } } },
+      include: { hourConcept: { select: { name: true, kind: true } } },
     });
     return rules.map((rule) => ({
       id: rule.id,
       hourConceptId: rule.hourConceptId,
       hourConceptName: rule.hourConcept.name,
+      // PERF-5A: lo usa closeOpenWorkShift (isNight) sin volver a leer HourConcept.
+      hourConceptKind: rule.hourConcept.kind,
       startTime: rule.startTime,
       endTime: rule.endTime,
       crossesMidnight: rule.crossesMidnight,

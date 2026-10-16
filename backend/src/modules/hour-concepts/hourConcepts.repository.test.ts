@@ -166,19 +166,19 @@ describe("findActiveRules — universo automático de Motor A (Etapa 15M.7B)", (
           loadMode: { in: ["AUTOMATIC", "BOTH"] },
         },
       },
-      include: { hourConcept: { select: { name: true } } },
+      include: { hourConcept: { select: { name: true, kind: true } } },
     });
   });
 
   it("mapea las reglas AUTOMATIC/BOTH elegibles sin alterar horario, cruce ni trazabilidad", async () => {
     mockedPrisma.hourConceptRule.findMany.mockResolvedValue([
-      { id: "rule-auto", hourConceptId: "auto", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0, hourConcept: { name: "Guardia" } },
-      { id: "rule-both", hourConceptId: "both", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0, hourConcept: { name: "Prueba" } },
+      { id: "rule-auto", hourConceptId: "auto", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0, hourConcept: { name: "Guardia", kind: "GUARDIA" } },
+      { id: "rule-both", hourConceptId: "both", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0, hourConcept: { name: "Prueba", kind: "OTRO" } },
     ]);
 
     await expect(hourConceptsRepository.findActiveRules()).resolves.toEqual([
-      { id: "rule-auto", hourConceptId: "auto", hourConceptName: "Guardia", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0 },
-      { id: "rule-both", hourConceptId: "both", hourConceptName: "Prueba", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0 },
+      { id: "rule-auto", hourConceptId: "auto", hourConceptName: "Guardia", hourConceptKind: "GUARDIA", startTime: "21:00", endTime: "04:00", crossesMidnight: true, priority: 0 },
+      { id: "rule-both", hourConceptId: "both", hourConceptName: "Prueba", hourConceptKind: "OTRO", startTime: "09:00", endTime: "11:00", crossesMidnight: false, priority: 0 },
     ]);
   });
 });

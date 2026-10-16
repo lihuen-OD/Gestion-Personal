@@ -8,6 +8,7 @@ import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { ClockByEmployeeInput, ClockEmployeeSearchQuery, ClockPhotoPunchInput } from "../time-entries/timeEntries.schemas";
 import { timeEntriesService } from "../time-entries/timeEntries.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
+import { emitClockPunchQueryBudget, runWithClockPunchQueryBudget } from "../../shared/observability/clockPunchQueryBudget";
 
 /**
  * Transporte HTTP del fichador (F7, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
@@ -42,11 +43,21 @@ export const clockController = {
     clockPunchMetric({ requestId, phase: "payload", durationMs: 0, bytes: payloadBytes });
     clockPunchMetric({ requestId, phase: "auth", durationMs: req.clockPunchTimings?.authMs || 0 });
     clockPunchMetric({ requestId, phase: "parse", durationMs: req.clockPunchTimings?.parseMs || 0, bytes: payloadBytes });
-    const result = await timeEntriesService.clockPhotoPunchIdempotent(
-      req.body as ClockPhotoPunchInput,
-      { device: { id: device.id, name: device.name }, source: "KIOSK" },
-      requestAuditContext(req),
-    );
+    // PERF-5A: presupuesto de queries por fase (pre/tx/post) de esta fichada.
+    const result = await runWithClockPunchQueryBudget(requestId, async () => {
+      try {
+        const punched = await timeEntriesService.clockPhotoPunchIdempotent(
+          req.body as ClockPhotoPunchInput,
+          { device: { id: device.id, name: device.name }, source: "KIOSK" },
+          requestAuditContext(req),
+        );
+        emitClockPunchQueryBudget("success");
+        return punched;
+      } catch (error) {
+        emitClockPunchQueryBudget("error");
+        throw error;
+      }
+    });
     clearTimeEntriesReadCaches();
     clearEmployeeTimeGridCache();
     res.once("finish", () => clockPunchMetric({

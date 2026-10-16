@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { Prisma, type WorkShift, type WorkShiftSource } from "@prisma/client";
+import { Prisma, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -411,7 +411,7 @@ type ClassifiedSegment = ClassifiedSegmentForPersistence & {
 async function classifySegmentsForEmployee(
   employeeId: string,
   daySegments: Array<{ date: Date; startAt: Date; endAt: Date; minutes: number; hours: number }>,
-  fallbackHourConcept: { id: string; name: string },
+  fallbackHourConcept: { id: string; name: string; kind?: HourConceptKind },
 ): Promise<ClassifiedSegment[]> {
   const [activeRules, enabledHourConceptIds] = await Promise.all([
     hourConceptsRepository.findActiveRules(),
@@ -438,6 +438,10 @@ async function classifySegmentsForEmployee(
   // conceptos ADICIONALES candidatos a los que el empleado realmente tiene
   // habilitados.
   const candidateRules = activeRules.filter((rule) => enabledHourConceptIds.has(rule.hourConceptId));
+  // PERF-5A: kind de cada concepto posible del tramo (reglas candidatas +
+  // respaldo), para que closeOpenWorkShift no relea HourConcept.
+  const kindByConcept = new Map<string, HourConceptKind>(candidateRules.map((rule) => [rule.hourConceptId, rule.hourConceptKind]));
+  if (fallbackHourConcept.kind) kindByConcept.set(fallbackHourConcept.id, fallbackHourConcept.kind);
   const classified = classifyWorkShiftSegments({
     daySegments,
     activeRules: candidateRules,
@@ -454,6 +458,7 @@ async function classifySegmentsForEmployee(
     hourConceptName: segment.hourConceptName,
     conceptStatus: segment.conceptStatus,
     hourConceptRuleId: segment.hourConceptRuleId,
+    hourConceptKind: kindByConcept.get(segment.hourConceptId),
   }));
 }
 
@@ -803,8 +808,9 @@ async function cleanupClockEvidence(evidence: ClockPhotoEvidence) {
  * transacción que la fichada, su AuditLog y el intento COMPLETED.
  */
 function clockEvidenceWriter(evidence: ClockPhotoEvidence) {
-  return async (tx: PrismaTransactionClient) => {
-    const stored = await storageService.persistManagedUploadWithArchive(evidence.preparedUpload, tx);
+  return async (tx: PrismaTransactionClient, attendancePunchId: string) => {
+    // PERF-5A: el StorageFile nace vinculado al punch (id generado antes de insertarlo).
+    const stored = await storageService.persistManagedUploadWithArchive(evidence.preparedUpload, tx, { attendancePunchId });
     const rawPayload = evidence.rawPayload as Prisma.JsonObject;
     return {
       ...evidence,
@@ -1627,6 +1633,7 @@ export const timeEntriesService = {
         audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
         timingRequestId: input.requestId,
+        returnEntries: false,
       });
     } catch (error) {
       await cleanupClockEvidence(evidence);
@@ -1649,7 +1656,8 @@ export const timeEntriesService = {
       segments: classifiedSegments,
       audit,
     });
-    await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments);
+    // PERF-5A: la jornada recién cerrada ya viene de la transacción; no se relee.
+    await evaluateShiftExitSafely(employee.id, created.workShift.id, now, classifiedSegments, created.workShift);
     clockPunchMetric({ requestId: input.requestId, phase: "post_commit", durationMs: performance.now() - postCommitStartedAt, result: "success" });
     console.info("CLOCK_PHOTO_PUNCH_PHASE_TIMING", {
       requestId: input.requestId,

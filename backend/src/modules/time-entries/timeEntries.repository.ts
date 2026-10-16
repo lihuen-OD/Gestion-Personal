@@ -1,4 +1,5 @@
-import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus, type WorkShift } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus, type HourConceptKind, type WorkShift } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
@@ -11,6 +12,7 @@ import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from ".
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import { laborHistoryService } from "../labor-history/laborHistory.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
+import { markClockPunchQueryPhase } from "../../shared/observability/clockPunchQueryBudget";
 import type { HistoryReader } from "../labor-history/laborHistory.repository";
 import { evaluateRuleScope, scopeDimensionLabels, type EngineScopeHistory, type ScopeDimension } from "../labor-history/laborHistory.scope";
 import { ruleScopeOf } from "./specialHourRuleScope";
@@ -189,7 +191,11 @@ type PunchEvidenceInput = {
  */
 export type ClockPunchTransactionTimings = { auditMs: number; attemptCompletionMs: number };
 export type ClockPunchTransactionWriter = (tx: PrismaTransactionClient, workShift: WorkShift, timings?: ClockPunchTransactionTimings) => Promise<unknown>;
-export type ClockPunchEvidenceWriter = (tx: PrismaTransactionClient) => Promise<PunchEvidenceInput>;
+/**
+ * PERF-5A: recibe el id que va a tener el AttendancePunch (generado antes de
+ * insertarlo) para que el StorageFile nazca vinculado, sin un UPDATE posterior.
+ */
+export type ClockPunchEvidenceWriter = (tx: PrismaTransactionClient, attendancePunchId: string) => Promise<PunchEvidenceInput>;
 
 export type ClockPunchAttemptKey = { requestId: string; deviceId: string; employeeId: string; punchType: "INGRESO" | "SALIDA" };
 
@@ -220,6 +226,10 @@ export type ClassifiedSegmentForPersistence = {
   hourConceptName: string;
   conceptStatus?: "SUGERIDO" | "MANUAL" | "SIN_CONCEPTO_COMPATIBLE" | "CONCEPTO_NO_HABILITADO";
   hourConceptRuleId?: string | null;
+  // PERF-5A: kind del concepto del tramo, cuando quien clasificó ya lo tiene
+  // cargado (reglas activas + concepto de respaldo). Si todos los tramos lo
+  // traen, closeOpenWorkShift no vuelve a leer HourConcept para isNight.
+  hourConceptKind?: HourConceptKind;
 };
 
 function punchEvidenceData(evidence?: PunchEvidenceInput) {
@@ -239,6 +249,9 @@ function punchEvidenceData(evidence?: PunchEvidenceInput) {
   };
 }
 
+// La evidencia que prepara el fichador (prepareEvidence) ya nace vinculada al
+// punch (PERF-5A); esto sólo vincula un StorageFile preexistente pasado como
+// punchEvidence.
 async function linkPunchEvidence(tx: PrismaTransactionClient, punchId: string, evidence?: PunchEvidenceInput) {
   if (evidence?.photoFileId) {
     await tx.storageFile.update({ where: { id: evidence.photoFileId }, data: { attendancePunchId: punchId } });
@@ -1682,10 +1695,13 @@ export const timeEntriesRepository = {
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const result = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
+      markClockPunchQueryPhase("tx");
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
-      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
+      const punchId = randomUUID();
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx, punchId) : input.punchEvidence;
       const punch = await tx.attendancePunch.create({
         data: {
+          id: punchId,
           employeeId: input.employeeId,
           type: "INGRESO",
           timestamp: input.startAt,
@@ -1693,7 +1709,7 @@ export const timeEntriesRepository = {
           ...punchEvidenceData(evidence),
         },
       });
-      await linkPunchEvidence(tx, punch.id, evidence);
+      if (!input.prepareEvidence) await linkPunchEvidence(tx, punch.id, evidence);
 
       const workShift = await tx.workShift.create({
         data: {
@@ -1711,6 +1727,7 @@ export const timeEntriesRepository = {
       if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
     });
+    markClockPunchQueryPhase("post");
     if (input.timingRequestId) {
       clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
       clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });
@@ -1726,8 +1743,10 @@ export const timeEntriesRepository = {
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const newShift = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
+      markClockPunchQueryPhase("tx");
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
-      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
+      const punchId = randomUUID();
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx, punchId) : input.punchEvidence;
       const previous = await tx.workShift.findFirst({
         where: { id: input.openWorkShiftId, employeeId: input.employeeId, status: WorkShiftStatus.ABIERTO, endAt: null },
         include: { hourConcept: true },
@@ -1769,6 +1788,7 @@ export const timeEntriesRepository = {
 
       const punch = await tx.attendancePunch.create({
         data: {
+          id: punchId,
           employeeId: input.employeeId,
           type: "INGRESO",
           timestamp: input.startAt,
@@ -1777,7 +1797,7 @@ export const timeEntriesRepository = {
           ...punchEvidenceData(evidence),
         },
       });
-      await linkPunchEvidence(tx, punch.id, evidence);
+      if (!input.prepareEvidence) await linkPunchEvidence(tx, punch.id, evidence);
 
       const workShift = await tx.workShift.create({
         data: {
@@ -1795,6 +1815,7 @@ export const timeEntriesRepository = {
       if (input.completeAttempt) await (input.timingRequestId ? input.completeAttempt(tx, workShift, timings) : input.completeAttempt(tx, workShift));
       return workShift;
     });
+    markClockPunchQueryPhase("post");
     if (input.timingRequestId) {
       clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
       clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });
@@ -2163,14 +2184,22 @@ export const timeEntriesRepository = {
     audit?: ClockPunchTransactionWriter;
     completeAttempt?: ClockPunchTransactionWriter;
     timingRequestId?: string;
+    // PERF-5A: el fichador no usa los TimeEntry devueltos; con `false` no se
+    // relee cada uno con su include después de escribirlo. El cierre manual de
+    // RRHH (default) los sigue devolviendo para su respuesta y su auditoría.
+    returnEntries?: boolean;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
     // dependen de nada que esta transacción vaya a escribir.
     // Motor único de Hora Especial (alcance + FERIADO/convocatoria), por fecha de tramo.
+    // PERF-5A: si quien clasificó ya trae el kind de cada tramo, no se vuelve a leer HourConcept.
+    const knownKinds = input.segments.every((segment) => segment.hourConceptKind)
+      ? input.segments.map((segment) => ({ id: segment.hourConceptId, kind: segment.hourConceptKind! }))
+      : null;
     const [specialHours, nightHourConcepts] = await Promise.all([
       resolveSpecialHourRulesByDate(input.employeeId, input.segments.map((segment) => segment.date)),
-      prisma.hourConcept.findMany({
+      knownKinds ?? prisma.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
         select: { id: true, kind: true },
       }),
@@ -2186,8 +2215,10 @@ export const timeEntriesRepository = {
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
     const result = await prisma.$transaction(async (tx) => {
       callbackStartedAt = performance.now();
+      markClockPunchQueryPhase("tx");
       if (input.cooldown) await guardClockPunchCooldown(tx, input.employeeId, input.cooldown);
-      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx) : input.punchEvidence;
+      const endPunchId = randomUUID();
+      const evidence = input.prepareEvidence ? await input.prepareEvidence(tx, endPunchId) : input.punchEvidence;
       // D-5: la salida se registra siempre, pero nunca carga horas en un
       // período enviado/aprobado: esas fechas quedan observadas para RRHH.
       const protectedPeriods = await findProtectedClosurePeriods(tx, uniqueDates.map((date) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(date) })));
@@ -2217,6 +2248,7 @@ export const timeEntriesRepository = {
 
       const endPunch = await tx.attendancePunch.create({
         data: {
+          id: endPunchId,
           employeeId: input.employeeId,
           type: "SALIDA",
           timestamp: input.endAt,
@@ -2225,7 +2257,7 @@ export const timeEntriesRepository = {
           ...punchEvidenceData(evidence),
         },
       });
-      await linkPunchEvidence(tx, endPunch.id, evidence);
+      if (!input.prepareEvidence) await linkPunchEvidence(tx, endPunch.id, evidence);
 
       const workShift = await tx.workShift.update({
         where: { id: input.workShiftId },
@@ -2253,10 +2285,11 @@ export const timeEntriesRepository = {
       // en vez de depender del orden no garantizado que devuelve Postgres
       // sin ORDER BY. No fusiona ni borra el duplicado — sólo hace
       // predecible cuál de las filas sigue acumulando hacia adelante.
+      // PERF-5A: sólo los campos que usa el acumulado de abajo.
       const existingEntries = uniqueDates.length
         ? await tx.timeEntry.findMany({
             where: { employeeId: input.employeeId, hourConceptId: input.normalHourConceptId, date: { in: uniqueDates } },
-            include: timeEntryInclude,
+            select: { id: true, date: true, status: true, actualMinutes: true, totalMinutes: true, observation: true },
             orderBy: { createdAt: "asc" },
           })
         : [];
@@ -2347,7 +2380,7 @@ export const timeEntriesRepository = {
           // actualMinutes para autocorregir cualquier TimeEntry legado.
           const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + minutes;
           const currentObservation = existing.observation ? `${existing.observation}\n` : "";
-          entries.push(await tx.timeEntry.update({
+          const update = {
             where: { id: existing.id },
             data: {
               workShiftId: workShift.id,
@@ -2360,12 +2393,13 @@ export const timeEntriesRepository = {
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
               observation: `${currentObservation}${FICHADA_ORIGIN_NOTE}${rulesNote}`,
-              status: "APROBADO",
+              status: "APROBADO" as const,
             },
-            include: timeEntryInclude,
-          }));
+          };
+          if (input.returnEntries === false) await tx.timeEntry.update({ ...update, select: { id: true } });
+          else entries.push(await tx.timeEntry.update({ ...update, include: timeEntryInclude }));
         } else {
-          entries.push(await tx.timeEntry.create({
+          const create = {
             data: {
               employeeId: input.employeeId,
               hourConceptId: input.normalHourConceptId,
@@ -2378,14 +2412,15 @@ export const timeEntriesRepository = {
               totalMinutes: minutes,
               actualMinutes: minutes,
               appliedMultiplier: multiplier,
-              status: "APROBADO",
+              status: "APROBADO" as const,
               segmentStartAt: lastSegment.startAt,
               segmentEndAt: lastSegment.endAt,
               source: shiftSource,
               observation: `${FICHADA_ORIGIN_NOTE}${rulesNote}`,
             },
-            include: timeEntryInclude,
-          }));
+          };
+          if (input.returnEntries === false) await tx.timeEntry.create({ ...create, select: { id: true } });
+          else entries.push(await tx.timeEntry.create({ ...create, include: timeEntryInclude }));
         }
       }
 
@@ -2404,6 +2439,7 @@ export const timeEntriesRepository = {
       // trabajo de arriba, no la solución principal (ver
       // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md §6/§10).
     }, { timeout: 10_000 });
+    markClockPunchQueryPhase("post");
     if (input.timingRequestId) {
       clockPunchMetric({ requestId: input.timingRequestId, phase: "transaction_acquire", durationMs: callbackStartedAt - startedAt });
       clockPunchMetric({ requestId: input.timingRequestId, phase: "audit", durationMs: timings.auditMs });

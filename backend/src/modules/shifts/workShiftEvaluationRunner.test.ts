@@ -1954,3 +1954,33 @@ describe("evaluateShiftEntry — Etapa 13I (DESCANSO_INSUFICIENTE desactivado)",
     expect(notifiedTitles()).toEqual(["Ingreso anticipado"]);
   });
 });
+
+// PERF-5A (docs/decisions/F12_PERF_5.md): menos consultas, mismo resultado.
+describe("PERF-5A — consultas redundantes de la evaluación de turnos", () => {
+  const entryAt = new Date("2026-08-18T22:00:00.000Z"); // 19:00 ART
+  const exitAt = new Date("2026-08-19T02:00:00.000Z"); // 23:00 ART
+  const closedShift = { id: "shift-out", startAt: entryAt, shiftTemplateId: "t1", totalMinutes: 240 };
+
+  beforeEach(() => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(disabledTemplate);
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({ workRegime: { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true, extendedShiftAlertMinutes: null } });
+  });
+
+  it("evaluateShiftExit con la jornada recién cerrada no la vuelve a leer y crea exactamente las mismas alertas", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue(closedShift);
+    await evaluateShiftExit("employee-1", "shift-out", exitAt);
+    const fromDatabase = upsertedAlertTypes();
+    const notifiedFromDatabase = vi.mocked(notifyUsers).mock.calls.length;
+    expect(mockedPrisma.workShift.findUnique).toHaveBeenCalledTimes(1);
+
+    vi.clearAllMocks();
+    mockedPrisma.shiftAlert.upsert.mockResolvedValue({ id: "alert-1" });
+    mockedPrisma.shiftAlert.updateMany.mockResolvedValue({ count: 0 });
+    await evaluateShiftExit("employee-1", "shift-out", exitAt, [], closedShift);
+
+    expect(mockedPrisma.workShift.findUnique).not.toHaveBeenCalled();
+    expect(upsertedAlertTypes()).toEqual(fromDatabase);
+    expect(vi.mocked(notifyUsers).mock.calls.length).toBe(notifiedFromDatabase);
+  });
+});

@@ -187,6 +187,10 @@ describe("storageService.uploadManaged — política de upload por módulo/prop�
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Herméticos respecto del .env local: cada test fija sólo las variables que prueba.
+    (env as MutableEnv).DEFAULT_STORAGE_PROVIDER = undefined;
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = undefined;
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = undefined;
   });
 
   afterEach(() => {

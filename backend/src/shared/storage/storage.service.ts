@@ -159,7 +159,7 @@ export const storageService = {
    * cargo del llamador (compensateManagedUpload), sin llamadas de red dentro
    * de la transacción. Sin `db`, compensa acá como siempre.
    */
-  async persistManagedUpload(prepared: PreparedManagedStorageUpload, db?: PrismaTransactionClient) {
+  async persistManagedUpload(prepared: PreparedManagedStorageUpload, db?: PrismaTransactionClient, links: { attendancePunchId?: string } = {}) {
     const { input, fileName, uploaded } = prepared;
     try {
       const insertStartedAt = performance.now();
@@ -179,7 +179,7 @@ export const storageService = {
         entityType: input.entityType,
         entityId: input.entityId,
         employeeId: input.employeeId || null,
-        attendancePunchId: input.attendancePunchId || null,
+        attendancePunchId: links.attendancePunchId || input.attendancePunchId || null,
         documentType: input.documentType || null,
         isThumbnail: Boolean(input.isThumbnail),
         originalFileId: input.originalFileId || null,
@@ -214,8 +214,8 @@ export const storageService = {
    * el primary tiene archivo secundario (Neon -> Google Drive), su
    * StorageArchiveJob PENDING, ambos en la transacción del llamador.
    */
-  async persistManagedUploadWithArchive(prepared: PreparedManagedStorageUpload, tx: PrismaTransactionClient) {
-    const stored = await storageService.persistManagedUpload(prepared, tx);
+  async persistManagedUploadWithArchive(prepared: PreparedManagedStorageUpload, tx: PrismaTransactionClient, links: { attendancePunchId?: string } = {}) {
+    const stored = await storageService.persistManagedUpload(prepared, tx, links);
     const target = archiveTargetFor(stored.storageProvider);
     if (target) await storageArchiveRepository.enqueue(tx, stored.id, target);
     return stored;

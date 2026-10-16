@@ -1942,9 +1942,12 @@ describe("F11.1 — estados del intento de fichada", () => {
 
 // F12-PERF-3 (docs/decisions/F12_PERF_3_4.md): la evidencia (StorageFile +
 // archive job) se escribe con la MISMA tx que la fichada, después del guard del
-// cooldown y antes del AttendancePunch, que la referencia y queda vinculado.
+// cooldown y antes del AttendancePunch, que la referencia. PERF-5A: el writer
+// recibe el id que va a tener el punch, así el StorageFile nace vinculado y no
+// hace falta un UPDATE posterior.
 // El rollback real contra PostgreSQL está en clock/clock.integration.test.ts.
 describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fichada", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const windowStart = new Date("2026-10-15T16:00:00.000Z");
   const day = new Date("2026-10-15T00:00:00.000Z");
   const evidence = { photoFileId: "file-1", photoStoragePath: "attendance/2026/10/device-1/req-1.jpg", faceDetected: true, faceValidationStatus: "VALID" as const, deviceId: "device-1", rawPayload: {} };
@@ -1962,11 +1965,12 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
 
     await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date("2026-10-15T16:01:00.000Z"), prepareEvidence, cooldown: { windowStart } });
 
-    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx);
+    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx, expect.stringMatching(UUID));
+    const punchId = prepareEvidence.mock.calls[0]![1];
     expect(mockedPrisma.__tx.$queryRaw.mock.invocationCallOrder[0]!).toBeLessThan(prepareEvidence.mock.invocationCallOrder[0]!);
     expect(prepareEvidence.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.attendancePunch.create.mock.invocationCallOrder[0]!);
-    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "INGRESO", photoFileId: "file-1", photoStoragePath: evidence.photoStoragePath, deviceId: "device-1" }) });
-    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-1" } });
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ id: punchId, type: "INGRESO", photoFileId: "file-1", photoStoragePath: evidence.photoStoragePath, deviceId: "device-1" }) });
+    expect(mockedPrisma.__tx.storageFile.update).not.toHaveBeenCalled();
   });
 
   it("salida: el punch de SALIDA lleva la evidencia de la tx y queda vinculado", async () => {
@@ -1982,9 +1986,9 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
       prepareEvidence, cooldown: { windowStart },
     });
 
-    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx);
-    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "SALIDA", photoFileId: "file-1" }) });
-    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-out" } });
+    expect(prepareEvidence).toHaveBeenCalledWith(mockedPrisma.__tx, expect.stringMatching(UUID));
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ id: prepareEvidence.mock.calls[0]![1], type: "SALIDA", photoFileId: "file-1" }) });
+    expect(mockedPrisma.__tx.storageFile.update).not.toHaveBeenCalled();
   });
 
   it("rollover: el writer corre antes de leer o reclamar la jornada anterior y el ingreso nuevo queda vinculado", async () => {
@@ -1998,7 +2002,8 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
     await timeEntriesRepository.rolloverExpiredOpenWorkShift({ openWorkShiftId: "shift-prev", employeeId: "employee-1", source: "KIOSK" as never, startAt: new Date("2026-10-15T16:01:00.000Z"), missingOutObservation: "x", prepareEvidence });
 
     expect(prepareEvidence.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.workShift.findFirst.mock.invocationCallOrder[0]!);
-    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-in" } });
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ id: prepareEvidence.mock.calls[0]![1], type: "INGRESO", photoFileId: "file-1" }) });
+    expect(mockedPrisma.__tx.storageFile.update).not.toHaveBeenCalled();
   });
 
   it("si el writer falla, la fichada no se escribe y el error se propaga (la transacción se revierte)", async () => {
@@ -2010,6 +2015,15 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
     expect(mockedPrisma.__tx.workShift.create).not.toHaveBeenCalled();
   });
 
+  it("evidencia preexistente pasada como punchEvidence (sin writer) se sigue vinculando con un UPDATE", async () => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-legacy" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "ADMIN" as never, startAt: new Date(), punchEvidence: evidence });
+
+    expect(mockedPrisma.__tx.storageFile.update).toHaveBeenCalledWith({ where: { id: "file-1" }, data: { attendancePunchId: "punch-legacy" } });
+  });
+
   it("una fichada sin StorageFile (carga administrativa) no toca StorageFile", async () => {
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-1" });
     mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
@@ -2017,6 +2031,62 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
     await timeEntriesRepository.createOpenWorkShift({ employeeId: "employee-1", source: "ADMIN" as never, startAt: new Date(), punchEvidence: { deviceId: null } });
 
     expect(mockedPrisma.__tx.storageFile.update).not.toHaveBeenCalled();
+  });
+});
+
+// PERF-5A (docs/decisions/F12_PERF_5.md): menos sentencias en el cierre del fichador, mismas escrituras.
+describe("PERF-5A — closeOpenWorkShift sin lecturas redundantes", () => {
+  const day = new Date("2026-10-13T00:00:00.000Z");
+  const baseSegment = { date: day, startAt: new Date("2026-10-13T11:00:00.000Z"), endAt: new Date("2026-10-13T13:00:00.000Z"), minutes: 120, hours: 2, hourConceptId: "concept-night", hourConceptName: "Nocturna" };
+  const close = (overrides: Record<string, unknown> = {}) => timeEntriesRepository.closeOpenWorkShift({
+    workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
+    source: "KIOSK" as never, endAt: baseSegment.endAt, totalMinutes: 120, segments: [{ ...baseSegment, hourConceptKind: "NOCTURNA" as never }], ...overrides,
+  });
+
+  beforeEach(() => {
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: "KIOSK" });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
+  });
+
+  it("con el kind de cada tramo ya resuelto no lee HourConcept y marca isNight igual", async () => {
+    await close();
+
+    expect(mockedPrisma.hourConcept.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeSegment.create.mock.calls[0]![0].data).toMatchObject({ hourConceptId: "concept-night", isNight: true });
+  });
+
+  it("si algún tramo no trae el kind, lo sigue leyendo de HourConcept (cierre manual y otros llamadores)", async () => {
+    mockedPrisma.hourConcept.findMany.mockResolvedValueOnce([{ id: "concept-night", kind: "NOCTURNA" }]);
+
+    await close({ segments: [baseSegment] });
+
+    expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledWith({ where: { id: { in: ["concept-night"] } }, select: { id: true, kind: true } });
+    expect(mockedPrisma.__tx.timeSegment.create.mock.calls[0]![0].data).toMatchObject({ isNight: true });
+  });
+
+  it("returnEntries=false escribe el mismo TimeEntry sin releerlo con su include ni devolverlo", async () => {
+    const result = await close({ returnEntries: false });
+
+    const call = mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0];
+    expect(call).toMatchObject({ select: { id: true }, data: { employeeId: "employee-1", hourConceptId: "concept-normal", totalMinutes: 120, actualMinutes: 120, status: "APROBADO", source: "KIOSK" } });
+    expect(call).not.toHaveProperty("include");
+    expect(result.entries).toEqual([]);
+  });
+
+  it("por defecto (cierre manual) sigue devolviendo cada TimeEntry con su include", async () => {
+    const result = await close();
+
+    expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0]).toHaveProperty("include");
+    expect(result.entries).toHaveLength(1);
+  });
+
+  it("los TimeEntry existentes del día se leen sólo con los campos del acumulado", async () => {
+    await close();
+
+    const [findManyArgs] = mockedPrisma.__tx.timeEntry.findMany.mock.calls[0]!;
+    expect(findManyArgs).toMatchObject({ select: { id: true, date: true, status: true, actualMinutes: true, totalMinutes: true, observation: true } });
+    expect(findManyArgs).not.toHaveProperty("include");
   });
 });
 

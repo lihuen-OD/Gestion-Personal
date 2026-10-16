@@ -1,0 +1,301 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`PERF-5 — fichada contra PostgreSQL local: resultado funcional y presupuesto de sentencias > IN → OUT: jornada, horas, tramos, especiales, auditoría, alertas, notificaciones y desgloses > after IN 1`] = `
+{
+  "alerts": [
+    {
+      "severity": "ADVERTENCIA",
+      "status": "PENDIENTE",
+      "type": "TURNO_NO_IDENTIFICADO",
+    },
+  ],
+  "audits": [
+    {
+      "action": "CREATE",
+      "after": {
+        "actorClockDeviceId": "<device>",
+        "employeeId": "<employee>",
+        "source": "KIOSK",
+        "workShiftId": "<shift>",
+      },
+      "description": "Ingreso con foto registrado desde el dispositivo de fichada "TEST PERF5" para legajo P5-1.",
+      "userId": null,
+    },
+  ],
+  "breakdownAudits": 0,
+  "breakdowns": [],
+  "endPunch": null,
+  "notifications": [
+    {
+      "entityType": "ShiftAlert",
+      "link": "/asistencia",
+      "message": "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
+      "priority": "ALTA",
+      "recipientIsRrhh": true,
+      "title": "Turno no identificado",
+      "type": "ALERTA_FICHADA",
+    },
+  ],
+  "shift": {
+    "crossesMidnight": false,
+    "hourConceptName": "Hora normal",
+    "observation": null,
+    "shiftTemplateId": null,
+    "source": "KIOSK",
+    "status": "ABIERTO",
+    "totalMinutes": null,
+  },
+  "startPunch": {
+    "deviceId": true,
+    "faceValidationStatus": "VALID",
+    "photoLinkedToPunch": true,
+    "photoPathMatchesFile": true,
+    "photoProvider": "NEON_OBJECT_STORAGE",
+    "rawPhoto": {
+      "storageFileIdMatches": true,
+      "thumbnailStatus": "NOT_STORED",
+    },
+    "source": "KIOSK",
+    "thumbnailFileId": null,
+    "type": "INGRESO",
+  },
+  "timeEntries": [],
+  "timeSegments": [],
+}
+`;
+
+exports[`PERF-5 — fichada contra PostgreSQL local: resultado funcional y presupuesto de sentencias > IN → OUT: jornada, horas, tramos, especiales, auditoría, alertas, notificaciones y desgloses > after OUT 1`] = `
+{
+  "alerts": [
+    {
+      "severity": "ADVERTENCIA",
+      "status": "PENDIENTE",
+      "type": "TURNO_NO_IDENTIFICADO",
+    },
+  ],
+  "audits": [
+    {
+      "action": "CREATE",
+      "after": {
+        "actorClockDeviceId": "<device>",
+        "employeeId": "<employee>",
+        "source": "KIOSK",
+        "workShiftId": "<shift>",
+      },
+      "description": "Ingreso con foto registrado desde el dispositivo de fichada "TEST PERF5" para legajo P5-1.",
+      "userId": null,
+    },
+    {
+      "action": "CREATE",
+      "after": {
+        "actorClockDeviceId": "<device>",
+        "employeeId": "<employee>",
+        "source": "KIOSK",
+        "workShiftId": "<shift>",
+      },
+      "description": "Salida con foto registrada desde el dispositivo de fichada "TEST PERF5" para legajo P5-1.",
+      "userId": null,
+    },
+  ],
+  "breakdownAudits": 1,
+  "breakdowns": [
+    {
+      "appliedMultiplier": 2,
+      "hourConceptId": true,
+      "minutes": 90,
+      "status": "BORRADOR",
+    },
+  ],
+  "endPunch": {
+    "deviceId": true,
+    "faceValidationStatus": "VALID",
+    "photoLinkedToPunch": true,
+    "photoPathMatchesFile": true,
+    "photoProvider": "NEON_OBJECT_STORAGE",
+    "rawPhoto": {
+      "storageFileIdMatches": true,
+      "thumbnailStatus": "NOT_STORED",
+    },
+    "source": "KIOSK",
+    "thumbnailFileId": null,
+    "type": "SALIDA",
+  },
+  "notifications": [
+    {
+      "entityType": "ShiftAlert",
+      "link": "/asistencia",
+      "message": "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
+      "priority": "ALTA",
+      "recipientIsRrhh": true,
+      "title": "Turno no identificado",
+      "type": "ALERTA_FICHADA",
+    },
+  ],
+  "shift": {
+    "crossesMidnight": false,
+    "hourConceptName": "Hora normal",
+    "observation": null,
+    "shiftTemplateId": null,
+    "source": "KIOSK",
+    "status": "PROCESADO",
+    "totalMinutes": 90,
+  },
+  "startPunch": {
+    "deviceId": true,
+    "faceValidationStatus": "VALID",
+    "photoLinkedToPunch": true,
+    "photoPathMatchesFile": true,
+    "photoProvider": "NEON_OBJECT_STORAGE",
+    "rawPhoto": {
+      "storageFileIdMatches": true,
+      "thumbnailStatus": "NOT_STORED",
+    },
+    "source": "KIOSK",
+    "thumbnailFileId": null,
+    "type": "INGRESO",
+  },
+  "timeEntries": [
+    {
+      "actualMinutes": 90,
+      "appliedMultiplier": 2,
+      "hours": 1.5,
+      "observation": "Generado automáticamente a partir de la fichada. Reglas aplicadas: Especial IT. Multiplicador x2 · 1 h 30 min trabajadas.",
+      "source": "KIOSK",
+      "status": "APROBADO",
+      "totalMinutes": 90,
+    },
+  ],
+  "timeSegments": [
+    {
+      "conceptStatus": "SUGERIDO",
+      "hourConceptName": "Hora nocturna IT",
+      "isNight": true,
+      "isSpecial": true,
+      "minutes": 90,
+      "ruleApplications": [
+        {
+          "isWinner": true,
+          "multiplierApplied": 2,
+          "wasConflicting": false,
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`PERF-5 — fichada contra PostgreSQL local: resultado funcional y presupuesto de sentencias > rollover: jornada vencida + IN → olvido de salida, jornada nueva, aviso y evaluación de entrada > rollover 1`] = `
+{
+  "next": {
+    "alerts": [
+      {
+        "severity": "ADVERTENCIA",
+        "status": "PENDIENTE",
+        "type": "TURNO_NO_IDENTIFICADO",
+      },
+    ],
+    "audits": [
+      {
+        "action": "CREATE",
+        "after": {
+          "actorClockDeviceId": "<device>",
+          "employeeId": "<employee>",
+          "source": "KIOSK",
+          "workShiftId": "<shift>",
+        },
+        "description": "Ingreso con foto registrado desde el dispositivo de fichada "TEST PERF5" para legajo P5-2.",
+        "userId": null,
+      },
+    ],
+    "breakdownAudits": 0,
+    "breakdowns": [],
+    "endPunch": null,
+    "notifications": [
+      {
+        "entityType": "ShiftAlert",
+        "link": "/asistencia",
+        "message": "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.",
+        "priority": "ALTA",
+        "recipientIsRrhh": true,
+        "title": "Turno no identificado",
+        "type": "ALERTA_FICHADA",
+      },
+    ],
+    "shift": {
+      "crossesMidnight": false,
+      "hourConceptName": "Hora normal",
+      "observation": null,
+      "shiftTemplateId": null,
+      "source": "KIOSK",
+      "status": "ABIERTO",
+      "totalMinutes": null,
+    },
+    "startPunch": {
+      "deviceId": true,
+      "faceValidationStatus": "VALID",
+      "photoLinkedToPunch": true,
+      "photoPathMatchesFile": true,
+      "photoProvider": "NEON_OBJECT_STORAGE",
+      "rawPhoto": {
+        "storageFileIdMatches": true,
+        "thumbnailStatus": "NOT_STORED",
+      },
+      "source": "KIOSK",
+      "thumbnailFileId": null,
+      "type": "INGRESO",
+    },
+    "timeEntries": [],
+    "timeSegments": [],
+  },
+  "previous": {
+    "alerts": [],
+    "audits": [],
+    "breakdownAudits": 0,
+    "breakdowns": [],
+    "endPunch": null,
+    "notifications": [
+      {
+        "entityType": "WorkShift",
+        "link": "/asistencia",
+        "message": "La jornada venció sin salida registrada y requiere revisión.",
+        "priority": "ALTA",
+        "recipientIsRrhh": true,
+        "title": "Falta registrar la salida",
+        "type": "FALTA_SALIDA",
+      },
+    ],
+    "shift": {
+      "crossesMidnight": false,
+      "hourConceptName": "Hora normal",
+      "observation": "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
+      "shiftTemplateId": null,
+      "source": "KIOSK",
+      "status": "FALTA_SALIDA",
+      "totalMinutes": null,
+    },
+    "startPunch": {
+      "deviceId": true,
+      "faceValidationStatus": "VALID",
+      "photoLinkedToPunch": false,
+      "photoPathMatchesFile": false,
+      "photoProvider": null,
+      "rawPhoto": undefined,
+      "source": "KIOSK",
+      "thumbnailFileId": null,
+      "type": "INGRESO",
+    },
+    "timeEntries": [
+      {
+        "actualMinutes": null,
+        "appliedMultiplier": 1,
+        "hours": 0,
+        "observation": "0 h — Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
+        "source": "KIOSK",
+        "status": "APROBADO",
+        "totalMinutes": 0,
+      },
+    ],
+    "timeSegments": [],
+  },
+}
+`;

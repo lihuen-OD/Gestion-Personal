@@ -1,3 +1,4 @@
+import type { WorkShift } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
@@ -463,9 +464,12 @@ export async function evaluateShiftExit(
   workShiftId: string,
   actualAt: Date,
   classifiedSegments: ClassifiedSegmentAlertInput[] = [],
+  // PERF-5A: la jornada recién cerrada, tal como la devolvió su transacción;
+  // sin ella se lee de la base (cierres sin ese dato a mano).
+  closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId">,
 ) {
   try {
-    const shift = await prisma.workShift.findUnique({ where: { id: workShiftId } });
+    const shift = closedShift ?? await prisma.workShift.findUnique({ where: { id: workShiftId } });
     if (!shift) return;
     await resolveOpenShiftOverflowAlert(workShiftId, "Resuelta automáticamente: la jornada se cerró con una salida registrada.");
     // Etapa 13B: `resolveMatchForExit` nunca busca contra turnos ajenos — usa

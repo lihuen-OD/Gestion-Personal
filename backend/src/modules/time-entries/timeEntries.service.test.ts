@@ -205,10 +205,12 @@ function prismaKnownError(code: string) {
 // repositorio está mockeado: se corre el writer `prepareEvidence` que recibió
 // con una tx falsa, como haría la transacción real.
 const EVIDENCE_TX = { marker: "evidence-tx" };
+// PERF-5A: id que la transacción le asigna al AttendancePunch antes de insertarlo.
+const EVIDENCE_PUNCH_ID = "punch-evidence-id";
 async function evidenceWrittenBy(repoFn: Mock, callIndex = 0) {
-  const { prepareEvidence } = repoFn.mock.calls[callIndex]![0] as { prepareEvidence?: (tx: unknown) => Promise<Record<string, any>> };
+  const { prepareEvidence } = repoFn.mock.calls[callIndex]![0] as { prepareEvidence?: (tx: unknown, punchId: string) => Promise<Record<string, any>> };
   expect(prepareEvidence).toEqual(expect.any(Function));
-  return prepareEvidence!(EVIDENCE_TX);
+  return prepareEvidence!(EVIDENCE_TX, EVIDENCE_PUNCH_ID);
 }
 
 // F6: id del ClockDevice autenticado; en producción sale de requireClockDevice.
@@ -2020,15 +2022,16 @@ describe("F12-PERF-3 — evidencia primaria y su persistencia transaccional", ()
 
     const evidence = await evidenceWrittenBy(repoFn());
     expect(mockedPersistManagedUploadWithArchive).toHaveBeenCalledTimes(1);
-    expect(mockedPersistManagedUploadWithArchive).toHaveBeenCalledWith(PREPARED_UPLOAD, EVIDENCE_TX);
+    // PERF-5A: el StorageFile nace vinculado al punch (sin UPDATE posterior).
+    expect(mockedPersistManagedUploadWithArchive).toHaveBeenCalledWith(PREPARED_UPLOAD, EVIDENCE_TX, { attendancePunchId: EVIDENCE_PUNCH_ID });
     expect(evidence).toMatchObject({ photoFileId: "file-1", photoStoragePath: "key-1", photoUrl: null, thumbnailFileId: null, deviceId: CLOCK_DEVICE_ID });
     expect(evidence.rawPayload.photo).toMatchObject({ storageFileId: "file-1", providerPath: "key-1", thumbnailStatus: "NOT_STORED" });
   });
 
   it("si la persistencia del StorageFile o del archive job falla dentro de la transacción, la fichada se revierte y el objeto se compensa", async () => {
     mockedPersistManagedUploadWithArchive.mockRejectedValueOnce(new Error("archive job insert failed"));
-    repo.createOpenWorkShift.mockImplementationOnce(async (input: { prepareEvidence: (tx: unknown) => Promise<unknown> }) => {
-      await input.prepareEvidence(EVIDENCE_TX);
+    repo.createOpenWorkShift.mockImplementationOnce(async (input: { prepareEvidence: (tx: unknown, punchId: string) => Promise<unknown> }) => {
+      await input.prepareEvidence(EVIDENCE_TX, EVIDENCE_PUNCH_ID);
       return { id: "shift-1", startAt: new Date(), startPunchId: null };
     });
 
@@ -2048,6 +2051,38 @@ describe("F12-PERF-3 — evidencia primaria y su persistencia transaccional", ()
     expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
     expect(mockedPersistManagedUploadWithArchive).not.toHaveBeenCalled();
     expect(mockedCompensateManagedUpload).not.toHaveBeenCalled();
+  });
+});
+
+// PERF-5A (docs/decisions/F12_PERF_5.md): el OUT pide al repositorio sólo lo que usa.
+describe("PERF-5A — salida sin lecturas redundantes", () => {
+  const nightlessNormal = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE", kind: "NORMAL" };
+  const context = () => ({ ...activeEmployee, workShifts: [{ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: nightlessNormal }], hourConcepts: [] }) as never;
+  const punchOut = () => ({ requestId: "77777777-7777-4777-8777-777777777777", employeeId: activeEmployee.id, punchType: "OUT" as const, photo: bigPhotoDataUrl(), faceValidationStatus: "VALID" as const });
+  const originalCooldown = env.CLOCK_PUNCH_COOLDOWN_SECONDS;
+
+  beforeEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: nightlessNormal });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = originalCooldown;
+  });
+
+  it("cierra sin pedir los TimeEntry de vuelta, con el kind de cada tramo, y evalúa la salida con la jornada que devolvió la transacción", async () => {
+    const closed = { id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), endAt: new Date(), totalMinutes: 60, endPunchId: "punch-out", shiftTemplateId: "template-1" };
+    repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: closed, entries: [], timeSegments: [] });
+
+    await timeEntriesService.clockPhotoPunch(punchOut(), KIOSK_CLOCK_ORIGIN, undefined, context());
+
+    const call = repo.closeOpenWorkShift.mock.calls[0]![0] as { returnEntries?: boolean; segments: Array<{ hourConceptKind?: string }> };
+    expect(call.returnEntries).toBe(false);
+    expect(call.segments.length).toBeGreaterThan(0);
+    for (const segment of call.segments) expect(segment.hourConceptKind).toBe("NORMAL");
+    expect(evaluateShiftExit).toHaveBeenCalledWith(activeEmployee.id, "shift-open", expect.any(Date), expect.any(Array), closed);
   });
 });
 

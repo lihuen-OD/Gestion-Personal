@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { isProduction, shouldRecordQueryMetrics } from "../../config/env";
 import { recordPrismaQuery } from "../observability/requestMetrics";
+import { countClockPunchQuery } from "../observability/clockPunchQueryBudget";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -29,6 +30,8 @@ export const prisma = prismaClient.$extends({
     $allModels: {
       async $allOperations({ model, operation, args, query }) {
         const startedAt = performance.now();
+        // PERF-5A: no-op fuera de un request de fichada (sin store en el ALS).
+        countClockPunchQuery();
         try {
           return await query(args);
         } finally {
