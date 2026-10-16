@@ -127,6 +127,32 @@ async function findFolder(parentId: string, name: string) {
   return data.files[0]?.id;
 }
 
+export function isGoogleDriveConfigured() {
+  return configured();
+}
+
+/**
+ * F12-PERF-4: copia de archivo ya subida para un StorageFile primario (marcada
+ * con appProperties.sourceStorageFileId al subirla). Permite que un job
+ * reclamado de nuevo tras un lease vencido no duplique la copia en Drive.
+ */
+export async function findGoogleDriveArchiveCopy(sourceStorageFileId: string) {
+  const query = [
+    "trashed = false",
+    `appProperties has { key = 'sourceStorageFileId' and value = '${escapeQueryValue(sourceStorageFileId)}' }`,
+  ].join(" and ");
+  const params = new URLSearchParams({
+    q: query,
+    fields: "files(id,name,mimeType,size,webViewLink,webContentLink,parents)",
+    pageSize: "1",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+  const response = await driveRequest<{ files: DriveFile[] }>(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
+  const data = await response.json() as { files: DriveFile[] };
+  return data.files[0] || null;
+}
+
 async function createFolder(parentId: string, name: string) {
   const response = await driveRequest<DriveFile>("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id,name", {
     method: "POST",

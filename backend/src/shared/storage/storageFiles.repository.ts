@@ -1,9 +1,10 @@
 import type { Prisma, StorageFileStatus } from "@prisma/client";
 import { prisma } from "../prisma/client";
+import type { PrismaTransactionClient } from "../prisma/client";
 
 export const storageFilesRepository = {
-  create(data: Prisma.StorageFileUncheckedCreateInput) {
-    return prisma.storageFile.create({ data });
+  create(data: Prisma.StorageFileUncheckedCreateInput, db: PrismaTransactionClient = prisma) {
+    return db.storageFile.create({ data });
   },
 
   findById(id: string) {

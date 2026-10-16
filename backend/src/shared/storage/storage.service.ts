@@ -5,6 +5,7 @@ import { googleDriveStorageProvider } from "./googleDriveStorage.provider";
 import { localStorageProvider } from "./localStorage.provider";
 import { neonObjectStorageProvider } from "./neonObjectStorage.provider";
 import { storageFilesRepository } from "./storageFiles.repository";
+import { storageArchiveRepository } from "./storageArchive.repository";
 import { checksum, fileExtension, safeFileName, validateStorageFile } from "./storageValidation";
 import type {
   ManagedStorageObjectInput,
@@ -15,6 +16,14 @@ import type {
   StorageProvider,
 } from "./storage.types";
 import { clockPunchMetric } from "../observability/clockPunchTelemetry";
+import type { PrismaTransactionClient } from "../prisma/client";
+
+export type PreparedManagedStorageUpload = {
+  input: ManagedStorageObjectInput;
+  fileName: string;
+  uploaded: StorageObjectResult;
+  selectedProvider: StorageProvider;
+};
 
 function providerByEnvName(name: string | undefined): StorageProvider {
   if (name === "neon_object_storage") return neonObjectStorageProvider;
@@ -98,6 +107,14 @@ const providerRegistry: Record<PersistedStorageProvider, StorageProvider> = {
   NEON_OBJECT_STORAGE: neonObjectStorageProvider,
 };
 
+/**
+ * F12-PERF-4: sólo Neon Object Storage tiene archivo secundario (Google
+ * Drive). Un primary que ya es Drive no se re-archiva en Drive.
+ */
+function archiveTargetFor(primary: PersistedStorageProvider): PersistedStorageProvider | null {
+  return primary === "NEON_OBJECT_STORAGE" ? "GOOGLE_DRIVE" : null;
+}
+
 function providerFor(name: PersistedStorageProvider): StorageProvider {
   const found = providerRegistry[name];
   if (!found) {
@@ -113,7 +130,7 @@ export const storageService = {
     return provider().upload(input);
   },
 
-  async uploadManaged(input: ManagedStorageObjectInput) {
+  async uploadManagedObject(input: ManagedStorageObjectInput): Promise<PreparedManagedStorageUpload> {
     validateStorageFile({
       buffer: input.buffer,
       fileName: input.fileName,
@@ -133,6 +150,17 @@ export const storageService = {
       if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: telemetryProvider(selectedProvider), result: "error" });
       throw error;
     }
+    return { input, fileName, uploaded, selectedProvider };
+  },
+
+  /**
+   * F12-PERF-3: con `db` (transacción del llamador) el StorageFile se revierte
+   * junto con esa transacción y la compensación del objeto físico queda a
+   * cargo del llamador (compensateManagedUpload), sin llamadas de red dentro
+   * de la transacción. Sin `db`, compensa acá como siempre.
+   */
+  async persistManagedUpload(prepared: PreparedManagedStorageUpload, db?: PrismaTransactionClient) {
+    const { input, fileName, uploaded } = prepared;
     try {
       const insertStartedAt = performance.now();
       const stored = await storageFilesRepository.create({
@@ -159,16 +187,17 @@ export const storageService = {
         uploadedByUserId: input.uploadedByUserId || null,
         checksum: input.buffer ? checksum(input.buffer) : null,
         metadata: { ...(input.metadata || {}), ...cloudinaryMetadataFrom(uploaded) },
-      });
+      }, db);
       if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "storage_file_insert", durationMs: performance.now() - insertStartedAt, provider: uploaded.provider, result: "success" });
       return stored;
     } catch (error) {
+      if (db) throw error;
       try {
         // Compensar con el MISMO provider que acaba de recibir el upload —
         // nunca con provider() (global): desde 15D.2 pueden diferir según
         // input.module, y compensar con el provider equivocado dejaría el
         // archivo huérfano en el provider real.
-        await selectedProvider.delete(uploaded.storageKey);
+        await prepared.selectedProvider.delete(uploaded.storageKey);
       } catch (compensationError) {
         console.error("STORAGE_COMPENSATION_FAILED", {
           severity: "critical",
@@ -178,6 +207,27 @@ export const storageService = {
       }
       throw error;
     }
+  },
+
+  /**
+   * F12-PERF-3/4 (docs/decisions/F12_PERF_3_4.md): StorageFile primario y, si
+   * el primary tiene archivo secundario (Neon -> Google Drive), su
+   * StorageArchiveJob PENDING, ambos en la transacción del llamador.
+   */
+  async persistManagedUploadWithArchive(prepared: PreparedManagedStorageUpload, tx: PrismaTransactionClient) {
+    const stored = await storageService.persistManagedUpload(prepared, tx);
+    const target = archiveTargetFor(stored.storageProvider);
+    if (target) await storageArchiveRepository.enqueue(tx, stored.id, target);
+    return stored;
+  },
+
+  async compensateManagedUpload(prepared: PreparedManagedStorageUpload) {
+    await prepared.selectedProvider.delete(prepared.uploaded.storageKey);
+  },
+
+  async uploadManaged(input: ManagedStorageObjectInput) {
+    const prepared = await storageService.uploadManagedObject(input);
+    return storageService.persistManagedUpload(prepared);
   },
 
   async deleteManaged(id: string) {

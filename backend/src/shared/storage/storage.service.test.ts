@@ -8,6 +8,7 @@ import { googleDriveStorageProvider } from "./googleDriveStorage.provider";
 import { cloudinaryStorageProvider } from "./cloudinaryStorage.provider";
 import { neonObjectStorageProvider } from "./neonObjectStorage.provider";
 import { storageFilesRepository } from "./storageFiles.repository";
+import { storageArchiveRepository } from "./storageArchive.repository";
 
 /**
  * Etapa 15D.1 (docs/decisions/STORAGE_PROVIDER_REGISTRY_15D1.md): operaciones
@@ -41,6 +42,10 @@ vi.mock("./storageFiles.repository", () => ({
     countUnlinkedPunchEvidence: vi.fn(),
     updateStatus: vi.fn(),
   },
+}));
+
+vi.mock("./storageArchive.repository", () => ({
+  storageArchiveRepository: { enqueue: vi.fn() },
 }));
 
 type MutableEnv = {
@@ -284,5 +289,100 @@ describe("storageService.uploadManaged — política de upload por módulo/prop�
 
     expect(drive.delete).toHaveBeenCalledWith("drive-punch-2");
     expect(local.delete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * F12-PERF-3/4 (docs/decisions/F12_PERF_3_4.md): el objeto físico se sube
+ * antes de la transacción de la fichada; el StorageFile y su archive job se
+ * escriben dentro, con la tx del llamador, y la compensación del objeto la
+ * hace el llamador (nunca una llamada de red dentro de la transacción).
+ */
+describe("storageService — upload primario + persistencia transaccional (F12-PERF-3/4)", () => {
+  const originalStorageProvider = env.STORAGE_PROVIDER;
+  const originalPunchPhoto = env.PUNCH_PHOTO_STORAGE_PROVIDER;
+  const archiveRepo = storageArchiveRepository as unknown as { enqueue: Mock };
+  const tx = { marker: "tx" } as never;
+
+  const punchPhotoInput = {
+    buffer: Buffer.from("foto-jpeg"),
+    fileName: "req-1.jpg",
+    mimeType: "image/jpeg",
+    module: "FICHADAS" as const,
+    entityType: "ATTENDANCE_PUNCH" as const,
+    entityId: "employee-1",
+    employeeId: "employee-1",
+    purpose: "punch-photo" as const,
+    folderSegments: ["attendance", "2026", "10", "device-1"],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (env as MutableEnv).STORAGE_PROVIDER = "google_drive";
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = "neon_object_storage";
+    neon.upload.mockResolvedValue({ provider: "neon_object_storage", storageKey: "attendance/2026/10/device-1/req-1.jpg", sizeBytes: 9 });
+    archiveRepo.enqueue.mockResolvedValue({ id: "job-1" });
+  });
+
+  afterEach(() => {
+    (env as MutableEnv).STORAGE_PROVIDER = originalStorageProvider;
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhoto;
+  });
+
+  it("uploadManagedObject sube al primary de FICHADAS (Neon) y no escribe StorageFile ni toca Drive", async () => {
+    const prepared = await storageService.uploadManagedObject(punchPhotoInput);
+
+    expect(neon.upload).toHaveBeenCalledTimes(1);
+    expect(neon.upload.mock.calls[0]![0]).toMatchObject({ folderSegments: punchPhotoInput.folderSegments, fileName: "req-1.jpg" });
+    expect(prepared.uploaded.storageKey).toBe("attendance/2026/10/device-1/req-1.jpg");
+    expect(filesRepo.create).not.toHaveBeenCalled();
+    expect(drive.upload).not.toHaveBeenCalled();
+  });
+
+  it("persistManagedUploadWithArchive: primary Neon → StorageFile NEON_OBJECT_STORAGE + job GOOGLE_DRIVE, ambos con la tx del llamador", async () => {
+    filesRepo.create.mockResolvedValue({ id: "sf-1", storageProvider: "NEON_OBJECT_STORAGE", storageKey: "k" });
+    const prepared = await storageService.uploadManagedObject(punchPhotoInput);
+
+    const stored = await storageService.persistManagedUploadWithArchive(prepared, tx);
+
+    expect(stored).toMatchObject({ id: "sf-1" });
+    expect(filesRepo.create).toHaveBeenCalledWith(expect.objectContaining({ storageProvider: "NEON_OBJECT_STORAGE", module: "FICHADAS", checksum: expect.stringMatching(/^[0-9a-f]{64}$/) }), tx);
+    expect(archiveRepo.enqueue).toHaveBeenCalledWith(tx, "sf-1", "GOOGLE_DRIVE");
+    expect(drive.upload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["google_drive", "GOOGLE_DRIVE"],
+    ["local", "LOCAL"],
+  ] as const)("primary %s → sin archive job (Drive nunca se re-archiva en Drive)", async (envName, persisted) => {
+    (env as MutableEnv).PUNCH_PHOTO_STORAGE_PROVIDER = envName;
+    const provider = envName === "google_drive" ? drive : local;
+    provider.upload.mockResolvedValue({ provider: envName, storageKey: "k" });
+    filesRepo.create.mockResolvedValue({ id: "sf-2", storageProvider: persisted, storageKey: "k" });
+
+    await storageService.persistManagedUploadWithArchive(await storageService.uploadManagedObject(punchPhotoInput), tx);
+
+    expect(archiveRepo.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("con tx, si falla el insert del StorageFile no compensa adentro: lo hace el llamador con compensateManagedUpload y el provider del upload", async () => {
+    filesRepo.create.mockRejectedValue(new Error("db down"));
+    const prepared = await storageService.uploadManagedObject(punchPhotoInput);
+
+    await expect(storageService.persistManagedUploadWithArchive(prepared, tx)).rejects.toThrow("db down");
+    expect(neon.delete).not.toHaveBeenCalled();
+    expect(archiveRepo.enqueue).not.toHaveBeenCalled();
+
+    await storageService.compensateManagedUpload(prepared);
+    expect(neon.delete).toHaveBeenCalledWith("attendance/2026/10/device-1/req-1.jpg");
+    expect(drive.delete).not.toHaveBeenCalled();
+  });
+
+  it("si el upload primario falla, no hay nada que persistir ni compensar", async () => {
+    neon.upload.mockRejectedValue(new AppError("Neon Object Storage timeout", 504, "STORAGE_NEON_TIMEOUT"));
+
+    await expect(storageService.uploadManagedObject(punchPhotoInput)).rejects.toMatchObject({ code: "STORAGE_NEON_TIMEOUT" });
+    expect(filesRepo.create).not.toHaveBeenCalled();
+    expect(neon.delete).not.toHaveBeenCalled();
   });
 });

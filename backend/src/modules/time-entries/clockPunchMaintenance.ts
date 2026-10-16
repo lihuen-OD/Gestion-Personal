@@ -7,6 +7,7 @@ import { checkMissingExpectedEntries } from "./missingEntry.service";
 import { runMissingEntryCatchUp } from "./missingEntryScheduler";
 import { checkMissingOutRisk } from "../shifts/openShiftMonitor.service";
 import { clockDevicesService } from "../clock-devices/clockDevices.service";
+import { processStorageArchiveBatch } from "../../shared/storage/storageArchive.worker";
 
 let running = false;
 let lastOrphanCount: number | undefined;
@@ -127,6 +128,17 @@ export async function maintainClockPunchAttempts() {
       }
     } catch (error) {
       console.error("MISSING_ENTRY_CATCHUP_FAILED", {
+        severity: "critical",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // F12-PERF-4: archivo a Google Drive al final del tick — sus uploads
+    // (segundos cada uno) nunca demoran los chequeos de asistencia de arriba.
+    try {
+      await processStorageArchiveBatch();
+    } catch (error) {
+      console.error("STORAGE_ARCHIVE_BATCH_FAILED", {
         severity: "critical",
         error: error instanceof Error ? error.message : String(error),
       });
