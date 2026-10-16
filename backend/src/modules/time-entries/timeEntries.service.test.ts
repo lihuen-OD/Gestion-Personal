@@ -5,7 +5,7 @@ import { env } from "../../config/env";
 import { AppError } from "../../shared/errors/AppError";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 import { prisma } from "../../shared/prisma/client";
-import { timeEntriesRepository } from "./timeEntries.repository";
+import { resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
 import { timeEntriesExportToCsv, timeEntriesService, clockAttemptHash, resolveShiftConcept } from "./timeEntries.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
@@ -18,6 +18,9 @@ import { automaticHourConceptBreakdownsService } from "../employees/automaticHou
 import { storageService } from "../../shared/storage/storage.service";
 
 vi.mock("./timeEntries.repository", () => ({
+  // PERF-5B: la salida resuelve Horas Especiales en paralelo con el upload y se
+  // las pasa a closeOpenWorkShift (mockeado acá); el valor no se usa.
+  resolveSpecialHourRulesByDate: vi.fn().mockResolvedValue(new Map()),
   timeEntriesRepository: {
     createOpenWorkShift: vi.fn(),
     rolloverExpiredOpenWorkShift: vi.fn(),
@@ -1338,7 +1341,7 @@ function clockPhotoPunchInput() {
 describe("clockPhotoPunchIdempotent", () => {
   it("responde con la respuesta ya guardada si el intento esta COMPLETED, sin re-ejecutar la fichada", async () => {
     const input = clockPhotoPunchInput();
-    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
     const requestHash = clockAttemptHash(input);
     repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
     repo.findClockPunchAttempt.mockResolvedValue({
@@ -1359,7 +1362,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
   it("re-lanza el error guardado si el intento esta FAILED", async () => {
     const input = clockPhotoPunchInput();
-    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
     const requestHash = clockAttemptHash(input);
     repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
     repo.findClockPunchAttempt.mockResolvedValue({
@@ -1383,7 +1386,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
   it("responde 409 si el intento todavia esta PROCESSING", async () => {
     const input = clockPhotoPunchInput();
-    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
     const requestHash = clockAttemptHash(input);
     repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
     repo.findClockPunchAttempt.mockResolvedValue({
@@ -1404,7 +1407,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
   it("responde 409 CLOCK_IDEMPOTENCY_KEY_REUSED si el mismo requestId se usa con un payload distinto", async () => {
     const input = clockPhotoPunchInput();
-    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
     repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
     repo.findClockPunchAttempt.mockResolvedValue({
       requestId: input.requestId,
@@ -1425,7 +1428,7 @@ describe("clockPhotoPunchIdempotent", () => {
   describe("F6 — intentos atados al ClockDevice autenticado", () => {
     it("crea el intento con el deviceId autenticado", async () => {
       const input = clockPhotoPunchInput();
-      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
       repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
       repo.findClockPunchAttempt.mockResolvedValue({
         requestId: input.requestId, employeeId: input.employeeId, deviceId: CLOCK_DEVICE_ID, punchType: "INGRESO",
@@ -1439,7 +1442,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
     it("un requestId de OTRO dispositivo (mismo payload) no devuelve su resultado: 409 como clave reutilizada", async () => {
       const input = clockPhotoPunchInput();
-      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
       repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
       repo.findClockPunchAttempt.mockResolvedValue({
         requestId: input.requestId, employeeId: input.employeeId, deviceId: OTHER_CLOCK_DEVICE_ID, punchType: "INGRESO",
@@ -1455,7 +1458,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
     it("un intento histórico sin dispositivo (deviceId NULL) tampoco se reutiliza", async () => {
       const input = clockPhotoPunchInput();
-      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
       repo.createClockPunchAttempt.mockRejectedValue(prismaKnownError("P2002"));
       repo.findClockPunchAttempt.mockResolvedValue({
         requestId: input.requestId, employeeId: input.employeeId, deviceId: null, punchType: "INGRESO",
@@ -1467,7 +1470,7 @@ describe("clockPhotoPunchIdempotent", () => {
 
     it("si la fichada falla, el intento ya quedó creado con el dispositivo y se marca FAILED", async () => {
       const input = { ...clockPhotoPunchInput(), faceValidationStatus: "NO_FACE" as const };
-      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+      repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
       repo.createClockPunchAttempt.mockResolvedValue({});
       repo.failClockPunchAttempt.mockResolvedValue({});
 
@@ -1517,7 +1520,8 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
   function punch(punchType: "IN" | "OUT", requestId = "55555555-5555-4555-8555-555555555555") {
     return { requestId, employeeId: activeEmployee.id, punchType, photo: bigPhotoDataUrl(), faceValidationStatus: "VALID" as const };
   }
-  const context = (workShifts: unknown[] = []) => ({ ...activeEmployee, workShifts, hourConcepts: [] }) as never;
+  // PERF-5B: la consulta real del contexto siempre trae `attendancePunches` (vacía sin fichada en la ventana).
+  const context = (workShifts: unknown[] = [], attendancePunches: Array<{ timestamp: Date }> = []) => ({ ...activeEmployee, workShifts, hourConcepts: [], attendancePunches }) as never;
   const openShift = () => ({ id: "shift-open", startAt: new Date(Date.now() - 60 * 60_000), hourConcept: normalConcept });
   const secondsAgo = (seconds: number) => new Date(Date.now() - seconds * 1000);
 
@@ -1671,10 +1675,10 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
 
     it("un requestId nuevo dentro de la ventana deja el intento FAILED con CLOCK_PUNCH_COOLDOWN, ligado al dispositivo y al empleado", async () => {
       const input = punch("OUT", "66666666-6666-4666-8666-666666666666");
-      repo.findClockValidationContext.mockResolvedValue(context([openShift()]));
+      // PERF-5B: por el camino idempotente la última fichada viene en la consulta del contexto.
+      repo.findClockValidationContext.mockResolvedValue(context([openShift()], [{ timestamp: secondsAgo(20) }]));
       repo.createClockPunchAttempt.mockResolvedValueOnce({});
       repo.failClockPunchAttempt.mockResolvedValueOnce({});
-      repo.findLatestClockPunchSince.mockResolvedValueOnce({ timestamp: secondsAgo(20) });
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
       await expect(timeEntriesService.clockPhotoPunchIdempotent(input, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 40 });
@@ -2086,6 +2090,145 @@ describe("PERF-5A — salida sin lecturas redundantes", () => {
   });
 });
 
+// PERF-5B (docs/decisions/F12_PERF_5.md): contexto por request y lecturas en paralelo seguras.
+describe("PERF-5B — contexto de la fichada y lecturas en paralelo", () => {
+  const normalConcept = { id: "concept-normal", name: "Hora normal", status: "ACTIVO", systemRole: "NORMAL_BASE", kind: "NORMAL" };
+  const punch = (punchType: "IN" | "OUT", requestId = "88888888-8888-4888-8888-888888888888") => ({ requestId, employeeId: activeEmployee.id, punchType, photo: bigPhotoDataUrl(), faceValidationStatus: "VALID" as const });
+  const context = (workShifts: unknown[] = [], attendancePunches: Array<{ timestamp: Date }> = []) => ({ ...activeEmployee, workShifts, hourConcepts: [], attendancePunches });
+  const openShift = (minutesAgo = 60) => ({ id: "shift-open", startAt: new Date(Date.now() - minutesAgo * 60_000), hourConcept: normalConcept });
+  const secondsAgo = (seconds: number) => new Date(Date.now() - seconds * 1000);
+  const originalCooldown = env.CLOCK_PUNCH_COOLDOWN_SECONDS;
+  const mockedSpecialHours = resolveSpecialHourRulesByDate as unknown as Mock;
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((ok, ko) => { resolve = ok; reject = ko; });
+    return { promise, resolve, reject };
+  }
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  beforeEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 60;
+    repo.findDefaultHourConcept.mockResolvedValue({ hourConcept: normalConcept });
+    repo.findBlockingNovelty.mockResolvedValue(null);
+    repo.findLockedTimeEntry.mockResolvedValue(null);
+    repo.findLatestClockPunchSince.mockResolvedValue(null);
+    repo.createClockPunchAttempt.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = originalCooldown;
+  });
+
+  it("el camino idempotente resuelve contexto (con la ventana del cooldown) y concepto en la misma ronda, antes del intento, y no los vuelve a consultar", async () => {
+    repo.findClockValidationContext.mockResolvedValue(context());
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+    const before = Date.now();
+
+    await timeEntriesService.clockPhotoPunchIdempotent(punch("IN"), KIOSK_CLOCK_ORIGIN);
+
+    const [employeeId, cooldownSince] = repo.findClockValidationContext.mock.calls[0]! as [string, Date];
+    expect(employeeId).toBe(activeEmployee.id);
+    expect(cooldownSince.getTime()).toBeGreaterThanOrEqual(before - 60_000);
+    expect(cooldownSince.getTime()).toBeLessThanOrEqual(Date.now() - 60_000);
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledTimes(1);
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledWith(activeEmployee.id, undefined);
+    expect(repo.findDefaultHourConcept.mock.invocationCallOrder[0]!).toBeLessThan(repo.createClockPunchAttempt.mock.invocationCallOrder[0]!);
+    expect(repo.findLatestClockPunchSince).not.toHaveBeenCalled();
+  });
+
+  it("un IN de un cliente viejo con hourConceptId pide ese concepto (y sigue rechazando uno que no sea la base)", async () => {
+    repo.findClockValidationContext.mockResolvedValue(context());
+    repo.findDefaultHourConcept.mockResolvedValueOnce({ hourConcept: { id: "concept-sereno", name: "Sereno", status: "ACTIVO", systemRole: null } });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(timeEntriesService.clockPhotoPunchIdempotent({ ...punch("IN"), hourConceptId: "concept-sereno" }, KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_HOUR_CONCEPT_NOT_ALLOWED" });
+    expect(repo.findDefaultHourConcept).toHaveBeenCalledWith(activeEmployee.id, "concept-sereno");
+    expect(mockedUploadManagedObject).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("cooldown preliminar desde el contexto: dentro de la ventana responde 409 con retryAfterSeconds y no sube la foto", async () => {
+    repo.findClockValidationContext.mockResolvedValue(context([openShift()], [{ timestamp: secondsAgo(15) }]));
+    repo.failClockPunchAttempt.mockResolvedValueOnce({});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(timeEntriesService.clockPhotoPunchIdempotent(punch("OUT"), KIOSK_CLOCK_ORIGIN)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_PUNCH_COOLDOWN", retryAfterSeconds: 45 });
+    expect(mockedUploadManagedObject).not.toHaveBeenCalled();
+    expect(repo.findLatestClockPunchSince).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("una fichada traída por el contexto pero ya fuera de la ventana real no bloquea", async () => {
+    // cooldownSince se toma un instante antes que la ventana real: una fichada justo en ese borde no cuenta.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = new Date("2026-10-16T12:00:00.000Z");
+    vi.setSystemTime(start);
+    repo.findClockValidationContext.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date(start.getTime() + 2_000));
+      return context([], [{ timestamp: new Date(start.getTime() - 59_000) }]);
+    });
+    repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });
+
+    await expect(timeEntriesService.clockPhotoPunchIdempotent(punch("IN"), KIOSK_CLOCK_ORIGIN)).resolves.toMatchObject({ workShift: { id: "shift-1" } });
+    vi.useRealTimers();
+  });
+
+  it("OUT: clasificación y Horas Especiales arrancan mientras la foto se sube, y llegan a closeOpenWorkShift", async () => {
+    const upload = deferred<unknown>();
+    mockedUploadManagedObject.mockImplementationOnce(() => upload.promise);
+    const specialHours = new Map([["2026-10-16", { multiplier: 2, matchedRules: [], winners: [], conflicting: false }]]);
+    mockedSpecialHours.mockResolvedValueOnce(specialHours);
+    repo.closeOpenWorkShift.mockResolvedValueOnce({ workShift: { id: "shift-open", startAt: openShift().startAt, endAt: new Date(), totalMinutes: 60, endPunchId: "punch-out" }, entries: [], timeSegments: [] });
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+
+    const pending = timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]) as never);
+    await flush();
+    expect(mockedFindActiveRules).toHaveBeenCalledTimes(1);
+    expect(mockedFindEnabledConceptIds).toHaveBeenCalledTimes(1);
+    expect(mockedSpecialHours).toHaveBeenCalledWith(activeEmployee.id, [expect.any(Date)]);
+    expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+
+    upload.resolve({ input: {}, fileName: "req.jpg", uploaded: { provider: "neon_object_storage", storageKey: "key-1" }, selectedProvider: {} });
+    await pending;
+    expect(repo.closeOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ specialHours }));
+  });
+
+  it("OUT: si las Horas Especiales fallan (historia faltante), se compensa la foto y se propaga el mismo error, sin rechazo sin manejar", async () => {
+    const missing = new AppError("No hay historia laboral", 409, "SPECIAL_HOUR_SCOPE_HISTORY_MISSING");
+    mockedSpecialHours.mockRejectedValueOnce(missing);
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+
+    await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]) as never)).rejects.toBe(missing);
+    expect(mockedCompensateManagedUpload).toHaveBeenCalledWith(PREPARED_UPLOAD);
+    expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+  });
+
+  it("OUT: si falla el upload, el error es el del upload aunque una lectura en paralelo también falle", async () => {
+    mockedUploadManagedObject.mockRejectedValueOnce(new AppError("Neon Object Storage timeout", 504, "STORAGE_NEON_TIMEOUT"));
+    mockedSpecialHours.mockRejectedValueOnce(new Error("db down"));
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+
+    await expect(timeEntriesService.clockPhotoPunch(punch("OUT"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift()]) as never)).rejects.toMatchObject({ statusCode: 503, code: "CLOCK_PHOTO_STORAGE_FAILED" });
+    expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+  });
+
+  it("rollover: el régimen de la jornada vencida se resuelve mientras la foto se sube", async () => {
+    const upload = deferred<unknown>();
+    mockedUploadManagedObject.mockImplementationOnce(() => upload.promise);
+    repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: new Date(), startPunchId: null });
+    env.CLOCK_PUNCH_COOLDOWN_SECONDS = 0;
+
+    const pending = timeEntriesService.clockPhotoPunch(punch("IN"), KIOSK_CLOCK_ORIGIN, undefined, context([openShift(21 * 60)]) as never);
+    await flush();
+    expect(mockedResolveActiveWorkRegime).toHaveBeenCalledTimes(1);
+
+    upload.resolve({ input: {}, fileName: "req.jpg", uploaded: { provider: "neon_object_storage", storageKey: "key-1" }, selectedProvider: {} });
+    await expect(pending).resolves.toMatchObject({ previousOpenShift: { id: "shift-open", status: "FALTA_SALIDA" } });
+    expect(mockedResolveActiveWorkRegime).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("F7.1 — metadata pública del error en intentos idempotentes", () => {
   const ATTEMPT_ID = "77777777-7777-4777-8777-777777777777";
   const input = () => ({ ...clockPhotoPunchInput(), requestId: ATTEMPT_ID, punchType: "OUT" as const });
@@ -2097,7 +2240,7 @@ describe("F7.1 — metadata pública del error en intentos idempotentes", () => 
   });
 
   beforeEach(() => {
-    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [] });
+    repo.findClockValidationContext.mockResolvedValue({ ...activeEmployee, workShifts: [], hourConcepts: [], attendancePunches: [] });
   });
 
   it("el reintento del mismo requestId reproduce el 409 con el retryAfterSeconds guardado, aunque haya pasado el tiempo", async () => {

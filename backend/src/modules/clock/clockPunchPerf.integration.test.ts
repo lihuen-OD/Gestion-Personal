@@ -39,10 +39,11 @@ type Modules = {
 // Techos de sentencias SQL por fase para este fixture (ver F12_PERF_5.md §Presupuesto).
 // Línea base medida antes de PERF-5 (mismo fixture): IN 5/11/9, OUT 17/19/23, ROLLOVER 6/16/17.
 // PERF-5A: IN 5/10/9, OUT 16/17/22, ROLLOVER 6/15/17.
+// PERF-5B: IN 4/10/9, OUT 15/17/22, ROLLOVER 5/15/17.
 const BUDGET = {
-  IN: { pre: 5, tx: 10, post: 9 },
-  OUT: { pre: 16, tx: 17, post: 22 },
-  ROLLOVER: { pre: 6, tx: 15, post: 17 },
+  IN: { pre: 4, tx: 10, post: 9 },
+  OUT: { pre: 15, tx: 17, post: 22 },
+  ROLLOVER: { pre: 5, tx: 15, post: 17 },
 } as const;
 
 function describeSql(sql: string): Statement {

@@ -1555,7 +1555,11 @@ export const timeEntriesRepository = {
     });
   },
 
-  findClockValidationContext(employeeId: string) {
+  // PERF-5B: con `cooldownSince`, la misma consulta trae la última fichada
+  // relevante desde ese instante (chequeo PRELIMINAR del cooldown, el mismo
+  // criterio que findLatestClockPunchSince); sin él, esa relación viene vacía.
+  // La decisión con autoridad sigue siendo guardClockPunchCooldown en la tx.
+  findClockValidationContext(employeeId: string, cooldownSince?: Date | null) {
     return prisma.employee.findUnique({
       where: { id: employeeId },
       select: {
@@ -1583,6 +1587,12 @@ export const timeEntriesRepository = {
           // antes de eliminarlo.
           where: { hourConcept: { status: "ACTIVO", countsAsWorked: true } },
           include: { hourConcept: true },
+        },
+        attendancePunches: {
+          where: cooldownSince ? cooldownRelevantPunchWhere(employeeId, cooldownSince) : { id: { in: [] } },
+          orderBy: { timestamp: "desc" },
+          take: 1,
+          select: { timestamp: true },
         },
       },
     });
@@ -2184,6 +2194,10 @@ export const timeEntriesRepository = {
     audit?: ClockPunchTransactionWriter;
     completeAttempt?: ClockPunchTransactionWriter;
     timingRequestId?: string;
+    // PERF-5B: resolución de Horas Especiales ya calculada por el fichador (en
+    // paralelo con el upload de la foto) para las fechas de estos tramos. Sin
+    // ella se resuelve acá, igual que antes.
+    specialHours?: Map<string, SpecialHourResolution>;
     // PERF-5A: el fichador no usa los TimeEntry devueltos; con `false` no se
     // relee cada uno con su include después de escribirlo. El cierre manual de
     // RRHH (default) los sigue devolviendo para su respuesta y su auditoría.
@@ -2198,7 +2212,7 @@ export const timeEntriesRepository = {
       ? input.segments.map((segment) => ({ id: segment.hourConceptId, kind: segment.hourConceptKind! }))
       : null;
     const [specialHours, nightHourConcepts] = await Promise.all([
-      resolveSpecialHourRulesByDate(input.employeeId, input.segments.map((segment) => segment.date)),
+      input.specialHours ?? resolveSpecialHourRulesByDate(input.employeeId, input.segments.map((segment) => segment.date)),
       knownKinds ?? prisma.hourConcept.findMany({
         where: { id: { in: [...new Set(input.segments.map((segment) => segment.hourConceptId))] } },
         select: { id: true, kind: true },

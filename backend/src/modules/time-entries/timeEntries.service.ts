@@ -11,7 +11,7 @@ import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { storageService, type PreparedManagedStorageUpload } from "../../shared/storage/storage.service";
-import { timeEntriesRepository } from "./timeEntries.repository";
+import { resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
 import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchTransactionWriter } from "./timeEntries.repository";
 import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
@@ -468,8 +468,15 @@ async function resolveShiftEmployee(input: Pick<PreviewWorkShiftInput, "employee
   return employee;
 }
 
+type DefaultHourConceptLookup = Awaited<ReturnType<typeof timeEntriesRepository.findDefaultHourConcept>>;
+
 export async function resolveShiftConcept(employeeId: string, hourConceptId?: string, options?: { restrictToNormalBase?: boolean }) {
-  const enabled = await timeEntriesRepository.findDefaultHourConcept(employeeId, hourConceptId);
+  return shiftConceptFrom(await timeEntriesRepository.findDefaultHourConcept(employeeId, hourConceptId), hourConceptId, options);
+}
+
+// Las mismas validaciones de resolveShiftConcept sobre un lookup ya hecho
+// (PERF-5B: el fichador lo trae en paralelo con su contexto).
+function shiftConceptFrom(enabled: DefaultHourConceptLookup, hourConceptId?: string, options?: { restrictToNormalBase?: boolean }) {
   if (!enabled || enabled.hourConcept.status !== "ACTIVO") {
     throw new AppError("El empleado no tiene una hora normal habilitada para generar la carga.", 400, "WORK_SHIFT_HOUR_CONCEPT_NOT_ENABLED");
   }
@@ -531,6 +538,28 @@ async function ensureClockEmployeeActive(employee: { id: string; status: string 
 type ClockValidationContext = NonNullable<Awaited<ReturnType<typeof timeEntriesRepository.findClockValidationContext>>>;
 
 /**
+ * PERF-5B (docs/decisions/F12_PERF_5.md): lo que el camino idempotente ya
+ * resolvió para ESTA fichada, en la misma ronda que su contexto. Vive sólo
+ * durante el request (nunca es un cache entre requests).
+ * - `cooldownSince`: la consulta del contexto trajo la última fichada relevante
+ *   desde ese instante (anterior a la ventana real); se filtra con la ventana.
+ * - `defaultConcept`: el findDefaultHourConcept que la fichada necesita —
+ *   NORMAL_BASE, o el concepto que pide un IN de un cliente viejo.
+ */
+type ClockPunchPrefetch = {
+  cooldownSince: Date | null;
+  defaultConcept: DefaultHourConceptLookup;
+};
+
+// Una lectura que corre en paralelo con otra espera (el upload de la foto) y se
+// consume después: si falla antes de que alguien la espere, no es un rechazo
+// sin manejar; el error aparece igual al hacerle await.
+function runAhead<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined);
+  return promise;
+}
+
+/**
  * F7: canal por el que llega una fichada de dispositivo. Lo decide la RUTA,
  * nunca el body. Desde F11 la única ruta es `/api/clock/*` → KIOSK: el alias
  * `/time-entries/clock/*` (PUBLIC_CLOCK_PHOTO) se retiró. PUBLIC_CLOCK_PHOTO
@@ -555,8 +584,8 @@ function clockPunchAuditAfter(workShiftId: string, employeeId: string, origin: C
   return { workShiftId, employeeId, source: origin.source, actorClockDeviceId: origin.device.id };
 }
 
-async function resolveClockValidationContext(employeeId: string) {
-  const context = await timeEntriesRepository.findClockValidationContext(employeeId);
+async function resolveClockValidationContext(employeeId: string, cooldownSince?: Date | null) {
+  const context = await timeEntriesRepository.findClockValidationContext(employeeId, cooldownSince);
   if (!context) throw new AppError("No se encontró el legajo seleccionado.", 404, "CLOCK_EMPLOYEE_NOT_FOUND");
   return context;
 }
@@ -1356,7 +1385,13 @@ export const timeEntriesService = {
     const deviceId = origin.device.id;
     const totalStarted = performance.now();
     const validationStarted = performance.now();
-    const validationContext = await measureClockPunchPhase({ requestId: input.requestId, phase: "employee_context" }, () => resolveClockValidationContext(input.employeeId));
+    // PERF-5B: contexto (con la última fichada para el cooldown preliminar) y
+    // concepto de la jornada en una sola ronda.
+    const cooldownSince = env.CLOCK_PUNCH_COOLDOWN_SECONDS > 0 ? new Date(Date.now() - env.CLOCK_PUNCH_COOLDOWN_SECONDS * 1000) : null;
+    const [validationContext, defaultConcept] = await measureClockPunchPhase({ requestId: input.requestId, phase: "employee_context" }, () => Promise.all([
+      resolveClockValidationContext(input.employeeId, cooldownSince),
+      timeEntriesRepository.findDefaultHourConcept(input.employeeId, input.punchType === "IN" ? input.hourConceptId : undefined),
+    ]));
     const contextMs = Number((performance.now() - validationStarted).toFixed(1));
     const requestHash = clockAttemptHash(input);
     const punchType = input.punchType === "IN" ? "INGRESO" : "SALIDA";
@@ -1387,7 +1422,7 @@ export const timeEntriesService = {
     try {
       // F11.1: el intento queda COMPLETED dentro de la transacción de la
       // fichada (clockAttemptCompletionWriter); acá no queda nada por confirmar.
-      const result = await timeEntriesService.clockPhotoPunch(input, origin, audit, validationContext, contextMs);
+      const result = await timeEntriesService.clockPhotoPunch(input, origin, audit, validationContext, contextMs, { cooldownSince, defaultConcept });
       console.info("CLOCK_PHOTO_PUNCH_TOTAL_TIMING", {
         requestId: input.requestId,
         contextMs,
@@ -1437,7 +1472,7 @@ export const timeEntriesService = {
     }
   },
 
-  async clockPhotoPunch(input: ClockPhotoPunchInput, origin: ClockPunchOrigin, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0) {
+  async clockPhotoPunch(input: ClockPhotoPunchInput, origin: ClockPunchOrigin, audit?: AuditContext, preparedContext?: ClockValidationContext, contextMs = 0, prefetch?: ClockPunchPrefetch) {
     const coreStarted = performance.now();
     const context = preparedContext || await resolveClockValidationContext(input.employeeId);
     const employee = context;
@@ -1459,13 +1494,20 @@ export const timeEntriesService = {
     const cooldownSeconds = env.CLOCK_PUNCH_COOLDOWN_SECONDS;
     const cooldown = clockPunchCooldownGuard(now, cooldownSeconds);
     if (cooldown) {
-      const recent = await timeEntriesRepository.findLatestClockPunchSince(employee.id, cooldown.windowStart);
+      // PERF-5B: con el prefetch, la última fichada vino en la consulta del
+      // contexto (desde un instante anterior a windowStart): mismo criterio.
+      const recent = prefetch?.cooldownSince && prefetch.cooldownSince <= cooldown.windowStart
+        ? context.attendancePunches.find((punch) => punch.timestamp > cooldown.windowStart) ?? null
+        : await timeEntriesRepository.findLatestClockPunchSince(employee.id, cooldown.windowStart);
       if (recent) throw clockPunchCooldownError(recent.timestamp, now, cooldownSeconds);
     }
+    const conceptFor = async (hourConceptId?: string, options?: { restrictToNormalBase?: boolean }) => (
+      prefetch ? shiftConceptFrom(prefetch.defaultConcept, hourConceptId, options) : resolveShiftConcept(employee.id, hourConceptId, options)
+    );
     const currentOpenShift = context.workShifts[0] || null;
     const selectedConcept = input.punchType === "IN"
-      ? await resolveShiftConcept(employee.id, input.hourConceptId, { restrictToNormalBase: true })
-      : currentOpenShift?.hourConcept || await resolveShiftConcept(employee.id);
+      ? await conceptFor(input.hourConceptId, { restrictToNormalBase: true })
+      : currentOpenShift?.hourConcept || await conceptFor();
     if (input.punchType === "OUT" && input.hourConceptId && input.hourConceptId !== selectedConcept.id) {
       throw new AppError("La salida debe conservar el tipo de jornada elegido en el ingreso.", 409, "CLOCK_SHIFT_CONCEPT_MISMATCH");
     }
@@ -1482,7 +1524,7 @@ export const timeEntriesService = {
         // partir TimeSegment (compatibilidad si el turno viniera con un
         // concepto no-Normal ya asignado); normalConcept es la Hora normal
         // canónica que va a recibir el TimeEntry, sin excepción.
-        const normalConcept = await resolveShiftConcept(employee.id);
+        const normalConcept = await conceptFor();
         const calculation = buildShiftSegments(currentOpenShift.startAt, now);
         await Promise.all(calculation.segments.map(async (segment) => {
           const [, locked] = await Promise.all([
@@ -1495,6 +1537,17 @@ export const timeEntriesService = {
         }));
         return { hourConcept, normalConcept, calculation };
       })()
+      : null;
+    // PERF-5B: lecturas que no dependen de la foto, en paralelo con su upload
+    // (los chequeos preliminares que pueden rechazar ya pasaron arriba): la
+    // clasificación y las Horas Especiales de la salida, y el régimen de un
+    // rollover posible.
+    const exitReads = exitPreparation ? {
+      classified: runAhead(classifySegmentsForEmployee(employee.id, exitPreparation.calculation.segments, exitPreparation.hourConcept)),
+      specialHours: runAhead(resolveSpecialHourRulesByDate(employee.id, exitPreparation.calculation.segments.map((segment) => segment.date))),
+    } : null;
+    const rolloverRegime = input.punchType === "IN" && currentOpenShift && shiftMinutes(currentOpenShift.startAt, now) > MAX_SHIFT_MINUTES
+      ? runAhead(resolveActiveWorkRegime(employee.id, now))
       : null;
     let evidence: ClockPhotoEvidence;
     try {
@@ -1522,7 +1575,7 @@ export const timeEntriesService = {
         // excedida, aunque supere MAX_SHIFT_MINUTES — cae al mismo "ya existe
         // un ingreso abierto" que un turno todavía no excedido, marcando la
         // jornada para revisión en vez de reemplazarla.
-        const regime = exceededMinutes > MAX_SHIFT_MINUTES ? await resolveActiveWorkRegime(employee.id, now) : null;
+        const regime = exceededMinutes > MAX_SHIFT_MINUTES ? await (rolloverRegime ?? resolveActiveWorkRegime(employee.id, now)) : null;
         if (exceededMinutes > MAX_SHIFT_MINUTES && regime?.openShiftOverflowAction !== "ALERT_ONLY") {
           let workShift;
           try {
@@ -1609,16 +1662,17 @@ export const timeEntriesService = {
       throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
     }
 
-    if (!exitPreparation) {
+    if (!exitPreparation || !exitReads) {
       await cleanupClockEvidence(evidence);
       throw new AppError("No se pudo preparar la salida. El intento no fue confirmado.", 409, "CLOCK_EXIT_NOT_READY");
     }
-    const { hourConcept, normalConcept, calculation } = exitPreparation;
+    const { normalConcept, calculation } = exitPreparation;
 
     let classifiedSegments: Awaited<ReturnType<typeof classifySegmentsForEmployee>>;
     let created: Awaited<ReturnType<typeof timeEntriesRepository.closeOpenWorkShift>>;
     try {
-      classifiedSegments = await classifySegmentsForEmployee(employee.id, calculation.segments, hourConcept);
+      classifiedSegments = await exitReads.classified;
+      const specialHours = await exitReads.specialHours;
       created = await timeEntriesRepository.closeOpenWorkShift({
         workShiftId: openShift.id,
         employeeId: employee.id,
@@ -1634,6 +1688,7 @@ export const timeEntriesService = {
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
         timingRequestId: input.requestId,
         returnEntries: false,
+        specialHours,
       });
     } catch (error) {
       await cleanupClockEvidence(evidence);
