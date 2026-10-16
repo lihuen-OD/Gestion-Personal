@@ -141,3 +141,55 @@ Las exportaciones definitivas exigen un cierre `APROBADO`, que pasó por esa gua
   - tres workers concurrentes → cada job una vez.
 - **Paridad funcional:** el snapshot de `clockPunchPerf.integration.test.ts` no cambió. Ese test procesa los jobs antes de tomar el snapshot.
 
+## Validación en staging (2026-10-16)
+
+Backend aislado local (`:4003`, `AUTOMATIC_JOBS_ENABLED=false`, `CLOCK_POSTPROCESS_WORKER_ENABLED=true`) contra la rama `development` de Neon (us-east-1). En el momento de la medición, un `SELECT 1` tardaba 188 ms de mediana (175–313 ms) y una transacción interactiva con una sola sentencia, 540–640 ms. Se usaron los legajos de prueba 29, 30 y 31 y un dispositivo de prueba enrolado por el flujo real y revocado al final. La validación generó alertas en esos legajos (aceptado). Producción no se tocó.
+
+### Regresión de sentencias (trace real, 1 IN + 1 OUT del legajo 30)
+
+Mismo trace por preload que la línea base (verbo, tablas y origen; sin SQL ni parámetros):
+
+| | Línea base | AUTH | PRE | TX | POST en el request | Total |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| IN | 27 | 3 | 4 | 11 | **0** | 18 |
+| OUT | 71 (67 críticas) | 3 | 19 | 18 | **0** | 40 |
+
+`clock_punch_query_budget`: IN 3/8/0 y OUT 14/12/0 (operaciones Prisma pre/tx/post). Los jobs `ENTRY` y `EXIT` terminaron en el primer intento, 5,9 s y 10,7 s después de su fichada. El ingreso adoptó el turno y las alertas y avisos quedaron como antes.
+
+### PERF-5E — conexiones del PUT al primary (sólo diagnóstico)
+
+Seis PUT reales de 34,6 KB por modo, con keys de prueba que se borraron al final. Se midió con `diagnostics_channel` de undici:
+
+| Idle previo | Conexión nueva | PUT (body sin consumir / consumido) |
+| --- | --- | ---: |
+| primero | sí | 1.378 / 1.047 ms |
+| 0 s | sí | 1.029 / 1.023 ms |
+| 2 s | **no** | **331 / 337 ms** |
+| 5 s | sí | 1.056 / 987 ms |
+| 30 s | sí | 1.102 / 1.136 ms |
+| 60 s | sí | 1.412 / 1.381 ms |
+
+- **Body sin consumir:** no tiene efecto medible. La respuesta del PUT viene vacía y undici libera el socket igual.
+- **Conexión nueva:** cuesta 520–890 ms (TCP ≈ 180 ms y TLS ≈ 400 ms, más DNS ≈ 235 ms si no está en cache). Undici cierra los sockets ociosos a los ~4 s, así que, con fichadas separadas por más de unos segundos, casi todo PUT paga una conexión nueva.
+- **Relevancia después de 5D:** sigue siendo relevante. En el IN, el upload está en el camino crítico y la conexión es ~0,5–0,9 s de sus ~1,1–1,5 s. En el OUT se superpone en parte con las lecturas de la salida.
+- **Mejora propuesta (no implementada):** abrir la conexión al primary en paralelo con las lecturas de contexto de la fichada, por ejemplo con un `HEAD` firmado a una key inexistente. El PUT llegaría con el socket ya abierto (dentro de los ~4 s) y ahorraría ~0,5–0,9 s por fichada, sin librerías nuevas. Cuesta una request más al storage por fichada y conviene medirla con el backend en la misma región que el storage (PERF-5G). Subir el keep-alive necesitaría un `Agent` de undici (librería nueva), así que quedó descartado.
+
+### PERF-5F — benchmark (5 IN + 5 OUT)
+
+Backend sin trace. "Cold" es la primera fichada de un proceso recién arrancado (pool, prepared statements y TLS al storage vacíos). "Warm" es el resto. Con n = 5 se reportan p50, p90 y máximo; no hay p95 confiable.
+
+| | Cliente p50 | p90 | máx | Upload p50 | PRE p50 | TX p50 | Post-commit en el request | Post-proceso completo p50 / máx |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| IN (todas) | 5,8 s | 7,8 s | 8,8 s | 1,14 s | 2,1 s | 3,5 s | 0 ms | 4,5 s / 5,5 s |
+| IN cold (1) | 8,8 s | | | 1,46 s | 4,7 s | 4,0 s | 0 ms | 5,5 s |
+| IN warm (4) | 5,0 s | 6,2 s | 6,4 s | 1,10 s | 2,1 s | 2,8 s | 0 ms | 4,0 s / 4,8 s |
+| OUT (todas) | 8,3 s | 9,8 s | 10,4 s | 1,20 s | 2,8 s | 5,5 s | 0 ms | 10,3 s / 11,9 s |
+| OUT cold (1) | 10,4 s | | | 1,39 s | 4,6 s | 5,8 s | 0 ms | 10,6 s |
+| OUT warm (4) | 8,1 s | 8,7 s | 8,8 s | 1,17 s | 2,6 s | 5,4 s | 0 ms | 9,7 s / 11,9 s |
+
+- **Requests:** las 10 fichadas respondieron 201. Operaciones Prisma por fase: IN 3/8/0 y OUT 14/12/0 en todas.
+- **Post-proceso:** los 10 jobs terminaron `COMPLETED` en el primer intento.
+- **Comparación con PERF-3/4** (mismo entorno): IN 5,6–10,6 s y OUT 16–21 s. El OUT bajó a la mitad. El IN mejora sobre todo en la cola.
+- **Objetivo ≤ 2 s:** no se alcanza en esta topología. Con ~190–300 ms por round trip, el TX del OUT (18 sentencias) ya cuesta ~5,5 s, sólo de red. Lo que queda en el request es upload, lecturas previas y la transacción, todo proporcional al RTT. Validar el objetivo requiere backend y base en la misma región (PERF-5G, public staging).
+- **Archive jobs:** quedaron 14 `StorageArchiveJob` `PENDING` (los 2 del diagnóstico de PERF-5 y uno por cada fichada de esta validación). Este backend no corría el scheduler del archivo; los procesa cualquier backend con schedulers.
+
