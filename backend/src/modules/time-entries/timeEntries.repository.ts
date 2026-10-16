@@ -2238,7 +2238,26 @@ export const timeEntriesRepository = {
       const protectedPeriods = await findProtectedClosurePeriods(tx, uniqueDates.map((date) => ({ employeeId: input.employeeId, period: periodFromCalendarDate(date) })));
       const isProtectedDate = (date: Date) => protectedPeriods.has(employeePeriodKey({ employeeId: input.employeeId, period: periodFromCalendarDate(date) }));
       const touchesProtected = uniqueDates.some(isProtectedDate);
-      const claimed = await tx.workShift.updateMany({
+      // PERF-5C: la salida se inserta primero y el claim de la jornada
+      // (sólo si sigue ABIERTA) le asigna endPunchId y devuelve la fila en la
+      // misma sentencia. Si otro cierre ganó, no hay fila: se lanza y la
+      // transacción revierte también la salida recién insertada. Con dos
+      // cierres concurrentes, el segundo espera el lock de fila del primero y
+      // re-evalúa la condición ya con la jornada cerrada.
+      const endPunch = await tx.attendancePunch.create({
+        data: {
+          id: endPunchId,
+          employeeId: input.employeeId,
+          type: "SALIDA",
+          timestamp: input.endAt,
+          source: input.source,
+          observation: input.observation || null,
+          ...punchEvidenceData(evidence),
+        },
+      });
+      if (!input.prepareEvidence) await linkPunchEvidence(tx, endPunch.id, evidence);
+
+      const [workShift] = await tx.workShift.updateManyAndReturn({
         where: {
           id: input.workShiftId,
           employeeId: input.employeeId,
@@ -2254,31 +2273,12 @@ export const timeEntriesRepository = {
           crossesMidnight: new Set(input.segments.map((segment) => segment.date.getTime())).size > 1,
           closedAt: input.endAt,
           observation: touchesProtected ? [input.observation, CLOSED_PERIOD_SHIFT_NOTE].filter(Boolean).join(" · ") : input.observation || undefined,
-        },
-      });
-      if (claimed.count !== 1) {
-        throw new Error("WORK_SHIFT_ALREADY_CLOSED");
-      }
-
-      const endPunch = await tx.attendancePunch.create({
-        data: {
-          id: endPunchId,
-          employeeId: input.employeeId,
-          type: "SALIDA",
-          timestamp: input.endAt,
-          source: input.source,
-          observation: input.observation || null,
-          ...punchEvidenceData(evidence),
-        },
-      });
-      if (!input.prepareEvidence) await linkPunchEvidence(tx, endPunch.id, evidence);
-
-      const workShift = await tx.workShift.update({
-        where: { id: input.workShiftId },
-        data: {
           endPunchId: endPunch.id,
         },
       });
+      if (!workShift) {
+        throw new Error("WORK_SHIFT_ALREADY_CLOSED");
+      }
       // F7.1 (FICHADOR_STANDALONE_PWA_PLAN.md §26.12): la salida
       // (AttendancePunch) guarda el canal de ESTA request (`input.source`),
       // pero las horas pertenecen a la jornada: el TimeEntry toma el source

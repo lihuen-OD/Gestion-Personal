@@ -30,7 +30,7 @@ vi.mock("../../shared/prisma/client", () => {
   const prismaEmployee = { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() };
   const tx = {
     ...historyFrom(txEmployee),
-    workShift: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+    workShift: { findFirst: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), updateManyAndReturn: vi.fn(), create: vi.fn(), update: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
     timeEntry: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     attendancePunch: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
@@ -102,7 +102,7 @@ vi.mock("../../shared/prisma/client", () => {
 type TxMocks = {
   $executeRaw: Mock;
   monthlyTimeClosure: { findMany: Mock };
-  workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; create: Mock; update: Mock };
+  workShift: { findFirst: Mock; findMany: Mock; updateMany: Mock; updateManyAndReturn: Mock; create: Mock; update: Mock };
   employeeHourConcept: { findFirst: Mock };
   timeEntry: { create: Mock; findFirst: Mock; update: Mock; findMany: Mock };
   attendancePunch: { create: Mock; findMany: Mock; findFirst: Mock };
@@ -1099,9 +1099,9 @@ describe("SpecialHourRuleApplication y multiplicador efectivo (Etapa 3)", () => 
   });
 
   it("Caso H — un único cierre no duplica SpecialHourRuleApplication (no hay recálculo implementado todavía)", async () => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    // PERF-5C: el claim devuelve la jornada cerrada en la misma sentencia.
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-h" }]);
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-h" });
     // Etapa 13F: closeOpenWorkShift resuelve Horas Especiales vía `prisma`
     // (no `tx`) antes de abrir la transacción -- ver
     // docs/decisions/CLOCK_PHOTO_PUNCH_EXIT_TRANSACTION_13F.md.
@@ -1550,9 +1550,8 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
   }
 
   beforeEach(() => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-13f" }]);
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out-13f" });
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-13f" });
   });
 
   it("Parte 1 / Tests obligatorios #7: las lecturas de Horas Especiales (scope, reglas, conceptos nocturnos) corren vía `prisma`, nunca vía `tx` -- no compiten por el presupuesto de la transacción", async () => {
@@ -1598,12 +1597,15 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(2);
   });
 
-  it("Tests obligatorios #4/#5/#11: si el WorkShift ya no está ABIERTO (otro intento lo cerró primero), lanza WORK_SHIFT_ALREADY_CLOSED sin crear AttendancePunch ni TimeEntry -- nada se duplica", async () => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 0 });
+  // PERF-5C: la salida se inserta antes del claim; si el claim no encuentra la
+  // jornada ABIERTA la transacción se revierte entera, salida incluida (probado
+  // contra PostgreSQL en clockPunchPerf.integration.test.ts).
+  it("Tests obligatorios #4/#5/#11: si el WorkShift ya no está ABIERTO (otro intento lo cerró primero), lanza WORK_SHIFT_ALREADY_CLOSED dentro de la transacción y no escribe horas ni tramos -- nada se duplica", async () => {
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([]);
 
     await expect(timeEntriesRepository.closeOpenWorkShift(closeInput())).rejects.toThrow("WORK_SHIFT_ALREADY_CLOSED");
 
-    expect(mockedPrisma.__tx.attendancePunch.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.attendancePunch.create.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.workShift.updateManyAndReturn.mock.invocationCallOrder[0]!);
     expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
     expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
     expect(mockedPrisma.__tx.timeSegment.create).not.toHaveBeenCalled();
@@ -1778,8 +1780,7 @@ describe("F7 — guard del cooldown en las escrituras de fichada", () => {
 
   it("salida: el lock del cooldown se toma antes que los locks de cierre (orden único, sin deadlock)", async () => {
     const day = new Date("2026-10-13T00:00:00.000Z");
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open" });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open" }]);
 
     await timeEntriesRepository.closeOpenWorkShift({
       workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
@@ -1820,7 +1821,6 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
   });
 
   beforeEach(() => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
   });
 
@@ -1830,19 +1830,19 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
     ["legacy IN → legacy OUT", "PUBLIC_CLOCK_PHOTO", "PUBLIC_CLOCK_PHOTO"],
     ["cierre manual de RRHH sobre una jornada de kiosco", "KIOSK", "ADMIN"],
   ])("%s: la salida guarda el canal de la request y el TimeEntry nuevo el source de la jornada", async (_label, shiftSource, requestSource) => {
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: shiftSource });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open", source: shiftSource }]);
 
     await close(requestSource);
 
     expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "SALIDA", source: requestSource }) });
     expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0].data.source).toBe(shiftSource);
     // La jornada conserva su source: el cierre no lo reescribe.
-    expect(mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0].data).not.toHaveProperty("source");
-    expect(mockedPrisma.__tx.workShift.update.mock.calls[0]![0].data).not.toHaveProperty("source");
+    expect(mockedPrisma.__tx.workShift.updateManyAndReturn.mock.calls[0]![0].data).not.toHaveProperty("source");
+    expect(mockedPrisma.__tx.workShift.update).not.toHaveBeenCalled();
   });
 
   it("legacy IN → KIOSK OUT sobre un TimeEntry existente del día: lo actualiza con el source de la jornada", async () => {
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: "PUBLIC_CLOCK_PHOTO" });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open", source: "PUBLIC_CLOCK_PHOTO" }]);
     mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-existing", date: day, status: "APROBADO", actualMinutes: 60, totalMinutes: 60, observation: null }]);
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
 
@@ -1974,8 +1974,7 @@ describe("F12-PERF-3 — evidencia preparada dentro de la transacción de la fic
   });
 
   it("salida: el punch de SALIDA lleva la evidencia de la tx y queda vinculado", async () => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open" });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open" }]);
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
     const prepareEvidence = vi.fn().mockResolvedValue(evidence);
 
@@ -2044,8 +2043,7 @@ describe("PERF-5A — closeOpenWorkShift sin lecturas redundantes", () => {
   });
 
   beforeEach(() => {
-    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
-    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: "KIOSK" });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open", source: "KIOSK" }]);
     mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
   });
 
@@ -2079,6 +2077,18 @@ describe("PERF-5A — closeOpenWorkShift sin lecturas redundantes", () => {
 
     expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0]).toHaveProperty("include");
     expect(result.entries).toHaveLength(1);
+  });
+
+  it("PERF-5C: un único claim condicionado a ABIERTA asigna el endPunchId de la salida recién insertada y devuelve la jornada", async () => {
+    await close();
+
+    const [claim] = mockedPrisma.__tx.workShift.updateManyAndReturn.mock.calls[0]!;
+    expect(claim.where).toEqual({ id: "shift-open", employeeId: "employee-1", status: "ABIERTO", endAt: null });
+    // endPunchId es el id que devolvió el insert de la salida (el mock responde "punch-out").
+    expect(claim.data).toMatchObject({ status: "PROCESADO", endAt: baseSegment.endAt, totalMinutes: 120, endPunchId: "punch-out" });
+    expect(mockedPrisma.__tx.attendancePunch.create.mock.invocationCallOrder[0]!).toBeLessThan(mockedPrisma.__tx.workShift.updateManyAndReturn.mock.invocationCallOrder[0]!);
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.workShift.update).not.toHaveBeenCalled();
   });
 
   it("los TimeEntry existentes del día se leen sólo con los campos del acumulado", async () => {

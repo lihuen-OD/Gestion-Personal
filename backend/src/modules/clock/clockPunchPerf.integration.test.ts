@@ -40,9 +40,10 @@ type Modules = {
 // Línea base medida antes de PERF-5 (mismo fixture): IN 5/11/9, OUT 17/19/23, ROLLOVER 6/16/17.
 // PERF-5A: IN 5/10/9, OUT 16/17/22, ROLLOVER 6/15/17.
 // PERF-5B: IN 4/10/9, OUT 15/17/22, ROLLOVER 5/15/17.
+// PERF-5C: IN 4/10/9, OUT 15/16/22, ROLLOVER 5/15/17.
 const BUDGET = {
   IN: { pre: 4, tx: 10, post: 9 },
-  OUT: { pre: 15, tx: 17, post: 22 },
+  OUT: { pre: 15, tx: 16, post: 22 },
   ROLLOVER: { pre: 5, tx: 15, post: 17 },
 } as const;
 
@@ -186,7 +187,7 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     await holder.hourConceptRule.create({ data: { hourConceptId: night.id, startTime: "00:00", endTime: "23:59" } });
     await holder.doubleHourRule.create({ data: { name: "Especial IT", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01"), weekdays: [0, 1, 2, 3, 4, 5, 6], multiplier: 2, priority: 1, reason: "PERF-5 IT" } });
     ids.rrhh = (await holder.user.create({ data: { name: "RRHH IT", email: "rrhh-perf5@example.com", passwordHash: "x", role: "NIVEL_1_RRHH" } })).id;
-    for (const [index, key] of ["golden", "rollover"].entries()) {
+    for (const [index, key] of ["golden", "rollover", "race", "closed", "httpRace"].entries()) {
       const employee = await holder.employee.create({ data: { legajo: `P5-${index + 1}`, cuil: `20-5${index + 1}`, dni: `5${index + 1}`, firstName: "Prueba", lastName: `PERF5 ${key}` } });
       ids[key] = employee.id;
       await holder.employeeHourConcept.create({ data: { employeeId: employee.id, hourConceptId: night.id } });
@@ -238,6 +239,66 @@ describe.skipIf(!url)("PERF-5 — fichada contra PostgreSQL local: resultado fun
     report.ROLLOVER = entry.phases;
     expect(entry.data.previousOpenShift).toMatchObject({ id: oldShiftId, status: "FALTA_SALIDA" });
     expect({ previous: await functionalSnapshot(oldShiftId), next: await functionalSnapshot(entry.data.workShift.id) }).toMatchSnapshot("rollover");
+  });
+
+  // ── PERF-5C: el claim de la salida (con endPunchId) es la condición de atomicidad del cierre ──
+
+  async function openShiftFor(employeeKey: string, minutesAgo: number) {
+    const normal = await holder.hourConcept.findFirstOrThrow({ where: { code: "HC-NORMAL" } });
+    await m.repository.createOpenWorkShift({ employeeId: ids[employeeKey]!, hourConceptId: normal.id, hourConceptName: normal.name, source: "KIOSK", startAt: new Date(Date.now() - minutesAgo * 60_000), punchEvidence: { deviceId: device.id, faceDetected: true, faceValidationStatus: "VALID" } });
+    const shift = await holder.workShift.findFirstOrThrow({ where: { employeeId: ids[employeeKey]!, status: "ABIERTO" } });
+    const { argentinaCalendarDate, argentinaDateParts } = await import("../../shared/datetime/argentinaTime");
+    const endAt = new Date();
+    const minutes = Math.round((endAt.getTime() - shift.startAt.getTime()) / 60_000);
+    const segment = { date: argentinaCalendarDate(argentinaDateParts(shift.startAt).key), startAt: shift.startAt, endAt, minutes, hours: minutes / 60, hourConceptId: normal.id, hourConceptName: normal.name, hourConceptKind: "NORMAL" as const };
+    const closeInput = () => ({ workShiftId: shift.id, employeeId: ids[employeeKey]!, normalHourConceptId: normal.id, normalHourConceptName: normal.name, source: "KIOSK" as const, endAt, totalMinutes: minutes, segments: [segment], returnEntries: false });
+    return { shift, closeInput };
+  }
+
+  it("PERF-5C: dos cierres simultáneos de la misma jornada (sin cooldown): exactamente uno escribe y el otro se revierte entero", async () => {
+    const { shift, closeInput } = await openShiftFor("race", 30);
+
+    const outcomes = await Promise.allSettled([m.repository.closeOpenWorkShift(closeInput()), m.repository.closeOpenWorkShift(closeInput())]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const rejected = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected")!;
+    expect((rejected.reason as Error).message).toBe("WORK_SHIFT_ALREADY_CLOSED");
+    const exits = await holder.attendancePunch.findMany({ where: { employeeId: ids.race!, type: "SALIDA" } });
+    expect(exits).toHaveLength(1);
+    expect(await holder.workShift.findUniqueOrThrow({ where: { id: shift.id } })).toMatchObject({ status: "PROCESADO", endPunchId: exits[0]!.id });
+    expect(await holder.timeEntry.count({ where: { workShiftId: shift.id } })).toBe(1);
+    expect(await holder.timeSegment.count({ where: { workShiftId: shift.id } })).toBe(1);
+  });
+
+  it("PERF-5C: cerrar una jornada ya cerrada no deja ninguna salida (la salida insertada antes del claim se revierte)", async () => {
+    const { shift, closeInput } = await openShiftFor("closed", 30);
+    await m.repository.closeOpenWorkShift(closeInput());
+    const exitsBefore = await holder.attendancePunch.count({ where: { employeeId: ids.closed!, type: "SALIDA" } });
+
+    await expect(m.repository.closeOpenWorkShift(closeInput())).rejects.toThrow("WORK_SHIFT_ALREADY_CLOSED");
+
+    expect(exitsBefore).toBe(1);
+    expect(await holder.attendancePunch.count({ where: { employeeId: ids.closed!, type: "SALIDA" } })).toBe(1);
+    expect(await holder.timeEntry.count({ where: { workShiftId: shift.id } })).toBe(1);
+  });
+
+  it("PERF-5C: dos OUT simultáneos por HTTP (requestIds distintos): una sola SALIDA, una sola carga de horas", async () => {
+    expect((await punch(ids.httpRace!, "IN")).status).toBe(201);
+    const workShiftId = await ageOpenShift(ids.httpRace!, 45);
+    await holder.clockDevice.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
+    const post = () => fetch(`${baseUrl}/clock/photo-punch`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `ClockDevice ${device.id}.${device.secret}` },
+      body: JSON.stringify({ requestId: randomUUID(), employeeId: ids.httpRace, punchType: "OUT", photo: PHOTO, faceValidationStatus: "VALID", faceDetectionScore: 0.97 }),
+    }).then(async (response) => ({ status: response.status, body: (await response.json()) as { error?: { code: string } } }));
+
+    const results = await Promise.all([post(), post()]);
+
+    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
+    expect(["CLOCK_PUNCH_COOLDOWN", "CLOCK_ALREADY_CLOSED", "CLOCK_NO_OPEN_SHIFT"]).toContain(results.find((result) => result.status === 409)!.body.error!.code);
+    expect(await holder.attendancePunch.count({ where: { employeeId: ids.httpRace!, type: "SALIDA" } })).toBe(1);
+    expect(await holder.workShift.findUniqueOrThrow({ where: { id: workShiftId } })).toMatchObject({ status: "PROCESADO", totalMinutes: 45 });
+    expect(await holder.timeEntry.count({ where: { workShiftId } })).toBe(1);
   });
 
   it("presupuesto de sentencias SQL por fase (techos; ver F12_PERF_5.md)", () => {

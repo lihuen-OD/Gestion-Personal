@@ -25,6 +25,7 @@ Este fixture tiene menos destinatarios y alertas que staging, así que sus núme
 | Antes de PERF-5 | 5 / 11 / 9 = 25 | 17 / 19 / 23 = 59 | 6 / 16 / 17 = 39 |
 | PERF-5A | 5 / 10 / 9 = 24 | 16 / 17 / 22 = 55 | 6 / 15 / 17 = 38 |
 | PERF-5B | 4 / 10 / 9 = 23 | 15 / 17 / 22 = 54 | 5 / 15 / 17 = 37 |
+| PERF-5C | 4 / 10 / 9 = 23 | 15 / 16 / 22 = 53 | 5 / 15 / 17 = 37 |
 
 En producción, `clock_punch_query_budget` (`shared/observability/clockPunchQueryBudget.ts`) emite por fichada la cantidad de **operaciones Prisma** por fase. Usa AsyncLocalStorage, cuesta un contador por operación y nunca registra SQL, parámetros ni datos personales.
 
@@ -47,3 +48,15 @@ En producción, `clock_punch_query_budget` (`shared/observability/clockPunchQuer
 - **Errores:** `runAhead` marca esas lecturas como manejadas, así que un fallo mientras se espera el upload no queda como rechazo sin manejar; el error aparece igual al consumirlas. Si falla el upload, se responde `CLOCK_PHOTO_STORAGE_FAILED` como antes. Si fallan las Horas Especiales (p. ej. `SPECIAL_HOUR_SCOPE_HISTORY_MISSING`), se compensa la foto y se propaga el mismo error, igual que cuando se resolvían después del upload.
 - **Rollover:** el régimen de una jornada vencida se resuelve en paralelo con el upload.
 - No hay `Promise.all` dentro de ninguna transacción interactiva.
+
+## PERF-5C — transacción del OUT
+
+- **Claim y salida en una sola escritura de la jornada:** la salida (`AttendancePunch`) se inserta primero. Después, un único `workShift.updateManyAndReturn` condicionado a `ABIERTO`/`endAt: null` cierra la jornada, le asigna `endPunchId` y devuelve la fila. Antes eran `updateMany` (claim) y `update(endPunchId)`. Si el claim no devuelve fila, se lanza `WORK_SHIFT_ALREADY_CLOSED` y la transacción revierte también la salida recién insertada. Con dos cierres concurrentes, el segundo espera el lock de fila del primero y re-evalúa la condición con la jornada ya cerrada. Aplica igual al cierre manual de RRHH.
+- **Se mantienen deliberadamente, por atomicidad:**
+  - el lock del cooldown + su lectura, y el lock del cierre mensual + su lectura: dos sentencias cada uno, porque unidas la lectura usaría el snapshot previo al lock;
+  - el lote `StorageFile` + `StorageArchiveJob`, la salida, el `TimeEntry` existente del día (no hay clave única para hacer upsert), `TimeSegment`, `TimeEntry`, aplicaciones de reglas, `AuditLog` e intento.
+- **Sin cambios:** el rollover (la lectura de la jornada vencida decide la nota del cierre protegido antes del claim) y la transacción del IN.
+- **Concurrencia real en PostgreSQL** (`clockPunchPerf.integration.test.ts`):
+  - dos cierres simultáneos de la misma jornada sin cooldown → uno escribe y el otro se revierte entero (1 SALIDA, 1 TimeEntry, 1 TimeSegment, `endPunchId` correcto);
+  - cerrar una jornada ya cerrada no deja ninguna salida;
+  - dos OUT HTTP simultáneos con `requestId` distintos → 201 + 409 y una sola salida y carga de horas.
