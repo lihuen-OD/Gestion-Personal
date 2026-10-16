@@ -2,6 +2,8 @@
 
 Fecha: 2026-10-16. Continúa `docs/decisions/F12_PERF_3_4.md`. Plan aprobado: PERF-5A → 5B → 5C → 5D en commits separados; 5E sólo diagnóstico; 5F benchmark local; 5G diferido a public staging.
 
+**Estado:** F12-PERF local cerrado. PERF-1 a PERF-5D están terminados y PERF-5G espera public staging; ver "Cierre local y gate PERF-5G" al final.
+
 ## Línea base
 
 Trace real en staging (backend local → Neon us-east-1, RTT ≈ 204 ms), 1 IN + 1 OUT del legajo de prueba 30:
@@ -192,4 +194,57 @@ Backend sin trace. "Cold" es la primera fichada de un proceso recién arrancado 
 - **Comparación con PERF-3/4** (mismo entorno): IN 5,6–10,6 s y OUT 16–21 s. El OUT bajó a la mitad. El IN mejora sobre todo en la cola.
 - **Objetivo ≤ 2 s:** no se alcanza en esta topología. Con ~190–300 ms por round trip, el TX del OUT (18 sentencias) ya cuesta ~5,5 s, sólo de red. Lo que queda en el request es upload, lecturas previas y la transacción, todo proporcional al RTT. Validar el objetivo requiere backend y base en la misma región (PERF-5G, public staging).
 - **Archive jobs:** quedaron 14 `StorageArchiveJob` `PENDING` (los 2 del diagnóstico de PERF-5 y uno por cada fichada de esta validación). Este backend no corría el scheduler del archivo; los procesa cualquier backend con schedulers.
+
+## Cierre local y gate PERF-5G
+
+### Auditoría de cierre (2026-10-16)
+
+- **Código:** en `main` y en `origin/main` (`c4ac9b4`). Los commits de PERF-5 son `a7a9beb` (5A), `629e0ba` (5B), `b05c3e1` (5C), `712d3d0` (5D) y `c4ac9b4` (validación). La CI #174 sobre `c4ac9b4` está en verde.
+- **Tests locales:** typecheck y build OK. La suite completa pasa (3171 tests, con los cuatro suites de integración del fichador sobre PostgreSQL local). El snapshot de paridad funcional no cambió desde que se grabó en 5A.
+- **Schema y migraciones en staging:**
+  - `prisma migrate status` dice "up to date" (69 migraciones).
+  - El checksum guardado de `20261016150000_add_clock_punch_postprocess_job` coincide con el archivo (`b33df410…9de8d`). Ninguna migración quedó sin terminar ni revertida.
+  - `prisma migrate diff` entre la base y `schema.prisma` da vacío.
+  - Producción y demo no fueron migradas ni consultadas.
+- **Secretos:** ningún `.env` está versionado (`backend/.env` está ignorado). Ningún valor de credencial ni el endpoint del storage aparecen en archivos versionados.
+- **Storage:** `PUNCH_PHOTO_STORAGE_PROVIDER=neon_object_storage` sólo aplica al módulo `FICHADAS`. Los documentos siguen en `STORAGE_PROVIDER` (Google Drive). En la fichada no hay llamadas a Drive ni fallback: el upload va al primary y la copia a Drive se encola en la transacción.
+- **Post-proceso:** los 12 jobs de la validación en staging están `COMPLETED`, sin `FAILED` ni pendientes.
+- **Archivo:** hay 14 `StorageArchiveJob` en `PENDING`, ninguno `FAILED`. Cada uno tiene target `GOOGLE_DRIVE`, 0 intentos, `nextAttemptAt` vencido, sin lease ni error, y fuente `NEON_OBJECT_STORAGE` `ACTIVE` del módulo `FICHADAS` con checksum. Cada fichada apunta a su archivo y el objeto existe en Neon (verificado con HEAD). Todavía no hay copia en Drive, y Drive está configurado. Los procesa el tick de mantenimiento (`processStorageArchiveBatch`, 5 por minuto) de cualquier backend con `AUTOMATIC_JOBS_ENABLED`. No se borran.
+
+### Riesgos abiertos
+
+1. **Latencia:** el objetivo ≤ 2 s no está validado. Desde el backend local, cada round trip a us-east-1 cuesta ~190–300 ms (IN p50 5,8 s, OUT p50 8,3 s). Ver PERF-5G.
+2. **Conexión nueva al storage:** después de unos segundos de inactividad, cada PUT abre una conexión nueva, que cuesta ~0,5–0,9 s (5E). La mejora propuesta no se implementó y se evalúa con datos de PERF-5G.
+3. **Orden de despliegue:** el código de 5D escribe el job dentro de la transacción de la fichada. Desplegarlo en un entorno sin la migración `20261016150000` hace fallar todas las fichadas (503). La migración va primero.
+4. **Worker:** sin un worker activo en algún proceso (`AUTOMATIC_JOBS_ENABLED`, o `CLOCK_POSTPROCESS_WORKER_ENABLED=true`), las alertas, los avisos y Motor B no aparecen. El envío del cierre igual procesa en línea lo pendiente de sus legajos.
+5. **Observabilidad de `FAILED`:** hoy es la fila del job más el log crítico `CLOCK_POSTPROCESS_FAILED`. Todavía no hay una alerta operativa.
+6. **Datos derivados:** alertas, avisos y desgloses aparecen segundos después del 201 (staging: ENTRY ~3–6 s, EXIT ~8–12 s). El cierre mensual está protegido por la guarda.
+7. **Residuales de 5D:** un IN concurrente con el envío del cierre puede quedar fuera del conteo (sin efecto en el snapshot). Los jobs `COMPLETED` no se purgan, igual que los de `StorageArchiveJob`. Los cachés en memoria siguen siendo por instancia.
+8. **Deuda previa:** `expireOpenWorkShifts` sigue sin auditoría (9G, `PERFORMANCE_STANDARDS.md` §10), documentada y sin tocar.
+
+### Gate PERF-5G
+
+No se hacen más optimizaciones locales de performance, ni la del keep-alive, sin evidencia de public staging. PERF-5G corre sólo cuando estén todas estas condiciones:
+
+- backend desplegado en la misma región que Neon (us-east-1), como public staging y nunca producción;
+- HTTPS real de punta a punta, con la PWA del fichador servida por public staging y `TRUST_PROXY_HOPS` correcto;
+- el mismo schema y las mismas migraciones: `prisma migrate status` al día, incluida `20261016150000`, y `prisma migrate diff` contra `schema.prisma` vacío;
+- Object Storage de staging (bucket privado) como primary de fichadas;
+- archivo a Drive operativo, con los jobs `PENDING` drenando a `COMPLETED`;
+- worker del post-proceso operativo;
+- observabilidad habilitada: logs `clock_punch_timing`, `clock_punch_query_budget`, `CLOCK_POSTPROCESS_*` y `STORAGE_ARCHIVE_*` capturados, y lectura de las tablas de jobs;
+- legajos de prueba y un dispositivo enrolado por el flujo real (pairing → RRHH), que se revoca al terminar.
+
+PERF-5G mide:
+
+- **Fichadas:** IN y OUT por separado, cold y warm. Cold es la primera fichada después de un deploy o reinicio, y la primera después de varios minutos sin uso. Para que p95 signifique algo, hacen falta al menos 20 por tipo.
+- **Latencia:** p50, p90 y p95 de la latencia percibida por el cliente.
+- **Fases:** PRE (auth, contexto e intento), STORAGE (`primary_upload`), TX (`transaction_acquire` + `transaction_core`) y RESPONSE (total del servidor y del cliente).
+- **Query count** por fase (`clock_punch_query_budget`; POST debe seguir en 0).
+- **Por separado, fuera del 201:**
+  - post-proceso: lag hasta `COMPLETED`, intentos y `FAILED`;
+  - archivo: lag hasta `COMPLETED`, intentos y fallos.
+- **Contexto de red:** el RTT backend→DB y backend→storage al momento de medir.
+
+**Objetivo de producto:** p50 ≤ 1,5 s y p95 ≤ 2,0 s de latencia del cliente. No se asume que se vaya a alcanzar. Si se cumple, F12-PERF se cierra. Si no, el desglose por fase decide la siguiente etapa, que se aprueba por separado (por ejemplo, la mejora de conexión al storage de 5E o la transacción del OUT).
 
