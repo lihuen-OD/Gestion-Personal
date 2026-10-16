@@ -1308,6 +1308,8 @@ Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, fi
 }
 ```
 
+Evidencia (F12-PERF-3/4, `docs/decisions/F12_PERF_3_4.md`): la foto se sube al primary de `PUNCH_PHOTO_STORAGE_PROVIDER` antes de la transacción, en la key `attendance/<año>/<mes>/<deviceId>/<requestId>.<ext>`. Su `StorageFile`, y con primary `neon_object_storage` su `StorageArchiveJob` hacia Google Drive, se escriben en la misma transacción que la fichada. Una fichada no confirmada no deja filas y su objeto se compensa. Google Drive nunca está en el camino del `201`. `thumbnail` se sigue validando, pero ya no se guarda.
+
 Etapa 6K — el fichador registra únicamente entrada/salida, nunca un tipo de jornada:
 
 - `hourConceptId` ya no se pide ni se manda desde la UI. El campo sigue existiendo en el schema como opcional, sólo por compatibilidad con clientes viejos; ya no hay `superRefine` que lo exija en `IN`.

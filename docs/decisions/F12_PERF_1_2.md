@@ -60,3 +60,5 @@ ALTER TYPE "StorageProvider" ADD VALUE 'NEON_OBJECT_STORAGE';
 - Impacto: agrega un valor al enum; no reescribe filas ni cambia el provider efectivo.
 - Estado staging: 67 migraciones locales detectadas; sólo `20261015190000_add_neon_object_storage_provider` está pendiente.
 - SHA-256: `febac710f40963d56d87682fdf48159bc4346d3e4fae10c6eb9cad97371e5b85`.
+
+> Actualización 2026-10-16: la migración se aplicó después en staging (2026-10-15 18:14 UTC, mismo checksum), junto con `20261015203000_add_storage_archive_job`. PERF-3/PERF-4: `docs/decisions/F12_PERF_3_4.md`.
