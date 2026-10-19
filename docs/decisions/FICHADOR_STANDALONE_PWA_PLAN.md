@@ -448,6 +448,12 @@ La hora oficial **ya** sale del servidor: `const now = new Date()` en `clockPhot
 
 ## 15. Deploy
 
+> **Superseded for public staging by [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md)
+> (2026-10-16).** Esta sección conserva el diseño original. Desde entonces el
+> repo versiona `fichador/netlify.toml` y `frontend/netlify.toml`, no hay
+> todavía ningún backend desplegado y el destino elegido para public staging
+> es Render Starter en la región `virginia`.
+
 **Situación actual:** en el repo no hay `netlify.toml`, `_redirects` ni `_headers`; la configuración de Netlify (build, SPA fallback, env) vive en la UI. El backend está en Render y la base en Neon. `vite.config.ts` no tiene proxy: el frontend llama directo a `VITE_API_URL`. CORS es una allowlist explícita (`CORS_ORIGIN`, separada por comas, `credentials: true`).
 
 **Propuesta:**
@@ -877,6 +883,10 @@ El WASM y el modelo de MediaPipe se siguen bajando en runtime de los CDN (igual 
 ---
 
 ## 20. F2 — despliegue independiente
+
+> **Superseded for public staging by [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md)
+> (2026-10-16)** en lo que respecta a la infraestructura a crear (§20.1–§20.12
+> quedan como registro de la auditoría y del cierre de F2 a nivel repo).
 
 **Estado: cerrada a nivel de repositorio — READY FOR DEPLOY, validación real de infraestructura diferida** (decisión del 2026-10-06, §20.12). Toda la parte del repo está hecha y validada localmente. La validación contra infraestructura real (checklist de §20.9) se hace cuando se defina y contrate la infraestructura; no bloquea el desarrollo local ni las etapas siguientes.
 
@@ -3629,6 +3639,13 @@ I/O. No se agregó cache, dependencia ni migración.
 > seleccionada. Ver
 > [FICHADOR_F12_LOCAL_CLOSURE_AND_DEVICE_COMPATIBILITY.md](FICHADOR_F12_LOCAL_CLOSURE_AND_DEVICE_COMPATIBILITY.md).
 
+> **Superseded for public staging by [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md)
+> (2026-10-16)** en §31.3 (variables), §31.6 (storage) y §31.8 (señales de
+> log). Después de F12-PERF-3/4/5 el primary de las fotos es Neon Object
+> Storage con copia asíncrona a Drive, el thumbnail ya no se guarda y el
+> post-proceso de la fichada es un job durable. Siguen vigentes §31.7
+> (`TRUST_PROXY_HOPS`), §31.9 (checklist por dispositivo) y §31.10 (rollback).
+
 Preparada el 2026-10-15 sobre `main` en `51dd7a4`. Es una etapa de
 infraestructura y validación: **cero cambios de runtime, schema o UI**. No se
 creó ningún recurso externo, no se desplegó, no se enroló ningún dispositivo
@@ -3749,6 +3766,12 @@ Confirmar carpeta/bucket privado, permisos mínimos, cuota, retención y que
 foto original y thumbnail creen dos `StorageFile` vinculados. Probar cleanup
 con un rechazo controlado antes del iPad, sin usar storage productivo.
 
+> **Superseded (2026-10-16):** para public staging, el primary de las fotos es
+> Neon Object Storage de staging (`PUNCH_PHOTO_STORAGE_PROVIDER=neon_object_storage`)
+> con copia asíncrona a Google Drive de prueba (`StorageArchiveJob`). Desde
+> F12-PERF-3 cada fichada crea un solo `StorageFile` (el thumbnail se valida
+> pero ya no se guarda). Ver [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md) §5 y §13.
+
 ### 31.7 Medición obligatoria de `TRUST_PROXY_HOPS`
 
 No hace falta un endpoint nuevo: existe `GET /api/health/client-ip`, apagado
@@ -3776,6 +3799,12 @@ por default, limitado y sin credenciales ni cookies.
    sonda. Repetir la medición si se agrega o retira CDN/proxy.
 
 ### 31.8 Smoke test previo y observabilidad
+
+> **Superseded (2026-10-16):** el smoke y las señales vigentes están en
+> [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md) §14 y §15. Lo de abajo
+> menciona el thumbnail y sus logs (`CLOCK_PHOTO_THUMBNAIL_*`), que ya no
+> existen, y no incluye `clock_punch_timing`, `clock_punch_query_budget`,
+> `CLOCK_POSTPROCESS_*` ni `STORAGE_ARCHIVE_*`.
 
 Antes del iPad, con un legajo exclusivamente de prueba o persona autorizada:
 

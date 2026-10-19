@@ -224,6 +224,8 @@ Backend sin trace. "Cold" es la primera fichada de un proceso recién arrancado 
 
 ### Gate PERF-5G
 
+Entorno: [PUBLIC_STAGING_PLAN.md](PUBLIC_STAGING_PLAN.md). Procedimiento de medición: [PERF_5G_RUNBOOK.md](PERF_5G_RUNBOOK.md).
+
 No se hacen más optimizaciones locales de performance, ni la del keep-alive, sin evidencia de public staging. PERF-5G corre sólo cuando estén todas estas condiciones:
 
 - backend desplegado en la misma región que Neon (us-east-1), como public staging y nunca producción;

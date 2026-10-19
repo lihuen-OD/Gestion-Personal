@@ -108,6 +108,8 @@ Tres apps desplegadas por separado (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN
 | Fichador | `VITE_API_URL` | `http://localhost:4002/api` | `https://<backend-test>/api` | `https://<api>/api` | en el hosting el build exige `https://` |
 | Fichador | `VITE_APP_VERSION` | opcional | opcional | opcional | versión informativa que ve el panel de RRHH; nunca autentica |
 | Fichador | `NODE_VERSION` | — | `22` (en `fichador/netlify.toml`) | `22` | misma mayor que CI |
+| Admin | `NODE_VERSION` | — | `22` (en `frontend/netlify.toml`) | `22` | misma mayor que CI |
+| Backend | `NODE_VERSION` | — | `22` (panel del hosting) | `22` | sin ella Render usa su default (24.x) |
 | Backend | `CORS_ORIGIN` | `http://localhost:5174,http://localhost:5175` | `https://<admin-test>,https://<fichador-test>` | `https://gestion.<dominio>,https://fichador.<dominio>` | lista explícita, sin `*` ni comodines de subdominio |
 | Backend | `CLOCK_RATE_LIMIT_MAX` / `CLOCK_IP_RATE_LIMIT_MAX` / `CLOCK_RATE_LIMIT_WINDOW_MS` | `30` / `300` / `300000` | ídem salvo medición | ídem salvo medición | cupo de `/api/clock/*` (y de su alias legacy `/time-entries/clock/*`, con los mismos buckets) por dispositivo autenticado y, antes de autenticar, por IP |
 | Backend | `CLOCK_PUNCH_COOLDOWN_SECONDS` | `60` (o sin definir) | `60` | `60` | F7: segundos mínimos entre dos fichadas **distintas** del mismo empleado (reloj del servidor, cualquier dispositivo). Entero 0–300; `0` lo desactiva (sólo para diagnóstico o para la matriz de staging); fuera de rango el backend no arranca. No es un rate limit ni la idempotencia |
@@ -128,7 +130,7 @@ Tres apps desplegadas por separado (`docs/decisions/FICHADOR_STANDALONE_PWA_PLAN
 
 ## Frontend deploy
 
-Two independent static sites (F2 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`): the admin (base directory `frontend`) and the fichador (base directory `fichador`, versioned config in `fichador/netlify.toml`, headers generated into `dist/_headers`). Never build both in one site nor serve the fichador under an admin path.
+Two independent static sites (F2 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`): the admin (base directory `frontend`, versioned config in `frontend/netlify.toml`: SPA fallback, basic security headers, previews and branch deploys off; its CSP is deferred) and the fichador (base directory `fichador`, versioned config in `fichador/netlify.toml`, headers generated into `dist/_headers`). Never build both in one site nor serve the fichador under an admin path. Build the admin only on the hosting with `VITE_API_URL` and `VITE_DEMO_MODE=false` — never publish a locally built `dist/` (see `docs/decisions/PUBLIC_STAGING_PLAN.md` §6).
 
 Fichador deploy previews and branch deploys stay **off** (`ignore = "exit 0"` per context in `fichador/netlify.toml`). The original reason — the temporary shared token embedded in every published bundle — no longer exists: F6 removed it and the build fails if `VITE_CLOCK_DEVICE_TOKEN` is defined. The current reasons are:
 - `CORS_ORIGIN` is an exact allowlist with no wildcards, so a preview URL (a new origin per build) cannot reach the backend unless it is added explicitly;
@@ -147,6 +149,8 @@ Check:
 - cache behavior
 
 ## Backend deploy
+
+Public staging (provider, region, build / pre-deploy / start commands, env, worker phases and deploy order): `docs/decisions/PUBLIC_STAGING_PLAN.md`. The migration always runs before the code (`prisma migrate deploy` in the pre-deploy step, never `migrate dev`, `db push` or `reset`).
 
 Check:
 - correct start command
