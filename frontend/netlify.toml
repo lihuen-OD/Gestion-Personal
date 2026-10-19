@@ -1,0 +1,74 @@
+# Admin (RRHH / supervisión / carga horaria) — sitio de hosting propio para
+# public staging (docs/decisions/PUBLIC_STAGING_PLAN.md). Netlify lee este
+# archivo cuando el "Base directory" del sitio es `frontend`; las rutas de acá
+# son relativas a esa carpeta. No construye ni publica el fichador, que tiene
+# su propio sitio y su propio `fichador/netlify.toml`.
+#
+# Variables del sitio, sólo en el panel de Netlify (todo VITE_* termina en el
+# bundle público):
+#   VITE_API_URL=https://<api-staging>/api
+#   VITE_DEMO_MODE=false
+# No definir ninguna VITE_DEMO_* en el sitio. Buildear siempre en Netlify:
+# nunca publicar un `dist/` armado en una máquina local, porque el `.env.local`
+# de desarrollo puede activar el modo demo y sus credenciales.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # Misma versión mayor que CI (.github/workflows/ci.yml) y que el fichador.
+  NODE_VERSION = "22"
+
+# Sin deploy previews ni branch deploys: CORS_ORIGIN del backend es una
+# allowlist exacta y no hay backend para previews, así que una URL de preview
+# no podría hablar con la API. `ignore` con salida 0 cancela el build en esos
+# contextos. Desactivarlos también en el panel (Deploy contexts → Deploy
+# previews: None; Branch deploys: None).
+[context.deploy-preview]
+  ignore = "exit 0"
+
+[context.branch-deploy]
+  ignore = "exit 0"
+
+# SPA fallback: el admin usa BrowserRouter con rutas profundas
+# (p. ej. /legajos/:id). Sin esto, abrir o recargar una de esas URLs da 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers básicos de seguridad. La CSP del admin queda diferida a propósito:
+# el admin carga Google Fonts (fonts.googleapis.com / fonts.gstatic.com),
+# tiles de OpenTopoMap, la API de Georef (apis.datos.gob.ar), imágenes blob: y
+# la API, cuyo origin cambia por entorno. Una CSP correcta necesita generarse
+# en el build con ese origin (como fichador/scripts/hosting-headers.mjs) y
+# verificarse en un navegador real antes de forzarla; una CSP escrita a mano
+# acá rompería la app o quedaría permisiva. Seguimiento en
+# PUBLIC_STAGING_PLAN.md (SECURITY FOLLOW-UP).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Strict-Transport-Security = "max-age=31536000"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Assets con hash de Vite: nunca cambian de contenido para la misma URL.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# El documento siempre se revalida, para no quedar con un index viejo que
+# apunte a assets que ya no existen. Las rutas profundas servidas por el
+# fallback ya usan el default de Netlify (revalidar en cada pedido).
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
