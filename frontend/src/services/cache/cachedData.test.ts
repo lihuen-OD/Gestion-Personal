@@ -85,3 +85,59 @@ describe("cachedData", () => {
   });
 });
 
+describe("cachedData — networkFirst", () => {
+  function networkFirst<T>(requestKey: string, fetcher: () => Promise<T>) {
+    return cachedData({ requestKey, policy, fetcher, validate: () => true, networkFirst: true });
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-08T10:00:00.000Z"));
+    await clearAllAppCaches("test setup");
+  });
+
+  afterEach(async () => {
+    await clearAllAppCaches("test teardown");
+    vi.useRealTimers();
+  });
+
+  it("fetches even when a fresh entry exists and returns the new response, not the cached one", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ value: "old" })
+      .mockResolvedValueOnce({ value: "new" });
+
+    await request("network-first", fetcher);
+    await expect(networkFirst("network-first", fetcher)).resolves.toEqual({ value: "new" });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    // The response also refreshes the entry for regular cached reads.
+    await expect(request("network-first", fetcher)).resolves.toEqual({ value: "new" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overlap requests: calls made while one is in flight share it", async () => {
+    let resolveFetch!: (value: { value: string }) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { resolveFetch = resolve; }));
+
+    const first = networkFirst("in-flight", fetcher);
+    const second = networkFirst("in-flight", fetcher);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    resolveFetch({ value: "shared" });
+
+    await expect(first).resolves.toEqual({ value: "shared" });
+    await expect(second).resolves.toEqual({ value: "shared" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the last cached value when the request fails, and rethrows when nothing is cached", async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ value: "cached" })
+      .mockRejectedValueOnce(new Error("network offline"))
+      .mockRejectedValueOnce(new Error("network offline"));
+
+    await request("network-first-offline", fetcher);
+    await expect(networkFirst("network-first-offline", fetcher)).resolves.toEqual({ value: "cached" });
+    await expect(networkFirst("never-cached", fetcher)).rejects.toThrow("network offline");
+  });
+});
+

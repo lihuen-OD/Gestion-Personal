@@ -13,6 +13,11 @@ type CachedRequestInput<T> = {
   policy: CachePolicy;
   fetcher: () => Promise<T>;
   validate: (value: T) => boolean;
+  // Para pantallas que se refrescan solas: con stale-while-revalidate cada
+  // refresco mostraría la respuesta del refresco anterior. Va siempre a la red
+  // (mismo dedupe in-flight, la respuesta actualiza la caché) y sólo usa el
+  // valor cacheado si el pedido falla.
+  networkFirst?: boolean;
 };
 
 function isFresh(entry: MemoryCacheEntry) {
@@ -69,7 +74,7 @@ export async function cachedData<T>(input: CachedRequestInput<T>) {
     schemaVersion: input.policy.schemaVersion,
     requestKey: input.requestKey,
   });
-  const cached = await readCached<T>(key, input.policy);
+  const cached = input.networkFirst ? undefined : await readCached<T>(key, input.policy);
 
   if (cached && isFresh(cached)) {
     recordCacheMetric("hit");
