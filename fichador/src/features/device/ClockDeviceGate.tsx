@@ -3,6 +3,7 @@ import { CheckCircle2, KeyRound, MonitorSmartphone, RefreshCw, ShieldAlert } fro
 import { ApiError, getUserErrorMessage } from "../../services/api/apiClient";
 import { clockDeviceApiService, type ClockDeviceState } from "../../services/api/clockDeviceApiService";
 import { clockDeviceSession, type ClockDeviceAuthFailure } from "../../services/api/clockDeviceSession";
+import { ClockMaintenanceMode } from "../maintenance/ClockMaintenanceMode";
 import { clockDeviceStorage, type StoredClockDeviceIdentity } from "./clockDeviceStorage";
 import { DeviceInstallHint, DeviceSetupChecklist } from "./DeviceSetupGuide";
 import { useClockDeviceHeartbeat } from "./useClockDeviceHeartbeat";
@@ -137,6 +138,8 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     try { await verify(identity); } finally { setBusy(false); }
   };
 
+  // Borra SÓLO la identidad local (IndexedDB) y cierra la sesión en memoria; el
+  // backend no se toca. true = borrada (lo usa también el modo mantenimiento).
   const reset = async () => {
     setBusy(true);
     try {
@@ -144,11 +147,16 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
       clockDeviceSession.end();
       identityRef.current = null;
       setIdentity(null); setDevice(null); setPairing(null); setCredentialLost(false); setConfirmingReset(false); setError("");
-    } catch { setError("No pudimos borrar la configuración local. Intentá nuevamente."); }
-    finally { setBusy(false); }
+      return true;
+    } catch {
+      setError("No pudimos borrar la configuración local. Intentá nuevamente.");
+      return false;
+    } finally { setBusy(false); }
   };
 
-  if (device?.status === "ACTIVE" && !credentialLost) return <>{children}</>;
+  // Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): sólo con
+  // la sesión operativa abierta. Revocar o perder la credencial lo desmonta.
+  if (device?.status === "ACTIVE" && !credentialLost) return <ClockMaintenanceMode onReconfigure={reset}>{children}</ClockMaintenanceMode>;
 
   const revoked = device?.status === "REVOKED";
   const pending = device?.status === "PENDING";

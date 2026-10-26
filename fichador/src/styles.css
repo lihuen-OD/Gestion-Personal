@@ -534,3 +534,52 @@ html,body{
 .setup-checklist summary{cursor:pointer;color:var(--color-primary);font-weight:650}
 .setup-checklist summary:focus-visible{outline:3px solid var(--ds-blue-600);outline-offset:2px;border-radius:4px}
 .setup-checklist ol{display:grid;gap:7px;margin:10px 0 0;padding-left:20px;line-height:1.5}
+
+/* Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md). El
+   encabezado acepta una presión larga sin seleccionar texto ni abrir el menú
+   del sistema; no cambia nada visible para quien ficha. El panel es de RRHH:
+   más ancho que el fichador, dos columnas desde tablet y una en teléfono.
+   .button lleva alturas con !important (bloque del admin copiado), por eso
+   las acciones grandes también. */
+.clock-heading{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+/* Un solo campo: diálogo angosto en vez del ancho de 860 px del modal genérico. */
+.modal:has(.maintenance-access){width:min(440px,calc(100vw - 32px))!important}
+.maintenance-access{display:grid;gap:14px}
+.maintenance-access input{height:56px;font-size:28px;font-weight:700;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums}
+.maintenance-access .form-actions{margin:0;padding:0;border:0;background:transparent}
+.maintenance-panel{width:min(920px,100%);display:grid;gap:20px;padding:28px;border:1px solid var(--ds-slate-200);border-radius:16px;background:#fff;box-shadow:0 24px 70px rgb(15 23 42 / .14)}
+.maintenance-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.maintenance-title{display:flex;align-items:flex-start;gap:14px;min-width:0}
+.maintenance-title h1{color:var(--ds-slate-900);font-size:24px;font-weight:700}
+.maintenance-title .muted{margin-top:4px}
+.maintenance-icon{flex:none;width:48px;height:48px;display:grid;place-items:center;border-radius:12px;background:var(--color-primary-subtle);color:var(--color-primary)}
+.maintenance-icon svg{width:24px;height:24px}
+.maintenance-timer{flex:none;display:grid;justify-items:end;gap:2px;padding:10px 14px;border:1px solid var(--ds-amber-200);border-radius:12px;background:var(--ds-amber-50)}
+.maintenance-timer small{color:var(--ds-amber-700);font-size:12px;font-weight:650}
+.maintenance-timer strong{color:var(--ds-slate-900);font-size:24px;font-weight:750;line-height:1.1;font-variant-numeric:tabular-nums}
+.maintenance-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.maintenance-card{display:grid;align-content:start;gap:12px;padding:18px;border:1px solid var(--ds-slate-200);border-radius:12px;background:var(--ds-slate-50)}
+.maintenance-card h2{display:flex;align-items:center;gap:8px;color:var(--ds-slate-900);font-size:15px;font-weight:700}
+.maintenance-card h2 svg{flex:none;width:18px;height:18px;color:var(--color-primary)}
+.maintenance-card dl{display:grid;gap:10px;margin:0}
+.maintenance-detail{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:12px;align-items:baseline}
+.maintenance-detail dt{color:var(--ds-slate-500);font-size:13px}
+.maintenance-detail dd{margin:0;color:var(--ds-slate-900);font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.maintenance-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.maintenance-actions .button{min-height:48px!important;font-size:15px!important}
+.maintenance-danger{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;border:1px solid var(--color-danger-border);border-radius:12px}
+.maintenance-danger h2{color:var(--ds-slate-900);font-size:15px;font-weight:700}
+.maintenance-danger p{margin-top:2px;color:var(--ds-slate-600);font-size:13px;line-height:1.45}
+.maintenance-danger .button{flex:none}
+.maintenance-confirm label{color:var(--ds-slate-700)}
+.maintenance-footnote{color:var(--ds-slate-500);font-size:12px;line-height:1.45;text-align:center}
+@media(max-width:720px){
+  .maintenance-header{flex-direction:column}
+  .maintenance-timer{width:100%;grid-template-columns:auto auto;align-items:baseline;justify-content:space-between;justify-items:start}
+  .maintenance-grid,.maintenance-actions{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:560px){
+  .maintenance-panel{padding:20px}
+  .maintenance-danger{flex-direction:column;align-items:stretch}
+  .maintenance-detail{grid-template-columns:minmax(0,1fr);gap:2px}
+}
