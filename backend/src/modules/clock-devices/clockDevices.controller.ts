@@ -4,6 +4,7 @@ import { requireParam } from "../../shared/http/params";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import type { ListClockDevicesQuery } from "./clockDevices.schemas";
 import { authenticatedClockDevice, clockDeviceRequestMetadata as metadata } from "./clockDeviceAuthentication";
+import { clockDeviceMaintenanceService, MAINTENANCE_SESSION_HEADER } from "./clockDeviceMaintenance.service";
 import { clockDevicesService } from "./clockDevices.service";
 
 export const clockDevicesController = {
@@ -30,4 +31,16 @@ export const clockDevicesController = {
   }) satisfies RequestHandler,
   revoke: (async (req, res) => res.json({ data: await clockDevicesService.revoke(requireParam(req, "id"), req.user!.id, requestAuditContext(req)) })) satisfies RequestHandler,
   deletePending: (async (req, res) => { await clockDevicesService.deletePending(requireParam(req, "id"), requestAuditContext(req)); res.status(204).send(); }) satisfies RequestHandler,
+  // Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md). El código
+  // y el token viajan una sola vez: no-store para que ningún caché los guarde.
+  issueMaintenanceCode: (async (req, res) => {
+    const data = await clockDeviceMaintenanceService.issueCode(requireParam(req, "id"), requestAuditContext(req));
+    res.set("Cache-Control", "no-store").status(201).json({ data });
+  }) satisfies RequestHandler,
+  openMaintenanceSession: (async (req, res) => {
+    const data = await clockDeviceMaintenanceService.openSession(authenticatedClockDevice(req), req.body.code, requestAuditContext(req));
+    res.set("Cache-Control", "no-store").status(201).json({ data });
+  }) satisfies RequestHandler,
+  maintenanceSession: (async (req, res) => res.set("Cache-Control", "no-store").json({ data: await clockDeviceMaintenanceService.getSession(authenticatedClockDevice(req), req.get(MAINTENANCE_SESSION_HEADER)) })) satisfies RequestHandler,
+  endMaintenanceSession: (async (req, res) => { await clockDeviceMaintenanceService.endSession(authenticatedClockDevice(req), req.get(MAINTENANCE_SESSION_HEADER)); res.status(204).send(); }) satisfies RequestHandler,
 };

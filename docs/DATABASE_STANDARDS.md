@@ -269,3 +269,35 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
 - **Asistencia.** Lee `AttendancePunch.device.name` por la relación existente,
   en la misma consulta. No se duplica el nombre en `WorkShift` ni en
   `TimeEntry`.
+
+### Acceso de mantenimiento (migración `20261026120000_add_clock_device_maintenance_access`)
+
+Diseño: `docs/decisions/FICHADOR_MAINTENANCE_MODE.md`.
+
+- **Columnas.** Cinco columnas aditivas en `ClockDevice`, sin tabla nueva:
+  - `maintenanceCodeHash` y `maintenanceCodeExpiresAt`;
+  - `maintenanceCodeFailedAttempts` (`DEFAULT 0`);
+  - `maintenanceSessionHash` y `maintenanceSessionExpiresAt`.
+
+  Los instantes son `TIMESTAMPTZ(3)`. Sólo se guardan hashes SHA-256, nunca
+  el código ni el token.
+- **Un código y una sesión por equipo**, como `pairingCodeHash`. Generar otro
+  código reemplaza al anterior en la misma columna. La historia (quién lo
+  generó, cuándo se usó y los rechazos) vive en `AuditLog`, con la entidad
+  `ClockDeviceMaintenance`.
+- **Reglas en el `WHERE`.** El consumo es un `UPDATE` condicionado a hash,
+  vencimiento, intentos y `ACTIVE`; el intento fallido incrementa sólo contra
+  un código vigente; la revocación limpia código y sesión en el mismo `UPDATE`
+  que pasa a `REVOKED`.
+- **CHECKs**, que Prisma no modela:
+  - `ClockDevice_maintenance_code_shape_check` y
+    `ClockDevice_maintenance_session_shape_check`: hash y vencimiento van
+    juntos;
+  - `ClockDevice_maintenance_active_only_check`: sólo un `ACTIVE` puede tener
+    código o sesión.
+- **Rollback.** `backend/prisma/rollbacks/20261026120000_add_clock_device_maintenance_access.down.sql`
+  no aborta: las columnas sólo guardan estado efímero (5 y 10 minutos).
+  Primero se revierte el código.
+- **Dónde está aplicada.** Sólo en una base local desechable `clock_it*`. No
+  está aplicada en `development`/staging, producción ni demo; en staging entra
+  con el `prisma migrate deploy` del pre-deploy autorizado.

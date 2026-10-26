@@ -4,7 +4,7 @@ import { prisma } from "../../shared/prisma/client";
 import { clockDevicesRepository } from "./clockDevices.repository";
 
 vi.mock("../../shared/prisma/client", () => ({
-  prisma: { $transaction: vi.fn(), clockDevice: { update: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() } },
+  prisma: { $transaction: vi.fn(), clockDevice: { update: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn(), updateManyAndReturn: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() } },
 }));
 
 const tx = {
@@ -133,5 +133,76 @@ describe("clockDevicesRepository — heartbeat, edición y limpieza (F9)", () =>
     expect(clockDevice.findMany.mock.calls[0]![0].take).toBe(50);
     expect(clockDevice.deleteMany.mock.calls[0]![0]).toEqual({ where: { AND: [where, { id: "p1" }] } });
     expect(clockDevice.deleteMany.mock.calls[1]![0]).toEqual({ where: { AND: [where, { id: "p2" }] } });
+  });
+});
+
+// Acceso de mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): cada
+// regla vive en el WHERE del UPDATE, no en una lectura previa.
+describe("clockDevicesRepository — acceso de mantenimiento", () => {
+  const clockDevice = prisma.clockDevice as unknown as { updateMany: Mock; updateManyAndReturn: Mock; findFirst: Mock; findUnique: Mock };
+  const NO_CODE = { maintenanceCodeHash: null, maintenanceCodeExpiresAt: null, maintenanceCodeFailedAttempts: 0 };
+  const NO_SESSION = { maintenanceSessionHash: null, maintenanceSessionExpiresAt: null };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clockDevice.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("revocar limpia código y sesión de mantenimiento en el MISMO UPDATE que pasa a REVOKED", async () => {
+    clockDevice.findUnique.mockResolvedValue({ id: "d1", status: "REVOKED" });
+    await clockDevicesRepository.revoke("d1", "rrhh-1");
+    expect(clockDevice.updateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = clockDevice.updateMany.mock.calls[0]![0];
+    expect(where).toEqual({ id: "d1", status: "ACTIVE" });
+    expect(data).toMatchObject({ status: "REVOKED", revokedByUserId: "rrhh-1", ...NO_CODE, ...NO_SESSION });
+  });
+
+  it("guardar un código: sólo ACTIVE, reemplaza el anterior y reinicia los intentos", async () => {
+    const expiresAt = new Date("2026-10-26T12:05:00.000Z");
+    await expect(clockDevicesRepository.setMaintenanceCode("d1", "h".repeat(64), expiresAt)).resolves.toBe(true);
+    expect(clockDevice.updateMany).toHaveBeenCalledWith({ where: { id: "d1", status: "ACTIVE" }, data: { maintenanceCodeHash: "h".repeat(64), maintenanceCodeExpiresAt: expiresAt, maintenanceCodeFailedAttempts: 0 } });
+    clockDevice.updateMany.mockResolvedValue({ count: 0 });
+    await expect(clockDevicesRepository.setMaintenanceCode("d1", "h".repeat(64), expiresAt)).resolves.toBe(false);
+  });
+
+  it("consumir: hash, vencimiento, intentos y ACTIVE en un solo UPDATE; borra el código y guarda la sesión", async () => {
+    const now = new Date("2026-10-26T12:00:00.000Z");
+    const session = { hash: "s".repeat(64), expiresAt: new Date("2026-10-26T12:10:00.000Z") };
+    await expect(clockDevicesRepository.consumeMaintenanceCode("d1", "c".repeat(64), session, now, 5)).resolves.toBe(true);
+    expect(clockDevice.updateMany).toHaveBeenCalledWith({
+      where: { id: "d1", status: "ACTIVE", maintenanceCodeHash: "c".repeat(64), maintenanceCodeExpiresAt: { gt: now }, maintenanceCodeFailedAttempts: { lt: 5 } },
+      data: { ...NO_CODE, maintenanceSessionHash: session.hash, maintenanceSessionExpiresAt: session.expiresAt },
+    });
+    clockDevice.updateMany.mockResolvedValue({ count: 0 });
+    await expect(clockDevicesRepository.consumeMaintenanceCode("d1", "c".repeat(64), session, now, 5)).resolves.toBe(false);
+  });
+
+  it("intento fallido: sólo cuenta contra un código vigente; al llegar al máximo lo anula", async () => {
+    const now = new Date("2026-10-26T12:00:00.000Z");
+    clockDevice.updateManyAndReturn.mockResolvedValueOnce([]);
+    await expect(clockDevicesRepository.registerFailedMaintenanceCode("d1", now, 5)).resolves.toBeNull();
+    expect(clockDevice.updateManyAndReturn.mock.calls[0]![0].where).toEqual({ id: "d1", status: "ACTIVE", maintenanceCodeHash: { not: null }, maintenanceCodeExpiresAt: { gt: now } });
+    expect(clockDevice.updateMany).not.toHaveBeenCalled();
+
+    clockDevice.updateManyAndReturn.mockResolvedValueOnce([{ maintenanceCodeFailedAttempts: 2 }]);
+    await expect(clockDevicesRepository.registerFailedMaintenanceCode("d1", now, 5)).resolves.toEqual({ failedAttempts: 2, burned: false });
+    expect(clockDevice.updateMany).not.toHaveBeenCalled();
+
+    clockDevice.updateManyAndReturn.mockResolvedValueOnce([{ maintenanceCodeFailedAttempts: 5 }]);
+    await expect(clockDevicesRepository.registerFailedMaintenanceCode("d1", now, 5)).resolves.toEqual({ failedAttempts: 5, burned: true });
+    expect(clockDevice.updateMany).toHaveBeenCalledWith({ where: { id: "d1", maintenanceCodeFailedAttempts: { gte: 5 } }, data: NO_CODE });
+  });
+
+  it("sesión: se busca por hash, vigente y ACTIVE; el diagnóstico no trae id, IP, user-agent ni hashes", async () => {
+    const now = new Date("2026-10-26T12:00:00.000Z");
+    await clockDevicesRepository.findMaintenanceSession("d1", "s".repeat(64), now);
+    const args = clockDevice.findFirst.mock.calls[0]![0];
+    expect(args.where).toEqual({ id: "d1", status: "ACTIVE", maintenanceSessionHash: "s".repeat(64), maintenanceSessionExpiresAt: { gt: now } });
+    expect(Object.keys(args.select).sort()).toEqual(["activatedAt", "establishment", "lastAppVersion", "lastSeenAt", "maintenanceSessionExpiresAt", "name", "status"]);
+  });
+
+  it("cerrar sesión: sólo la de ese token", async () => {
+    await clockDevicesRepository.endMaintenanceSession("d1", "s".repeat(64));
+    expect(clockDevice.updateMany).toHaveBeenCalledWith({ where: { id: "d1", maintenanceSessionHash: "s".repeat(64) }, data: NO_SESSION });
   });
 });

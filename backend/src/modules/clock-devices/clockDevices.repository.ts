@@ -28,6 +28,22 @@ const clockDeviceSelfSelect = {
   establishment: { select: { id: true, name: true, zone: { select: { id: true, name: true } } } },
 } satisfies Prisma.ClockDeviceSelect;
 
+// Modo mantenimiento: diagnóstico del propio equipo para RRHH. Sin id, IP,
+// user-agent ni hashes.
+const clockDeviceMaintenanceSelect = {
+  name: true,
+  status: true,
+  activatedAt: true,
+  lastSeenAt: true,
+  lastAppVersion: true,
+  establishment: { select: { name: true, zone: { select: { name: true } } } },
+} satisfies Prisma.ClockDeviceSelect;
+
+// Sin código ni sesión de mantenimiento: lo que deja la revocación y lo que
+// consume un código anulado.
+const NO_MAINTENANCE_CODE = { maintenanceCodeHash: null, maintenanceCodeExpiresAt: null, maintenanceCodeFailedAttempts: 0 } as const;
+const NO_MAINTENANCE_SESSION = { maintenanceSessionHash: null, maintenanceSessionExpiresAt: null } as const;
+
 // F9: RRHH edita nombre y establecimiento de un PENDING o un ACTIVE. REVOKED es
 // terminal: su nombre sigue identificando las fichadas que hizo.
 const EDITABLE_STATUSES: ClockDeviceStatus[] = ["PENDING", "ACTIVE"];
@@ -218,12 +234,67 @@ export const clockDevicesRepository = {
     });
   },
 
+  // La revocación también corta el acceso de mantenimiento en el mismo UPDATE
+  // (y la CHECK ClockDevice_maintenance_active_only_check lo exige).
   async revoke(id: string, userId: string) {
     const changed = await prisma.clockDevice.updateMany({
       where: { id, status: "ACTIVE" },
-      data: { status: "REVOKED", revokedAt: new Date(), revokedByUserId: userId, pairingCodeHash: null, pairingExpiresAt: null },
+      data: { status: "REVOKED", revokedAt: new Date(), revokedByUserId: userId, pairingCodeHash: null, pairingExpiresAt: null, ...NO_MAINTENANCE_CODE, ...NO_MAINTENANCE_SESSION },
     });
     return changed.count ? clockDevicesRepository.findSafeById(id) : null;
+  },
+
+  // Mantenimiento: un código por equipo; guardar uno nuevo reemplaza al
+  // anterior y reinicia sus intentos. false = ya no está ACTIVE.
+  async setMaintenanceCode(id: string, hash: string, expiresAt: Date) {
+    const changed = await prisma.clockDevice.updateMany({
+      where: { id, status: "ACTIVE" },
+      data: { maintenanceCodeHash: hash, maintenanceCodeExpiresAt: expiresAt, maintenanceCodeFailedAttempts: 0 },
+    });
+    return changed.count === 1;
+  },
+
+  // Consumo de un solo uso: todas las condiciones en un único UPDATE, así dos
+  // pedidos concurrentes con el mismo código no abren dos sesiones. Abrir una
+  // sesión reemplaza la anterior del mismo equipo.
+  async consumeMaintenanceCode(id: string, codeHash: string, session: { hash: string; expiresAt: Date }, now: Date, maxFailedAttempts: number) {
+    const changed = await prisma.clockDevice.updateMany({
+      where: { id, status: "ACTIVE", maintenanceCodeHash: codeHash, maintenanceCodeExpiresAt: { gt: now }, maintenanceCodeFailedAttempts: { lt: maxFailedAttempts } },
+      data: { ...NO_MAINTENANCE_CODE, maintenanceSessionHash: session.hash, maintenanceSessionExpiresAt: session.expiresAt },
+    });
+    return changed.count === 1;
+  },
+
+  // Intento fallido contra el código VIGENTE del equipo. null = no había uno
+  // (no se cuenta). Al llegar al máximo, el código se anula.
+  async registerFailedMaintenanceCode(id: string, now: Date, maxFailedAttempts: number) {
+    const [counted] = await prisma.clockDevice.updateManyAndReturn({
+      where: { id, status: "ACTIVE", maintenanceCodeHash: { not: null }, maintenanceCodeExpiresAt: { gt: now } },
+      data: { maintenanceCodeFailedAttempts: { increment: 1 } },
+      select: { maintenanceCodeFailedAttempts: true },
+    });
+    if (!counted) return null;
+    const burned = counted.maintenanceCodeFailedAttempts >= maxFailedAttempts;
+    if (burned) {
+      await prisma.clockDevice.updateMany({ where: { id, maintenanceCodeFailedAttempts: { gte: maxFailedAttempts } }, data: NO_MAINTENANCE_CODE });
+    }
+    return { failedAttempts: counted.maintenanceCodeFailedAttempts, burned };
+  },
+
+  findMaintenanceSession(id: string, sessionHash: string, now: Date) {
+    return prisma.clockDevice.findFirst({
+      where: { id, status: "ACTIVE", maintenanceSessionHash: sessionHash, maintenanceSessionExpiresAt: { gt: now } },
+      select: { ...clockDeviceMaintenanceSelect, maintenanceSessionExpiresAt: true },
+    });
+  },
+
+  findMaintenanceDiagnostics(id: string) {
+    return prisma.clockDevice.findUnique({ where: { id }, select: clockDeviceMaintenanceSelect });
+  },
+
+  // Sólo la sesión de ese token: un token viejo no cierra la sesión nueva.
+  async endMaintenanceSession(id: string, sessionHash: string) {
+    await prisma.clockDevice.updateMany({ where: { id, maintenanceSessionHash: sessionHash }, data: NO_MAINTENANCE_SESSION });
   },
 
   async deletePending(id: string) {
