@@ -24,6 +24,7 @@ import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { classifyWorkShiftSegments } from "../hour-concepts/hourConceptClassification";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
+import { loadDayOffAccounting } from "../employee-day-offs/employeeDayOffAccounting";
 import {
   accountEmployeePeriods,
   emptyPeriodAccounting,
@@ -40,6 +41,7 @@ import {
   formatArgentinaTime,
   humanizePeriodEs,
   nextArgentinaMidnightUtc,
+  periodCalendarBounds,
   periodFromCalendarDate,
   todayArgentinaDateKey,
 } from "../../shared/datetime/argentinaTime";
@@ -1906,9 +1908,12 @@ export const timeEntriesService = {
     for (const employee of await timeEntriesRepository.findEmployeesForExport(missingEmployeeIds)) employees.set(employee.id, employee);
 
     // Horas base = sólo NORMAL_BASE (un TimeEntry no-Normal legacy previo a
-    // 6L no cuenta). Todo lo demás lo deriva workedTimeAccounting.
+    // 6L no cuenta). Todo lo demás lo deriva workedTimeAccounting, francos
+    // incluidos (docs/decisions/EMPLOYEE_DAY_OFF.md §7).
     const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE");
-    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+    const exportRange = periodCalendarBounds(query.period);
+    const dayOffs = await loadDayOffAccounting({ employeeIds, from: exportRange.start, to: exportRange.end });
+    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
 
     const ruleNames = new Map<string, Set<string>>();
     const conflicts = new Set<string>();

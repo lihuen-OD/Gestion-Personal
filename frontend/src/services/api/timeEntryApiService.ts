@@ -1,3 +1,4 @@
+import type { DayOffActivity } from "./employeeDayOffApiService";
 import { apiRequest } from "./apiClient";
 import { appendSortParams } from "./listQuery";
 import type { SortState } from "../../utils/sort";
@@ -73,6 +74,9 @@ export type ApiTimeEntry = {
 export type EmployeePeriodDay = {
   day: number;
   novelty: { label: string } | null;
+  // Franco ACTIVO del día (docs/decisions/EMPLOYEE_DAY_OFF.md §15). Lo que
+  // computa está en `accounting.days[day]`; esto es la evidencia registrada.
+  dayOff?: DayOffActivity | null;
   specialHourRuleNames: string[];
   specialHourConflict: boolean;
 };

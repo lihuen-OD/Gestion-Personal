@@ -23,6 +23,8 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
+    // EMPLOYEE_DAY_OFF.md §6: el motor de obligación descarta francos activos.
+    employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
     employee: { findMany: vi.fn() },
     attendancePunch: { findMany: vi.fn() },
     novelty: { findMany: vi.fn() },

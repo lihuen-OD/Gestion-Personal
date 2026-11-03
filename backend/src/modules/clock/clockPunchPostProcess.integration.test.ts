@@ -199,7 +199,7 @@ describe.skipIf(!url)("PERF-5D — post-proceso durable de fichadas contra Postg
     await vi.waitFor(async () => expect((await jobsOf("restart"))[0]!.status).toBe("COMPLETED"), { timeout: 10_000, interval: 50 });
 
     const completed = (await jobsOf("restart"))[0]!;
-    expect(completed).toMatchObject({ attemptCount: 1, stepsCompleted: ["entry-evaluation"], leaseExpiresAt: null });
+    expect(completed).toMatchObject({ attemptCount: 1, stepsCompleted: ["entry-evaluation", "day-off-evaluation"], leaseExpiresAt: null });
     expect(completed.completedAt).toBeInstanceOf(Date);
     expect((await alertsOf(workShiftId)).map((alert) => alert.type)).toEqual(["TURNO_NO_IDENTIFICADO"]);
     await expectOneNoticePerRecipient(workShiftId);

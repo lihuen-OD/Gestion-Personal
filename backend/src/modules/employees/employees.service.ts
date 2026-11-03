@@ -8,7 +8,7 @@ import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { calendarDateKey, formatArgentinaDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { calendarDateKey, formatArgentinaDate, periodCalendarBounds, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { roles } from "../../shared/security/roles";
 import { employeeAccessWhere } from "./employeeAccess";
@@ -17,6 +17,7 @@ import { resolveDoubleHourMultipliersByDate } from "../time-entries/timeEntries.
 import { laborHistoryService, mapLaborHistoryPersistenceError, type EmployeeLaborChanges, type RecordedHistoryChange } from "../labor-history/laborHistory.service";
 import { sameIdSet } from "../labor-history/laborHistory.periods";
 import { accountEmployeePeriod, toAccountingBaseEntry, toAccountingBreakdown, withinBaseCoverageMinutes, type WorkTreatment } from "../time-entries/workedTimeAccounting";
+import { dayOffsWithin, emptyDayOffAccounting, loadDayOffAccounting, type DayOffAccounting } from "../employee-day-offs/employeeDayOffAccounting";
 import type {
   CreateEmployeeDocumentInput,
   CreateEmployeeBlockHistoryInput,
@@ -111,6 +112,9 @@ type TimeGridConcept = {
 type TimeGridEntry = {
   employeeId: string;
   day: number;
+  // Fecha y canal de las horas: deciden si una fila es automática en un franco.
+  date?: Date;
+  source?: Prisma.TimeEntryGetPayload<{ select: { source: true } }>["source"];
   hours: Prisma.Decimal;
   status: string;
   hourConcept: TimeGridConcept;
@@ -133,6 +137,16 @@ export type TimeGridSpecialHourDay = {
   conflict: boolean;
 };
 
+// Franco del día (docs/decisions/EMPLOYEE_DAY_OFF.md §15): sólo los ACTIVO.
+// `activityMinutes` es lo que registró el fichador en las jornadas de esa
+// fecha operativa (evidencia); lo que computa está en `accounting.days[day]`.
+export type TimeGridDayOff = {
+  status: "ACTIVO";
+  notes: string | null;
+  activityShifts: number;
+  activityMinutes: number;
+};
+
 const treatmentOrder = (concept: TimeGridConcept) => (concept.workTreatment === "WITHIN_BASE" ? 0 : 1);
 
 /**
@@ -147,6 +161,8 @@ export function buildEmployeeTimeGrid(
   enabledConcepts: TimeGridConcept[],
   entries: TimeGridEntry[],
   breakdowns: TimeGridBreakdown[],
+  dayOffs: DayOffAccounting = emptyDayOffAccounting(),
+  period?: string,
 ) {
   if (!normalConcept) {
     throw new AppError("Canonical normal hour concept not found", 500, "NORMAL_HOUR_CONCEPT_NOT_FOUND");
@@ -154,7 +170,15 @@ export function buildEmployeeTimeGrid(
 
   // Horas base = TimeEntry NORMAL_BASE APROBADO/EN_REVISION (criterio vigente).
   const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE" && ["APROBADO", "EN_REVISION"].includes(entry.status));
-  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+
+  const dayOffsByDay: Record<string, TimeGridDayOff> = {};
+  if (period) {
+    const { start, end } = periodCalendarBounds(period);
+    for (const item of dayOffsWithin(dayOffs, start, end)) {
+      dayOffsByDay[String(Number(item.dateKey.slice(8, 10)))] = { status: "ACTIVO", notes: item.notes, activityShifts: item.activityShifts, activityMinutes: item.activityMinutes };
+    }
+  }
 
   const ruleInfoByDay = new Map<string, { ruleNames: string[]; conflict: boolean }>();
   for (const entry of baseEntries) {
@@ -216,6 +240,7 @@ export function buildEmployeeTimeGrid(
     accounting,
     totalWorkedMinutes: accounting.totalWorkedMinutes,
     specialHoursByDay,
+    dayOffsByDay,
   };
 }
 
@@ -672,13 +697,21 @@ export const employeesService = {
   },
 
   async getTimeGrid(id: string, query: EmployeeTimeGridQuery, user: Express.AuthUser) {
-    const grid = await employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user));
+    const { start, end } = periodCalendarBounds(query.period);
+    // El índice de francos no depende del alcance: si el legajo es ajeno,
+    // findTimeGrid devuelve null y se descarta.
+    const [grid, dayOffs] = await Promise.all([
+      employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user)),
+      loadDayOffAccounting({ employeeIds: [id], from: start, to: end }),
+    ]);
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     const timeGrid = buildEmployeeTimeGrid(
       grid.normalConcept,
       grid.employee.hourConcepts.map((link) => link.hourConcept),
       grid.entries,
       grid.breakdowns,
+      dayOffs,
+      query.period,
     );
     return redactPiiForRole({ ...grid, ...timeGrid }, user);
   },

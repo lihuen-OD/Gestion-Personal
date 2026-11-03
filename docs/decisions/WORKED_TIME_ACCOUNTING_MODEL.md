@@ -379,3 +379,7 @@ El problema era sólo de presentación: las celdas y la columna TOTAL de cada co
 **Totales de control.** La tarjeta "Para liquidación", la fila "Total trabajado · Equivalencia" del resumen (real · para liquidación), las etiquetas "Para liquidación" de Carga de horas y Por persona, y la columna `Equivalencia para liquidación` del export se conservan como control general. El popover del día en Carga de horas muestra lo liquidable por componente (Horas normales / Dentro de la jornada / Horas adicionales).
 
 **Export y cierre.** Sin cambios: el export ya tenía `<Concepto> (horas reales)` y `<Concepto> (para liquidación)` por concepto, y el snapshot del cierre ya guarda `accounting.concepts` con real y para liquidación. La revisión del cierre usa la misma grilla.
+
+## 18. Francos (2026-11-03)
+
+Ver `docs/decisions/EMPLOYEE_DAY_OFF.md` §7. En una jornada cuya fecha operativa tiene franco activo, las Horas base y los desgloses **automáticos** no computan; lo cargado o corregido por una persona sí (`TimeEntry.source` `null`/`ADMIN`, desgloses `MANUAL`). La regla vive sólo en `applyDayOffExclusions` (este mismo archivo) y todos los consumidores de §8 la reciben: los que leen filas pasan el índice de `loadDayOffAccounting` a `accountEmployeePeriods`; el resumen y el dashboard restan `periodDayOffUncountedMinutes`. `DayAccounting`/`PeriodAccounting` suman `dayOffUncountedMinutes` y el snapshot del cierre agrega `dayOffs` (fechas con franco). Ninguna fila se reescribe.

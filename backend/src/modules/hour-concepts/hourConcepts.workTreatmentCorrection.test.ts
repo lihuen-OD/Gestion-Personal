@@ -75,6 +75,7 @@ describe("corrección de workTreatment con horas cargadas — test principal", (
           findMany: vi.fn().mockResolvedValue([baseEntry]),
         },
         hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue([{ ...breakdown, hourConcept: { workTreatment: treatment, code: "HOR-005", name: "Prueba" } }]) },
+        employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
       };
       return (await buildClosureSnapshots(client as never, ["emp-1"], "2026-10")).get("emp-1") as { accounting: { totalWorkedMinutes: number; normalResidualMinutes: number } };
     };

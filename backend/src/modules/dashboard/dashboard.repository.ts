@@ -2,6 +2,7 @@ import { ApprovalStatus, DocumentStatus, EmployeeStatus, LaborMovementType, Nove
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
+import { periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,7 +100,7 @@ export const dashboardRepository = {
    * conceptos WITHIN_BASE nunca se suman: ya están dentro de la base.
    */
   async sumLoadedHours(period: string, accessWhere: Prisma.EmployeeWhereInput) {
-    const [base, additive] = await Promise.all([
+    const [base, additive, dayOffUncounted] = await Promise.all([
       prisma.timeEntry.aggregate({
         where: {
           period,
@@ -118,8 +119,13 @@ export const dashboardRepository = {
         },
         _sum: { minutes: true },
       }),
+      // Horas automáticas de jornadas en franco: no computan (EMPLOYEE_DAY_OFF.md §7).
+      periodDayOffUncountedMinutes(period, accessWhere),
     ]);
-    return { baseHours: Number(base._sum.hours?.toString() || 0), additiveMinutes: additive._sum.minutes ?? 0 };
+    return {
+      baseHours: Number(base._sum.hours?.toString() || 0) - dayOffUncounted.baseMinutes / 60,
+      additiveMinutes: (additive._sum.minutes ?? 0) - dayOffUncounted.additiveMinutes,
+    };
   },
 
   /**

@@ -5,6 +5,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { clearAuditDerivedCaches, type AuditContext } from "../audit/audit.service";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
+import { evaluateWorkShiftDayOff } from "../employee-day-offs/employeeDayOffActivity";
 import { clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { clearShiftAlertReadCaches } from "../shifts/shiftAlert.cache";
 import { evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
@@ -48,6 +49,10 @@ export const POSTPROCESS_STEPS = {
   overflowResolution: "overflow-resolution",
   missingExitNotice: "missing-exit-notice",
   entryEvaluation: "entry-evaluation",
+  // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada en un día de franco → alerta
+  // ACTIVIDAD_EN_FRANCO. Después de entry-evaluation (que adopta el turno que
+  // define la fecha operativa).
+  dayOffEvaluation: "day-off-evaluation",
   exitEvaluation: "exit-evaluation",
   breakdowns: (period: string) => `breakdowns:${period}`,
 } as const;
@@ -130,6 +135,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
   if (kind === "ENTRY") {
     const payload = parsePayload(entryPayloadSchema, job);
     await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
   if (kind === "ROLLOVER_ENTRY") {
@@ -139,6 +145,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     await runStep(job, POSTPROCESS_STEPS.overflowResolution, (tx) => resolveOpenShiftOverflowAlert(payload.previousShift.id, ROLLOVER_OVERFLOW_RESOLUTION_NOTE, tx));
     await runStep(job, POSTPROCESS_STEPS.missingExitNotice, (tx) => notifyMissingExit(job.employeeId, payload.previousShift.id, payload.previousShift.startAt, { db: tx, rethrow: true }));
     await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
   if (kind === "EXIT") {

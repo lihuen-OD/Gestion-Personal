@@ -28,6 +28,10 @@ export type AccountingTotals = {
   withinBaseExcessMinutes: number;
   additiveMinutes: number;
   totalWorkedMinutes: number;
+  // Horas base automáticas registradas que no computan por pertenecer a una
+  // jornada en franco (docs/decisions/EMPLOYEE_DAY_OFF.md §7). Opcional:
+  // snapshots y respuestas previas al franco no lo traen.
+  dayOffUncountedMinutes?: number;
   settlement: SettlementAccounting;
   concepts: ConceptAccounting[];
 };

@@ -43,6 +43,13 @@ export interface WorkObligationResolution {
  * Novedades y evidencia de actividad (fichadas/jornadas/horas cargadas) NO
  * se resuelven acá — son un chequeo posterior, distinto para cada llamador
  * (todo el día transcurrido vs. sólo lo que ya pasó de tolerancia).
+ *
+ * Franco (docs/decisions/EMPLOYEE_DAY_OFF.md §5-§6): un `EmployeeDayOff`
+ * ACTIVO en `dateKey` anula la obligación, aunque el turno, el régimen y la
+ * fecha la exijan. Se aplica acá, después de la convocatoria a feriado (la
+ * escritura ya impide que franco y convocatoria coexistan; si igual pasara,
+ * gana el franco) — falta de ingreso e inactividad lo heredan sin filtros
+ * propios.
  */
 export async function resolveWorkObligationCandidates(dateKey: string): Promise<WorkObligationResolution> {
   const referenceDate = argentinaCalendarDate(dateKey);
@@ -82,10 +89,15 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
 
   if (!earliestByEmployee.size) return { isHoliday, candidates: [] };
 
-  const regimes = await resolveActiveWorkRegimesForDate(referenceDate);
+  const [regimes, dayOffs] = await Promise.all([
+    resolveActiveWorkRegimesForDate(referenceDate),
+    prisma.employeeDayOff.findMany({ where: { date: referenceDate, status: "ACTIVO", employeeId: { in: [...earliestByEmployee.keys()] } }, select: { employeeId: true } }),
+  ]);
+  const withDayOff = new Set(dayOffs.map((item) => item.employeeId));
   const candidates: WorkObligationCandidate[] = [];
   for (const [employeeId, data] of earliestByEmployee) {
     if (regimes.get(employeeId)?.kind === "SIN_TURNO") continue;
+    if (withDayOff.has(employeeId)) continue;
     candidates.push({ employeeId, template: data.template, scheduledStartAt: data.scheduledStartAt });
   }
 

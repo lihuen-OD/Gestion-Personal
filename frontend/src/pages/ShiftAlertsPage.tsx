@@ -40,6 +40,8 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado",
   SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
+  // Situación para revisión (EMPLOYEE_DAY_OFF.md §9), nunca un incumplimiento.
+  ACTIVIDAD_EN_FRANCO: "Actividad en día de franco",
 };
 
 const SEVERITY_TONE: Record<ShiftAlertSeverity, "neutral" | "warning" | "danger"> = {
@@ -94,6 +96,9 @@ function differenceLabel(alert: ShiftAlert) {
 //   explícitamente y ninguno es, en la práctica, la alerta más relevante de
 //   un grupo real.
 const GROUP_MAIN_ALERT_PRIORITY: ShiftAlertType[] = [
+  // Un franco cambia el sentido de todo el grupo: no había obligación de
+  // trabajar, así que puntualidad y duración pasan a segundo plano.
+  "ACTIVIDAD_EN_FRANCO",
   "JORNADA_FUERA_DE_TURNO",
   "POSIBLE_OLVIDO_SALIDA",
   "CONCEPTO_NO_HABILITADO",

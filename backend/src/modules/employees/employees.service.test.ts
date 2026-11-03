@@ -106,6 +106,48 @@ describe("buildEmployeeTimeGrid", () => {
     employeeId: "emp-1", day, hourConceptId: concept.id, minutes, appliedMultiplier: multiplier, startAt: null, endAt: null, hourConcept: concept,
   });
 
+  // docs/decisions/EMPLOYEE_DAY_OFF.md §7 y §15: la grilla no recalcula nada
+  // en frontend: Horas base del día franco = lo que computa la contabilidad, y
+  // `dayOffsByDay` dice que ese día había franco (distinto de "sin horas").
+  it("franco con fichada automática: Horas base del día en 0 (no computa), franco visible con la actividad registrada; carga manual de otro día intacta", () => {
+    const dayOffs = {
+      excludedBaseMinutes: new Map([["emp-1|2026-11-05", 480]]),
+      excludedWorkShiftIds: new Set(["shift-1"]),
+      dayOffDates: new Set(["emp-1|2026-11-05"]),
+      dayOffs: [
+        { id: "d1", employeeId: "emp-1", dateKey: "2026-11-05", notes: "Pedido", activityShifts: 1, activityMinutes: 480 },
+        { id: "d2", employeeId: "emp-1", dateKey: "2026-11-06", notes: null, activityShifts: 0, activityMinutes: 0 },
+        // Margen del índice (día anterior al período): no se muestra.
+        { id: "d0", employeeId: "emp-1", dateKey: "2026-10-31", notes: null, activityShifts: 0, activityMinutes: 0 },
+      ],
+    };
+    const result = buildEmployeeTimeGrid(normal, [], [
+      entry(5, 8, { date: new Date("2026-11-05T00:00:00.000Z"), source: "KIOSK" }),
+      entry(7, 6, { date: new Date("2026-11-07T00:00:00.000Z"), source: null }),
+    ], [], dayOffs, "2026-11");
+
+    expect(result.rows[0]!.minutesByDay).toEqual({ "7": 360 });
+    expect(result.totalWorkedMinutes).toBe(360);
+    expect(result.accounting.days["5"]).toMatchObject({ baseMinutes: 0, dayOffUncountedMinutes: 480 });
+    expect(result.dayOffsByDay).toEqual({
+      "5": { status: "ACTIVO", notes: "Pedido", activityShifts: 1, activityMinutes: 480 },
+      "6": { status: "ACTIVO", notes: null, activityShifts: 0, activityMinutes: 0 },
+    });
+  });
+
+  it("franco + horas corregidas por un responsable (source ADMIN): computan y el franco sigue visible (trazabilidad de ambas cosas)", () => {
+    const dayOffs = {
+      excludedBaseMinutes: new Map([["emp-1|2026-11-05", 480]]),
+      excludedWorkShiftIds: new Set(["shift-1"]),
+      dayOffDates: new Set(["emp-1|2026-11-05"]),
+      dayOffs: [{ id: "d1", employeeId: "emp-1", dateKey: "2026-11-05", notes: null, activityShifts: 1, activityMinutes: 480 }],
+    };
+    const result = buildEmployeeTimeGrid(normal, [], [entry(5, 8, { date: new Date("2026-11-05T00:00:00.000Z"), source: "ADMIN" })], [], dayOffs, "2026-11");
+
+    expect(result.rows[0]!.minutesByDay).toEqual({ "5": 480 });
+    expect(result.dayOffsByDay["5"]).toMatchObject({ status: "ACTIVO" });
+  });
+
   it("filas: Horas base primero, después dentro de la jornada y por último horas adicionales", () => {
     const result = buildEmployeeTimeGrid(normal, [colectivo, sereno], [], []);
     expect(result.rows.map((row) => row.concept.id)).toEqual(["normal", "sereno", "colectivo"]);

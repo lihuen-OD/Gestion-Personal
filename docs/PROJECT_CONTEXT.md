@@ -183,7 +183,7 @@ The objective of this project is to build an internal enterprise system to centr
 
 The system is intended to replace fragmented Excel/Google Sheets workflows with a structured, scalable and auditable application.
 
-**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 25 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
+**Current state (updated after the 2026-08 technical audit): the system is no longer a frontend-only/mock prototype.** There is a real, production backend (Node/Express + TypeScript + Prisma + PostgreSQL, 26 modules under `backend/src/modules`) that the frontend consumes over HTTP. It includes JWT auth, backend-enforced role/employee-scope permissions, a real audit log, file storage (Google Drive/Cloudinary/local), and a fichador (time clock) flow without user session, authenticated per device (`ClockDevice`, since F6). A handful of `*MockService.ts` files remain in `frontend/src/services` as leftovers from the original mock-only phase — they are legacy, not the current data source, and most have already been removed once confirmed unused (see `docs/BACKEND_API_CONTRACTS.md` for the real endpoints). Before assuming any part of the system is "mock only", check `backend/src/modules` and `frontend/src/services/api` first.
 
 ## Users and roles
 
@@ -614,7 +614,7 @@ Domicilio must be handled as a single block history, not field-by-field.
 
 ### Modules implemented since this list was written
 
-The backend has 25 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
+The backend has 26 modules under `backend/src/modules`. The following exist and are in production use but were missing from the numbered list above — check `backend/src/modules/<name>` and `docs/BACKEND_API_CONTRACTS.md` before assuming a module doesn't exist:
 
 * **shifts** (`shiftTemplate`, `shiftAssignment`, `shiftAlert`) — turnos: plantillas de turno, asignación a empleados, alertas de jornada abierta/vencida. Added 2026-07-23.
 * **work-regimes** (`WorkRegime`, `EmployeeWorkRegime`) — régimen laboral configurable por RRHH (turno obligatorio/flexible/sin turno; rollover automático o alerta crítica ante jornada abierta excedida) y su asignación a empleados con vigencia histórica. Instancias como Cosecha/Riego/Campaña son datos, no código. Added 2026-08-19.
@@ -628,6 +628,7 @@ The backend has 25 modules under `backend/src/modules`. The following exist and 
 * **dashboard** — métricas agregadas del home.
 * **labor-history** — módulo interno, sin rutas HTTP, que registra y consulta por fecha las vigencias de puesto, centro de costo, sector legado, empresas empleadoras y alcance del puesto para el motor de horas especiales (A7/D-5).
 * **clock** — capa de transporte del fichador (F7 del plan del fichador standalone): namespace del dispositivo `/api/clock/*` (enrolamiento de `clock-devices` + rutas operativas, fichadas `KIOSK`); desde F11 es el único: el alias legacy `/time-entries/clock/*` se retiró (404). Sin servicio propio: el núcleo de la fichada sigue en `time-entries`. Added 2026-10-13.
+* **employee-day-offs** (`EmployeeDayOff`) — franco por empleado y fecha: esa persona no tiene obligación de trabajar esa fecha operativa. Anula la obligación (`resolveWorkObligationCandidates`: sin falta de ingreso ni "Sin actividad registrada"), sus horas automáticas de fichador no computan (lo cargado o corregido por una persona sí), la fichada nunca se bloquea y genera la alerta `ACTIVIDAD_EN_FRANCO` para revisión. "Gestionar francos" vive en Carga de horas. Ver `docs/decisions/EMPLOYEE_DAY_OFF.md`. Added 2026-11-03 (migración no aplicada todavía en staging/demo/producción).
 * **clock-devices** — identidad individual de los dispositivos de fichada (`ClockDevice`): enrolamiento por código, aprobación/revocación RRHH y el middleware `requireClockDevice`. Desde F9 también hace la operación de los equipos: heartbeat (`POST /api/clock/heartbeat`), conectividad derivada de `lastSeenAt`, edición RRHH de nombre y establecimiento (`PATCH /api/clock-devices/:id`) y limpieza automática de solicitudes `PENDING` abandonadas. Desde 2026-10-26 también da el acceso de mantenimiento: código temporal de RRHH (`POST /api/clock-devices/:id/maintenance-code`) y sesión corta del fichador (`/api/clock/maintenance/session`); ver `docs/decisions/FICHADOR_MAINTENANCE_MODE.md`.
 
 ## Main business rules
@@ -771,7 +772,7 @@ Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALON
 Backend:
 
 * Node.js + Express + TypeScript, under `backend/src`.
-* Modular monolith: 25 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes. `labor-history` is intentionally internal and has no HTTP router: it owns dated engine-scope history used transactionally by `employees`, `positions` and `time-entries`.
+* Modular monolith: 26 modules under `backend/src/modules`, each generally following controller → service → repository → schemas (zod) → routes. `labor-history` is intentionally internal and has no HTTP router: it owns dated engine-scope history used transactionally by `employees`, `positions` and `time-entries`.
 * JWT auth (`backend/src/modules/auth`), role/employee-scope authorization enforced server-side (`backend/src/middlewares/authorization.ts` + per-module `employeeAccessWhere`), a generic audit-log helper (`backend/src/modules/audit`), and a shared TTL cache (`backend/src/shared/cache`).
 
 Database:

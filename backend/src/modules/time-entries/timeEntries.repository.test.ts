@@ -77,6 +77,9 @@ vi.mock("../../shared/prisma/client", () => {
       // mismo criterio que `findPeriodEmployees` en 14C.2.
       timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn(), aggregate: vi.fn() },
+      // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos por default, la
+      // contabilidad queda como hasta hoy.
+      employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
       // Etapa 15E.2: findClosuresForExport consulta MonthlyTimeClosure vía
       // el cliente `prisma` global (mismo criterio que el resto de este
       // repositorio para queries de sólo lectura sin necesidad de $transaction).
@@ -257,6 +260,27 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
     const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh", rejectedAt: null });
     expect(call.data.approvedAt).toBeInstanceOf(Date);
+  });
+
+  it("corregir las horas a mano (cualquier rol) fija source ADMIN: la fila pasa a ser horas reconocidas por una persona (EMPLOYEE_DAY_OFF.md §7.1)", async () => {
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8, correctionReason: "Trabajó en su franco" } as never);
+
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ hours: 8, source: "ADMIN" });
+    // El vínculo con la evidencia (jornada/tramo) no se toca.
+    expect(call.data).not.toHaveProperty("workShiftId");
+    expect(call.data).not.toHaveProperty("timeSegmentId");
+  });
+
+  it("editar sólo la observación no cambia el canal de las horas", async () => {
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { observation: "nota" } as never);
+
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).not.toHaveProperty("source");
   });
 
   it("create/update piden el registro completo (empleado + concepto) para que el frontend pueda actualizar la celda sin otro request (Etapa 6L.4)", async () => {
@@ -2584,7 +2608,7 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       expect(summary.accounting.totalWorkedMinutes).toBe(540);
       expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
       expect(summary.accounting.hasSpecialMultiplier).toBe(true);
-      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
+      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, dayOff: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
     });
 
     it("Colectivo de domingo sin Horas base ese día usa su propio multiplicador (ya no queda en x1 por falta de TimeEntry)", async () => {

@@ -362,6 +362,7 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 - `accounting`: `PeriodAccounting` con `days[day]` — `baseMinutes`, `normalResidualMinutes`, `withinBaseMinutes`, `withinBaseCoveredMinutes`, `withinBaseOverlapMinutes`, `withinBaseExcessMinutes`, `additiveMinutes`, `totalWorkedMinutes`, `settlement { normalMinutes, withinBaseMinutes, additiveMinutes, totalMinutes }`, `concepts[{ hourConceptId, treatment, realMinutes, settlementMinutes }]`, `multiplier` (por día) y `hasSpecialMultiplier` (período);
 - `totalWorkedMinutes`: total real = Horas base + conceptos `ADDITIVE_TO_WORKED_TOTAL` (nunca + `WITHIN_BASE`);
 - `specialHoursByDay[day]`: `{ multiplier, ruleNames, conflict }` sólo para días con multiplicador > 1 (indicador visual; las horas del día viven en `accounting.days`).
+- `dayOffsByDay[day]` (desde 2026-11-03, `docs/decisions/EMPLOYEE_DAY_OFF.md`): `{ status: "ACTIVO", notes, activityShifts, activityMinutes }` sólo para días con franco activo. `activity*` es lo que registró el fichador en las jornadas de esa fecha operativa (evidencia); lo que computa está en `accounting.days[day]`. `accounting` (días y período) suma `dayOffUncountedMinutes`: Horas base automáticas que no computan por pertenecer a una jornada en franco.
 
 Desde 2026-10-02 ya no existen `specialHourAdditionalMinutes`, `specialHourLiquidableTotalMinutes` ni `additionalMinutes`/`liquidableTotalMinutes` por día (duplicaban los conceptos dentro de la jornada). Los conceptos `AUTOMATIC` son de sólo lectura; los `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
@@ -1382,6 +1383,8 @@ Reglas:
 PATCH /api/time-entries/:id
 ```
 
+Desde 2026-11-03, editar `hours` fija `source = ADMIN` en la fila: las horas pasan a ser "reconocidas por una persona" aunque la fila haya nacido de una fichada (`workShiftId`/`timeSegmentId` no cambian). Es la señal que usan los francos para computar horas reconocidas (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7.1).
+
 No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa. Con el período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, Nivel 2/3 reciben `409 PERIOD_CLOSED_REQUIRES_CORRECTION` (deben usar `POST /workforce/corrections` en su lugar); no existe endpoint de borrado para `TimeEntry`.
 
 ### Enviar / aprobar / rechazar / devolver
@@ -1584,7 +1587,7 @@ Reglas:
 - Devuelve empleados activos paginados.
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
-- Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`.
+- Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`. Desde 2026-11-03 `dailyBreakdown[]` también lleva `dayOff: { notes, activityShifts, activityMinutes } | null` e incluye los días con franco aunque no tengan horas; la contabilidad de la grilla, "Por persona", el export, el resumen y el dashboard excluyen las horas automáticas de jornadas en franco (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7).
 
 ## Exportaciones
 
@@ -1819,7 +1822,28 @@ Todas las rutas requieren `requireAuth`.
 - `GET /holiday-work/dates?from=YYYY-MM-DD&to=YYYY-MM-DD` (rango máximo 400 días): delega en `workforceService.holidayDatesInRange` (`workforce-management`, reutiliza `calendarPreview(kind=FERIADO)` sin duplicar el cálculo de calendario — ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`). Devuelve `[{ date, rules: [{ id, name }] }]` — nunca `multiplier`/`priority`/`hasOverlap`/`hasConflict` (eso es de liquidación, no de esta pantalla).
 - `GET /holiday-work/candidates`: empleados `status=ACTIVO` dentro del alcance del usuario (`employeeAccessWhere`), paginados (`take` máximo 500, default 100). `shiftTemplateId` filtra por `shiftAssignments` `HABILITADO`; `withoutShift=true` filtra a quienes no tienen ninguna. Devuelve, por empleado, su sector y sus turnos habituales activos.
 - `GET /holiday-work/assignments?date=YYYY-MM-DD`: convocatorias `status=ACTIVA` para esa fecha, dentro del alcance del usuario.
-- `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones.
+- `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones. Desde 2026-11-03 convocar (`ACTIVA`) a alguien con franco activo esa fecha responde `409 HOLIDAY_WORK_CONFLICTS_DAY_OFF` (`docs/decisions/EMPLOYEE_DAY_OFF.md` §5).
+
+### Francos (`employee-day-offs`, montado en `/api/employee-day-offs`)
+
+`docs/decisions/EMPLOYEE_DAY_OFF.md`. Un franco = esa persona no tiene obligación de trabajar esa fecha operativa. Todas las rutas requieren `requireAuth`, roles RRHH/Supervisión/Carga Horaria, y operan dentro de `employeeAccessWhere(user)`. Sin caché backend propia.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/?period=YYYY-MM&status?&page&take` | Francos (`ACTIVO`/`CANCELADO`) del período visibles para el usuario. `{ data: [{ id, employeeId, date, status, notes, createdAt, updatedAt, employee }], meta }`. `take` ≤ 500. |
+| GET | `/by-date?date=YYYY-MM-DD&search&page&take` | Para el modal: personas `ACTIVO` del alcance con `{ employee, dayOff: { id, status, notes, updatedAt } \| null, holidayWork, periodLocked }`. `take` ≤ 200 (default 50). |
+| PUT | `/` | Guardado en lote. |
+
+`PUT /api/employee-day-offs` — body `{ date: "YYYY-MM-DD", correctionReason?, employees: [{ employeeId, status: "ACTIVO" | "CANCELADO", notes? }] }` (1..500 personas). Cada ítem es un upsert de `(employeeId, date)`; nunca reemplaza la fecha. Sin `notes` se conserva la nota guardada; `null`/vacío la borra. Respuesta `{ data: { date, items, summary: { changed, unchanged, activityAlerts, resolvedActivityAlerts, resolvedInactivityIncidents } } }`.
+
+- Idempotente: un ítem sin cambios no escribe ni audita; `CANCELADO` sobre una persona sin franco no crea nada. Nunca borra: cancelar deja `CANCELADO`, reactivar vuelve a `ACTIVO`.
+- `400 DAY_OFF_DUPLICATE_EMPLOYEE`: la misma persona dos veces en el lote.
+- `403 EMPLOYEE_SCOPE_FORBIDDEN`: alguna persona fuera del alcance; no se guarda nada del lote.
+- `409 PERIOD_CLOSED`: período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE` y quien guarda no es RRHH. RRHH sin `correctionReason` → `400 DAY_OFF_CORRECTION_REASON_REQUIRED`; con motivo se guarda y se audita (el snapshot del cierre protegido no se reconstruye).
+- `409 DAY_OFF_CONFLICTS_HOLIDAY_WORK`: la persona está convocada (`HolidayWorkAssignment` `ACTIVA`) ese día.
+- `409 DAY_OFF_CONCURRENT_UPDATE`: garantía final del `@@unique(employeeId, date)` (el advisory lock por empleado + fecha ya serializa guardados concurrentes).
+- En la misma transacción: alertas `ACTIVIDAD_EN_FRANCO` (con notificación `ALERTA_FICHADA`) para jornadas del fichador de esa fecha operativa al activar, resolución automática de esas alertas pendientes al cancelar, resolución de incidentes de inactividad pendientes de esa fecha al activar, y recálculo de snapshots de cierres no protegidos.
+- Auditoría `EmployeeDayOff` por fila cambiada (`CREATE`/`ACTIVATE`/`DEACTIVATE`/`UPDATE`), con before/after. Invalida `time-grid`, `period-employees`/Por persona/resumen/asistencia, dashboard, cierres, alertas y notificaciones.
 
 ### Gestión de fuerza laboral (`workforce-management`, montado en `/api/workforce`)
 

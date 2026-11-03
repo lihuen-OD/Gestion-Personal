@@ -41,7 +41,10 @@ export type ShiftAlertTypeValue =
   | "POSIBLE_OLVIDO_SALIDA"
   | "CONCEPTO_NO_HABILITADO"
   | "SEGMENTO_SIN_CLASIFICAR"
-  | "JORNADA_FUERA_DE_TURNO";
+  | "JORNADA_FUERA_DE_TURNO"
+  // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada del fichador en un día de
+  // franco. La crea employee-day-offs (post-proceso y guardado del franco).
+  | "ACTIVIDAD_EN_FRANCO";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
@@ -59,6 +62,7 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   CONCEPTO_NO_HABILITADO: "ADVERTENCIA",
   SEGMENTO_SIN_CLASIFICAR: "ADVERTENCIA",
   JORNADA_FUERA_DE_TURNO: "ADVERTENCIA",
+  ACTIVIDAD_EN_FRANCO: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -82,6 +86,7 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   CONCEPTO_NO_HABILITADO: "Concepto horario detectado pero no habilitado para el empleado",
   SEGMENTO_SIN_CLASIFICAR: "Tramo de jornada sin concepto horario compatible",
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
+  ACTIVIDAD_EN_FRANCO: "Actividad registrada en día de franco",
 };
 
 const DEFAULT_ALERT_NOTIFICATION_MESSAGE = "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.";
@@ -96,6 +101,9 @@ const messageByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
     "La persona registró una fichada, pero no tiene un turno asignado compatible para ese horario. Revisá si corresponde asignarle un turno.",
   JORNADA_FUERA_DE_TURNO:
     "La jornada registrada no tuvo superposición con el turno asignado para ese día.",
+  // Situación para revisión, nunca un incumplimiento (EMPLOYEE_DAY_OFF.md §9).
+  ACTIVIDAD_EN_FRANCO:
+    "La persona tenía franco asignado para esta fecha y registró actividad. Revisá si corresponde reconocer horas trabajadas.",
 };
 
 /**

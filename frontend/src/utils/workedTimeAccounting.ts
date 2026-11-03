@@ -29,6 +29,7 @@ export function emptyPeriodAccounting(): PeriodAccounting {
     withinBaseExcessMinutes: 0,
     additiveMinutes: 0,
     totalWorkedMinutes: 0,
+    dayOffUncountedMinutes: 0,
     settlement: { normalMinutes: 0, withinBaseMinutes: 0, additiveMinutes: 0, totalMinutes: 0 },
     concepts: [],
   };
