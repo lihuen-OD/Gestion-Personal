@@ -4,6 +4,22 @@
 
 Guía breve para levantar el backend real y preparar el frontend para empezar a consumir API.
 
+## TypeScript en VS Code
+
+Con la raíz `Gestion-Personal` abierta, `.vscode/settings.json` ofrece el
+SDK de `backend/node_modules/typescript/lib`. Ejecutar **TypeScript: Select
+TypeScript Version → Use Workspace Version** con un archivo `.ts` abierto.
+El editor debe usar la versión instalada por el proyecto (actualmente 5.9.3
+en los tres paquetes), igual que los comandos de validación.
+
+Un editor con TypeScript 6 puede advertir que `moduleResolution: "Node"`
+(alias de `node10`, usado por el backend CommonJS) está deprecado. No agregar
+`ignoreDeprecations: "6.0"` mientras el compilador del proyecto sea 5.9:
+lo rechaza con TS5103. La migración real a un resolver moderno queda
+pendiente; requiere adaptar los imports dinámicos sin extensión y validar
+los tests, además de cambiar `module`/`moduleResolution` juntos. Seleccionar
+el SDK del proyecto alinea el editor; no constituye esa migración.
+
 ## Backend
 
 Entrar a:
