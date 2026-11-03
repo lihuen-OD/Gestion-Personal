@@ -312,6 +312,11 @@ enum ShiftAlertType {
   // un incumplimiento: las horas automáticas no computan hasta que un
   // responsable las reconozca.
   ACTIVIDAD_EN_FRANCO
+  // Jornada del fichador sobre una fecha que ya tenía horas cargadas a mano
+  // (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md). Las horas manuales siguen
+  // computando y la fichada queda como evidencia hasta que un responsable
+  // decide cuál conservar.
+  ACTIVIDAD_SOBRE_CARGA_MANUAL
 }
 
 enum ShiftAlertStatus {

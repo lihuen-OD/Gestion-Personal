@@ -44,6 +44,11 @@ export const shiftAlertService = {
     const before = await shiftAlertRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("No encontramos la alerta solicitada", 404, "SHIFT_ALERT_NOT_FOUND");
     if (before.status !== "PENDIENTE") throw new AppError("La alerta ya fue resuelta", 400, "SHIFT_ALERT_ALREADY_RESOLVED");
+    // MANUAL_HOURS_VS_CLOCK_PUNCH.md: esta revisión exige elegir qué horas
+    // computan; resolverla acá la cerraría sin decisión.
+    if (before.type === "ACTIVIDAD_SOBRE_CARGA_MANUAL") {
+      throw new AppError("Esta revisión se resuelve desde Carga de horas, eligiendo qué horas se computan.", 409, "SHIFT_ALERT_REQUIRES_HOURS_DECISION");
+    }
     const item = await execute(() => shiftAlertRepository.resolve(id, input.resolution, input.reason, user.id));
     await auditService.register({
       ...audit,

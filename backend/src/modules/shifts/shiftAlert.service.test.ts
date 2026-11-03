@@ -36,6 +36,13 @@ beforeEach(() => {
 });
 
 describe("shiftAlertService.resolve", () => {
+  it("no cierra una revisión de fichada sobre horas cargadas a mano: esa exige elegir qué horas computan (MANUAL_HOURS_VS_CLOCK_PUNCH.md)", async () => {
+    repo.findById.mockResolvedValue({ ...pendingAlert, type: "ACTIVIDAD_SOBRE_CARGA_MANUAL" });
+
+    await expect(shiftAlertService.resolve("alert-1", { resolution: "RESUELTA", reason: "Visto" }, user)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_ALERT_REQUIRES_HOURS_DECISION" });
+    expect(repo.resolve).not.toHaveBeenCalled();
+  });
+
   it("resuelve la alerta con un userId real (camino feliz)", async () => {
     repo.findById.mockResolvedValue(pendingAlert);
     repo.resolve.mockResolvedValue({ ...pendingAlert, status: "RESUELTA" });

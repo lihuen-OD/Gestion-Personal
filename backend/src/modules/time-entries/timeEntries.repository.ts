@@ -9,7 +9,18 @@ import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePe
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { dayOffsWithin, loadDayOffAccounting, periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
-import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
+import {
+  calendarDatesOf,
+  candidateDateKeys,
+  hasManualNormalEntryOnStartDate,
+  MANUAL_HOURS_CONFLICT_ALERT_TYPE,
+  MANUAL_HOURS_SHIFT_NOTE,
+  manualHoursDateKeys,
+  needsOperationalDate,
+  operationalDateKeyForShift,
+} from "./manualHoursConflict";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import { laborHistoryService } from "../labor-history/laborHistory.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
@@ -23,6 +34,7 @@ import {
   accountingBreakdownSelect,
   countedBreakdownStatusWhere,
   emptyPeriodAccounting,
+  isAutomaticTimeEntrySource,
   toAccountingBaseEntry,
   toAccountingBreakdown,
   totalWorkedHours,
@@ -698,6 +710,101 @@ function resolvePeriodStatus(statuses: string[]) {
 // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): texto de negocio para jornadas
 // cuyas horas caen en un período protegido.
 const CLOSED_PERIOD_SHIFT_NOTE = "Período enviado o aprobado: la fichada se registró pero sus horas no se cargaron automáticamente. Requiere corrección explícita de RRHH.";
+
+/**
+ * Una sola fila por persona, fecha y concepto. Si la existente la fijó el
+ * fichador, la vía para reemplazar ese valor es corregir esa carga (RRHH con
+ * motivo), nunca una segunda carga (MANUAL_HOURS_VS_CLOCK_PUNCH.md, caso 3).
+ */
+export function duplicateTimeEntryError(existingSource: WorkShiftSource | null) {
+  if (isAutomaticTimeEntrySource(existingSource)) {
+    return new AppError(
+      "Esa fecha ya tiene horas registradas por el fichador. Para reemplazarlas, corregí esa carga desde el detalle del día.",
+      409,
+      "TIME_ENTRY_CLOCK_HOURS_EXIST",
+    );
+  }
+  return new AppError("Time entry already exists for this employee, date and hour concept", 409, "TIME_ENTRY_DUPLICATED");
+}
+
+/** Texto de Horas Especiales que acompaña a la carga generada por una fichada. */
+export function specialHoursRulesNote(matchedRules: Array<{ name: string }>, multiplier: number, minutes: number) {
+  if (!matchedRules.length) return "";
+  const workedHours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  const workedDuration = workedHours > 0
+    ? `${workedHours} h${remainingMinutes > 0 ? ` ${remainingMinutes} min` : ""}`
+    : `${remainingMinutes} min`;
+  return ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador x${multiplier} · ${workedDuration} trabajadas.`;
+}
+
+/**
+ * Lo que una jornada del fichador escribe en la fila de Horas base de una
+ * fecha. Lo usan la salida (closeOpenWorkShift) y "Usar horas fichadas"
+ * (MANUAL_HOURS_VS_CLOCK_PUNCH.md), así ambas dejan exactamente la misma fila.
+ */
+export type ClockNormalEntryTarget = {
+  employeeId: string;
+  normalHourConceptId: string;
+  workShiftId: string;
+  source: WorkShiftSource;
+  date: Date;
+  minutes: number;
+  // null sólo al resolver una carga manual en la fecha operativa sin tramos
+  // de esa jornada (la fila queda en 0 h, vinculada a la jornada).
+  lastSegment: { id: string; startAt: Date; endAt: Date } | null;
+  multiplier: number;
+  rulesNote: string;
+};
+
+export function clockNormalEntryCreateData(target: ClockNormalEntryTarget) {
+  return {
+    employeeId: target.employeeId,
+    hourConceptId: target.normalHourConceptId,
+    workShiftId: target.workShiftId,
+    timeSegmentId: target.lastSegment?.id ?? null,
+    date: target.date,
+    period: periodFromCalendarDate(target.date),
+    day: dayOfMonthFromCalendarDate(target.date),
+    hours: target.minutes / 60,
+    totalMinutes: target.minutes,
+    actualMinutes: target.minutes,
+    appliedMultiplier: target.multiplier,
+    status: "APROBADO" as const,
+    segmentStartAt: target.lastSegment?.startAt ?? null,
+    segmentEndAt: target.lastSegment?.endAt ?? null,
+    source: target.source,
+    observation: `${FICHADA_ORIGIN_NOTE}${target.rulesNote}`,
+  };
+}
+
+/**
+ * MERGE: otra jornada fichada del mismo día suma sus minutos a la fila
+ * automática existente. REPLACE: "Usar horas fichadas" reemplaza el valor que
+ * había fijado una persona (la carga anterior queda en la observación y en la
+ * auditoría).
+ */
+export function clockNormalEntryUpdateData(existing: { actualMinutes: number | null; totalMinutes: number; observation: string | null }, target: ClockNormalEntryTarget, mode: "MERGE" | "REPLACE", replacementNote = "") {
+  // Etapa 8F: ver misma nota en createFromWorkShift — hours/totalMinutes/
+  // actualMinutes son siempre minutos reales, nunca el valor multiplicado por
+  // una Hora Especial, y se recalculan desde actualMinutes para autocorregir
+  // cualquier TimeEntry legado.
+  const nextRealMinutes = (mode === "MERGE" ? existing.actualMinutes ?? existing.totalMinutes : 0) + target.minutes;
+  const currentObservation = existing.observation ? `${existing.observation}\n` : "";
+  return {
+    workShiftId: target.workShiftId,
+    timeSegmentId: target.lastSegment?.id ?? null,
+    hours: nextRealMinutes / 60,
+    totalMinutes: nextRealMinutes,
+    actualMinutes: nextRealMinutes,
+    appliedMultiplier: target.multiplier,
+    source: target.source,
+    segmentStartAt: target.lastSegment?.startAt ?? null,
+    segmentEndAt: target.lastSegment?.endAt ?? null,
+    observation: `${currentObservation}${replacementNote}${FICHADA_ORIGIN_NOTE}${target.rulesNote}`,
+    status: "APROBADO" as const,
+  };
+}
 
 export const timeEntriesRepository = {
   // F7: chequeo previo (sin lock) del cooldown, antes de guardar la foto. La
@@ -1680,7 +1787,7 @@ export const timeEntriesRepository = {
           data: { status: WorkShiftStatus.FALTA_SALIDA, totalMinutes: 0, hourConceptId: concept.id, hourConceptName: concept.name, observation: isProtected ? `${observation} ${CLOSED_PERIOD_SHIFT_NOTE}` : observation, closedAt: now },
         });
         if (updated.count !== 1) continue;
-        if (isProtected) {
+        if (isProtected || await hasManualNormalEntryOnStartDate(tx, { employeeId: shift.employeeId, hourConceptId: concept.id, startAt: shift.startAt })) {
           count += 1;
           items.push({ employeeId: shift.employeeId, workShiftId: shift.id, startAt: shift.startAt });
           continue;
@@ -1804,7 +1911,7 @@ export const timeEntriesRepository = {
         },
       });
       if (claimed.count !== 1) throw new Error("WORK_SHIFT_ALREADY_CLOSED");
-      if (previous && previousConcept && !previousProtected) {
+      if (previous && previousConcept && !previousProtected && !await hasManualNormalEntryOnStartDate(tx, { employeeId: input.employeeId, hourConceptId: previousConcept.id, startAt: previous.startAt })) {
         await tx.timeEntry.create({
           data: {
             employeeId: input.employeeId,
@@ -1930,7 +2037,7 @@ export const timeEntriesRepository = {
         date,
         ...(exceptId ? { id: { not: exceptId } } : {}),
       },
-      select: { id: true },
+      select: { id: true, source: true },
     });
   },
 
@@ -1997,6 +2104,16 @@ export const timeEntriesRepository = {
       await assertClosurePeriodsWritable(tx, [{ employeeId: input.employeeId, period: periodFromCalendarDate(input.date) }], {
         message: "El período ya fue enviado a cierre. No se pueden cargar horas nuevas — pedile a RRHH que reabra el cierre si hace falta agregar algo.",
       });
+      // MANUAL_HOURS_VS_CLOCK_PUNCH.md: el mismo lock persona+día que toma la
+      // salida del fichador. La verificación de duplicado del servicio corre
+      // antes y sin lock; acá se repite serializada, así una salida
+      // concurrente nunca deja dos filas ni suma la carga a la fichada.
+      await lockEmployeeDays(tx, [{ employeeId: input.employeeId, dateKey: calendarDateKey(input.date) }]);
+      const duplicate = await tx.timeEntry.findFirst({
+        where: { employeeId: input.employeeId, hourConceptId: input.hourConceptId, date: input.date },
+        select: { id: true, source: true },
+      });
+      if (duplicate) throw duplicateTimeEntryError(duplicate.source);
       return tx.timeEntry.create({
       data: {
         employeeId: input.employeeId,
@@ -2292,7 +2409,7 @@ export const timeEntriesRepository = {
       });
       if (!input.prepareEvidence) await linkPunchEvidence(tx, endPunch.id, evidence);
 
-      const [workShift] = await tx.workShift.updateManyAndReturn({
+      let [workShift] = await tx.workShift.updateManyAndReturn({
         where: {
           id: input.workShiftId,
           employeeId: input.employeeId,
@@ -2335,14 +2452,34 @@ export const timeEntriesRepository = {
       // sin ORDER BY. No fusiona ni borra el duplicado — sólo hace
       // predecible cuál de las filas sigue acumulando hacia adelante.
       // PERF-5A: sólo los campos que usa el acumulado de abajo.
-      const existingEntries = uniqueDates.length
-        ? await tx.timeEntry.findMany({
-            where: { employeeId: input.employeeId, hourConceptId: input.normalHourConceptId, date: { in: uniqueDates } },
-            select: { id: true, date: true, status: true, actualMinutes: true, totalMinutes: true, observation: true },
-            orderBy: { createdAt: "asc" },
-          })
-        : [];
+      // MANUAL_HOURS_VS_CLOCK_PUNCH.md: esta salida y una carga manual de las
+      // mismas fechas se serializan por persona+día (el lock de francos), así
+      // una carga concurrente nunca termina sumada a la fichada ni duplicada.
+      // Se leen también las fechas vecinas: la fecha operativa puede no tener
+      // tramos.
+      const segmentDateKeys = uniqueDates.map(calendarDateKey);
+      const candidateKeys = candidateDateKeys(segmentDateKeys);
+      await lockEmployeeDays(tx, candidateKeys.map((dateKey) => ({ employeeId: input.employeeId, dateKey })));
+      const existingEntries = await tx.timeEntry.findMany({
+        where: { employeeId: input.employeeId, hourConceptId: input.normalHourConceptId, date: { in: calendarDatesOf(candidateKeys) } },
+        select: { id: true, date: true, status: true, source: true, actualMinutes: true, totalMinutes: true, observation: true },
+        orderBy: { createdAt: "asc" },
+      });
       const existingByDate = new Map(existingEntries.map((entry) => [entry.date.getTime(), entry]));
+      // Horas manuales en la jornada: la salida se registra igual, pero no
+      // carga horas en NINGUNA de sus fechas (una nocturna es un solo
+      // conflicto) ni toca la carga manual; la jornada queda observada con su
+      // alerta para que un responsable decida (la notificación sale del
+      // post-proceso, fuera de esta transacción).
+      const operationalDateKey = needsOperationalDate(existingEntries, segmentDateKeys) ? await operationalDateKeyForShift(tx, workShift) : null;
+      const heldForManualHours = manualHoursDateKeys(existingEntries, segmentDateKeys, operationalDateKey).length > 0;
+      if (heldForManualHours) {
+        workShift = await tx.workShift.update({
+          where: { id: workShift.id },
+          data: { status: "OBSERVADO", observation: [workShift.observation, MANUAL_HOURS_SHIFT_NOTE].filter(Boolean).join(" · ") },
+        });
+        await createShiftAlert({ employeeId: input.employeeId, workShiftId: workShift.id, type: MANUAL_HOURS_CONFLICT_ALERT_TYPE, actualAt: input.endAt, notify: false, db: tx });
+      }
 
       const timeSegments = [];
       const pendingRuleApplications: Prisma.SpecialHourRuleApplicationCreateManyInput[] = [];
@@ -2396,14 +2533,7 @@ export const timeEntriesRepository = {
         // §3.9) — todos los tramos de una misma fecha comparten exactamente
         // el mismo `multiplier`/`matchedRules`, así que sobreescribir acá es
         // seguro y equivalente a calcularlo una sola vez por fecha.
-        const workedHours = Math.floor(segment.minutes / 60);
-        const remainingMinutes = segment.minutes % 60;
-        const workedDuration = workedHours > 0
-          ? `${workedHours} h${remainingMinutes > 0 ? ` ${remainingMinutes} min` : ""}`
-          : `${remainingMinutes} min`;
-        const rulesNote = matchedRules.length > 0
-          ? ` Reglas aplicadas: ${matchedRules.map((rule) => rule.name).join(", ")}. Multiplicador x${multiplier} · ${workedDuration} trabajadas.`
-          : "";
+        const rulesNote = specialHoursRulesNote(matchedRules, multiplier, segment.minutes);
         const dateKey = segment.date.getTime();
         dailyNormalMinutes.set(dateKey, (dailyNormalMinutes.get(dateKey) ?? 0) + segment.minutes);
         lastSegmentByDate.set(dateKey, { id: timeSegment.id, startAt: segment.startAt, endAt: segment.endAt });
@@ -2412,7 +2542,7 @@ export const timeEntriesRepository = {
 
       const entries = [];
       for (const [dateKey, minutes] of dailyNormalMinutes) {
-        if (isProtectedDate(new Date(dateKey))) continue;
+        if (heldForManualHours || isProtectedDate(new Date(dateKey))) continue;
         const existing = existingByDate.get(dateKey) ?? null;
 
         if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
@@ -2422,52 +2552,23 @@ export const timeEntriesRepository = {
         const lastSegment = lastSegmentByDate.get(dateKey)!;
         const { multiplier, rulesNote } = dailyMultiplier.get(dateKey)!;
 
+        const target: ClockNormalEntryTarget = {
+          employeeId: input.employeeId,
+          normalHourConceptId: input.normalHourConceptId,
+          workShiftId: workShift.id,
+          source: shiftSource,
+          date: new Date(dateKey),
+          minutes,
+          lastSegment,
+          multiplier,
+          rulesNote,
+        };
         if (existing) {
-          // Etapa 8F: ver misma nota en createFromWorkShift — hours/
-          // totalMinutes/actualMinutes son siempre minutos reales, nunca el
-          // valor multiplicado por una Hora Especial, y se recalculan desde
-          // actualMinutes para autocorregir cualquier TimeEntry legado.
-          const nextRealMinutes = (existing.actualMinutes ?? existing.totalMinutes) + minutes;
-          const currentObservation = existing.observation ? `${existing.observation}\n` : "";
-          const update = {
-            where: { id: existing.id },
-            data: {
-              workShiftId: workShift.id,
-              timeSegmentId: lastSegment.id,
-              hours: nextRealMinutes / 60,
-              totalMinutes: nextRealMinutes,
-              actualMinutes: nextRealMinutes,
-              appliedMultiplier: multiplier,
-              source: shiftSource,
-              segmentStartAt: lastSegment.startAt,
-              segmentEndAt: lastSegment.endAt,
-              observation: `${currentObservation}${FICHADA_ORIGIN_NOTE}${rulesNote}`,
-              status: "APROBADO" as const,
-            },
-          };
+          const update = { where: { id: existing.id }, data: clockNormalEntryUpdateData(existing, target, "MERGE") };
           if (input.returnEntries === false) await tx.timeEntry.update({ ...update, select: { id: true } });
           else entries.push(await tx.timeEntry.update({ ...update, include: timeEntryInclude }));
         } else {
-          const create = {
-            data: {
-              employeeId: input.employeeId,
-              hourConceptId: input.normalHourConceptId,
-              workShiftId: workShift.id,
-              timeSegmentId: lastSegment.id,
-              date: new Date(dateKey),
-              period: periodFromCalendarDate(new Date(dateKey)),
-              day: dayOfMonthFromCalendarDate(new Date(dateKey)),
-              hours: minutes / 60,
-              totalMinutes: minutes,
-              actualMinutes: minutes,
-              appliedMultiplier: multiplier,
-              status: "APROBADO" as const,
-              segmentStartAt: lastSegment.startAt,
-              segmentEndAt: lastSegment.endAt,
-              source: shiftSource,
-              observation: `${FICHADA_ORIGIN_NOTE}${rulesNote}`,
-            },
-          };
+          const create = { data: clockNormalEntryCreateData(target) };
           if (input.returnEntries === false) await tx.timeEntry.create({ ...create, select: { id: true } });
           else entries.push(await tx.timeEntry.create({ ...create, include: timeEntryInclude }));
         }

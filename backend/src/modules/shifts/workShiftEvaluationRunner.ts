@@ -44,7 +44,10 @@ export type ShiftAlertTypeValue =
   | "JORNADA_FUERA_DE_TURNO"
   // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada del fichador en un día de
   // franco. La crea employee-day-offs (post-proceso y guardado del franco).
-  | "ACTIVIDAD_EN_FRANCO";
+  | "ACTIVIDAD_EN_FRANCO"
+  // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: jornada del fichador sobre
+  // una fecha con horas cargadas a mano. La crea time-entries (post-proceso).
+  | "ACTIVIDAD_SOBRE_CARGA_MANUAL";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
@@ -63,6 +66,7 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   SEGMENTO_SIN_CLASIFICAR: "ADVERTENCIA",
   JORNADA_FUERA_DE_TURNO: "ADVERTENCIA",
   ACTIVIDAD_EN_FRANCO: "ADVERTENCIA",
+  ACTIVIDAD_SOBRE_CARGA_MANUAL: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -87,6 +91,12 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   SEGMENTO_SIN_CLASIFICAR: "Tramo de jornada sin concepto horario compatible",
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
   ACTIVIDAD_EN_FRANCO: "Actividad registrada en día de franco",
+  ACTIVIDAD_SOBRE_CARGA_MANUAL: "Actividad fichada sobre horas cargadas manualmente",
+};
+
+// Destino del aviso: Asistencia, salvo los tipos que se deciden en otra pantalla.
+const linkByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
+  ACTIVIDAD_SOBRE_CARGA_MANUAL: "/horas",
 };
 
 const DEFAULT_ALERT_NOTIFICATION_MESSAGE = "La fichada requiere seguimiento. Las horas no fueron modificadas automáticamente.";
@@ -104,6 +114,8 @@ const messageByAlertType: Partial<Record<ShiftAlertTypeValue, string>> = {
   // Situación para revisión, nunca un incumplimiento (EMPLOYEE_DAY_OFF.md §9).
   ACTIVIDAD_EN_FRANCO:
     "La persona tenía franco asignado para esta fecha y registró actividad. Revisá si corresponde reconocer horas trabajadas.",
+  ACTIVIDAD_SOBRE_CARGA_MANUAL:
+    "La persona ya tenía horas cargadas manualmente para esta jornada y posteriormente registró actividad mediante el fichador. Revisá si corresponde conservar la carga manual o reemplazarla por las horas efectivamente fichadas.",
 };
 
 /**
@@ -176,35 +188,45 @@ export async function createShiftAlert(input: {
     update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes ?? undefined, severity, status: "PENDIENTE" },
   });
   if (input.notify === false) return alert;
+  await notifyShiftAlert({ id: alert.id, employeeId: input.employeeId, type: input.type, actualAt: input.actualAt }, input.db);
+  return alert;
+}
+
+/**
+ * Aviso (SystemNotification) de una alerta ya persistida. createShiftAlert lo
+ * manda al crearla; quien crea la alerta dentro de una transacción crítica con
+ * `notify=false` (la salida con horas manuales, MANUAL_HOURS_VS_CLOCK_PUNCH.md)
+ * lo manda después desde el post-proceso durable.
+ */
+export async function notifyShiftAlert(alert: { id: string; employeeId: string; type: ShiftAlertTypeValue; actualAt: Date }, db?: PrismaTransactionClient) {
   // Etapa 10E: la notificación es best-effort — un fallo acá (ej. un
   // problema transitorio de DB al insertar SystemNotification) nunca debe
   // tirar abajo la fichada real que ya se confirmó, ni impedir que la alerta
   // ya persistida quede registrada. Mismo criterio ya usado para
   // resolveOpenShiftOverflowAlert (Etapa 10B).
   try {
-    await notifyUsers(await attendanceRecipients(input.employeeId), {
+    await notifyUsers(await attendanceRecipients(alert.employeeId), {
       type: "ALERTA_FICHADA",
-      title: labelByAlertType[input.type],
-      message: messageByAlertType[input.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
+      title: labelByAlertType[alert.type],
+      message: messageByAlertType[alert.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
       entityType: "ShiftAlert",
       entityId: alert.id,
       // Congelado al crear: un upsert posterior de la alerta no mueve esta notificación.
-      eventAt: input.actualAt,
-      link: "/asistencia",
+      eventAt: alert.actualAt,
+      link: linkByAlertType[alert.type] ?? "/asistencia",
       priority: "ALTA",
-    }, db);
+    }, db ?? prisma);
   } catch (error) {
     // PERF-5D: dentro de una transacción el fallo ya la abortó; se propaga y
     // el paso entero (alerta + aviso) se reintenta junto.
-    if (input.db) throw error;
+    if (db) throw error;
     console.error("SHIFT_ALERT_NOTIFY_FAILED", {
       severity: "warning",
       shiftAlertId: alert.id,
-      type: input.type,
+      type: alert.type,
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  return alert;
 }
 
 // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):

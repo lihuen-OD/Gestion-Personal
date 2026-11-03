@@ -29,6 +29,7 @@ import {
  */
 const STEP_TX = { marker: "step-tx" };
 
+import { notifyManualHoursConflict } from "../time-entries/manualHoursConflict";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: { $transaction: vi.fn() },
 }));
@@ -61,6 +62,7 @@ vi.mock("../shifts/workShiftEvaluationRunner", () => ({
 }));
 vi.mock("../time-entries/timeEntries.service", () => ({ notifyMissingExit: vi.fn() }));
 vi.mock("../employee-day-offs/employeeDayOffActivity", () => ({ evaluateWorkShiftDayOff: vi.fn() }));
+vi.mock("../time-entries/manualHoursConflict", () => ({ notifyManualHoursConflict: vi.fn() }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ ROLLOVER_OVERFLOW_RESOLUTION_NOTE: "nota-rollover" }));
 vi.mock("../time-entries/timeEntries.cache", () => ({ clearTimeEntriesReadCaches: vi.fn() }));
 vi.mock("../audit/audit.service", () => ({ clearAuditDerivedCaches: vi.fn() }));
@@ -200,7 +202,10 @@ describe("PERF-5D — pasos del post-proceso por tipo", () => {
     expect(mockedRecalculate.mock.calls.map((call) => call[0].period)).toEqual(["2026-09", "2026-10"]);
     expect(mockedRecalculate).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "employee-1", createdByUserId: null, audit: AUDIT, withinTransaction: expect.any(Function) }));
     expect(evaluateShiftExit).toHaveBeenCalledWith("employee-1", "shift-1", new Date(ACTUAL_AT), [{ startAt: new Date("2026-10-16T03:00:00.000Z"), minutes: 540, conceptStatus: "SUGERIDO" }], undefined, { db: STEP_TX, rethrow: true });
-    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-09", "breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation]);
+    // MANUAL_HOURS_VS_CLOCK_PUNCH.md: el aviso de la jornada retenida por
+    // horas manuales sale al final, en su propio paso.
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-09", "breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation, POSTPROCESS_STEPS.manualHoursNotice]);
+    expect(notifyManualHoursConflict).toHaveBeenCalledWith("shift-1", { db: STEP_TX });
     expect(mockedRecalculate.mock.invocationCallOrder[1]).toBeLessThan(vi.mocked(evaluateShiftExit).mock.invocationCallOrder[0]!);
     // La IP y el user agent no quedan en el job completado.
     expect(repo.complete).toHaveBeenCalledWith("job-1", 1, { actualAt: ACTUAL_AT, segments: expect.any(Array) }, expect.any(Date));
@@ -260,7 +265,7 @@ describe("PERF-5D — idempotencia y fallos", () => {
 
     await expect(processClaimedClockPunchPostProcessJob(exitJob({ periods: ["2026-10"] }))).resolves.toMatchObject({ status: "COMPLETED" });
 
-    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation]);
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation, POSTPROCESS_STEPS.manualHoursNotice]);
     expect(console.error).toHaveBeenCalledWith("AUTOMATIC_BREAKDOWN_SYNC_FAILED", expect.objectContaining({ severity: "warning", code: "PERIOD_CLOSED", period: "2026-10" }));
   });
 
