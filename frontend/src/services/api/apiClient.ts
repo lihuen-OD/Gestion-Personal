@@ -125,6 +125,12 @@ const errorMessagesByCode: Record<string, string> = {
   // qué novedad/legajo generó el conflicto.
   TIME_ENTRY_NOT_FOUND: "No encontramos la carga horaria solicitada.",
   TIME_ENTRY_DUPLICATED: "Ya existe una carga para ese empleado, fecha y concepto de horas.",
+  // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md
+  TIME_ENTRY_CLOCK_HOURS_EXIST: "Esa fecha ya tiene horas registradas por el fichador. Para reemplazarlas, corregí esa carga desde el detalle del día.",
+  MANUAL_HOURS_CONFLICT_NOT_FOUND: "No encontramos la revisión solicitada.",
+  MANUAL_HOURS_CONFLICT_ALREADY_RESOLVED: "Esta revisión ya fue resuelta. Actualizá la pantalla para ver la decisión tomada.",
+  MANUAL_HOURS_CORRECTION_REASON_REQUIRED: "El período ya fue enviado o aprobado: indicá el motivo de la corrección.",
+  SHIFT_ALERT_REQUIRES_HOURS_DECISION: "Esta revisión se resuelve desde Carga de horas, eligiendo qué horas se computan.",
   TIME_ENTRY_LOCKED: "Las cargas aprobadas o cerradas no se pueden editar.",
   TIME_ENTRY_STATUS_NOT_SUBMITTABLE: "Solo se pueden enviar cargas en borrador o devueltas.",
   TIME_ENTRY_STATUS_NOT_APPROVABLE: "Solo se pueden aprobar cargas en revisión.",
@@ -142,6 +148,7 @@ const errorMessagesByCode: Record<string, string> = {
   CLOCK_DEVICE_ACTIVATION_CONFLICT: "La solicitud ya no está pendiente o el código venció.",
   CLOCK_DEVICE_NOT_ACTIVE: "Sólo se pueden revocar dispositivos activos.",
   CLOCK_DEVICE_DELETE_FORBIDDEN: "Sólo se pueden eliminar solicitudes pendientes sin actividad.",
+  CLOCK_MAINTENANCE_DEVICE_NOT_ACTIVE: "Sólo un dispositivo activo puede recibir un acceso de mantenimiento.",
   AUDIT_PARAMETER_DUPLICATED: "Ya existe un parámetro de auditoría con ese código.",
   AUDIT_PARAMETER_NOT_FOUND: "No encontramos el parámetro de auditoría solicitado.",
   STORAGE_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",

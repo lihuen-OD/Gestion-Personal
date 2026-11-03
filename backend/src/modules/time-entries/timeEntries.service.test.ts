@@ -102,6 +102,8 @@ vi.mock("../employees/automaticHourConceptBreakdowns.service", () => ({
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     monthlyTimeClosure: { findUnique: vi.fn().mockResolvedValue(null) },
+    // Francos del export (EMPLOYEE_DAY_OFF.md §7): sin francos por default.
+    employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

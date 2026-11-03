@@ -11,6 +11,8 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import type { Employee, Novelty, TimeEntry, TimeStatus } from "../types";
 import type { ApiTimeGridSpecialHourDay, EmployeeTimeGridRow } from "../services/api/employeeApiService";
+import type { TimeGridDayOff } from "../services/api/employeeDayOffApiService";
+import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { noveltyColorClass } from "../utils/noveltyColor";
@@ -151,6 +153,9 @@ export function EmployeeHoursPage() {
   // contabilidad recalculada por el backend.
   const [accounting, setAccounting] = useState<PeriodAccounting>(emptyPeriodAccounting);
   const [specialHoursByDay, setSpecialHoursByDay] = useState<Record<string, ApiTimeGridSpecialHourDay>>({});
+  // Francos activos del período (docs/decisions/EMPLOYEE_DAY_OFF.md §15): la
+  // celda de Horas base muestra "Franco" + lo que computa según el backend.
+  const [dayOffsByDay, setDayOffsByDay] = useState<Record<string, TimeGridDayOff>>({});
   const [syncing, setSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -176,6 +181,7 @@ export function EmployeeHoursPage() {
         setAttendanceIssues(grid.attendanceIssues);
         setAccounting(grid.accounting);
         setSpecialHoursByDay(grid.specialHoursByDay);
+        setDayOffsByDay(grid.dayOffsByDay);
         setLoading(false);
 
         fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
@@ -198,6 +204,7 @@ export function EmployeeHoursPage() {
         setAttendanceIssues(0);
         setAccounting(emptyPeriodAccounting());
         setSpecialHoursByDay({});
+        setDayOffsByDay({});
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -247,6 +254,7 @@ export function EmployeeHoursPage() {
       setAttendanceIssues(grid.attendanceIssues);
       setAccounting(grid.accounting);
       setSpecialHoursByDay(grid.specialHoursByDay);
+      setDayOffsByDay(grid.dayOffsByDay);
     }).catch(() => {
       // Re-sincronización silenciosa: si falla, se conserva el último estado
       // local ya actualizado de forma optimista.
@@ -319,6 +327,7 @@ export function EmployeeHoursPage() {
   // aplica igual sea la fila de Hora normal o un concepto adicional (11A.1).
   const selectedDaySpecialHour = selected ? specialHoursByDay[String(selected.day)] : undefined;
   const selectedDayAccounting = selected ? accounting.days[String(selected.day)] : undefined;
+  const selectedDayOff = selected && selectedRow?.role === "NORMAL_BASE" ? dayOffsByDay[String(selected.day)] : undefined;
   // Etapa 6L.3: RRHH ya es quien aprueba, así que su carga manual se aplica
   // directo — no tiene sentido mostrarle "Enviar a revisión" a sí mismo.
   const isRrhh = Boolean(user && roleLevel(user.role) === 1);
@@ -603,6 +612,10 @@ export function EmployeeHoursPage() {
                   </td>
                   {monthDays.map((day) => {
                     const entry = row.role === "NORMAL_BASE" ? entryFor(day, row.concept.id, row.concept.name) : undefined;
+                    // Franco: la celda dice "Franco" + lo que computa (backend);
+                    // abrirla sigue siendo el flujo de corrección que reconoce horas.
+                    const dayOff = row.role === "NORMAL_BASE" ? dayOffsByDay[String(day)] : undefined;
+                    const countedBaseMinutes = row.minutesByDay[String(day)] ?? 0;
                     const novelties = row.role === "NORMAL_BASE" ? conceptNovelties(day, row.concept.name) : [];
                     const mainNovelty = novelties[0];
                     const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
@@ -614,7 +627,7 @@ export function EmployeeHoursPage() {
                     const amount = row.role === "NORMAL_BASE" ? null : conceptDayAmount(accounting, day, row.concept.id, breakdownMinutes);
                     const cellClass = [
                       "hour-cell",
-                      entry || breakdownMinutes ? "filled" : "",
+                      dayOff ? "day-off" : entry || breakdownMinutes ? "filled" : "",
                       row.role === "NORMAL_BASE" && isBlocked(day) ? "blocked" : "",
                       noveltyVisualClass(mainNovelty),
                       amount?.pending ? "is-syncing" : "",
@@ -631,11 +644,11 @@ export function EmployeeHoursPage() {
                         {row.role === "NORMAL_BASE" ? (
                           <button
                             className={cellClass}
-                            title={[entry || isBlocked(day) ? fullDuration : "Agregar horas", ...novelties.map((novelty) => novelty.type)].filter(Boolean).join(" · ")}
-                            aria-label={`${label}, día ${day}: ${entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
+                            title={[dayOff ? dayOffDescription(dayOff, countedBaseMinutes) : entry || isBlocked(day) ? fullDuration : "Agregar horas", ...novelties.map((novelty) => novelty.type)].filter(Boolean).join(" · ")}
+                            aria-label={`${label}, día ${day}: ${dayOff ? dayOffDescription(dayOff, countedBaseMinutes) : entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
                             onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
                           >
-                            <span>{entry ? compactDuration : isBlocked(day) ? "0m" : "+"}</span>
+                            {dayOff ? <DayOffMark countedMinutes={countedBaseMinutes} /> : <span>{entry ? compactDuration : isBlocked(day) ? "0m" : "+"}</span>}
                             {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
                             {specialHourDot}
                           </button>
@@ -764,6 +777,16 @@ export function EmployeeHoursPage() {
                 </div>
               ) : null}
             </div>
+            {selectedDayOff ? (
+              <div className="info-note compact day-off">
+                <b>Franco asignado este día</b>
+                <p>
+                  No debía trabajar: las horas que registra el fichador no computan.
+                  {selectedDayOff.activityShifts > 0 ? ` Actividad registrada: ${selectedDayOff.activityMinutes > 0 ? formatDurationMinutes(selectedDayOff.activityMinutes) : "jornada abierta"}.` : ""}
+                  {" "}Si corresponde reconocer horas, cargalas o corregilas acá con un motivo: lo que guardes computa y el franco se mantiene.
+                </p>
+              </div>
+            ) : null}
             {selectedLocked ? (
               <div className="info-note compact">
                 <b>Registro aprobado</b>

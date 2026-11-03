@@ -3,6 +3,9 @@ import {
   accountDay,
   accountEmployeePeriod,
   accountEmployeePeriods,
+  applyDayOffExclusions,
+  dayOffKey,
+  isAutomaticTimeEntrySource,
   toAccountingBaseEntry,
   toAccountingBreakdown,
   withinBaseCoverageMinutes,
@@ -219,7 +222,98 @@ describe("workedTimeAccounting — fórmulas oficiales", () => {
   });
 
   it("adaptadores Prisma: horas decimales a minutos, multiplicador Decimal, tratamiento obligatorio", () => {
-    expect(toAccountingBaseEntry({ employeeId: EMPLOYEE, day: 3, hours: "7.5", appliedMultiplier: "2.00" })).toEqual({ employeeId: EMPLOYEE, day: 3, minutes: 450, multiplier: 2 });
+    expect(toAccountingBaseEntry({ employeeId: EMPLOYEE, day: 3, hours: "7.5", appliedMultiplier: "2.00" })).toEqual({ employeeId: EMPLOYEE, day: 3, minutes: 450, multiplier: 2, automatic: false });
     expect(() => toAccountingBreakdown({ employeeId: EMPLOYEE, day: 1, hourConceptId: "x", minutes: 60, hourConcept: { workTreatment: null } })).toThrow();
+  });
+});
+
+
+// docs/decisions/EMPLOYEE_DAY_OFF.md §7: en un franco no computan las horas
+// automáticas de jornadas de esa fecha operativa; lo cargado o corregido por
+// una persona sí. El índice simula lo que arma loadDayOffAccounting.
+describe("workedTimeAccounting — francos", () => {
+  const DATE = "2026-11-05";
+  const DAY = 5;
+  const autoBase = (hours: number, overrides: Partial<AccountingBaseEntry> = {}): AccountingBaseEntry => ({ ...base(hours, 1, DAY), dateKey: DATE, automatic: true, ...overrides });
+  const index = (excluded: Record<string, number>, shifts: string[] = ["shift-franco"]) => ({
+    excludedBaseMinutes: new Map(Object.entries(excluded).map(([date, minutes]) => [dayOffKey(EMPLOYEE, date), minutes])),
+    excludedWorkShiftIds: new Set(shifts),
+    dayOffDates: new Set([dayOffKey(EMPLOYEE, DATE)]),
+  });
+
+  it("señal: sólo los canales del fichador son automáticos; null (carga manual) y ADMIN (registrado/corregido por una persona) no", () => {
+    for (const source of ["KIOSK", "PUBLIC_CLOCK_PHOTO", "PORTAL_DNI", "BIOTIME", "FACIAL"] as const) expect(isAutomaticTimeEntrySource(source)).toBe(true);
+    expect(isAutomaticTimeEntrySource("ADMIN")).toBe(false);
+    expect(isAutomaticTimeEntrySource(null)).toBe(false);
+    expect(toAccountingBaseEntry({ employeeId: EMPLOYEE, day: DAY, hours: 8, date: new Date(`${DATE}T00:00:00.000Z`), source: "KIOSK" })).toMatchObject({ dateKey: DATE, automatic: true });
+  });
+
+  it("franco sin actividad → 0 h (no hay filas que contar)", () => {
+    const period = accountEmployeePeriod([], [], index({}, []));
+    expect(period.totalWorkedMinutes).toBe(0);
+  });
+
+  it("franco con fichada de 8 h (automática) → 0 h computadas, 8 h registradas sin computar", () => {
+    const period = accountEmployeePeriod([autoBase(8)], [], index({ [DATE]: 8 * H }));
+
+    expect(period.totalWorkedMinutes).toBe(0);
+    expect(period.baseMinutes).toBe(0);
+    expect(period.days[String(DAY)]).toMatchObject({ baseMinutes: 0, totalWorkedMinutes: 0, dayOffUncountedMinutes: 8 * H });
+    expect(period.dayOffUncountedMinutes).toBe(8 * H);
+  });
+
+  it("franco con fichada corregida a mano por un responsable (source ADMIN) → computan las horas reconocidas", () => {
+    const period = accountEmployeePeriod([autoBase(8, { automatic: false })], [], index({ [DATE]: 8 * H }));
+
+    expect(period.totalWorkedMinutes).toBe(8 * H);
+    expect(period.dayOffUncountedMinutes).toBe(0);
+  });
+
+  it("franco + carga manual de 6 h sin fichada → 6 h computadas", () => {
+    const period = accountEmployeePeriod([autoBase(6, { automatic: false })], [], index({}, []));
+    expect(period.totalWorkedMinutes).toBe(6 * H);
+  });
+
+  it("franco cancelado (índice sin franco) → las mismas 8 h automáticas vuelven a computar", () => {
+    const period = accountEmployeePeriod([autoBase(8)], []);
+    expect(period.totalWorkedMinutes).toBe(8 * H);
+  });
+
+  it("fila automática que mezcla una jornada en franco (2 h) y otra que no (3 h): sólo se descuenta la del franco", () => {
+    const period = accountEmployeePeriod([autoBase(5)], [], index({ [DATE]: 2 * H }));
+    expect(period.totalWorkedMinutes).toBe(3 * H);
+    expect(period.dayOffUncountedMinutes).toBe(2 * H);
+  });
+
+  it("el descuento nunca deja minutos negativos (tope: los minutos de la fila)", () => {
+    const period = accountEmployeePeriod([autoBase(1)], [], index({ [DATE]: 8 * H }));
+    expect(period.totalWorkedMinutes).toBe(0);
+    expect(period.dayOffUncountedMinutes).toBe(H);
+  });
+
+  it("desgloses: AUTOMATIC de la jornada en franco no computa; MANUAL sí; AUTOMATIC sin jornada se atribuye por la fecha del franco", () => {
+    const automaticSereno = { ...sereno(2, 1, DAY), dateKey: DATE, automatic: true, workShiftId: "shift-franco" };
+    const otherShiftSereno = { ...sereno(1, 1, DAY), dateKey: DATE, automatic: true, workShiftId: "shift-otra" };
+    const legacyColectivo = { ...colectivo(1, 1, DAY), dateKey: DATE, automatic: true, workShiftId: null };
+    const manualColectivo = { ...colectivo(2, 1, DAY), dateKey: DATE, automatic: false };
+
+    const result = applyDayOffExclusions([], [automaticSereno, otherShiftSereno, legacyColectivo, manualColectivo], index({}));
+
+    expect(result.excludedBreakdowns).toEqual([automaticSereno, legacyColectivo]);
+    expect(result.breakdowns).toEqual([otherShiftSereno, manualColectivo]);
+  });
+
+  it("sin francos devuelve exactamente las mismas filas (ningún costo ni cambio para el resto de los días)", () => {
+    const entries = [autoBase(8)];
+    const result = applyDayOffExclusions(entries, []);
+    expect(result.baseEntries).toBe(entries);
+    expect(result.uncountedBase).toEqual([]);
+  });
+
+  it("varios empleados: el franco de uno nunca descuenta horas del otro", () => {
+    const other = { ...autoBase(8), employeeId: "emp-2" };
+    const result = accountEmployeePeriods([autoBase(8), other], [], index({ [DATE]: 8 * H }));
+    expect(result.get(EMPLOYEE)!.totalWorkedMinutes).toBe(0);
+    expect(result.get("emp-2")!.totalWorkedMinutes).toBe(8 * H);
   });
 });

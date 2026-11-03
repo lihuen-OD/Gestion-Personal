@@ -13,6 +13,7 @@ import { ErrorState } from "../components/ui/ErrorState";
 import { shiftAlertApiService, type ShiftAlert, type ShiftAlertSeverity, type ShiftAlertStatus, type ShiftAlertType } from "../services/api/shiftAlertApiService";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { formatDateTime } from "../utils/date";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
 
 // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md, ajuste final):
 // esta página ya NO ofrece "Crear novedad" -- el flujo principal para
@@ -40,7 +41,16 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado",
   SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
+  // Situación para revisión (EMPLOYEE_DAY_OFF.md §9), nunca un incumplimiento.
+  ACTIVIDAD_EN_FRANCO: "Actividad en día de franco",
+  // Se decide en Carga de horas (MANUAL_HOURS_VS_CLOCK_PUNCH.md), nunca un incumplimiento.
+  ACTIVIDAD_SOBRE_CARGA_MANUAL: "Fichada sobre horas cargadas manualmente",
 };
+
+// Período de Carga de horas donde se decide una fichada sobre horas cargadas a mano.
+function hoursPeriodOf(alert: ShiftAlert) {
+  return argentinaDateKey(new Date(alert.workShift?.startAt ?? alert.actualAt)).slice(0, 7);
+}
 
 const SEVERITY_TONE: Record<ShiftAlertSeverity, "neutral" | "warning" | "danger"> = {
   INFO: "neutral",
@@ -94,6 +104,11 @@ function differenceLabel(alert: ShiftAlert) {
 //   explícitamente y ninguno es, en la práctica, la alerta más relevante de
 //   un grupo real.
 const GROUP_MAIN_ALERT_PRIORITY: ShiftAlertType[] = [
+  // Un franco cambia el sentido de todo el grupo: no había obligación de
+  // trabajar, así que puntualidad y duración pasan a segundo plano.
+  "ACTIVIDAD_EN_FRANCO",
+  // Define qué horas computan esa jornada: va antes que puntualidad y duración.
+  "ACTIVIDAD_SOBRE_CARGA_MANUAL",
   "JORNADA_FUERA_DE_TURNO",
   "POSIBLE_OLVIDO_SALIDA",
   "CONCEPTO_NO_HABILITADO",
@@ -317,7 +332,7 @@ export function ShiftAlertsPage() {
                           <span>{countLabel(members.length, "alerta", "alertas")}{warningCount ? ` · ${countLabel(warningCount, "advertencia", "advertencias")}` : ""}{infoCount ? ` · ${countLabel(infoCount, "informativa", "informativas")}` : ""}</span>
                           <button type="button" className="shift-alert-toggle" onClick={() => toggleGroup(group.workShiftId)} aria-expanded={expanded} aria-controls={`shift-alert-detail-${group.workShiftId}`}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span>{expanded ? "Ocultar detalles" : `Ver ${countLabel(members.length, "alerta", "alertas")}`}</span></button>
                         </div>
-                        {expanded ? <div className="shift-alert-group-detail" id={`shift-alert-detail-${group.workShiftId}`}><p>Alertas de esta jornada</p><ul>{members.map((member, index) => <li key={member.id} className={index === 0 ? "is-primary" : ""}><div className="shift-alert-detail-name"><span>{TYPE_LABELS[member.type]}</span>{index === 0 ? <small>Principal</small> : null}{LEGACY_ALERT_TYPES.has(member.type) ? <small>Registro anterior</small> : null}</div><span className="shift-alert-difference">{differenceLabel(member)}</span><Badge tone={SEVERITY_TONE[member.severity]}>{SEVERITY_LABELS[member.severity]}</Badge><Badge tone={STATUS_TONE[member.status]}>{STATUS_LABELS[member.status]}</Badge>{member.status === "PENDIENTE" ? <button type="button" className="table-link" aria-label={`Resolver ${TYPE_LABELS[member.type]}`} onClick={() => openResolve(member)}><CheckCircle2 size={13} />Resolver</button> : <span />}</li>)}</ul></div> : null}
+                        {expanded ? <div className="shift-alert-group-detail" id={`shift-alert-detail-${group.workShiftId}`}><p>Alertas de esta jornada</p><ul>{members.map((member, index) => <li key={member.id} className={index === 0 ? "is-primary" : ""}><div className="shift-alert-detail-name"><span>{TYPE_LABELS[member.type]}</span>{index === 0 ? <small>Principal</small> : null}{LEGACY_ALERT_TYPES.has(member.type) ? <small>Registro anterior</small> : null}</div><span className="shift-alert-difference">{differenceLabel(member)}</span><Badge tone={SEVERITY_TONE[member.severity]}>{SEVERITY_LABELS[member.severity]}</Badge><Badge tone={STATUS_TONE[member.status]}>{STATUS_LABELS[member.status]}</Badge>{member.status === "PENDIENTE" && member.type === "ACTIVIDAD_SOBRE_CARGA_MANUAL" ? <Link className="table-link" to={`/horas?period=${hoursPeriodOf(member)}`}><CheckCircle2 size={13} />Revisar en Carga de horas</Link> : member.status === "PENDIENTE" ? <button type="button" className="table-link" aria-label={`Resolver ${TYPE_LABELS[member.type]}`} onClick={() => openResolve(member)}><CheckCircle2 size={13} />Resolver</button> : <span />}</li>)}</ul></div> : null}
                       </article>
                     );
                   })}

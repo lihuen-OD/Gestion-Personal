@@ -9,6 +9,8 @@ The sections below are a generic design-system template shared across projects a
 * **Carga Horaria / Horas** — period review, approval, export (`HoursPage.tsx`, `EmployeeHoursPage.tsx`).
 * **Asistencia** — attendance summary and observations (`AttendancePage.tsx`).
 * **Fichador** — time-clock kiosk UI without user session, by name search + photo. Since F6 it lives only in the standalone app (`fichador/`), authenticated per device (`ClockDevice`); since F11 the admin app has no `/fichador` route at all.
+  * Since 2026-10-26 it has a hidden RRHH maintenance mode: a 5 s long press on the title plus a temporary code issued from Admin → Dispositivos de fichada (key icon, `MaintenanceCodeModal`). The employee-facing screen gets no new visible control.
+  * See `docs/decisions/FICHADOR_MAINTENANCE_MODE.md` and `docs/fichador-kiosk/OPERACION_RRHH.md`.
 * **Turnos** — shift templates, assignment, alerts (`ShiftsPage.tsx`, `ShiftDetailPage.tsx`, `ShiftAlertsPage.tsx`, `ShiftCreatePage.tsx`).
 * **Novedades** — novelty create/approve/reject workflow, novelty types config (`NoveltiesPage.tsx`, `NoveltyTypesPage.tsx`, `NoveltyTypeDetailPage.tsx`).
 * **Documentación** — document list/upload/category config (`DocumentsPage.tsx`, `DocumentCategoriesPage.tsx`).

@@ -307,6 +307,16 @@ enum ShiftAlertType {
   // ajeno — ver docs/decisions/SHIFT_ENTRY_CLASSIFICATION_13A.md).
   INGRESO_ANTICIPADO
   JORNADA_FUERA_DE_TURNO
+  // Jornada del fichador cuya fecha operativa tiene un franco activo
+  // (docs/decisions/EMPLOYEE_DAY_OFF.md §9). Situación para revisión, nunca
+  // un incumplimiento: las horas automáticas no computan hasta que un
+  // responsable las reconozca.
+  ACTIVIDAD_EN_FRANCO
+  // Jornada del fichador sobre una fecha que ya tenía horas cargadas a mano
+  // (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md). Las horas manuales siguen
+  // computando y la fichada queda como evidencia hasta que un responsable
+  // decide cuál conservar.
+  ACTIVIDAD_SOBRE_CARGA_MANUAL
 }
 
 enum ShiftAlertStatus {
@@ -417,7 +427,9 @@ model User {
   shiftAssignmentsDisabled           ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
   holidayWorkAssignmentsCreated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentCreatedBy")
   holidayWorkAssignmentsUpdated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentUpdatedBy")
-  shiftAlertsResolved                ShiftAlert[]
+  employeeDayOffsCreated             EmployeeDayOff[]               @relation("EmployeeDayOffCreatedBy")
+  employeeDayOffsUpdated             EmployeeDayOff[]               @relation("EmployeeDayOffUpdatedBy")
+  shiftAlertsResolved               ShiftAlert[]
   doubleHourRulesCreated             DoubleHourRule[]
   attendancePunchesReviewed          AttendancePunch[]
   auditParametersCreated             AuditParameter[]               @relation("AuditParameterCreatedBy")
@@ -917,7 +929,8 @@ model Employee {
   doubleHourAssignments     DoubleHourRuleEmployee[]
   shiftAssignments          ShiftAssignment[]
   holidayWorkAssignments    HolidayWorkAssignment[]
-  workRegimeAssignments     EmployeeWorkRegime[]
+  dayOffs                   EmployeeDayOff[]
+  workRegimeAssignments    EmployeeWorkRegime[]
   workLocations             EmployeeWorkLocation[]
   positionPeriods           EmployeePositionPeriod[]
   costCenterPeriods         EmployeeCostCenterPeriod[]
@@ -1845,6 +1858,38 @@ model HolidayWorkAssignment {
   @@index([employeeId])
 }
 
+enum EmployeeDayOffStatus {
+  ACTIVO
+  CANCELADO
+}
+
+// Franco: ese empleado no tiene obligación de trabajar en esa fecha operativa
+// (docs/decisions/EMPLOYEE_DAY_OFF.md). Condición excepcional de Empleado +
+// Fecha — no es un turno, un régimen, una novedad ni un TimeEntry de 0 h. Una
+// fila por persona y fecha para siempre: cancelar deja CANCELADO y reactivar
+// vuelve a ACTIVO sobre la misma fila (mismo patrón que HolidayWorkAssignment).
+// No guarda horas: la contabilidad deja de computar las horas automáticas de
+// las jornadas de esa fecha operativa al leer, sin reescribir evidencia.
+// `@@unique([employeeId, date])` ya indexa la búsqueda por empleado + fecha.
+model EmployeeDayOff {
+  id              String               @id @default(uuid())
+  employeeId      String
+  date            DateTime             @db.Date
+  status          EmployeeDayOffStatus @default(ACTIVO)
+  notes           String?
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(3)
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy User?    @relation("EmployeeDayOffCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User?    @relation("EmployeeDayOffUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, date])
+  @@index([date, status])
+}
+
 // Régimen de trabajo: comportamiento genérico (3 kinds fijos). Los nombres
 // concretos (Cosecha, Riego, Campaña, Jornada libre controlada, etc.) son
 // instancias configurables por RRHH, nunca valores de enum ni lógica
@@ -2130,6 +2175,17 @@ model ClockDevice {
   lastIp            String?
   lastUserAgent     String?
   lastAppVersion    String?
+  // Acceso de mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md).
+  // Código temporal que genera RRHH, de un solo uso: sólo su SHA-256 ligado a
+  // este dispositivo. Uno por equipo (generar otro reemplaza al anterior).
+  maintenanceCodeHash           String?
+  maintenanceCodeExpiresAt      DateTime? @db.Timestamptz(3)
+  maintenanceCodeFailedAttempts Int       @default(0)
+  // Sesión corta abierta con ese código: sólo el SHA-256 del token. Las CHECK
+  // de la migración exigen hash y vencimiento juntos, y que sólo un ACTIVE
+  // tenga código o sesión.
+  maintenanceSessionHash        String?
+  maintenanceSessionExpiresAt   DateTime? @db.Timestamptz(3)
   createdAt         DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
 

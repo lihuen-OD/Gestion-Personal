@@ -31,6 +31,11 @@ describe("CSP del fichador", () => {
     expect(sources.some((source) => source.includes("*") || source === "https:")).toBe(false);
   });
 
+  it("permite el backend HTTP local sin sumar hosts de otros entornos", () => {
+    expect(directive(contentSecurityPolicy("http://localhost:4002/api"), "connect-src"))
+      .toBe("connect-src 'self' http://localhost:4002");
+  });
+
   it("no deja embeber el fichador en otro sitio", () => {
     expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'none'");
   });
@@ -105,6 +110,9 @@ describe("assertDeployEnv — variables del build en el hosting", () => {
   it.each([
     [{ ...valid, VITE_API_URL: undefined }, /VITE_API_URL/],
     [{ ...valid, VITE_API_URL: "http://localhost:4002/api" }, /VITE_API_URL/],
+    ...["https://", "https://localhost:4002/api", "https://localhost.:4002/api", "https://test.localhost/api",
+      "https://127.0.0.1/api", "https://[::1]/api", "https://0.0.0.0/api", "https://*.example.com/api",
+      "https://user:password@api.example.com/api"].map((url) => [{ ...valid, VITE_API_URL: url }, /VITE_API_URL/]),
     // F6: un sitio que todavía define el token compartido retirado falla el
     // build, para que el valor viejo no quede olvidado en el hosting.
     [{ ...valid, VITE_CLOCK_DEVICE_TOKEN: "x".repeat(32) }, /VITE_CLOCK_DEVICE_TOKEN fue retirado/],
@@ -166,6 +174,18 @@ describe("buildApiUrl — el API del header es el del bundle", () => {
     writeFileSync(join(root, ".env"), "VITE_API_URL=https://api-env.example.com/api\n");
     vi.stubEnv("VITE_API_URL", "https://api-hosting.example.com/api");
     expect(buildApiUrl("production", root)).toBe("https://api-hosting.example.com/api");
+  });
+
+  it("desarrollo respeta .env.development.local y el override explícito", () => {
+    root = mkdtempSync(join(tmpdir(), "fichador-env-"));
+    vi.stubEnv("VITE_API_URL", undefined);
+    writeFileSync(join(root, ".env"), "VITE_API_URL=https://base.example.com/api\n");
+    writeFileSync(join(root, ".env.local"), "VITE_API_URL=https://local.example.com/api\n");
+    writeFileSync(join(root, ".env.development"), "VITE_API_URL=https://dev.example.com/api\n");
+    writeFileSync(join(root, ".env.development.local"), "VITE_API_URL=http://localhost:4002/api\n");
+    expect(buildApiUrl("development", root)).toBe("http://localhost:4002/api");
+    vi.stubEnv("VITE_API_URL", "http://localhost:4003/api");
+    expect(buildApiUrl("development", root)).toBe("http://localhost:4003/api");
   });
 
   it("sin variable, el mismo default que src/services/api/apiClient.ts", () => {

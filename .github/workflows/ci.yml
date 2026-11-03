@@ -1,22 +1,32 @@
 name: CI
 
-# CI de validacion (no de despliegue): no hace deploy, no corre migraciones
-# contra ninguna base real, y no usa secretos reales. Ver
-# docs/DEVOPS_DEPLOYMENT_STANDARDS.md para el detalle de que valida cada job,
-# cuando corre, y que correr localmente antes de subir cambios.
+# CI de validacion (no de despliegue): no hace deploy, no usa secretos reales y
+# no corre migraciones contra ninguna base real. La unica base que toca es el
+# PostgreSQL efimero del job "database", que vive y muere en el runner.
+# Flujo de ramas, que corre en cada evento y que checks exigir en GitHub:
+# docs/GIT_WORKFLOW.md. Detalle de cada job y que correr localmente antes de
+# subir cambios: docs/DEVOPS_DEPLOYMENT_STANDARDS.md.
 
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# En un PR, un push nuevo cancela la corrida anterior del mismo PR. En main y
+# development cada push conserva su corrida (historial de cada SHA integrado).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   backend:
-    name: Backend (validate, typecheck, test, build)
+    name: Backend
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -65,9 +75,100 @@ jobs:
       - name: Build
         run: npm run build
 
-  frontend:
-    name: Frontend (test, build)
+  database:
+    # Gate de migraciones e integracion real (docs/GIT_WORKFLOW.md §5). La base
+    # es un PostgreSQL efimero del runner, la misma version mayor que Neon (18).
+    # Nunca recibe una URL de Neon: los scripts y las suites rechazan todo host
+    # que no sea localhost.
+    name: Database (migrations + integration)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci_migrations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      # Mismos placeholders que el job backend: las suites de integracion usan
+      # su propia *_IT_DATABASE_URL y nunca este DATABASE_URL.
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_dummy?schema=public"
+      JWT_ACCESS_SECRET: "ci-placeholder-access-secret-not-real"
+      JWT_REFRESH_SECRET: "ci-placeholder-refresh-secret-not-real"
+      TZ: "America/Argentina/Cordoba"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # El chequeo de historial compara contra el merge-base con la rama destino.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Migration history (PR only)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: npx tsx scripts/ci/check-migration-history.ts "origin/$BASE_REF"
+
+      - name: Migrations on a clean database
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_migrations"
+        run: >-
+          npx tsx scripts/ci/migrate-clean-database.ts
+          --clone=clock_it_ci,clock_it_ci_devices,clock_it_ci_maint,clock_it_ci_perf,clock_it_ci_postprocess,clock_it_ci_dayoff,clock_it_ci_manual,deletion_it_ci
+
+      # Suites opt-in que corren contra el schema actual, cada una en su propia
+      # copia de la base recien migrada. Quedan afuera, a proposito, las dos de
+      # la reorganizacion A8/M2 (reorg/m2Migration y reorg/cleanupRestore):
+      # necesitan un schema previo a M2 (docs/GIT_WORKFLOW.md §5).
+      - name: PostgreSQL integration tests
+        env:
+          CLOCK_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci"
+          CLOCK_DEVICES_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_devices"
+          CLOCK_MAINTENANCE_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_maint"
+          CLOCK_PERF_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_perf"
+          CLOCK_POSTPROCESS_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_postprocess"
+          DAY_OFF_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_dayoff"
+          MANUAL_HOURS_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_manual"
+          DELETION_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/deletion_it_ci"
+        run: >-
+          npx vitest run
+          src/modules/clock/clock.integration.test.ts
+          src/modules/clock/clockPunchPerf.integration.test.ts
+          src/modules/clock/clockPunchPostProcess.integration.test.ts
+          src/modules/clock-devices/clockDevices.integration.test.ts
+          src/modules/clock-devices/clockDeviceMaintenance.integration.test.ts
+          src/modules/employee-day-offs/employeeDayOff.integration.test.ts
+          src/modules/time-entries/manualHoursConflict.integration.test.ts
+          src/modules/org-structure/controlledDeletion.integration.test.ts
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
@@ -88,6 +189,10 @@ jobs:
       - name: Test
         run: npm run test
 
+      # Compila los journeys de Playwright (e2e/); no los ejecuta.
+      - name: Typecheck e2e
+        run: npm run typecheck:e2e
+
       # No hay script "typecheck" separado en el frontend: el build ya corre
       # "tsc -b" antes de "vite build", asi que el chequeo de tipos queda
       # cubierto por este mismo paso.
@@ -99,8 +204,9 @@ jobs:
     # El build incluye el chequeo de aislamiento: falla si el bundle arrastra
     # modulos administrativos. El e2e (Playwright) no corre en CI, igual que
     # los journeys del frontend.
-    name: Fichador (test, typecheck e2e, build + aislamiento)
+    name: Fichador
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: fichador
@@ -126,3 +232,46 @@ jobs:
 
       - name: Build (tsc -b + vite build + aislamiento del bundle)
         run: npm run build
+
+  promotion-source:
+    # Gateway de produccion: a main sólo llega development (o un hotfix/*,
+    # docs/GIT_WORKFLOW.md §4), siempre desde este mismo repositorio. En los
+    # demas eventos el job se omite y no bloquea nada.
+    name: Promotion source (PR to main)
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check head branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::Un PR a main tiene que salir de una rama de $BASE_REPO, no de $HEAD_REPO."
+            exit 1
+          fi
+          case "$HEAD_REF" in
+            development|hotfix/*) echo "Origen permitido: $HEAD_REF" ;;
+            *) echo "::error::A main sólo se llega desde development (o hotfix/*). Este PR sale de $HEAD_REF: abrilo contra development."; exit 1 ;;
+          esac
+
+  ci-result:
+    # Único check a marcar como obligatorio en la protección de ramas: falla si
+    # cualquier job falló o se canceló. Un job omitido (promotion-source fuera
+    # de un PR a main) no cuenta como falla.
+    name: CI result
+    if: always()
+    needs: [backend, database, frontend, fichador, promotion-source]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarize
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: echo "$RESULTS"
+
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

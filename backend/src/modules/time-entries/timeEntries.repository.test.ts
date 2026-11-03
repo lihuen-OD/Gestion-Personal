@@ -1,13 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { ClockPunchAttemptNotProcessing, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
-import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { ClockPunchAttemptNotProcessing, duplicateTimeEntryError, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 
+import { calendarDateKey } from "../../shared/datetime/argentinaTime";
 vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   flagOpenShiftOverflowForReview: vi.fn().mockResolvedValue(undefined),
   resolveOpenShiftOverflowAlert: vi.fn().mockResolvedValue(undefined),
+  createShiftAlert: vi.fn().mockResolvedValue({ id: "alert-manual-hours" }),
+  notifyShiftAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../shared/prisma/client", () => {
@@ -77,6 +80,9 @@ vi.mock("../../shared/prisma/client", () => {
       // mismo criterio que `findPeriodEmployees` en 14C.2.
       timeEntry: { aggregate: vi.fn(), groupBy: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() },
       hourConceptBreakdown: { findMany: vi.fn(), aggregate: vi.fn() },
+      // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos por default, la
+      // contabilidad queda como hasta hoy.
+      employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
       // Etapa 15E.2: findClosuresForExport consulta MonthlyTimeClosure vía
       // el cliente `prisma` global (mismo criterio que el resto de este
       // repositorio para queries de sólo lectura sin necesidad de $transaction).
@@ -257,6 +263,27 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
     const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ status: "APROBADO", approvedByUserId: "user-rrhh", rejectedAt: null });
     expect(call.data.approvedAt).toBeInstanceOf(Date);
+  });
+
+  it("corregir las horas a mano (cualquier rol) fija source ADMIN: la fila pasa a ser horas reconocidas por una persona (EMPLOYEE_DAY_OFF.md §7.1)", async () => {
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8, correctionReason: "Trabajó en su franco" } as never);
+
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).toMatchObject({ hours: 8, source: "ADMIN" });
+    // El vínculo con la evidencia (jornada/tramo) no se toca.
+    expect(call.data).not.toHaveProperty("workShiftId");
+    expect(call.data).not.toHaveProperty("timeSegmentId");
+  });
+
+  it("editar sólo la observación no cambia el canal de las horas", async () => {
+    mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
+
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { observation: "nota" } as never);
+
+    const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
+    expect(call.data).not.toHaveProperty("source");
   });
 
   it("create/update piden el registro completo (empleado + concepto) para que el frontend pueda actualizar la celda sin otro request (Etapa 6L.4)", async () => {
@@ -1590,9 +1617,11 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     }));
 
     expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.__tx.timeEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ employeeId, hourConceptId: "concept-normal", date: { in: [sunday, nextDay] } }),
-    }));
+    // Una sola consulta con las fechas de los tramos (más los días vecinos
+    // del ingreso, por la fecha operativa — MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+    const { where } = mockedPrisma.__tx.timeEntry.findMany.mock.calls[0]![0];
+    expect(where).toMatchObject({ employeeId, hourConceptId: "concept-normal" });
+    expect(where.date.in.map(calendarDateKey)).toEqual(expect.arrayContaining([calendarDateKey(sunday), calendarDateKey(nextDay)]));
     expect(mockedPrisma.__tx.timeEntry.findFirst).not.toHaveBeenCalled();
     expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(2);
   });
@@ -1612,7 +1641,8 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
   });
 
   it("una sola fila de TimeEntry existente se reutiliza correctamente vía el mapa por fecha (sin duplicar, mismo resultado que antes del batching)", async () => {
-    const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: sunday, actualMinutes: 60, totalMinutes: 60, observation: null, status: "APROBADO" };
+    // Fila de otra jornada fichada del mismo día (automática): se acumula.
+    const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: sunday, actualMinutes: 60, totalMinutes: 60, observation: null, status: "APROBADO", source: "KIOSK" };
     mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([existing]);
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
 
@@ -1664,7 +1694,7 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     });
 
     it("con un TimeEntry ya existente ese día (otra jornada cerrada antes): acumula sobre él exactamente una vez -- 1 + 69 + 120 + 60 = 250, nunca 61 (regresión legajo 30)", async () => {
-      const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: day, actualMinutes: 1, totalMinutes: 1, observation: "Generado por fichada de ingreso/salida.", status: "APROBADO" };
+      const existing = { id: "entry-existing", employeeId, hourConceptId: "concept-normal", date: day, actualMinutes: 1, totalMinutes: 1, observation: "Generado por fichada de ingreso/salida.", status: "APROBADO", source: "KIOSK" };
       mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([existing]);
       mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
 
@@ -1843,7 +1873,7 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
 
   it("legacy IN → KIOSK OUT sobre un TimeEntry existente del día: lo actualiza con el source de la jornada", async () => {
     mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open", source: "PUBLIC_CLOCK_PHOTO" }]);
-    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-existing", date: day, status: "APROBADO", actualMinutes: 60, totalMinutes: 60, observation: null }]);
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-existing", date: day, status: "APROBADO", source: "KIOSK", actualMinutes: 60, totalMinutes: 60, observation: null }]);
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-existing" });
 
     await close("KIOSK");
@@ -1865,6 +1895,76 @@ describe("F7.1 — source de la jornada en el cierre y el rollover", () => {
     expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith({ data: expect.objectContaining({ workShiftId: "shift-prev", hours: 0, source: "PUBLIC_CLOCK_PHOTO" }) });
     expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "INGRESO", source: "KIOSK" }) });
     expect(mockedPrisma.__tx.workShift.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "KIOSK", status: "ABIERTO" }) });
+  });
+});
+
+// docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: la salida nunca se rechaza ni
+// toca horas fijadas por una persona; la jornada queda observada con su alerta.
+describe("closeOpenWorkShift — horas cargadas a mano en la fecha", () => {
+  const day = new Date("2026-10-13T00:00:00.000Z");
+  const segment = { date: day, startAt: new Date("2026-10-13T11:00:00.000Z"), endAt: new Date("2026-10-13T17:42:00.000Z"), minutes: 402, hours: 6.7, hourConceptId: "concept-normal", hourConceptName: "Hora normal" };
+  const close = () => timeEntriesRepository.closeOpenWorkShift({
+    workShiftId: "shift-open", employeeId: "employee-1", normalHourConceptId: "concept-normal", normalHourConceptName: "Hora normal",
+    source: "KIOSK", endAt: segment.endAt, totalMinutes: 402, segments: [segment], returnEntries: false,
+  });
+
+  beforeEach(() => {
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-out" });
+    mockedPrisma.__tx.workShift.updateManyAndReturn.mockResolvedValue([{ id: "shift-open", source: "KIOSK", observation: null }]);
+    mockedPrisma.__tx.workShift.update.mockResolvedValue({ id: "shift-open", source: "KIOSK", status: "OBSERVADO" });
+    mockedPrisma.__tx.timeSegment.create.mockResolvedValue({ id: "segment-1" });
+  });
+
+  it.each([
+    ["carga manual en revisión (el caso reportado)", null, "EN_REVISION"],
+    ["carga manual en borrador", null, "BORRADOR"],
+    ["carga manual aprobada", null, "APROBADO"],
+    ["carga manual rechazada", null, "RECHAZADO"],
+    ["corrección manual (ADMIN)", "ADMIN", "APROBADO"],
+  ])("%s: la salida se registra, la fila manual no se toca y la jornada queda observada con su alerta", async (_label, source, status) => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-manual", date: day, status, source, actualMinutes: 480, totalMinutes: 480, observation: null }]);
+
+    await expect(close()).resolves.toBeDefined();
+
+    expect(mockedPrisma.__tx.attendancePunch.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "SALIDA" }) });
+    expect(mockedPrisma.__tx.timeSegment.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.workShift.update).toHaveBeenCalledWith({ where: { id: "shift-open" }, data: { status: "OBSERVADO", observation: expect.stringContaining("ya tenía horas cargadas manualmente") } });
+    expect(vi.mocked(createShiftAlert)).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "employee-1", workShiftId: "shift-open", type: "ACTIVIDAD_SOBRE_CARGA_MANUAL", notify: false, db: mockedPrisma.__tx }));
+  });
+
+  it("toma el lock persona+día de las fechas candidatas antes de leer las filas del día", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([]);
+
+    await close();
+
+    const lockCall = mockedPrisma.__tx.$executeRaw.mock.calls.find((call) => String(call[0]).includes("pg_advisory_xact_lock(hashtextextended"));
+    expect(lockCall).toBeDefined();
+    expect(lockCall![1]).toEqual(["employee-day:employee-1:2026-10-12", "employee-day:employee-1:2026-10-13", "employee-day:employee-1:2026-10-14"]);
+    const lockOrder = mockedPrisma.__tx.$executeRaw.mock.invocationCallOrder[mockedPrisma.__tx.$executeRaw.mock.calls.indexOf(lockCall!)]!;
+    expect(lockOrder).toBeLessThan(mockedPrisma.__tx.timeEntry.findMany.mock.invocationCallOrder[0]!);
+    // Sin horas manuales: la fichada carga sus horas como siempre, sin alerta.
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(createShiftAlert)).not.toHaveBeenCalled();
+  });
+
+  it("una fila automática del mismo día (otra jornada fichada) se sigue acumulando, sin revisión", async () => {
+    mockedPrisma.__tx.timeEntry.findMany.mockResolvedValue([{ id: "entry-kiosk", date: day, status: "APROBADO", source: "KIOSK", actualMinutes: 60, totalMinutes: 60, observation: null }]);
+
+    await close();
+
+    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledWith({ where: { id: "entry-kiosk" }, data: expect.objectContaining({ totalMinutes: 462 }), select: { id: true } });
+    expect(mockedPrisma.__tx.workShift.update).not.toHaveBeenCalled();
+    expect(vi.mocked(createShiftAlert)).not.toHaveBeenCalled();
+  });
+});
+
+describe("duplicateTimeEntryError", () => {
+  it("si la fila existente la fijó el fichador, explica que hay que corregir esa carga; si no, el duplicado de siempre", () => {
+    expect(duplicateTimeEntryError("KIOSK")).toMatchObject({ statusCode: 409, code: "TIME_ENTRY_CLOCK_HOURS_EXIST" });
+    expect(duplicateTimeEntryError(null)).toMatchObject({ statusCode: 409, code: "TIME_ENTRY_DUPLICATED" });
+    expect(duplicateTimeEntryError("ADMIN")).toMatchObject({ statusCode: 409, code: "TIME_ENTRY_DUPLICATED" });
   });
 });
 
@@ -2584,7 +2684,7 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       expect(summary.accounting.totalWorkedMinutes).toBe(540);
       expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
       expect(summary.accounting.hasSpecialMultiplier).toBe(true);
-      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
+      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, dayOff: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
     });
 
     it("Colectivo de domingo sin Horas base ese día usa su propio multiplicador (ya no queda en x1 por falta de TimeEntry)", async () => {

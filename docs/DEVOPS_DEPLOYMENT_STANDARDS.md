@@ -30,16 +30,19 @@ Before deploy:
 
 ### Where it lives
 
-`.github/workflows/ci.yml` — three independent jobs, `backend`, `frontend` and `fichador`, run in parallel on every GitHub Actions run.
+`.github/workflows/ci.yml` — four independent jobs, `backend`, `database`, `frontend` and `fichador`, run in parallel on every GitHub Actions run, plus `promotion-source` (PRs to `main` only) and the `ci-result` aggregate. The branch flow they protect (`feat/*`/`fix/*` → `development` → `main`), what runs on each event and which check to require in GitHub are in `docs/GIT_WORKFLOW.md`.
 
 ### When it runs
 
-- Every push to `main`.
+- Every push to `main` or `development`.
 - Every pull request (against any base branch).
+- Manually (`workflow_dispatch`).
+
+In a pull request a new push cancels the previous run of that PR; pushes to `main`/`development` keep every run.
 
 ### What it validates
 
-**`backend` job** (working directory `backend/`):
+**`backend` job** (check name `Backend`, working directory `backend/`):
 1. `npm ci` — install dependencies from the committed lockfile.
 2. `npx prisma validate` — the Prisma schema is syntactically valid and internally consistent.
 3. `npx prisma generate` — the Prisma Client can be generated from the current schema (this is what makes the TypeScript types used everywhere in `backend/src` resolve correctly).
@@ -47,24 +50,35 @@ Before deploy:
 5. `npm run test` — the full Vitest suite (unit tests; the repository/service layer is exercised through mocked Prisma clients, never a real database — see "No real database" below).
 6. `npm run build` — the backend compiles to `dist/` the same way it would for a real deploy.
 
-**`frontend` job** (working directory `frontend/`):
+**`database` job** (check name `Database (migrations + integration)`, working directory `backend/`, ephemeral `postgres:18` service container on the runner):
+1. `npm ci`, `npx prisma generate`.
+2. Pull requests only: `npx tsx scripts/ci/check-migration-history.ts origin/<base>` — fails if the PR modifies, renames or deletes a migration that already exists in the target branch, touches `migration_lock.toml`, or adds a migration without `migration.sql`, with a malformed name, or sorting before the target's latest migration.
+3. `npx tsx scripts/ci/migrate-clean-database.ts --clone=…` — replays the whole migration history on the empty ephemeral database, then requires `prisma migrate status` up to date and `prisma migrate diff --from-url … --to-schema-datamodel prisma/schema.prisma --exit-code` empty. `20260824170000_normalize_hour_concepts` needs the `HC-NORMAL` row that only `prisma/seed.ts` creates, so the script applies the history up to the migration before it, inserts that single row and finishes with `prisma migrate deploy`. The verified database is then cloned once per integration suite.
+4. `npx vitest run <8 suites>` — the opt-in PostgreSQL integration suites that target the current schema (clock, clock perf, clock post-process, clock devices, clock maintenance, day offs, manual hours vs clock punch, controlled deletion), each on its own clone. The two A8/M2 suites need a pre-M2 schema and stay manual (`docs/GIT_WORKFLOW.md` §5.2).
+
+**`frontend` job** (check name `Frontend`, working directory `frontend/`):
 1. `npm ci`.
 2. `npm run test` — the Vitest suite.
-3. `npm run build` — runs `tsc -b && vite build`; there is no separate `typecheck` script in the frontend, so type-checking happens as the first half of this same step.
+3. `npm run typecheck:e2e` — the Playwright journeys compile (they are not run in CI).
+4. `npm run build` — runs `tsc -b && vite build`; there is no separate `typecheck` script in the frontend, so type-checking happens as the first half of this same step.
 
-**`fichador` job** (working directory `fichador/`, standalone kiosk app since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
+**`fichador` job** (check name `Fichador`, working directory `fichador/`, standalone kiosk app since F1 of `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`):
 1. `npm ci`.
 2. `npm run test` — the Vitest suite.
 3. `npm run typecheck:e2e` — the Playwright spec compiles (the e2e itself is not run in CI, same as the frontend journeys).
 4. `npm run build` — `tsc -b && vite build`, then `scripts/check-bundle-isolation.mjs`, which fails the job if the kiosk imports anything outside `fichador/src` or its bundle contains admin modules.
 
+**`promotion-source` job** (check name `Promotion source (PR to main)`, pull requests to `main` only): fails unless the PR comes from `development` (or `hotfix/*`, `docs/GIT_WORKFLOW.md` §4) in this same repository. Skipped on every other event.
+
+**`ci-result` job** (check name `CI result`): runs after all the others, even when one failed, and fails if any of them failed or was cancelled (a skipped `promotion-source` is fine). It is the single check to mark as required in branch protection.
+
 If any job fails, the run is reported as failed on the commit/PR. **A failing CI run must be fixed before merging** — it means one of the checks above broke, not that anything was deployed or changed on any real environment (this workflow never deploys and never touches a real database, see below).
 
-### No real database, no real secrets, no migrations
+### No real database, no real secrets
 
-- `DATABASE_URL`, `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` in the `backend` job are **placeholder values hardcoded directly in the workflow file** (e.g. `postgresql://ci:ci@localhost:5432/ci_dummy`) — not real secrets, and there is nothing at `localhost:5432` in the runner for them to connect to. They exist only so that `backend/src/config/env.ts` (which validates these as required at import time) doesn't throw, and so `prisma validate`/`prisma generate` have a syntactically valid connection string to parse. The test suite mocks the Prisma client module-by-module (`vi.mock("../../shared/prisma/client", ...)`) and never opens a real connection, confirmed by running the full suite locally with these same dummy values.
-- CI never runs `prisma migrate deploy` / `prisma migrate dev`, never seeds data, and never connects to the real Neon database used by local development or production.
-- CI never deploys anything anywhere. It is a validation gate only.
+- `DATABASE_URL`, `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` in the `backend` and `database` jobs are **placeholder values hardcoded directly in the workflow file** (e.g. `postgresql://ci:ci@localhost:5432/ci_dummy`), not real secrets. They exist only so that `backend/src/config/env.ts` (which validates these as required at import time) doesn't throw, and so `prisma validate`/`prisma generate` have a syntactically valid connection string to parse. The unit test suite mocks the Prisma client module-by-module (`vi.mock("../../shared/prisma/client", ...)`) and never opens a real connection, confirmed by running the full suite locally with these same dummy values.
+- The only database CI ever connects to is the `database` job's ephemeral PostgreSQL container, created empty for the run and destroyed with it. `prisma migrate deploy` runs only there, through `scripts/ci/migrate-clean-database.ts`, which refuses any non-`localhost` host and any non-empty database. The integration suites refuse any non-`localhost` URL as well. CI never runs `prisma migrate dev`/`db push`/`migrate reset`, never runs the seed, and never connects to Neon (development, staging or production).
+- CI never deploys anything anywhere. It is a validation gate only; deploys are manual and separate (`docs/GIT_WORKFLOW.md` §6).
 
 ### What to run locally before pushing
 
@@ -76,9 +90,24 @@ npm run build
 ```
 (`prisma validate`/`prisma generate` are worth running too if you touched `prisma/schema.prisma`: `npx prisma validate && npx prisma generate`.)
 
+If you touched `prisma/schema.prisma` or `prisma/migrations`, also run the migration gate against a new, empty local database (never Neon), as shown in `docs/GIT_WORKFLOW.md` §5.2:
+```bash
+createdb ci_migrations
+DATABASE_URL=postgresql://<user>@localhost:5432/ci_migrations npx tsx scripts/ci/migrate-clean-database.ts
+npx tsx scripts/ci/check-migration-history.ts origin/development
+```
+
 Frontend (`cd frontend`):
 ```bash
 npm run test
+npm run typecheck:e2e
+npm run build
+```
+
+Fichador (`cd fichador`):
+```bash
+npm run test
+npm run typecheck:e2e
 npm run build
 ```
 
@@ -150,7 +179,7 @@ Check:
 
 ## Backend deploy
 
-Public staging (provider, region, build / pre-deploy / start commands, env, worker phases and deploy order): `docs/decisions/PUBLIC_STAGING_PLAN.md`. The migration always runs before the code (`prisma migrate deploy` in the pre-deploy step, never `migrate dev`, `db push` or `reset`).
+Public staging (provider, region, build / pre-deploy / start commands, env, worker phases and deploy order): `docs/decisions/PUBLIC_STAGING_PLAN.md`. Which branch each environment deploys (staging ← `development`, production ← `main`, always a manual deploy of a SHA with `CI result` green, never from a PR) and what is pending to configure in Render/Netlify/Neon: `docs/GIT_WORKFLOW.md` §6. The migration always runs before the code (`prisma migrate deploy` in the pre-deploy step, never `migrate dev`, `db push` or `reset`).
 
 Check:
 - correct start command

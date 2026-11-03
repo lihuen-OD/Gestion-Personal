@@ -4,6 +4,7 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 import { evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { evaluateWorkShiftDayOff } from "../employee-day-offs/employeeDayOffActivity";
 import { notifyMissingExit } from "../time-entries/timeEntries.service";
 import { clearAuditDerivedCaches } from "../audit/audit.service";
 import { clearShiftAlertReadCaches } from "../shifts/shiftAlert.cache";
@@ -28,6 +29,7 @@ import {
  */
 const STEP_TX = { marker: "step-tx" };
 
+import { notifyManualHoursConflict } from "../time-entries/manualHoursConflict";
 vi.mock("../../shared/prisma/client", () => ({
   prisma: { $transaction: vi.fn() },
 }));
@@ -59,6 +61,8 @@ vi.mock("../shifts/workShiftEvaluationRunner", () => ({
   resolveOpenShiftOverflowAlert: vi.fn(),
 }));
 vi.mock("../time-entries/timeEntries.service", () => ({ notifyMissingExit: vi.fn() }));
+vi.mock("../employee-day-offs/employeeDayOffActivity", () => ({ evaluateWorkShiftDayOff: vi.fn() }));
+vi.mock("../time-entries/manualHoursConflict", () => ({ notifyManualHoursConflict: vi.fn() }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ ROLLOVER_OVERFLOW_RESOLUTION_NOTE: "nota-rollover" }));
 vi.mock("../time-entries/timeEntries.cache", () => ({ clearTimeEntriesReadCaches: vi.fn() }));
 vi.mock("../audit/audit.service", () => ({ clearAuditDerivedCaches: vi.fn() }));
@@ -116,6 +120,7 @@ beforeEach(() => {
   repo.fail.mockResolvedValue({ count: 1 });
   repo.countHeldElsewhere.mockResolvedValue(0);
   vi.mocked(evaluateShiftEntry).mockResolvedValue(undefined);
+  vi.mocked(evaluateWorkShiftDayOff).mockResolvedValue(false);
   vi.mocked(evaluateShiftExit).mockResolvedValue(undefined);
   vi.mocked(resolveOpenShiftOverflowAlert).mockResolvedValue(undefined);
   vi.mocked(notifyMissingExit).mockResolvedValue(undefined);
@@ -149,6 +154,31 @@ describe("PERF-5D — pasos del post-proceso por tipo", () => {
     for (const clear of [clearAuditDerivedCaches, clearShiftAlertReadCaches, clearNotificationsListCache, clearEmployeeTimeGridCache]) expect(clear).toHaveBeenCalled();
   });
 
+  it("ENTRY: después de evaluar el ingreso (que adopta el turno) corre el paso de franco en su propia transacción y lo marca (EMPLOYEE_DAY_OFF.md §9)", async () => {
+    await expect(processClaimedClockPunchPostProcessJob(job())).resolves.toMatchObject({ status: "COMPLETED" });
+
+    expect(evaluateWorkShiftDayOff).toHaveBeenCalledWith("shift-1", { db: STEP_TX });
+    expect(vi.mocked(evaluateShiftEntry).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(evaluateWorkShiftDayOff).mock.invocationCallOrder[0]!);
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual([POSTPROCESS_STEPS.entryEvaluation, POSTPROCESS_STEPS.dayOffEvaluation]);
+  });
+
+  it("reintento con el paso de franco ya marcado: no vuelve a evaluarlo (no duplica alerta ni notificación)", async () => {
+    await expect(processClaimedClockPunchPostProcessJob(job({ stepsCompleted: [POSTPROCESS_STEPS.entryEvaluation, POSTPROCESS_STEPS.dayOffEvaluation], attemptCount: 2 }))).resolves.toMatchObject({ status: "COMPLETED" });
+
+    expect(evaluateShiftEntry).not.toHaveBeenCalled();
+    expect(evaluateWorkShiftDayOff).not.toHaveBeenCalled();
+    expect(repo.markStep).not.toHaveBeenCalled();
+  });
+
+  it("falla el paso de franco: el ingreso ya evaluado queda marcado y el job vuelve a PENDING (la fichada nunca se invalida)", async () => {
+    vi.mocked(evaluateWorkShiftDayOff).mockRejectedValueOnce(new Error("day off lookup failed"));
+
+    await expect(processClaimedClockPunchPostProcessJob(job())).resolves.toMatchObject({ status: "RETRY" });
+
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual([POSTPROCESS_STEPS.entryEvaluation]);
+    expect(repo.complete).not.toHaveBeenCalled();
+  });
+
   it("ROLLOVER_ENTRY: resuelve la alerta de la jornada vencida, avisa la falta de salida (eventAt = su inicio) y evalúa el ingreso nuevo, en ese orden y cada uno en su paso", async () => {
     const claimed = job({ kind: "ROLLOVER_ENTRY", payload: { actualAt: ACTUAL_AT, previousShift: { id: "shift-old", startAt: PREVIOUS_START } } });
 
@@ -159,7 +189,8 @@ describe("PERF-5D — pasos del post-proceso por tipo", () => {
     expect(evaluateShiftEntry).toHaveBeenCalledWith("employee-1", "shift-1", new Date(ACTUAL_AT), { db: STEP_TX });
     const order = [resolveOpenShiftOverflowAlert, notifyMissingExit, evaluateShiftEntry].map((fn) => vi.mocked(fn).mock.invocationCallOrder[0]!);
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual([POSTPROCESS_STEPS.overflowResolution, POSTPROCESS_STEPS.missingExitNotice, POSTPROCESS_STEPS.entryEvaluation]);
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual([POSTPROCESS_STEPS.overflowResolution, POSTPROCESS_STEPS.missingExitNotice, POSTPROCESS_STEPS.entryEvaluation, POSTPROCESS_STEPS.dayOffEvaluation]);
+    expect(evaluateWorkShiftDayOff).toHaveBeenCalledWith("shift-1", { db: STEP_TX });
   });
 
   it("EXIT: Motor B por período (auditoría y marca en su transacción) y después la evaluación de salida, que relee la jornada y propaga sus fallos", async () => {
@@ -171,7 +202,10 @@ describe("PERF-5D — pasos del post-proceso por tipo", () => {
     expect(mockedRecalculate.mock.calls.map((call) => call[0].period)).toEqual(["2026-09", "2026-10"]);
     expect(mockedRecalculate).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "employee-1", createdByUserId: null, audit: AUDIT, withinTransaction: expect.any(Function) }));
     expect(evaluateShiftExit).toHaveBeenCalledWith("employee-1", "shift-1", new Date(ACTUAL_AT), [{ startAt: new Date("2026-10-16T03:00:00.000Z"), minutes: 540, conceptStatus: "SUGERIDO" }], undefined, { db: STEP_TX, rethrow: true });
-    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-09", "breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation]);
+    // MANUAL_HOURS_VS_CLOCK_PUNCH.md: el aviso de la jornada retenida por
+    // horas manuales sale al final, en su propio paso.
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-09", "breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation, POSTPROCESS_STEPS.manualHoursNotice]);
+    expect(notifyManualHoursConflict).toHaveBeenCalledWith("shift-1", { db: STEP_TX });
     expect(mockedRecalculate.mock.invocationCallOrder[1]).toBeLessThan(vi.mocked(evaluateShiftExit).mock.invocationCallOrder[0]!);
     // La IP y el user agent no quedan en el job completado.
     expect(repo.complete).toHaveBeenCalledWith("job-1", 1, { actualAt: ACTUAL_AT, segments: expect.any(Array) }, expect.any(Date));
@@ -195,7 +229,8 @@ describe("PERF-5D — idempotencia y fallos", () => {
     await expect(processClaimedClockPunchPostProcessJob(job())).resolves.toMatchObject({ status: "COMPLETED" });
 
     expect(evaluateShiftEntry).not.toHaveBeenCalled();
-    expect(repo.markStep).not.toHaveBeenCalled();
+    // Sólo corre (y marca) el paso siguiente, el de franco.
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual([POSTPROCESS_STEPS.dayOffEvaluation]);
   });
 
   it("falla la notificación de un paso: vuelve a PENDING con backoff, el paso queda sin marca y nada se da por completado", async () => {
@@ -230,7 +265,7 @@ describe("PERF-5D — idempotencia y fallos", () => {
 
     await expect(processClaimedClockPunchPostProcessJob(exitJob({ periods: ["2026-10"] }))).resolves.toMatchObject({ status: "COMPLETED" });
 
-    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation]);
+    expect(repo.markStep.mock.calls.map((call) => call[2])).toEqual(["breakdowns:2026-10", POSTPROCESS_STEPS.exitEvaluation, POSTPROCESS_STEPS.manualHoursNotice]);
     expect(console.error).toHaveBeenCalledWith("AUTOMATIC_BREAKDOWN_SYNC_FAILED", expect.objectContaining({ severity: "warning", code: "PERIOD_CLOSED", period: "2026-10" }));
   });
 

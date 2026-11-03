@@ -8,6 +8,8 @@ vi.mock("../../shared/prisma/client", () => ({
     timeEntry: { aggregate: vi.fn() },
     hourConceptBreakdown: { aggregate: vi.fn() },
     employee: { groupBy: vi.fn() },
+    // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos en el período no se resta nada.
+    employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

@@ -5,12 +5,14 @@ import { AppError } from "../../shared/errors/AppError";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { clearAuditDerivedCaches, type AuditContext } from "../audit/audit.service";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
+import { evaluateWorkShiftDayOff } from "../employee-day-offs/employeeDayOffActivity";
 import { clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { clearShiftAlertReadCaches } from "../shifts/shiftAlert.cache";
 import { evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { ROLLOVER_OVERFLOW_RESOLUTION_NOTE } from "../time-entries/timeEntries.repository";
 import { notifyMissingExit } from "../time-entries/timeEntries.service";
+import { notifyManualHoursConflict } from "../time-entries/manualHoursConflict";
 import { clearNotificationsListCache } from "../workforce-management/workforce.cache";
 import { entryPayloadSchema, exitPayloadSchema, rolloverPayloadSchema } from "./clockPunchPostProcess.payload";
 import {
@@ -48,7 +50,14 @@ export const POSTPROCESS_STEPS = {
   overflowResolution: "overflow-resolution",
   missingExitNotice: "missing-exit-notice",
   entryEvaluation: "entry-evaluation",
+  // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada en un día de franco → alerta
+  // ACTIVIDAD_EN_FRANCO. Después de entry-evaluation (que adopta el turno que
+  // define la fecha operativa).
+  dayOffEvaluation: "day-off-evaluation",
   exitEvaluation: "exit-evaluation",
+  // MANUAL_HOURS_VS_CLOCK_PUNCH.md: la salida dejó la jornada observada por
+  // horas manuales y creó su alerta sin avisar; este paso manda el aviso.
+  manualHoursNotice: "manual-hours-notice",
   breakdowns: (period: string) => `breakdowns:${period}`,
 } as const;
 
@@ -130,6 +139,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
   if (kind === "ENTRY") {
     const payload = parsePayload(entryPayloadSchema, job);
     await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
   if (kind === "ROLLOVER_ENTRY") {
@@ -139,6 +149,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     await runStep(job, POSTPROCESS_STEPS.overflowResolution, (tx) => resolveOpenShiftOverflowAlert(payload.previousShift.id, ROLLOVER_OVERFLOW_RESOLUTION_NOTE, tx));
     await runStep(job, POSTPROCESS_STEPS.missingExitNotice, (tx) => notifyMissingExit(job.employeeId, payload.previousShift.id, payload.previousShift.startAt, { db: tx, rethrow: true }));
     await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
   if (kind === "EXIT") {
@@ -149,6 +160,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     const audit = payload.audit ?? undefined;
     for (const period of job.periods) await runBreakdownStep(job, period, audit);
     await runStep(job, POSTPROCESS_STEPS.exitEvaluation, (tx) => evaluateShiftExit(job.employeeId, job.workShiftId, payload.actualAt, payload.segments, undefined, { db: tx, rethrow: true }));
+    await runStep(job, POSTPROCESS_STEPS.manualHoursNotice, (tx) => notifyManualHoursConflict(job.workShiftId, { db: tx }));
     return;
   }
   throw new AppError("Unsupported clock punch post-process kind", 500, "CLOCK_POSTPROCESS_KIND_UNSUPPORTED");

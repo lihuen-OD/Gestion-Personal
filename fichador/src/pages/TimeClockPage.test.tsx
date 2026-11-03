@@ -5,6 +5,7 @@ import { FALLBACK_COOLDOWN_SECONDS, OFFLINE_MESSAGE, SUCCESS_RESET_MS, TimeClock
 import { timeClockApiService } from "../services/api/timeClockApiService";
 import { ApiError, NetworkError } from "../services/api/apiClient";
 import { kioskActivity } from "../pwa/kioskActivity";
+import { MAINTENANCE_LONG_PRESS_MS, MaintenanceTriggerContext } from "../features/maintenance/maintenanceTrigger";
 
 vi.mock("../services/api/timeClockApiService", () => ({
   timeClockApiService: {
@@ -766,5 +767,50 @@ describe("TimeClockPage — F10: acción principal, actualizar estado y cámara 
     await waitFor(() => expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1));
     expect(vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0].requestId).toBe("22222222-2222-4222-8222-222222222222");
     uuid.mockRestore();
+  });
+});
+
+// Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): el gesto
+// oculto vive en el encabezado y sólo funciona con el kiosco sin fichada en curso.
+describe("TimeClockPage — gesto oculto de mantenimiento", () => {
+  const heading = () => screen.getByRole("heading", { name: "Fichador de personal" }).closest(".clock-heading")!;
+  const hold = async () => {
+    fireEvent.pointerDown(heading(), { pointerType: "touch", clientX: 10, clientY: 10 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(MAINTENANCE_LONG_PRESS_MS); });
+    fireEvent.pointerUp(heading(), { pointerType: "touch" });
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sin modo mantenimiento montado (sin Gate) el encabezado no hace nada y no muestra nada nuevo", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    render(<TimeClockPage />);
+    await hold();
+    expect(screen.queryByText(/mantenimiento/i)).not.toBeInTheDocument();
+  });
+
+  it("con el kiosco ocioso pide el acceso; con la cámara abierta para fichar, no", async () => {
+    const requestAccess = vi.fn();
+    mockNoOpenShift();
+    vi.mocked(timeClockApiService.searchEmployees).mockResolvedValue([employeeMatch]);
+    const user = userEvent.setup();
+    render(<MaintenanceTriggerContext.Provider value={requestAccess}><TimeClockPage /></MaintenanceTriggerContext.Provider>);
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await hold();
+    expect(requestAccess).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+
+    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.click(await screen.findByText("Gomez, Ana"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Marcar ingreso" }));
+    expect(await screen.findByTestId("face-capture-modal")).toBeInTheDocument();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await hold();
+    expect(requestAccess).toHaveBeenCalledTimes(1);
   });
 });

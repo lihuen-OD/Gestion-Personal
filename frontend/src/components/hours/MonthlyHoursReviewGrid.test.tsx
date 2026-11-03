@@ -194,3 +194,31 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 });
+
+// docs/decisions/EMPLOYEE_DAY_OFF.md §15: "—" sigue siendo "sin horas"; un día
+// de franco muestra "Franco" + lo que computa según el backend.
+describe("MonthlyHoursReviewGrid — francos", () => {
+  it("franco sin actividad reconocida: la celda de Horas base dice 'Franco 0 h', nunca '—'", () => {
+    const grid = timeGridFixture([dayAccounting(4)], { dayOffsByDay: { "5": { status: "ACTIVO", notes: null, activityShifts: 1, activityMinutes: 480 } } });
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
+
+    const cell = screen.getByLabelText(/Horas base, día 5:/);
+    expect(cell).toHaveClass("day-off");
+    expect(cell).toHaveTextContent("Franco");
+    expect(cell).toHaveTextContent("0 h");
+    expect(cell).not.toHaveTextContent("—");
+    expect(cell.getAttribute("aria-label")).toContain("Actividad registrada por el fichador: 8 h");
+    // Un día sin franco ni horas sigue mostrando "—".
+    expect(screen.getByLabelText("Horas base, día 6: sin horas")).toHaveTextContent("—");
+  });
+
+  it("franco con horas reconocidas: muestra 'Franco' con las horas que computan", () => {
+    const grid = timeGridFixture([dayAccounting(4)], { dayOffsByDay: { "4": { status: "ACTIVO", notes: null, activityShifts: 1, activityMinutes: 480 } } });
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
+
+    const cell = screen.getByLabelText(/Horas base, día 4:/);
+    expect(cell).toHaveTextContent("Franco");
+    expect(cell).toHaveTextContent("8h");
+    expect(cell.getAttribute("aria-label")).toContain("Horas reconocidas: 8 h");
+  });
+});

@@ -59,6 +59,31 @@ describe("attendanceApiService.getSummary/getObservations — dedupe/cache front
     expect(apiRequest).toHaveBeenCalledTimes(1);
   });
 
+  // Los refrescos de AttendancePage piden con networkFirst: cada uno tiene
+  // que traer el dato nuevo, nunca la respuesta del refresco anterior.
+  it("getSummary con networkFirst: vuelve a la red dentro del TTL y devuelve el dato nuevo (refresco en vivo)", async () => {
+    vi.mocked(apiRequest)
+      .mockResolvedValueOnce(summaryResponse)
+      .mockResolvedValueOnce({ data: { ...summaryResponse.data, totals: { ...summaryResponse.data.totals, open: 0, closed: 1 } } });
+
+    await attendanceApiService.getSummary("2026-08-27");
+    const refreshed = await attendanceApiService.getSummary("2026-08-27", { networkFirst: true });
+
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+    expect(refreshed.totals).toMatchObject({ open: 0, closed: 1 });
+  });
+
+  it("getSummary con networkFirst: si el refresco falla devuelve el último resumen, sin error (refresco silencioso)", async () => {
+    vi.mocked(apiRequest)
+      .mockResolvedValueOnce(summaryResponse)
+      .mockRejectedValueOnce(new Error("network offline"));
+
+    await attendanceApiService.getSummary("2026-08-27");
+
+    await expect(attendanceApiService.getSummary("2026-08-27", { networkFirst: true })).resolves.toEqual(summaryResponse.data);
+    expect(apiRequest).toHaveBeenCalledTimes(2);
+  });
+
   it("getSummary: cambiar de fecha es un cache miss nuevo", async () => {
     vi.mocked(apiRequest).mockResolvedValue(summaryResponse);
 

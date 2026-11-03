@@ -20,6 +20,10 @@ export const shiftAlertTypeSchema = z.enum([
   // Etapa 13A: ingreso antes del horario/tolerancia del turno asignado.
   "INGRESO_ANTICIPADO",
   "JORNADA_FUERA_DE_TURNO",
+  // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada registrada en un día de franco.
+  "ACTIVIDAD_EN_FRANCO",
+  // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a mano.
+  "ACTIVIDAD_SOBRE_CARGA_MANUAL",
 ]);
 
 export const shiftAlertSeveritySchema = z.enum(["INFO", "ADVERTENCIA", "CRITICA"]);

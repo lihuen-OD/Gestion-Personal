@@ -142,6 +142,11 @@ Migrations should:
 - be reversible when possible
 - be documented if risky
 
+History rules, enforced by the CI `database` job (`docs/GIT_WORKFLOW.md` §5.2):
+- a migration that already exists on the target branch is never edited, renamed or deleted — a correction is a new migration;
+- a new migration folder is `<14-digit timestamp>_<snake_case_name>`, contains `migration.sql`, and sorts after the latest migration of the target branch;
+- the full history must replay on a clean PostgreSQL and produce exactly `schema.prisma` (`prisma migrate diff --exit-code` empty). The only bootstrap allowed is the `HC-NORMAL` seed row that `20260824170000_normalize_hour_concepts` requires; a new migration must never depend on seed or environment-specific data.
+
 Hand-written rollbacks (`backend/prisma/rollbacks/*.down.sql`, added 2026-10-09):
 - run in one transaction and lock the affected tables before checking anything;
 - **abort without changes** when dropping a column or table would lose information that cannot be re-derived — e.g. any history row (`20261008090000`), any archived row, or a persisted classification that differs from the criterion the previous code would re-derive (`20261008150000`);
@@ -269,3 +274,35 @@ El único hard delete permitido es un `PENDING` sin `AttendancePunch` ni
 - **Asistencia.** Lee `AttendancePunch.device.name` por la relación existente,
   en la misma consulta. No se duplica el nombre en `WorkShift` ni en
   `TimeEntry`.
+
+### Acceso de mantenimiento (migración `20261026120000_add_clock_device_maintenance_access`)
+
+Diseño: `docs/decisions/FICHADOR_MAINTENANCE_MODE.md`.
+
+- **Columnas.** Cinco columnas aditivas en `ClockDevice`, sin tabla nueva:
+  - `maintenanceCodeHash` y `maintenanceCodeExpiresAt`;
+  - `maintenanceCodeFailedAttempts` (`DEFAULT 0`);
+  - `maintenanceSessionHash` y `maintenanceSessionExpiresAt`.
+
+  Los instantes son `TIMESTAMPTZ(3)`. Sólo se guardan hashes SHA-256, nunca
+  el código ni el token.
+- **Un código y una sesión por equipo**, como `pairingCodeHash`. Generar otro
+  código reemplaza al anterior en la misma columna. La historia (quién lo
+  generó, cuándo se usó y los rechazos) vive en `AuditLog`, con la entidad
+  `ClockDeviceMaintenance`.
+- **Reglas en el `WHERE`.** El consumo es un `UPDATE` condicionado a hash,
+  vencimiento, intentos y `ACTIVE`; el intento fallido incrementa sólo contra
+  un código vigente; la revocación limpia código y sesión en el mismo `UPDATE`
+  que pasa a `REVOKED`.
+- **CHECKs**, que Prisma no modela:
+  - `ClockDevice_maintenance_code_shape_check` y
+    `ClockDevice_maintenance_session_shape_check`: hash y vencimiento van
+    juntos;
+  - `ClockDevice_maintenance_active_only_check`: sólo un `ACTIVE` puede tener
+    código o sesión.
+- **Rollback.** `backend/prisma/rollbacks/20261026120000_add_clock_device_maintenance_access.down.sql`
+  no aborta: las columnas sólo guardan estado efímero (5 y 10 minutos).
+  Primero se revierte el código.
+- **Dónde está aplicada.** Sólo en una base local desechable `clock_it*`. No
+  está aplicada en `development`/staging, producción ni demo; en staging entra
+  con el `prisma migrate deploy` del pre-deploy autorizado.

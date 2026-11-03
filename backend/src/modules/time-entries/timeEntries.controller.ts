@@ -4,6 +4,8 @@ import { requireParam } from "../../shared/http/params";
 import type { AdminCloseWorkShiftInput, AdminWorkShiftReasonInput, AttendanceObservationsQuery, AttendanceSummaryQuery, CreateWorkShiftInput, ListTimeEntriesQuery, PreviewWorkShiftInput, ResolveAttendanceObservationInput, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, TimeEntriesSummaryQuery } from "./timeEntries.schemas";
 import { attendanceObservationsCache, attendanceSummaryCache, clearTimeEntriesReadCaches, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache } from "./timeEntries.cache";
 import { timeEntriesExportToCsv, timeEntriesService } from "./timeEntries.service";
+import { manualHoursConflictService } from "./manualHoursConflict.service";
+import type { ManualHoursConflictsQuery, ResolveManualHoursConflictInput } from "./timeEntries.schemas";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { drainClockPunchPostProcess } from "../clock/clockPunchPostProcess.worker";
 
@@ -29,6 +31,19 @@ export const timeEntriesController = {
     if (cached) return res.json({ data: cached });
     const result = await timeEntriesService.summary(req.query as unknown as TimeEntriesSummaryQuery, req.user!);
     timeEntriesSummaryCache.set(key, result);
+    res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  // Fichada sobre horas cargadas a mano (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+  // Sin caché propio: la lista es chica (un tipo de alerta en un período) y
+  // tiene que reflejar la decisión recién tomada.
+  manualHoursConflicts: (async (req, res) => {
+    const result = await manualHoursConflictService.list(req.query as unknown as ManualHoursConflictsQuery, req.user!);
+    res.json({ data: result.items });
+  }) satisfies RequestHandler,
+
+  resolveManualHoursConflict: (async (req, res) => {
+    const result = await manualHoursConflictService.resolve(requireParam(req, "id"), req.body as ResolveManualHoursConflictInput, req.user!, requestAuditContext(req));
     res.json({ data: result });
   }) satisfies RequestHandler,
 

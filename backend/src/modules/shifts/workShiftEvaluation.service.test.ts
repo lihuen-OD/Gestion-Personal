@@ -16,6 +16,7 @@ import {
   isShiftAssignmentApplicableOnWeekday,
   matchShiftForEmployee,
   type ShiftTemplateRef,
+  workShiftOperationalDateKey,
 } from "./workShiftEvaluation.service";
 
 function template(overrides: Partial<ShiftTemplateRef> & { id: string; code: string; startTime: string; endTime: string }): ShiftTemplateRef {
@@ -814,5 +815,37 @@ describe("matchShiftForEmployee — compatibilidad hacia atrás (Etapa 8J, secci
     });
     expect(match.case).toBe("ENABLED");
     expect(match.differenceMinutes).toBe(5);
+  });
+});
+
+describe("workShiftOperationalDateKey — fecha operativa de una jornada (EMPLOYEE_DAY_OFF.md §4)", () => {
+  // Instantes en hora Argentina (UTC-3) para que cada caso se lea como en la tabla de la decisión.
+  const art = (dateTime: string) => new Date(`${dateTime}:00.000-03:00`);
+  const night = { startTime: "23:00", endTime: "07:00", crossesMidnight: true };
+  const midnight = { startTime: "00:00", endTime: "08:00", crossesMidnight: false };
+  const day = { startTime: "08:00", endTime: "16:00", crossesMidnight: false };
+
+  it("turno nocturno 23:00-07:00, ingreso 22:55 del 10: pertenece al 10", () => {
+    expect(workShiftOperationalDateKey(art("2026-11-10T22:55"), night)).toBe("2026-11-10");
+  });
+
+  it("turno nocturno, ingreso tarde 00:15 del 11: sigue siendo la noche del 10 (no la fecha UTC/calendario del ingreso)", () => {
+    expect(workShiftOperationalDateKey(art("2026-11-11T00:15"), night)).toBe("2026-11-10");
+  });
+
+  it("turno 00:00-08:00, ingreso anticipado 23:50 del 9: pertenece a la ocurrencia del 10", () => {
+    expect(workShiftOperationalDateKey(art("2026-11-09T23:50"), midnight)).toBe("2026-11-10");
+  });
+
+  it("turno 08:00-16:00, trabajo extra a las 21:00 del 10: fuera de la ventana de cualquier ocurrencia → fecha del ingreso (10), nunca el 11", () => {
+    expect(workShiftOperationalDateKey(art("2026-11-10T21:00"), day)).toBe("2026-11-10");
+  });
+
+  it("noche del 10 pero el día siguiente trabaja 09:00-13:00 un extra: el extra es del 11, no de la noche del 10", () => {
+    expect(workShiftOperationalDateKey(art("2026-11-11T09:00"), night)).toBe("2026-11-11");
+  });
+
+  it("sin turno adoptado: fecha argentina del ingreso (21:30 ART del 10 = 00:30 UTC del 11)", () => {
+    expect(workShiftOperationalDateKey(new Date("2026-11-11T00:30:00.000Z"), null)).toBe("2026-11-10");
   });
 });

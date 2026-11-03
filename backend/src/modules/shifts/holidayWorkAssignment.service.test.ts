@@ -46,7 +46,9 @@ vi.mock("../workforce-management/workforce.service", () => ({
 
 const repo = holidayWorkAssignmentRepository as unknown as { findCandidates: Mock; findByDate: Mock; findExisting: Mock; create: Mock; update: Mock };
 const mockedPrisma = prisma as unknown as { employee: { count: Mock }; $transaction: Mock };
-const TX = { holidayWorkAssignment: {} };
+// EMPLOYEE_DAY_OFF.md §5: el guardado toma el lock por empleado + fecha y
+// verifica francos activos; sin francos por default.
+const TX = { holidayWorkAssignment: {}, $executeRaw: vi.fn(), employeeDayOff: { findMany: vi.fn() } };
 const noChanges = { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
 const mockedAudit = auditService.register as unknown as Mock;
 const mockedHolidayDates = workforceService.holidayDatesInRange as unknown as Mock;
@@ -56,6 +58,8 @@ const rrhh = { id: "user-1", role: roles.rrhh } as unknown as Express.AuthUser;
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback(TX));
+  TX.$executeRaw.mockResolvedValue(0);
+  TX.employeeDayOff.findMany.mockResolvedValue([]);
   vi.mocked(reinterpretSpecialHoursOnDates).mockResolvedValue(noChanges as never);
 });
 
@@ -229,6 +233,32 @@ describe("holidayWorkAssignmentService.save — Etapa 12D", () => {
     // ninguna llamada a systemNotification/notifyUsers/notifyRrhh es posible
     // sin importarlas, y el service no las importa (ver holidayWorkAssignment.service.ts).
     expect(mockedAudit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("holidayWorkAssignmentService.save — franco el mismo día (docs/decisions/EMPLOYEE_DAY_OFF.md §5)", () => {
+  const date = new Date("2026-08-27");
+
+  it("convocar a alguien con franco ACTIVO ese día → 409 explícito y no se guarda (feriado + convocatoria + franco nunca coexisten)", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    TX.employeeDayOff.findMany.mockResolvedValue([{ employee: { legajo: "100", firstName: "Ana", lastName: "Pérez" } }]);
+
+    const attempt = holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" } as never] }, rrhh);
+
+    await expect(attempt).rejects.toMatchObject({ statusCode: 409, code: "HOLIDAY_WORK_CONFLICTS_DAY_OFF", message: expect.stringContaining("Pérez, Ana · Legajo 100 tiene franco asignado") });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("toma el mismo lock por empleado + fecha que el guardado de francos y sólo verifica francos de quienes quedan convocados", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(2);
+    repo.findExisting.mockResolvedValue(null);
+    repo.create.mockResolvedValue({ id: "hwa-1", status: "ACTIVA", employee: { legajo: "100" } });
+
+    await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" } as never, { employeeId: "employee-2", status: "CANCELADA" } as never] }, rrhh);
+
+    expect(TX.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(TX.employeeDayOff.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { date, status: "ACTIVO", employeeId: { in: ["employee-1"] } } }));
   });
 });
 

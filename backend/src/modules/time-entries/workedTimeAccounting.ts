@@ -1,4 +1,5 @@
-import type { HourConceptWorkTreatment, Prisma } from "@prisma/client";
+import type { HourConceptBreakdownSource, HourConceptWorkTreatment, Prisma, WorkShiftSource } from "@prisma/client";
+import { calendarDateKey } from "../../shared/datetime/argentinaTime";
 import { AppError } from "../../shared/errors/AppError";
 
 /**
@@ -20,6 +21,11 @@ import { AppError } from "../../shared/errors/AppError";
  * intervalo (MANUAL: distribución declarada, sin posición en la jornada).
  * Así un minuto compartido por dos conceptos dentro de la jornada nunca se
  * resta dos veces de la base.
+ *
+ * Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7): las horas AUTOMÁTICAS de
+ * jornadas cuya fecha operativa tiene franco activo no computan; lo cargado o
+ * corregido por una persona sí. `applyDayOffExclusions` es la única
+ * implementación de esa regla y `accountEmployeePeriods` la aplica.
  */
 
 export type WorkTreatment = HourConceptWorkTreatment;
@@ -29,6 +35,10 @@ export type AccountingBaseEntry = {
   day: number;
   minutes: number;
   multiplier: number;
+  // Fecha calendario "YYYY-MM-DD" y si las horas vigentes las fijó el fichador
+  // (francos). Sin estos datos la fila nunca se excluye.
+  dateKey?: string;
+  automatic?: boolean;
 };
 
 export type AccountingBreakdown = {
@@ -40,6 +50,9 @@ export type AccountingBreakdown = {
   multiplier: number;
   startAt?: Date | null;
   endAt?: Date | null;
+  dateKey?: string;
+  automatic?: boolean;
+  workShiftId?: string | null;
 };
 
 export type ConceptAccounting = {
@@ -73,6 +86,9 @@ type AccountingTotals = {
   withinBaseExcessMinutes: number;
   additiveMinutes: number;
   totalWorkedMinutes: number;
+  // Horas base automáticas registradas que no computan por pertenecer a una
+  // jornada en franco (evidencia conservada, a revisar).
+  dayOffUncountedMinutes: number;
   settlement: SettlementAccounting;
   concepts: ConceptAccounting[];
 };
@@ -176,6 +192,7 @@ export function accountDay(day: number, baseEntries: AccountingBaseEntry[], brea
     withinBaseExcessMinutes: Math.max(0, coverage - baseMinutes),
     additiveMinutes,
     totalWorkedMinutes: baseMinutes + additiveMinutes,
+    dayOffUncountedMinutes: 0,
     settlement,
     concepts,
   };
@@ -193,6 +210,7 @@ function emptyPeriod(): PeriodAccounting {
     withinBaseExcessMinutes: 0,
     additiveMinutes: 0,
     totalWorkedMinutes: 0,
+    dayOffUncountedMinutes: 0,
     settlement: emptySettlement(),
     concepts: [],
   };
@@ -209,6 +227,7 @@ function addDay(period: PeriodAccounting, day: DayAccounting) {
   period.withinBaseExcessMinutes += day.withinBaseExcessMinutes;
   period.additiveMinutes += day.additiveMinutes;
   period.totalWorkedMinutes += day.totalWorkedMinutes;
+  period.dayOffUncountedMinutes += day.dayOffUncountedMinutes;
   period.settlement.normalMinutes += day.settlement.normalMinutes;
   period.settlement.withinBaseMinutes += day.settlement.withinBaseMinutes;
   period.settlement.additiveMinutes += day.settlement.additiveMinutes;
@@ -224,29 +243,110 @@ function addDay(period: PeriodAccounting, day: DayAccounting) {
   }
 }
 
+// ── Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7) ─────────────────────────
+
 /**
- * Contabilidad por empleado del período (un recorrido, sin consultas): agrupa
- * por empleado+día y delega cada día en accountDay. Los empleados sin filas
- * no aparecen en el Map — usar `emptyPeriodAccounting()` como default.
+ * Índice de francos de un rango, armado por
+ * `employee-day-offs/employeeDayOffAccounting.ts::loadDayOffAccounting`.
+ * Claves `employeeId|YYYY-MM-DD` (fecha calendario).
  */
-export function accountEmployeePeriods(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[]) {
-  const grouped = new Map<string, Map<number, { base: AccountingBaseEntry[]; breakdowns: AccountingBreakdown[] }>>();
+export type DayOffAccountingIndex = {
+  // Minutos de tramos de jornadas del fichador cuya fecha operativa tiene
+  // franco activo, por la fecha calendario del tramo (una noche en franco
+  // también descuenta lo que cae al día siguiente).
+  excludedBaseMinutes: ReadonlyMap<string, number>;
+  // Esas jornadas: sus desgloses automáticos (Motor B guarda workShiftId) no computan.
+  excludedWorkShiftIds: ReadonlySet<string>;
+  // Fechas con franco activo: atribución de un desglose automático sin jornada.
+  dayOffDates: ReadonlySet<string>;
+};
+
+export const EMPTY_DAY_OFF_ACCOUNTING: DayOffAccountingIndex = { excludedBaseMinutes: new Map(), excludedWorkShiftIds: new Set(), dayOffDates: new Set() };
+
+export const dayOffKey = (employeeId: string, dateKey: string) => `${employeeId}|${dateKey}`;
+
+/**
+ * Canales del fichador (`WorkShiftSource` salvo ADMIN). Una fila de Horas base
+ * es automática si su `source` es uno de estos: el fichador fijó sus horas.
+ * `null` (carga manual) y `ADMIN` (jornada registrada a mano o corrección de
+ * horas, ver timeEntriesRepository.update) son horas fijadas por una persona.
+ */
+export const CLOCK_TIME_ENTRY_SOURCES = ["PORTAL_DNI", "PUBLIC_CLOCK_PHOTO", "KIOSK", "BIOTIME", "FACIAL"] as const satisfies readonly WorkShiftSource[];
+
+export function isAutomaticTimeEntrySource(source: WorkShiftSource | null | undefined) {
+  return (CLOCK_TIME_ENTRY_SOURCES as readonly string[]).includes(source ?? "");
+}
+
+export type DayOffExclusionResult = {
+  baseEntries: AccountingBaseEntry[];
+  breakdowns: AccountingBreakdown[];
+  uncountedBase: Array<{ employeeId: string; day: number; minutes: number }>;
+  excludedBreakdowns: AccountingBreakdown[];
+};
+
+/**
+ * Única regla de francos sobre la contabilidad: a cada fila AUTOMÁTICA de
+ * Horas base se le descuentan los minutos de jornadas en franco de esa fecha
+ * (tope: sus propios minutos) y los desgloses AUTOMATIC de una jornada en
+ * franco no computan. Lo manual nunca se toca. Sin francos devuelve las mismas
+ * filas.
+ */
+export function applyDayOffExclusions(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], index: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING): DayOffExclusionResult {
+  if (!index.excludedBaseMinutes.size && !index.dayOffDates.size) return { baseEntries, breakdowns, uncountedBase: [], excludedBreakdowns: [] };
+
+  const remaining = new Map(index.excludedBaseMinutes);
+  const counted: AccountingBaseEntry[] = [];
+  const uncountedBase: DayOffExclusionResult["uncountedBase"] = [];
+  for (const entry of baseEntries) {
+    const key = entry.automatic && entry.dateKey ? dayOffKey(entry.employeeId, entry.dateKey) : null;
+    const excluded = key ? Math.min(entry.minutes, remaining.get(key) ?? 0) : 0;
+    if (!excluded) {
+      counted.push(entry);
+      continue;
+    }
+    remaining.set(key!, (remaining.get(key!) ?? 0) - excluded);
+    uncountedBase.push({ employeeId: entry.employeeId, day: entry.day, minutes: excluded });
+    if (entry.minutes > excluded) counted.push({ ...entry, minutes: entry.minutes - excluded });
+  }
+
+  const countedBreakdowns: AccountingBreakdown[] = [];
+  const excludedBreakdowns: AccountingBreakdown[] = [];
+  for (const breakdown of breakdowns) {
+    const isExcluded = Boolean(breakdown.automatic) && (breakdown.workShiftId
+      ? index.excludedWorkShiftIds.has(breakdown.workShiftId)
+      : Boolean(breakdown.dateKey && index.dayOffDates.has(dayOffKey(breakdown.employeeId, breakdown.dateKey))));
+    (isExcluded ? excludedBreakdowns : countedBreakdowns).push(breakdown);
+  }
+  return { baseEntries: counted, breakdowns: countedBreakdowns, uncountedBase, excludedBreakdowns };
+}
+
+/**
+ * Contabilidad por empleado del período (un recorrido, sin consultas): aplica
+ * los francos (`dayOffs`), agrupa por empleado+día y delega cada día en
+ * accountDay. Los empleados sin filas no aparecen en el Map — usar
+ * `emptyPeriodAccounting()` como default.
+ */
+export function accountEmployeePeriods(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING) {
+  const applied = applyDayOffExclusions(baseEntries, breakdowns, dayOffs);
+  type Bucket = { base: AccountingBaseEntry[]; breakdowns: AccountingBreakdown[]; uncounted: number };
+  const grouped = new Map<string, Map<number, Bucket>>();
   const bucket = (employeeId: string, day: number) => {
-    const days = grouped.get(employeeId) ?? new Map<number, { base: AccountingBaseEntry[]; breakdowns: AccountingBreakdown[] }>();
+    const days = grouped.get(employeeId) ?? new Map<number, Bucket>();
     grouped.set(employeeId, days);
-    const current = days.get(day) ?? { base: [], breakdowns: [] };
+    const current = days.get(day) ?? { base: [], breakdowns: [], uncounted: 0 };
     days.set(day, current);
     return current;
   };
-  for (const entry of baseEntries) bucket(entry.employeeId, entry.day).base.push(entry);
-  for (const breakdown of breakdowns) bucket(breakdown.employeeId, breakdown.day).breakdowns.push(breakdown);
+  for (const entry of applied.baseEntries) bucket(entry.employeeId, entry.day).base.push(entry);
+  for (const breakdown of applied.breakdowns) bucket(breakdown.employeeId, breakdown.day).breakdowns.push(breakdown);
+  for (const item of applied.uncountedBase) bucket(item.employeeId, item.day).uncounted += item.minutes;
 
   const result = new Map<string, PeriodAccounting>();
   for (const [employeeId, days] of grouped) {
     const period = emptyPeriod();
     for (const day of [...days.keys()].sort((a, b) => a - b)) {
       const rows = days.get(day)!;
-      addDay(period, accountDay(day, rows.base, rows.breakdowns));
+      addDay(period, { ...accountDay(day, rows.base, rows.breakdowns), dayOffUncountedMinutes: rows.uncounted });
     }
     result.set(employeeId, period);
   }
@@ -258,11 +358,11 @@ export function emptyPeriodAccounting(): PeriodAccounting {
 }
 
 /** Contabilidad de un único empleado (detalle por legajo, cierre). */
-export function accountEmployeePeriod(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[]) {
+export function accountEmployeePeriod(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING) {
   const employeeIds = new Set([...baseEntries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId)]);
   if (employeeIds.size > 1) throw new Error("accountEmployeePeriod recibe filas de un único empleado");
   const [employeeId] = employeeIds;
-  return (employeeId ? accountEmployeePeriods(baseEntries, breakdowns).get(employeeId) : undefined) ?? emptyPeriod();
+  return (employeeId ? accountEmployeePeriods(baseEntries, breakdowns, dayOffs).get(employeeId) : undefined) ?? emptyPeriod();
 }
 
 // ── Adaptadores desde Prisma ────────────────────────────────────────────────
@@ -272,13 +372,18 @@ export function accountEmployeePeriod(baseEntries: AccountingBaseEntry[], breakd
 export const accountingBaseEntrySelect = {
   employeeId: true,
   day: true,
+  date: true,
   hours: true,
   appliedMultiplier: true,
+  source: true,
 } satisfies Prisma.TimeEntrySelect;
 
 export const accountingBreakdownSelect = {
   employeeId: true,
   day: true,
+  date: true,
+  source: true,
+  workShiftId: true,
   hourConceptId: true,
   minutes: true,
   appliedMultiplier: true,
@@ -289,12 +394,14 @@ export const accountingBreakdownSelect = {
 
 type DecimalLike = Prisma.Decimal | number | string | null | undefined;
 
-export function toAccountingBaseEntry(entry: { employeeId: string; day: number; hours: DecimalLike; appliedMultiplier?: DecimalLike }): AccountingBaseEntry {
+export function toAccountingBaseEntry(entry: { employeeId: string; day: number; hours: DecimalLike; appliedMultiplier?: DecimalLike; date?: Date; source?: WorkShiftSource | null }): AccountingBaseEntry {
   return {
     employeeId: entry.employeeId,
     day: entry.day,
     minutes: Math.round(Number(entry.hours ?? 0) * 60),
     multiplier: Number(entry.appliedMultiplier ?? 1) || 1,
+    ...(entry.date ? { dateKey: calendarDateKey(entry.date) } : {}),
+    automatic: isAutomaticTimeEntrySource(entry.source),
   };
 }
 
@@ -306,6 +413,9 @@ export function toAccountingBreakdown(breakdown: {
   appliedMultiplier?: DecimalLike;
   startAt?: Date | null;
   endAt?: Date | null;
+  date?: Date;
+  source?: HourConceptBreakdownSource;
+  workShiftId?: string | null;
   hourConcept: { workTreatment: WorkTreatment | null };
 }): AccountingBreakdown {
   // El CHECK HourConcept_work_treatment_check garantiza que todo concepto
@@ -323,6 +433,9 @@ export function toAccountingBreakdown(breakdown: {
     multiplier: Number(breakdown.appliedMultiplier ?? 1) || 1,
     startAt: breakdown.startAt ?? null,
     endAt: breakdown.endAt ?? null,
+    ...(breakdown.date ? { dateKey: calendarDateKey(breakdown.date) } : {}),
+    automatic: breakdown.source === "AUTOMATIC",
+    workShiftId: breakdown.workShiftId ?? null,
   };
 }
 

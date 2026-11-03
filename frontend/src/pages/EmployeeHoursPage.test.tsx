@@ -861,3 +861,36 @@ describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etap
     expect(within(day5).getByText("+")).toBeInTheDocument();
   });
 });
+
+// docs/decisions/EMPLOYEE_DAY_OFF.md §7 y §15: la celda de Horas base de un
+// día de franco dice "Franco" + lo que computa (backend); abrirla sigue siendo
+// el flujo existente de carga/corrección, que es como se reconocen horas.
+describe("EmployeeHoursPage — francos", () => {
+  const dayOffGrid = () => ({ ...buildNormalOnlyGrid(), dayOffsByDay: { "3": { status: "ACTIVO" as const, notes: null, activityShifts: 1, activityMinutes: 480 } } });
+
+  it("franco con actividad no reconocida: 'Franco 0 h' en la celda, aunque exista la fila del fichador", async () => {
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(dayOffGrid());
+    renderPage();
+    await waitForGridLoaded();
+
+    const cell = within(rowFor("Horas base")).getByRole("button", { name: /Horas base, día 3: Franco asignado/ });
+    expect(cell).toHaveClass("day-off");
+    expect(cell).toHaveTextContent("Franco");
+    expect(cell).toHaveTextContent("0 h");
+  });
+
+  it("abrir la celda muestra el aviso de franco y deja reconocer horas con el flujo de carga existente", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(dayOffGrid());
+    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({ id: "entry-3", employeeId: "employee-1", period: "2026-08", day: 3, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal" });
+    renderPage();
+    await waitForGridLoaded();
+
+    await user.click(within(rowFor("Horas base")).getByRole("button", { name: /Horas base, día 3: Franco/ }));
+
+    expect(await screen.findByText("Franco asignado este día")).toBeInTheDocument();
+    expect(screen.getByText(/lo que guardes computa y el franco se mantiene/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ day: 3, hours: 8 }), { knownExistingId: null }));
+  });
+});

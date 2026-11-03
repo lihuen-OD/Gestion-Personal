@@ -362,6 +362,7 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 - `accounting`: `PeriodAccounting` con `days[day]` — `baseMinutes`, `normalResidualMinutes`, `withinBaseMinutes`, `withinBaseCoveredMinutes`, `withinBaseOverlapMinutes`, `withinBaseExcessMinutes`, `additiveMinutes`, `totalWorkedMinutes`, `settlement { normalMinutes, withinBaseMinutes, additiveMinutes, totalMinutes }`, `concepts[{ hourConceptId, treatment, realMinutes, settlementMinutes }]`, `multiplier` (por día) y `hasSpecialMultiplier` (período);
 - `totalWorkedMinutes`: total real = Horas base + conceptos `ADDITIVE_TO_WORKED_TOTAL` (nunca + `WITHIN_BASE`);
 - `specialHoursByDay[day]`: `{ multiplier, ruleNames, conflict }` sólo para días con multiplicador > 1 (indicador visual; las horas del día viven en `accounting.days`).
+- `dayOffsByDay[day]` (desde 2026-11-03, `docs/decisions/EMPLOYEE_DAY_OFF.md`): `{ status: "ACTIVO", notes, activityShifts, activityMinutes }` sólo para días con franco activo. `activity*` es lo que registró el fichador en las jornadas de esa fecha operativa (evidencia); lo que computa está en `accounting.days[day]`. `accounting` (días y período) suma `dayOffUncountedMinutes`: Horas base automáticas que no computan por pertenecer a una jornada en franco.
 
 Desde 2026-10-02 ya no existen `specialHourAdditionalMinutes`, `specialHourLiquidableTotalMinutes` ni `additionalMinutes`/`liquidableTotalMinutes` por día (duplicaban los conceptos dentro de la jornada). Los conceptos `AUTOMATIC` son de sólo lectura; los `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
@@ -1368,6 +1369,7 @@ Body:
 
 Reglas:
 
+- Una sola fila por persona, fecha y concepto. Si ya existe, `409 TIME_ENTRY_DUPLICATED`; si la existente la fijó el fichador, `409 TIME_ENTRY_CLOCK_HOURS_EXIST` (se corrige esa carga, no se carga otra). La verificación se repite dentro de la transacción con el lock persona+día que también toma la salida del fichador (`docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md`).
 - Crea en `BORRADOR` — **excepto si quien carga es RRHH** (Etapa 6L.3): en ese caso queda `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios, sin pasar por `BORRADOR`/`EN_REVISION`. Nivel 2/3 mantienen `BORRADOR`. La decisión es por rol del usuario autenticado (`req.user.role`), nunca por un campo del body — el cliente no puede pedir el estado.
 - Valida que la hora especial esté habilitada para el legajo.
 - Evita duplicado por empleado + fecha + concepto.
@@ -1381,6 +1383,8 @@ Reglas:
 ```txt
 PATCH /api/time-entries/:id
 ```
+
+Desde 2026-11-03, editar `hours` fija `source = ADMIN` en la fila: las horas pasan a ser "reconocidas por una persona" aunque la fila haya nacido de una fichada (`workShiftId`/`timeSegmentId` no cambian). Es la señal que usan los francos para computar horas reconocidas (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7.1).
 
 No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa. Con el período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, Nivel 2/3 reciben `409 PERIOD_CLOSED_REQUIRES_CORRECTION` (deben usar `POST /workforce/corrections` en su lugar); no existe endpoint de borrado para `TimeEntry`.
 
@@ -1584,7 +1588,7 @@ Reglas:
 - Devuelve empleados activos paginados.
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
-- Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`.
+- Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`. Desde 2026-11-03 `dailyBreakdown[]` también lleva `dayOff: { notes, activityShifts, activityMinutes } | null` e incluye los días con franco aunque no tengan horas; la contabilidad de la grilla, "Por persona", el export, el resumen y el dashboard excluyen las horas automáticas de jornadas en franco (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7).
 
 ## Exportaciones
 
@@ -1819,7 +1823,46 @@ Todas las rutas requieren `requireAuth`.
 - `GET /holiday-work/dates?from=YYYY-MM-DD&to=YYYY-MM-DD` (rango máximo 400 días): delega en `workforceService.holidayDatesInRange` (`workforce-management`, reutiliza `calendarPreview(kind=FERIADO)` sin duplicar el cálculo de calendario — ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`). Devuelve `[{ date, rules: [{ id, name }] }]` — nunca `multiplier`/`priority`/`hasOverlap`/`hasConflict` (eso es de liquidación, no de esta pantalla).
 - `GET /holiday-work/candidates`: empleados `status=ACTIVO` dentro del alcance del usuario (`employeeAccessWhere`), paginados (`take` máximo 500, default 100). `shiftTemplateId` filtra por `shiftAssignments` `HABILITADO`; `withoutShift=true` filtra a quienes no tienen ninguna. Devuelve, por empleado, su sector y sus turnos habituales activos.
 - `GET /holiday-work/assignments?date=YYYY-MM-DD`: convocatorias `status=ACTIVA` para esa fecha, dentro del alcance del usuario.
-- `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones.
+- `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones. Desde 2026-11-03 convocar (`ACTIVA`) a alguien con franco activo esa fecha responde `409 HOLIDAY_WORK_CONFLICTS_DAY_OFF` (`docs/decisions/EMPLOYEE_DAY_OFF.md` §5).
+
+### Fichadas sobre horas cargadas a mano (`/api/time-entries/manual-hours-conflicts`)
+
+`docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md`. La revisión es la `ShiftAlert` `ACTIVIDAD_SOBRE_CARGA_MANUAL` de una jornada del fichador que cayó en una fecha con horas fijadas por una persona: la salida se registró, la jornada quedó `OBSERVADO` sin cargar horas y computan las horas manuales hasta que alguien decide. Roles RRHH, Supervisión y Carga horaria, siempre dentro de `employeeAccessWhere(user)`. Sin caché backend propia.
+
+```txt
+GET  /api/time-entries/manual-hours-conflicts?period=YYYY-MM[&employeeId=uuid]
+POST /api/time-entries/manual-hours-conflicts/:id/resolve
+```
+
+- `GET`: revisiones pendientes y resueltas cuyas fechas tocan el período. Cada ítem: `{ id, employee: { id, legajo, firstName, lastName }, operationalDate, status: "PENDIENTE" | "RESUELTA", decision: "KEEP_MANUAL" | "USE_CLOCK" | null, resolvedAt, resolvedByName, shift: { id, startAt, endAt, totalMinutes }, days: [{ date, manualMinutes, manualStatus, clockMinutes, countedMinutes }], manualMinutes, clockMinutes, differenceMinutes }`. Una nocturna es un solo ítem con dos `days`. En una resuelta, `manualMinutes`/`clockMinutes` son los que vio quien decidió (auditoría de la decisión) y `countedMinutes`, lo que computa hoy.
+- `POST .../resolve` — body `{ decision: "KEEP_MANUAL" | "USE_CLOCK", correctionReason? }`. Devuelve el ítem actualizado.
+  - `USE_CLOCK`: la fila de Horas base de cada fecha pasa a valer lo fichado (`source` del fichador, `APROBADO`); la jornada pasa a `PROCESADO`; snapshots de cierres no protegidos reconstruidos; Motor B después del commit.
+  - `KEEP_MANUAL`: no cambia horas ni la jornada.
+  - Errores: `403 EMPLOYEE_SCOPE_FORBIDDEN` (fuera del alcance), `404 MANUAL_HOURS_CONFLICT_NOT_FOUND`, `409 MANUAL_HOURS_CONFLICT_ALREADY_RESOLVED` (otra decisión ya tomada; repetir la misma no cambia nada), `409 PERIOD_CLOSED` (Nivel 2/3 con `USE_CLOCK` en período enviado/aprobado), `400 MANUAL_HOURS_CORRECTION_REASON_REQUIRED` (RRHH sin motivo en ese caso), `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` (motor de Horas Especiales, sin escrituras).
+  - Auditoría `ShiftAlert` `UPDATE` en la misma transacción, con empleado, fecha operativa, horas manuales y fichadas por fecha, decisión, usuario y motivo.
+- `POST /api/shifts/alerts/:id/resolve` sobre este tipo → `409 SHIFT_ALERT_REQUIRES_HOURS_DECISION`.
+- La salida del fichador (`/api/clock/photo-punch`) y el cierre manual de RRHH ya no responden `CLOCK_LOCKED_TIME_ENTRY` por una carga manual del día.
+
+### Francos (`employee-day-offs`, montado en `/api/employee-day-offs`)
+
+`docs/decisions/EMPLOYEE_DAY_OFF.md`. Un franco = esa persona no tiene obligación de trabajar esa fecha operativa. Todas las rutas requieren `requireAuth`, roles RRHH/Supervisión/Carga Horaria, y operan dentro de `employeeAccessWhere(user)`. Sin caché backend propia.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/?period=YYYY-MM&status?&page&take` | Francos (`ACTIVO`/`CANCELADO`) del período visibles para el usuario. `{ data: [{ id, employeeId, date, status, notes, createdAt, updatedAt, employee }], meta }`. `take` ≤ 500. |
+| GET | `/by-date?date=YYYY-MM-DD&search&page&take` | Para el modal: personas `ACTIVO` del alcance con `{ employee, dayOff: { id, status, notes, updatedAt } \| null, holidayWork, periodLocked }`. `take` ≤ 200 (default 50). |
+| PUT | `/` | Guardado en lote. |
+
+`PUT /api/employee-day-offs` — body `{ date: "YYYY-MM-DD", correctionReason?, employees: [{ employeeId, status: "ACTIVO" | "CANCELADO", notes? }] }` (1..500 personas). Cada ítem es un upsert de `(employeeId, date)`; nunca reemplaza la fecha. Sin `notes` se conserva la nota guardada; `null`/vacío la borra. Respuesta `{ data: { date, items, summary: { changed, unchanged, activityAlerts, resolvedActivityAlerts, resolvedInactivityIncidents } } }`.
+
+- Idempotente: un ítem sin cambios no escribe ni audita; `CANCELADO` sobre una persona sin franco no crea nada. Nunca borra: cancelar deja `CANCELADO`, reactivar vuelve a `ACTIVO`.
+- `400 DAY_OFF_DUPLICATE_EMPLOYEE`: la misma persona dos veces en el lote.
+- `403 EMPLOYEE_SCOPE_FORBIDDEN`: alguna persona fuera del alcance; no se guarda nada del lote.
+- `409 PERIOD_CLOSED`: período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE` y quien guarda no es RRHH. RRHH sin `correctionReason` → `400 DAY_OFF_CORRECTION_REASON_REQUIRED`; con motivo se guarda y se audita (el snapshot del cierre protegido no se reconstruye).
+- `409 DAY_OFF_CONFLICTS_HOLIDAY_WORK`: la persona está convocada (`HolidayWorkAssignment` `ACTIVA`) ese día.
+- `409 DAY_OFF_CONCURRENT_UPDATE`: garantía final del `@@unique(employeeId, date)` (el advisory lock por empleado + fecha ya serializa guardados concurrentes).
+- En la misma transacción: alertas `ACTIVIDAD_EN_FRANCO` (con notificación `ALERTA_FICHADA`) para jornadas del fichador de esa fecha operativa al activar, resolución automática de esas alertas pendientes al cancelar, resolución de incidentes de inactividad pendientes de esa fecha al activar, y recálculo de snapshots de cierres no protegidos.
+- Auditoría `EmployeeDayOff` por fila cambiada (`CREATE`/`ACTIVATE`/`DEACTIVATE`/`UPDATE`), con before/after. Invalida `time-grid`, `period-employees`/Por persona/resumen/asistencia, dashboard, cierres, alertas y notificaciones.
 
 ### Gestión de fuerza laboral (`workforce-management`, montado en `/api/workforce`)
 
@@ -1948,6 +1991,9 @@ Rutas públicas, con rate limit independiente:
 | GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>`, cualquier estado | Estado seguro y actualización de metadata de última conexión; un `REVOKED` recibe `200` con su estado para poder mostrarlo |
 | POST | `/api/clock/device/pairing-code/refresh` | idem | Sólo `PENDING`; invalida el código anterior y devuelve código/vencimiento nuevos |
 | POST | `/api/clock/heartbeat` | `Authorization: ClockDevice …`, sólo `ACTIVE` | F9. Sin body. Actualiza `lastSeenAt`, `lastIp` y `lastUserAgent` de la request, y `lastAppVersion` del header `X-Clock-App-Version`; el body nunca se lee. Responde `{ device: { id, name, status, establishment }, serverTime }`. No audita. Si el equipo fue revocado entre la autenticación y la escritura → `403 CLOCK_DEVICE_REVOKED`. No existe en el alias legacy |
+| POST | `/api/clock/maintenance/session` | `Authorization: ClockDevice …`, sólo `ACTIVE` | Modo mantenimiento. Body `.strict()` `{ code }` (6 dígitos). Canjea el código de RRHH de **este** dispositivo, que es de un solo uso, y responde `201 { token, expiresAt, expiresInSeconds, device }` (`Cache-Control: no-store`). Código inexistente, vencido, anulado, usado o de otro equipo → siempre `401 CLOCK_MAINTENANCE_CODE_INVALID` |
+| GET | `/api/clock/maintenance/session` | idem + `X-Clock-Maintenance-Session: <token>` | Diagnóstico del equipo y segundos restantes: `{ expiresAt, expiresInSeconds, device, serverTime }`. Sesión inválida o vencida → `401 CLOCK_MAINTENANCE_SESSION_INVALID` |
+| DELETE | `/api/clock/maintenance/session` | idem | Cierra la sesión de ese token. Siempre `204` (idempotente) |
 
 Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
 min`; además hay un máximo operativo de 20 solicitudes pendientes. La
@@ -1956,6 +2002,11 @@ tiene dos límites propios, que nunca consumen el cupo de fichadas:
 
 - por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`);
 - `10/5 min` por dispositivo ya autenticado.
+
+El modo mantenimiento también tiene limitadores propios: por IP antes de
+autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `10/15 min` por dispositivo para canjear
+códigos y `30/5 min` por dispositivo para leer o cerrar la sesión. Además, 5
+intentos fallidos anulan el código vigente; ese contador vive en la base.
 
 Rutas RRHH (`Bearer` JWT + Nivel 1):
 
@@ -1966,8 +2017,22 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 | POST | `/api/clock-devices/resolve-pairing` | Resuelve `{ pairingCode }` a metadata segura de un pendiente vigente |
 | POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, establishmentId? }`; consume pairing y activa atómicamente |
 | PATCH | `/api/clock-devices/:id` | F9. Body `.strict()` `{ name?, establishmentId? }`, al menos uno; cualquier otro campo → `400 VALIDATION_ERROR`. Detalle abajo |
-| POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
+| POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED`. También borra el código y la sesión de mantenimiento en el mismo `UPDATE` |
+| POST | `/api/clock-devices/:id/maintenance-code` | Genera un código de mantenimiento: 6 dígitos, vence a los 5 min, de un solo uso y sólo para ese dispositivo. Reemplaza al anterior. Responde `201 { code, expiresAt, expiresInSeconds }` (`Cache-Control: no-store`); el código no se persiste ni se audita en claro. Límite `10/5 min` por usuario. Un dispositivo no `ACTIVE` → `409 CLOCK_MAINTENANCE_DEVICE_NOT_ACTIVE` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
+
+**Modo mantenimiento.** Diseño y amenazas en
+`docs/decisions/FICHADOR_MAINTENANCE_MODE.md`.
+
+- El `device` de las rutas de sesión es el diagnóstico del propio equipo:
+  `name`, `status`, `establishment { name, zone { name } }`, `activatedAt`,
+  `lastSeenAt`, `lastAppVersion` y `connectivity`. Sin id, IP, user-agent ni
+  hashes.
+- La auditoría usa la entidad `ClockDeviceMaintenance`:
+  - `CREATE`: código generado (usuario RRHH);
+  - `LOGIN`: ingreso desde el fichador (`userId = NULL`, `after.actorClockDeviceId`);
+  - `REJECT`: código rechazado, sólo si había uno vigente (como mucho 5 por
+    código).
 
 **`PATCH /api/clock-devices/:id` (F9):**
 

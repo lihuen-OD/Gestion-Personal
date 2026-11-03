@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { findClosuresForHourConcept, rebuildClosureSnapshots } from "./closureSnapshot";
+import { buildClosureSnapshots, findClosuresForHourConcept, rebuildClosureSnapshots } from "./closureSnapshot";
 
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §9/§14: el snapshot de cierre
 // es lo único que persiste la lectura de un concepto; si RRHH corrige o
@@ -9,6 +9,7 @@ function db(overrides: { closures?: unknown[]; base?: unknown[]; breakdowns?: un
     monthlyTimeClosure: { findMany: vi.fn().mockResolvedValue(overrides.closures ?? []), update: vi.fn().mockResolvedValue({}) },
     timeEntry: { groupBy: vi.fn().mockResolvedValue(overrides.groups ?? []), findMany: vi.fn().mockResolvedValue(overrides.base ?? []) },
     hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue(overrides.breakdowns ?? []) },
+    employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -111,5 +112,29 @@ describe("rebuildClosureSnapshots", () => {
     await expect(rebuildClosureSnapshots(client as never, [], recalculation)).resolves.toEqual([]);
     expect(client.timeEntry.findMany).not.toHaveBeenCalled();
     expect(client.monthlyTimeClosure.update).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("buildClosureSnapshots — francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7)", () => {
+  it("congela lo que computa (sin las horas automáticas de la jornada en franco) y la fecha del franco como traza", async () => {
+    const client = db({
+      base: [
+        { employeeId: "emp-1", day: 5, date: new Date("2026-11-05T00:00:00.000Z"), hours: 8, appliedMultiplier: 1, source: "KIOSK" },
+        { employeeId: "emp-1", day: 6, date: new Date("2026-11-06T00:00:00.000Z"), hours: 8, appliedMultiplier: 1, source: "KIOSK" },
+      ],
+    });
+    client.employeeDayOff.findMany.mockResolvedValue([{ id: "d1", employeeId: "emp-1", date: new Date("2026-11-05T00:00:00.000Z"), notes: null }]);
+    Object.assign(client, {
+      workShift: {
+        findMany: vi.fn().mockResolvedValue([{ id: "shift-5", employeeId: "emp-1", startAt: new Date("2026-11-05T11:00:00.000Z"), status: "PROCESADO", shiftTemplate: null, timeSegments: [{ date: new Date("2026-11-05T00:00:00.000Z"), minutes: 480 }] }]),
+      },
+    });
+
+    const snapshot = (await buildClosureSnapshots(client as never, ["emp-1"], "2026-11")).get("emp-1") as { accounting: { totalWorkedMinutes: number; dayOffUncountedMinutes: number }; dayOffs: string[] };
+
+    expect(snapshot.accounting.totalWorkedMinutes).toBe(480);
+    expect(snapshot.accounting.dayOffUncountedMinutes).toBe(480);
+    expect(snapshot.dayOffs).toEqual(["2026-11-05"]);
   });
 });

@@ -83,6 +83,26 @@ describe("CORS para dos sitios independientes (admin + fichador)", () => {
     expect((await heartbeatPreflight("https://evil.example.com")).headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  // Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): la sesión
+  // viaja en su propio header. cors() refleja los headers pedidos (no hay lista
+  // fija), así que pasa sin cambiar la configuración; sólo para el origin permitido.
+  it("el preflight de /clock/maintenance/session (GET y DELETE) acepta X-Clock-Maintenance-Session, y no para otro origin", async () => {
+    const maintenancePreflight = (origin: string, method: string) => fetch(`${baseUrl}/clock/maintenance/session`, {
+      method: "OPTIONS",
+      headers: { origin, "access-control-request-method": method, "access-control-request-headers": "authorization, x-clock-app-version, x-clock-maintenance-session" },
+    });
+    for (const method of ["GET", "DELETE", "POST"]) {
+      const response = await maintenancePreflight(FICHADOR, method);
+      expect(response.status).toBe(204);
+      expect(response.headers.get("access-control-allow-origin")).toBe(FICHADOR);
+      expect(response.headers.get("access-control-allow-methods")).toContain(method);
+      expect(response.headers.get("access-control-allow-headers")?.split(",").map((header) => header.trim().toLowerCase())).toEqual(
+        expect.arrayContaining(["authorization", "x-clock-maintenance-session"]),
+      );
+    }
+    expect((await maintenancePreflight("https://evil.example.com", "GET")).headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   // F7: el namespace nuevo /api/clock/* comparte backend y configuración CORS.
   it("el preflight del namespace nuevo /clock/* pasa igual (POST con Authorization/Content-Type y GET con versión de app)", async () => {
     for (const path of ["/clock/photo-punch", "/clock/status"]) {

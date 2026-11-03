@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, Pencil, Search, ShieldOff, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, KeyRound, Pencil, Search, ShieldOff, Trash2 } from "lucide-react";
+import { MaintenanceCodeModal, type MaintenanceCodeState } from "../components/clock-devices/MaintenanceCodeModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DataTable } from "../components/ui/DataTable";
@@ -71,6 +72,7 @@ export function ClockDevicesPage() {
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState("");
   const [notice, setNotice] = useState("");
+  const [maintenance, setMaintenance] = useState<{ device: ClockDevice; state: MaintenanceCodeState } | null>(null);
   // Sólo la respuesta del último pedido se aplica: un refresco viejo nunca pisa
   // un filtro nuevo.
   const requestSeq = useRef(0);
@@ -177,6 +179,17 @@ export function ClockDevicesPage() {
     await clockDeviceApiService.revoke(device.id); void load("silent");
   };
 
+  // Modo mantenimiento: cada pedido genera un código nuevo (el anterior deja de
+  // valer). Una respuesta que llega con el modal cerrado o de otro equipo se descarta.
+  const issueMaintenanceCode = async (device: ClockDevice) => {
+    setMaintenance({ device, state: { status: "loading" } });
+    const apply = (state: MaintenanceCodeState) => setMaintenance((current) => (current?.device.id === device.id ? { device, state } : current));
+    try {
+      const result = await clockDeviceApiService.issueMaintenanceCode(device.id);
+      apply({ status: "ready", code: result.code, deadline: Date.now() + result.expiresInSeconds * 1_000 });
+    } catch (issueError) { apply({ status: "error", message: getUserErrorMessage(issueError, "No pudimos generar el código. Intentá nuevamente.") }); }
+  };
+
   const remove = async (device: ClockDevice) => {
     if (!await confirmAction("¿Querés eliminar esta solicitud pendiente? El dispositivo deberá configurarse nuevamente.", { title: "Eliminar solicitud", confirmLabel: "Eliminar", tone: "danger" })) return;
     await clockDeviceApiService.deletePending(device.id); void load("silent");
@@ -191,7 +204,7 @@ export function ClockDevicesPage() {
   })();
 
   return <>
-    <PageHeader eyebrow="FICHADOR" title="Dispositivos de fichada" description="Aprobá, ubicá y revocá los equipos habilitados para el fichador standalone." action={<Button variant="primary" icon={Check} onClick={() => setPairingOpen(true)}>Aprobar dispositivo</Button>} />
+    <PageHeader eyebrow="FICHADOR" title="Dispositivos de fichada" description="Aprobá, ubicá y revocá los equipos habilitados para el fichador standalone, o generá un acceso de mantenimiento temporal." action={<Button variant="primary" icon={Check} onClick={() => setPairingOpen(true)}>Aprobar dispositivo</Button>} />
     <Section title="Equipos registrados" subtitle={`${meta.total} dispositivos encontrados`}>
       <div className="filters">
         <label className="search-field"><Search size={16} /><input spellCheck={false} aria-label="Buscar dispositivo" placeholder="Buscar por nombre" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
@@ -209,6 +222,7 @@ export function ClockDevicesPage() {
             <td>{device.lastAppVersion || <span className="muted">—</span>}</td>
             <td><div className="table-actions">
               {device.status !== "REVOKED" ? <button className="table-icon-action" title="Editar" aria-label={`Editar ${device.name || "solicitud pendiente"}`} onClick={() => void openEdit(device)}><Pencil size={15} /></button> : null}
+              {device.status === "ACTIVE" ? <button className="table-icon-action" title="Generar acceso de mantenimiento" aria-label={`Generar acceso de mantenimiento para ${device.name}`} onClick={() => void issueMaintenanceCode(device)}><KeyRound size={15} /></button> : null}
               {device.status === "ACTIVE" ? <button className="table-icon-action" title="Revocar" aria-label={`Revocar ${device.name}`} onClick={() => void revoke(device)}><ShieldOff size={15} /></button> : null}
               {device.status === "PENDING" ? <button className="table-icon-action danger-link" title="Eliminar solicitud" aria-label="Eliminar solicitud" onClick={() => void remove(device)}><Trash2 size={15} /></button> : null}
             </div></td>
@@ -232,6 +246,7 @@ export function ClockDevicesPage() {
         <FormActions><Button onClick={closeEdit} disabled={editBusy}>Cancelar</Button><Button variant="primary" loading={editBusy} onClick={() => void saveEdit()}>Guardar cambios</Button></FormActions>
       </div>
     </Modal> : null}
+    {maintenance ? <MaintenanceCodeModal deviceName={maintenance.device.name || "Dispositivo sin nombre"} state={maintenance.state} onRegenerate={() => void issueMaintenanceCode(maintenance.device)} close={() => setMaintenance(null)} /> : null}
     {notice ? <div className="toast" role="status">{notice}</div> : null}
   </>;
 }

@@ -14,6 +14,8 @@ const entityLabels: Record<string, string> = {
   AttendanceInactivityIncident: "Inactividad en fichada",
   AttendancePunch: "Fichada",
   AuditParameter: "Parámetro de auditoría",
+  ClockDevice: "Dispositivo de fichada",
+  ClockDeviceMaintenance: "Mantenimiento de dispositivo de fichada",
   // "Document" es el nombre legado previo a "EmployeeDocument" — se
   // conserva para no dejar sin traducir filas históricas ya persistidas.
   Document: "Documento",

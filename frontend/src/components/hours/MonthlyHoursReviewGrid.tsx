@@ -7,6 +7,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { MonthlyHoursTableSections } from "./MonthlyHoursTableSections";
 import { conceptDayAmount, conceptPeriodAmount } from "../../utils/workedTimeAccounting";
 import { amountDescription, amountMinutes, SettlementTotalCell, SpecialHourDot } from "./SettlementAmount";
+import { DayOffMark, dayOffDescription } from "./DayOffMark";
 
 // Mismo criterio de asociación día↔novedad que EmployeeHoursPage.tsx
 // (dayNovelties, no exportado ahí) — se repite acá en vez de tocar esa
@@ -51,14 +52,16 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
           const amount = isBase ? null : conceptDayAmount(grid.accounting, day, row.concept.id, realMinutes);
           const minutes = amount ? amountMinutes(amount) : realMinutes;
           const dayNovelties = isBase ? noveltiesForDay(grid.novelties, day) : [];
-          const cellClass = ["hour-cell", minutes ? "filled" : "", amount?.pending ? "is-syncing" : ""].filter(Boolean).join(" ");
-          const description = amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
-          const titleParts = minutes ? [description] : [];
+          // Franco (EMPLOYEE_DAY_OFF.md §15): "Franco" + lo que computa, nunca "—".
+          const dayOff = isBase ? grid.dayOffsByDay[String(day)] : undefined;
+          const cellClass = ["hour-cell", dayOff ? "day-off" : minutes ? "filled" : "", amount?.pending ? "is-syncing" : ""].filter(Boolean).join(" ");
+          const description = dayOff ? dayOffDescription(dayOff, minutes) : amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
+          const titleParts = minutes || dayOff ? [description] : [];
           if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
           return (
             <td key={`${row.concept.id}-${day}`}>
-              <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes ? description : "sin horas"}`}>
-                <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>
+              <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes || dayOff ? description : "sin horas"}`}>
+                {dayOff ? <DayOffMark countedMinutes={minutes} /> : <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>}
                 {dayNovelties.length ? <span className="alert-dot purple" /> : null}
                 {amount && minutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null}
               </span>

@@ -175,3 +175,18 @@ export type ClockByEmployeeInput = z.infer<typeof clockByEmployeeSchema>;
 export type ClockPhotoPunchInput = z.infer<typeof clockPhotoPunchSchema>;
 export type AdminCloseWorkShiftInput = z.infer<typeof adminCloseWorkShiftSchema>;
 export type AdminWorkShiftReasonInput = z.infer<typeof adminWorkShiftReasonSchema>;
+
+// Fichada sobre horas cargadas a mano (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+export const manualHoursConflictsQuerySchema = z.object({
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  employeeId: z.string().uuid().optional(),
+});
+
+export const resolveManualHoursConflictSchema = z.object({
+  decision: z.enum(["KEEP_MANUAL", "USE_CLOCK"]),
+  // Sólo RRHH, y sólo si "Usar horas fichadas" cae en un período enviado o aprobado.
+  correctionReason: z.string().trim().min(2).max(600).optional(),
+});
+
+export type ManualHoursConflictsQuery = z.infer<typeof manualHoursConflictsQuerySchema>;
+export type ResolveManualHoursConflictInput = z.infer<typeof resolveManualHoursConflictSchema>;
