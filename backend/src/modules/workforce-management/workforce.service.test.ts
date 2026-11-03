@@ -21,6 +21,8 @@ vi.mock("../../shared/prisma/client", () => ({
     employee: { count: vi.fn(), findMany: vi.fn() },
     timeEntry: { groupBy: vi.fn(), findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]), update: vi.fn() },
     hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue([]) },
+    // Francos (EMPLOYEE_DAY_OFF.md §7): el snapshot del cierre los aplica; sin francos por default.
+    employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },

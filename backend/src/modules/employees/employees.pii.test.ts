@@ -11,6 +11,12 @@ vi.mock("./employees.repository", () => ({
   },
 }));
 
+// getTimeGrid también lee el índice de francos (EMPLOYEE_DAY_OFF.md §7): sin francos.
+vi.mock("../employee-day-offs/employeeDayOffAccounting", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../employee-day-offs/employeeDayOffAccounting")>();
+  return { ...actual, loadDayOffAccounting: vi.fn(async () => actual.emptyDayOffAccounting()) };
+});
+
 const repo = employeesRepository as unknown as { findOptions: Mock; findTimeGrid: Mock };
 const cargaUser = { id: "user-carga", role: roles.cargaHoraria } as Express.AuthUser;
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as Express.AuthUser;

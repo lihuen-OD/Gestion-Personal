@@ -7,7 +7,8 @@ import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { workforceService } from "../workforce-management/workforce.service";
 import { holidayWorkAssignmentRepository } from "./holidayWorkAssignment.repository";
-import { loadEmployeeReferences } from "../../shared/audit/employeeReference";
+import { formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
+import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
 import { reinterpretSpecialHoursOnDates } from "../workforce-management/specialHourReinterpretation";
 import { describeReinterpretation, reinterpretationMetadata } from "../workforce-management/specialHourReinterpretationSummary";
@@ -86,6 +87,21 @@ export const holidayWorkAssignmentService = {
 
     const dateLabel = formatArgentinaDate(input.date);
     const { results, audits, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      // docs/decisions/EMPLOYEE_DAY_OFF.md §5: convocatoria + franco el mismo
+      // día es contradictorio y se bloquea en la escritura. Mismo lock por
+      // empleado + fecha que el guardado de francos: nunca quedan los dos activos.
+      await lockEmployeeDays(tx, employeeIds.map((employeeId) => ({ employeeId, dateKey: dateKey(input.date) })));
+      const convoked = input.assignments.filter((item) => item.status === "ACTIVA").map((item) => item.employeeId);
+      const dayOffConflicts = convoked.length
+        ? await tx.employeeDayOff.findMany({ where: { date: input.date, status: "ACTIVO", employeeId: { in: convoked } }, select: { employee: { select: { legajo: true, firstName: true, lastName: true } } } })
+        : [];
+      if (dayOffConflicts.length) {
+        throw new AppError(
+          `No se puede convocar: ${dayOffConflicts.map((item) => formatEmployeeReference(item.employee)).join("; ")} tiene franco asignado el ${dateLabel}. Cancelá el franco primero.`,
+          409,
+          "HOLIDAY_WORK_CONFLICTS_DAY_OFF",
+        );
+      }
       const saved = [];
       const pendingAudits: RegisterAuditInput[] = [];
       for (const item of input.assignments) {

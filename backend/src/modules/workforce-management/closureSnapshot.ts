@@ -9,6 +9,7 @@ import {
   toAccountingBaseEntry,
   toAccountingBreakdown,
 } from "../time-entries/workedTimeAccounting";
+import { dayOffsWithin, loadDayOffAccounting } from "../employee-day-offs/employeeDayOffAccounting";
 
 /**
  * Snapshot de auditoría de `MonthlyTimeClosure` (docs/decisions/
@@ -28,6 +29,9 @@ export type ClosureSnapshotRecalculation =
   | { reason: "SPECIAL_HOUR_RULE_CHANGED"; doubleHourRuleId: string; doubleHourRuleName: string }
   // Cambió la convocatoria de un feriado (§16): define quién cobra el FERIADO.
   | { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED"; date: string }
+  // Se asignó, canceló o reactivó un franco (docs/decisions/EMPLOYEE_DAY_OFF.md
+  // §8): las horas automáticas de esa fecha operativa dejan o vuelven a computar.
+  | { reason: "EMPLOYEE_DAY_OFF_CHANGED"; date: string }
   // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
   | { reason: "SPECIAL_HOUR_RECONCILIATION" };
 
@@ -71,7 +75,7 @@ function periodRange(period: string) {
  */
 export async function buildClosureSnapshots(db: Db, employeeIds: string[], period: string): Promise<Map<string, Prisma.InputJsonObject>> {
   const range = periodRange(period);
-  const [rows, baseEntries, breakdowns] = await Promise.all([
+  const [rows, baseEntries, breakdowns, dayOffs] = await Promise.all([
     db.timeEntry.groupBy({
       by: ["employeeId", "status"],
       where: { employeeId: { in: employeeIds }, period, hourConcept: { systemRole: "NORMAL_BASE" } },
@@ -86,8 +90,12 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
       where: { employeeId: { in: employeeIds }, period, status: countedBreakdownStatusWhere },
       select: { ...accountingBreakdownSelect, hourConcept: { select: { workTreatment: true, code: true, name: true } } },
     }),
+    // Francos: mismo criterio que la grilla (docs/decisions/EMPLOYEE_DAY_OFF.md §7).
+    loadDayOffAccounting({ employeeIds, from: range.start, to: range.end }, db),
   ]);
-  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+  const dayOffDatesByEmployee = new Map<string, string[]>();
+  for (const item of dayOffsWithin(dayOffs, range.start, range.end)) dayOffDatesByEmployee.set(item.employeeId, [...(dayOffDatesByEmployee.get(item.employeeId) ?? []), item.dateKey].sort());
   const conceptNames = new Map(breakdowns.map((breakdown) => [breakdown.hourConceptId, { code: breakdown.hourConcept.code, name: breakdown.hourConcept.name }]));
   return new Map(employeeIds.map((employeeId) => {
     const accounting = accountingByEmployee.get(employeeId) ?? emptyPeriodAccounting();
@@ -99,6 +107,9 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
         ...accounting,
         concepts: accounting.concepts.map((concept) => ({ ...concept, ...conceptNames.get(concept.hourConceptId) })),
       },
+      // Fechas con franco activo al congelar: traza de "tenía franco" junto a
+      // lo que efectivamente computó.
+      dayOffs: dayOffDatesByEmployee.get(employeeId) ?? [],
     };
     return [employeeId, snapshot as unknown as Prisma.InputJsonObject];
   }));

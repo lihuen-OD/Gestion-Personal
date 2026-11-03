@@ -238,6 +238,29 @@ export function isEarlyArrivalReviewRequired(differenceMinutes: number): boolean
   return Math.abs(differenceMinutes) >= EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES;
 }
 
+/**
+ * Fecha operativa ("YYYY-MM-DD") de una jornada: a qué día pertenece su
+ * obligación, que no siempre es el día calendario del ingreso
+ * (docs/decisions/EMPLOYEE_DAY_OFF.md §4). Única definición para francos.
+ *
+ * Con el turno que adoptó la jornada se toma su ocurrencia más cercana
+ * (`closestOccurrence`, mismo criterio que `evaluateOutOfShiftWorkday`). Si el
+ * ingreso cae dentro de [inicio − EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES, fin)
+ * de esa ocurrencia, la fecha es la del inicio programado: la noche 23:00-07:00
+ * del día 10 sigue siendo del 10 aunque se fiche a las 00:15. Fuera de esa
+ * ventana (p. ej. trabajo extra a las 21:00 de alguien con turno 08:00) o sin
+ * turno, es la fecha argentina del ingreso.
+ */
+export function workShiftOperationalDateKey(startAt: Date, template: Pick<ShiftTemplateRef, "startTime" | "endTime" | "crossesMidnight"> | null): string {
+  if (template) {
+    const { scheduledAt } = closestOccurrence(startAt, template.startTime);
+    const scheduledEndAt = scheduledInstantForShiftTime(scheduledAt, template.endTime, template.crossesMidnight);
+    const windowStart = scheduledAt.getTime() - EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES * 60_000;
+    if (startAt.getTime() >= windowStart && startAt.getTime() < scheduledEndAt.getTime()) return argentinaDateKey(scheduledAt);
+  }
+  return argentinaDateKey(startAt);
+}
+
 export interface ExitPunctualityResult {
   evaluated: boolean;
   earlyLeave: boolean;

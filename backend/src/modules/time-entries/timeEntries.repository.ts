@@ -7,6 +7,7 @@ import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./cloc
 import { failedAttemptResponse } from "./clockAttemptErrorMeta";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import { dayOffsWithin, loadDayOffAccounting, periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
@@ -607,7 +608,10 @@ async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAc
   ]);
 
   const employeeIds = employees.map((employee) => employee.id);
-  const [entries, breakdowns] = employeeIds.length
+  // Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7): sin período, todos los
+  // activos de las personas de esta página (acotado por `take`).
+  const dayOffRange = query.period ? periodRange(query.period) : null;
+  const [entries, breakdowns, dayOffs] = employeeIds.length
     ? await Promise.all([
         prisma.timeEntry.findMany({
           where: {
@@ -636,15 +640,16 @@ async function findManyByEmployeeGrouped(query: ListTimeEntriesQuery, employeeAc
               select: accountingBreakdownSelect,
             })
           : Promise.resolve([]),
+        loadDayOffAccounting({ employeeIds, ...(dayOffRange ? { from: dayOffRange.start, to: dayOffRange.end } : {}) }),
       ])
-    : [[], []];
+    : [[], [], undefined];
 
   // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: total trabajado = base +
   // conceptos adicionales (nunca + dentro de la jornada); la equivalencia
   // para liquidación sale de las categorías ya sin duplicar. Mismos filtros
   // de estado que antes (TimeEntry según query.status, desgloses sin
   // RECHAZADO).
-  const accountingByEmployee = accountEmployeePeriods(entries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+  const accountingByEmployee = accountEmployeePeriods(entries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
   const ruleNamesByEmployee = new Map<string, Set<string>>();
   const conflictByEmployee = new Set<string>();
   for (const entry of entries) {
@@ -792,7 +797,7 @@ export const timeEntriesRepository = {
   // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult] = await Promise.all([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -849,11 +854,17 @@ export const timeEntriesRepository = {
         },
         _sum: { minutes: true },
       }),
+      // Horas automáticas de jornadas en franco (EMPLOYEE_DAY_OFF.md §7).
+      periodDayOffUncountedMinutes(period, employeeAccessWhere),
     ]);
 
     // Total trabajado = base + adicionales (nunca + conceptos dentro de la
-    // jornada) — mismo criterio que accountDay, sin re-leer día por día.
-    const countableHours = totalWorkedHours(Number(hoursResult._sum.hours?.toString() || 0), additiveResult._sum.minutes ?? 0);
+    // jornada) — mismo criterio que accountDay, sin re-leer día por día —
+    // menos lo que un franco deja sin computar.
+    const countableHours = totalWorkedHours(
+      Number(hoursResult._sum.hours?.toString() || 0) - dayOffUncounted.baseMinutes / 60,
+      (additiveResult._sum.minutes ?? 0) - dayOffUncounted.additiveMinutes,
+    );
 
     return {
       activeEmployees,
@@ -965,7 +976,7 @@ export const timeEntriesRepository = {
     ]);
 
     const employeeIds = employees.map((employee) => employee.id);
-    const [entries, breakdowns, novelties] = await Promise.all([
+    const [entries, breakdowns, novelties, dayOffs] = await Promise.all([
       employeeIds.length
         ? prisma.timeEntry.findMany({
             where: {
@@ -1024,6 +1035,8 @@ export const timeEntriesRepository = {
             },
           })
         : Promise.resolve([]),
+      // Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7): 1 consulta si no hay ninguno.
+      loadDayOffAccounting({ employeeIds, from: start, to: end }),
     ]);
 
     // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: Horas base = TimeEntry
@@ -1034,7 +1047,8 @@ export const timeEntriesRepository = {
       entry.hourConcept.systemRole === "NORMAL_BASE"
       && (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION);
     const countedBaseEntries = entries.filter(isCountedBase);
-    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown));
+    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+    const dayOffsByEmployeeDay = new Map(dayOffsWithin(dayOffs, start, end).map((item) => [`${item.employeeId}:${Number(item.dateKey.slice(8, 10))}`, item]));
 
     const metaByEmployee = new Map<string, { incidents: number; statuses: string[] }>();
     // Nombre de la/las regla(s) ganadora(s) por día (sólo fichador: una carga
@@ -1071,21 +1085,26 @@ export const timeEntriesRepository = {
         const meta = metaByEmployee.get(employee.id);
         const dayRules = rulesByEmployeeDay.get(employee.id);
         const employeeNovelties = noveltiesByEmployee.get(employee.id) || [];
-        // Por día: novedad e indicador de Hora Especial. Las horas del día
-        // viven en `accounting.days[day]` (una sola fuente, sin duplicarlas).
+        // Por día: novedad, franco e indicador de Hora Especial. Las horas del
+        // día viven en `accounting.days[day]` (una sola fuente, sin duplicarlas).
         const dailyBreakdown: Array<{
           day: number;
           novelty: { label: string } | null;
+          // Franco ACTIVO (EMPLOYEE_DAY_OFF.md §15): `activityMinutes` es lo que
+          // registró el fichador esa fecha operativa; lo que computa, la contabilidad.
+          dayOff: { notes: string | null; activityShifts: number; activityMinutes: number } | null;
           specialHourRuleNames: string[];
           specialHourConflict: boolean;
         }> = [];
         for (let day = 1; day <= dayCount; day++) {
           const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
           const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, dayDate));
-          if (!accounting.days[String(day)] && !coveringNovelties.length) continue;
+          const dayOff = dayOffsByEmployeeDay.get(`${employee.id}:${day}`);
+          if (!accounting.days[String(day)] && !coveringNovelties.length && !dayOff) continue;
           dailyBreakdown.push({
             day,
             novelty: coveringNovelties.length ? { label: coveringNovelties.map((novelty) => novelty.noveltyType.name).join(", ") } : null,
+            dayOff: dayOff ? { notes: dayOff.notes, activityShifts: dayOff.activityShifts, activityMinutes: dayOff.activityMinutes } : null,
             specialHourRuleNames: dayRules?.get(day)?.names ?? [],
             specialHourConflict: dayRules?.get(day)?.conflict ?? false,
           });
@@ -2506,7 +2525,12 @@ export const timeEntriesRepository = {
       data: {
         ...(input.hourConceptId !== undefined ? { hourConceptId: input.hourConceptId } : {}),
         ...(input.date !== undefined ? { date, period: periodFromCalendarDate(date), day: dayOfMonthFromCalendarDate(date) } : {}),
-        ...(hours !== undefined ? { hours, totalMinutes: minutesFromHours(hours) } : {}),
+        // `source` = canal que fijó el valor vigente de las horas: una persona
+        // que corrige las horas las vuelve ADMIN (reconocidas), aunque la fila
+        // haya nacido de una fichada. Así un franco distingue horas
+        // automáticas de reconocidas (docs/decisions/EMPLOYEE_DAY_OFF.md §7.1);
+        // workShiftId/timeSegmentId conservan el vínculo con la evidencia.
+        ...(hours !== undefined ? { hours, totalMinutes: minutesFromHours(hours), source: "ADMIN" as const } : {}),
         appliedMultiplier,
         ...(input.observation !== undefined ? { observation: input.observation || null } : {}),
         ...(autoApprovedByUserId ? { status: "APROBADO", approvedByUserId: autoApprovedByUserId, approvedAt: new Date(), rejectedAt: null } : {}),
