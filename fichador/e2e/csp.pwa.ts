@@ -8,6 +8,19 @@ import { expect, test } from "@playwright/test";
 // Safari/iPad no se prueba acá: queda en la checklist del piloto (F12).
 const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open("fichador-device", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("identity");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const tx = request.result.transaction("identity", "readwrite");
+      tx.objectStore("identity").put({ id: "00000000-0000-4000-8000-000000000001", secret: "e2e-individual-device-secret" }, "current");
+      tx.oncomplete = () => resolve();
+    };
+  }));
+});
+
 test("CSP enforced: la PWA y el detector de rostros cargan sin violaciones", async ({ page }) => {
   const consoleViolations: string[] = [];
   page.on("console", (message) => {
@@ -24,16 +37,6 @@ test("CSP enforced: la PWA y el detector de rostros cargan sin violaciones", asy
     if (path.endsWith("/clock/employees")) return route.fulfill({ json: { data: [employee] } });
     return route.fulfill({ json: { data: { employee, openShift: null } } });
   });
-  await page.addInitScript(() => new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open("fichador-device", 1);
-    request.onupgradeneeded = () => request.result.createObjectStore("identity");
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const tx = request.result.transaction("identity", "readwrite");
-      tx.objectStore("identity").put({ id: "00000000-0000-4000-8000-000000000001", secret: "e2e-individual-device-secret" }, "current");
-      tx.oncomplete = () => resolve();
-    };
-  }));
 
   const response = await page.goto("/");
   const headers = response!.headers();
@@ -52,4 +55,18 @@ test("CSP enforced: la PWA y el detector de rostros cargan sin violaciones", asy
 
   expect(await page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations)).toEqual([]);
   expect(consoleViolations).toEqual([]);
+});
+
+test("backend apagado: error normal de red, sin violación CSP", async ({ page }) => {
+  const violations: string[] = [];
+  page.on("console", (message) => {
+    if (/Content Security Policy|Refused to connect/i.test(message.text())) violations.push(message.text());
+  });
+  // API local inexistente, sin mock: no se apaga el backend real del usuario.
+  const failure = page.waitForEvent("requestfailed", (request) => request.url().endsWith("/api/clock/device/status"));
+  await page.goto("/");
+  expect((await failure).failure()?.errorText).toContain("ERR_CONNECTION_REFUSED");
+  await expect(page.getByRole("heading", { name: "No pudimos verificar el dispositivo" })).toBeVisible();
+  await expect(page.getByText(/No hay conexión con el servidor/)).toBeVisible();
+  expect(violations).toEqual([]);
 });

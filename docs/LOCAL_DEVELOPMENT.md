@@ -322,6 +322,56 @@ el heartbeat del Gate nunca llega a un backend real en `localhost`.
 hosting. `npm run e2e:pwa` incluye `e2e/csp.pwa.ts`: la app y el detector real
 cargan sin violaciones.
 
+**Una sola configuración del API (corrección CSP local, 2026-11-03).**
+En una terminal, `cd backend && npm run dev`; en otra:
+
+```bash
+cd fichador
+VITE_API_URL=http://localhost:4002/api npm run dev
+```
+
+Abrir `http://localhost:5175`. También se puede guardar esa variable en
+`fichador/.env.local` (ignorado por Git). Vite respeta `.env`, `.env.local`,
+`.env.[mode]`, `.env.[mode].local`, en ese orden; la variable exportada en la
+terminal gana sobre los archivos. Reiniciar Vite después de cambiarla.
+
+Para probar CSP y PWA, detener dev antes de usar el mismo puerto:
+
+```bash
+VITE_API_URL=http://localhost:4002/api npm run build
+npm run preview
+```
+
+El plugin `scripts/write-hosting-headers.mjs` genera `_headers` **dentro de
+Vite**, desde el mismo entorno resuelto del bundle (incluido `--mode`).
+Preview lee el bloque de seguridad de ese artefacto: cambiar `VITE_API_URL`
+al arrancar preview ya no cambia su CSP. Para cambiar el API hay que
+reconstruir. Si falta `_headers` o su CSP, preview falla y pide reconstruir;
+nunca sirve silenciosamente un build sin política. Netlify sigue exigiendo
+una URL HTTPS válida, sin localhost, comodines ni credenciales, y falla
+antes de generar assets si el entorno no cumple.
+
+**Si dev muestra una CSP de un preview viejo.** Comprobar primero
+`curl -I http://localhost:5175/`: dev no envía CSP, mientras que preview sí.
+Dev no registra service workers nuevos, pero eso no elimina uno instalado
+antes en ese mismo origin. Una pestaña abierta o un documento servido por
+ese worker puede conservar los headers de un build anterior. En DevTools,
+Network, revisar el documento y si indica `from ServiceWorker`; Application
+→ Service Workers permite comprobar el worker de `http://localhost:5175`.
+Si se confirma ese caso, desregistrar **sólo ese worker**, cerrar las
+pestañas/PWA de ese origin y volver a abrir dev. No usar “Clear site data” ni
+borrar IndexedDB: allí vive la identidad del dispositivo. No se necesita
+reconfigurar ni borrar dispositivos del backend.
+
+Diagnóstico de esta corrección: el proceso real en 5175 era `npm run dev`,
+sin CSP; no había `.env*` locales salvo `.env.example`, y la IP reportada no
+aparecía en `fichador/` (incluidos `dist` y archivos ignorados). Se reprodujo
+el desajuste anterior iniciando preview con un API distinto del build:
+bundle local, CSP con el origin del entorno de preview. El origen histórico
+de la IP en la pestaña del usuario no pudo verificarse por falta de acceso a
+ese navegador; un worker/documento anterior es una hipótesis, no un hecho
+confirmado. No se modificaron sus datos del navegador.
+
 **Auditoría de fichada.** Se escribe en la misma transacción que la fichada:
 el `AuditLog` existe apenas la fichada responde 201, sin demoras.
 

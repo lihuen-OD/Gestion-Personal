@@ -1,5 +1,5 @@
 // Fichador standalone (F2, docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §20).
-// Genera dist/_headers (formato Netlify / Cloudflare Pages) al final del
+// Genera dist/_headers (formato Netlify / Cloudflare Pages) dentro del
 // build. Se genera en vez de versionarse fijo porque la CSP necesita el
 // origin del backend de cada entorno (VITE_API_URL), igual que el bundle.
 import { loadEnv } from "vite";
@@ -17,8 +17,8 @@ export function apiOrigin(apiUrl) {
  * F11: con la CSP enforced, un connect-src distinto del API del bundle
  * bloquearía todas las llamadas, así que el header sale de la misma fuente.
  */
-export function buildApiUrl(mode, root) {
-  return loadEnv(mode, root, "VITE_").VITE_API_URL || "http://localhost:4002/api";
+export function buildApiUrl(mode, root, env = loadEnv(mode, root, "VITE_")) {
+  return env.VITE_API_URL || "http://localhost:4002/api";
 }
 
 /**
@@ -105,7 +105,14 @@ ${security}
 export function assertDeployEnv(env) {
   if (env.NETLIFY !== "true") return;
   const problems = [];
-  if (!env.VITE_API_URL || !env.VITE_API_URL.startsWith("https://")) problems.push("VITE_API_URL debe ser una URL https del backend del entorno");
+  let api;
+  try { api = new URL(env.VITE_API_URL); } catch { /* Rechazo abajo, sin imprimir el valor. */ }
+  const hostname = api?.hostname.toLowerCase().replace(/\.$/, "");
+  const loopback = hostname === "localhost" || hostname?.endsWith(".localhost")
+    || hostname?.startsWith("127.") || hostname === "[::1]" || hostname === "0.0.0.0";
+  if (!api || api.protocol !== "https:" || loopback || api.username || api.password || api.hostname.includes("*")) {
+    problems.push("VITE_API_URL debe ser una URL https válida del backend del entorno, sin localhost ni credenciales");
+  }
   if (env.VITE_CLOCK_DEVICE_TOKEN) problems.push("VITE_CLOCK_DEVICE_TOKEN fue retirado en F6: borrarlo del sitio (el fichador ya no usa un token compartido)");
   if (problems.length) throw new Error(`Variables del fichador inválidas para deploy:\n  - ${problems.join("\n  - ")}`);
 }
