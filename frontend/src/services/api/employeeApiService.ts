@@ -10,6 +10,7 @@ import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import type { TimeGridDayOff } from "./employeeDayOffApiService";
 import type { PeriodAccounting } from "../../types/workedTimeAccounting.types";
 import { currentCacheScope } from "../cache/cacheKey";
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStatusService";
@@ -156,6 +157,7 @@ type ApiTimeGridResponse = {
     accounting: PeriodAccounting;
     attendanceIssues: number;
     specialHoursByDay?: Record<string, ApiTimeGridSpecialHourDay>;
+    dayOffsByDay?: Record<string, TimeGridDayOff>;
   };
 };
 
@@ -183,6 +185,8 @@ export type EmployeeTimeGrid = {
   accounting: PeriodAccounting;
   attendanceIssues: number;
   specialHoursByDay: Record<string, ApiTimeGridSpecialHourDay>;
+  // Francos ACTIVOS por día (docs/decisions/EMPLOYEE_DAY_OFF.md §15).
+  dayOffsByDay: Record<string, TimeGridDayOff>;
 };
 
 export type ManualHourConceptBreakdownInput = {
@@ -814,6 +818,7 @@ export const employeeApiService = {
       accounting: response.data.accounting,
       attendanceIssues: response.data.attendanceIssues || 0,
       specialHoursByDay: response.data.specialHoursByDay || {},
+      dayOffsByDay: response.data.dayOffsByDay || {},
     };
   },
   async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {

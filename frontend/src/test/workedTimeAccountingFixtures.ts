@@ -94,6 +94,7 @@ export function timeGridFixture(days: DayAccounting[] = [dayAccounting(4)], over
     accounting,
     attendanceIssues: 0,
     specialHoursByDay: Object.fromEntries(days.filter((day) => day.multiplier > 1).map((day) => [String(day.day), { multiplier: day.multiplier, ruleNames: ["Domingos"], conflict: false }])),
+    dayOffsByDay: {},
     ...overrides,
   };
 }

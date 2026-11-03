@@ -6,6 +6,7 @@ import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
+import { employeeDayOffApiService } from "../services/api/employeeDayOffApiService";
 import type { EmployeePeriodDay } from "../services/api/timeEntryApiService";
 import type { DayAccounting } from "../types/workedTimeAccounting.types";
 import { dayAccounting, periodAccounting } from "../test/workedTimeAccountingFixtures";
@@ -50,6 +51,11 @@ vi.mock("../services/api/timeEntryApiService", async (importOriginal) => {
       returnForCorrection: vi.fn(),
     },
   };
+});
+
+vi.mock("../services/api/employeeDayOffApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/employeeDayOffApiService")>();
+  return { ...actual, employeeDayOffApiService: { getByDate: vi.fn(), save: vi.fn() } };
 });
 
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
@@ -1060,5 +1066,59 @@ describe("HoursPage — la observación de una carga nunca muestra ids técnicos
     expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     expect(text).not.toContain("TimeEntry");
     expect(text).toContain("fusionada en la carga de Horas normales del mismo día.");
+  });
+});
+
+
+// docs/decisions/EMPLOYEE_DAY_OFF.md §15: celda "Franco" en la grilla de
+// período y "Gestionar francos" (encabezado y detalle del día, mismo modal).
+describe("HoursPage — francos", () => {
+  beforeEach(() => {
+    vi.mocked(employeeDayOffApiService.getByDate).mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 50, hasMore: false } });
+  });
+
+  it("día con franco y sin horas reconocidas: 'Franco 0 h' (no '-'), con la actividad registrada en el detalle", async () => {
+    authAs("Nivel 3 - Administrativo de Carga Horaria");
+    const zero = { ...dayAccounting(5, { base: 0, sereno: 0, colectivo: 0 }), dayOffUncountedMinutes: 480 };
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({
+        days: [zero],
+        dailyBreakdown: [{ day: 5, novelty: null, dayOff: { notes: "Compensatorio", activityShifts: 1, activityMinutes: 480 }, specialHourRuleNames: [], specialHourConflict: false }],
+      })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 5: Franco asignado/ });
+    expect(trigger).toHaveTextContent("Franco");
+    expect(trigger).toHaveTextContent("0 h");
+    expect(trigger.closest("td")).toHaveClass("is-day-off");
+
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByText("Franco asignado: no debía trabajar.")).toBeInTheDocument();
+    expect(popover.getByText(/Actividad registrada por el fichador: 8 h\. No computa hasta que se reconozca\./)).toBeInTheDocument();
+    expect(popover.getByText("Observación: Compensatorio")).toBeInTheDocument();
+  });
+
+  it("'Gestionar francos' del encabezado abre el modal con la fecha sugerida del período", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    renderGrid();
+
+    (await screen.findByRole("button", { name: "Gestionar francos" })).click();
+
+    expect(await screen.findByRole("heading", { name: "Gestionar francos" })).toBeInTheDocument();
+    await waitFor(() => expect(employeeDayOffApiService.getByDate).toHaveBeenCalledWith(expect.objectContaining({ date: expect.stringMatching(/^2026-08-\d{2}$/) })));
+  });
+
+  it("desde el detalle de un día: mismo modal, esa fecha y esa persona", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({ items: [buildPeriodRow()], meta: { total: 1, page: 1, pageSize: 25, hasMore: false } });
+    renderGrid();
+
+    (await screen.findByRole("button", { name: /Detalle del .* 1$/ })).click();
+    (await waitFor(() => currentDayPopover().getByRole("button", { name: "Gestionar franco" }))).click();
+
+    await waitFor(() => expect(employeeDayOffApiService.getByDate).toHaveBeenCalledWith({ date: "2026-08-01", search: "100", page: 1, take: 50 }));
   });
 });

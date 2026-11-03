@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   BarChart3,
+  CalendarOff,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -26,7 +27,11 @@ import { noveltyApiService } from "../services/api/noveltyApiService";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { Employee, TimeEntry } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
-import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr } from "../utils/period";
+import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
+import { argentinaDateKey } from "../utils/argentinaDateKey";
+import { roleLevel } from "../utils/roles";
+import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
+import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import { formatTimeEntryObservation } from "../utils/userFacingText";
 import { statusTone } from "../utils/status";
@@ -62,12 +67,15 @@ function DayCell({
   accounting,
   employeeId,
   period,
+  onManageDayOff,
 }: {
   label: string;
   day?: EmployeePeriodDay;
   accounting?: DayAccounting;
   employeeId: string;
   period: string;
+  // Abre "Gestionar francos" con este día y esta persona (mismo modal y servicio que el encabezado).
+  onManageDayOff?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
@@ -114,16 +122,25 @@ function DayCell({
     };
   }, [open]);
 
+  const dayOff = day?.dayOff ?? null;
+  const countedMinutes = accounting?.totalWorkedMinutes ?? 0;
+  const uncountedMinutes = accounting?.dayOffUncountedMinutes ?? 0;
   return (
-    <td className="day-cell">
+    <td className={dayOff ? "day-cell is-day-off" : "day-cell"}>
       <button
         ref={triggerRef}
         type="button"
         className="day-cell-trigger"
         onClick={() => setOpen((current) => !current)}
-        aria-label={`Detalle del ${label}`}
+        aria-label={dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`}
+        title={dayOff ? dayOffDescription(dayOff, countedMinutes) : undefined}
       >
-        <span className={day?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
+        {dayOff ? (
+          // "Franco · 0 h" (o lo reconocido): nunca "-", que es "sin horas".
+          <DayOffMark countedMinutes={countedMinutes} />
+        ) : (
+          <span className={day?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
+        )}
         {day?.novelty ? <span className="alert-dot purple" /> : null}
         {accounting && accounting.multiplier > 1 ? <span className="alert-dot orange" /> : null}
       </button>
@@ -135,6 +152,21 @@ function DayCell({
               style={{ left: `${position.left}px`, top: `${position.top}px`, maxWidth: `${DAY_POPOVER_WIDTH}px` }}
             >
               <b>{label}</b>
+              {dayOff ? (
+                <>
+                  <span className="day-cell-day-off">Franco asignado: no debía trabajar.</span>
+                  {dayOff.activityShifts > 0 ? (
+                    <span>
+                      Actividad registrada por el fichador: {dayOff.activityMinutes > 0 ? formatDurationMinutes(dayOff.activityMinutes) : "jornada abierta"}.
+                      {countedMinutes > 0 ? "" : " No computa hasta que se reconozca."}
+                    </span>
+                  ) : null}
+                  {dayOff.notes ? <span>Observación: {dayOff.notes}</span> : null}
+                </>
+              ) : null}
+              {!dayOff && uncountedMinutes > 0 ? (
+                <span className="day-cell-day-off">Incluye {formatDurationMinutes(uncountedMinutes)} de una jornada en franco que no computan.</span>
+              ) : null}
               {accounting || day ? (
                 <>
                   {accounting ? (
@@ -174,9 +206,23 @@ function DayCell({
               ) : (
                 <span>Sin carga ni novedades registradas.</span>
               )}
-              <Link className="table-link" to={`/horas/${employeeId}?period=${period}`} onClick={() => setOpen(false)}>
-                Ver detalle completo
-              </Link>
+              <div className="day-cell-actions">
+                <Link className="table-link" to={`/horas/${employeeId}?period=${period}`} onClick={() => setOpen(false)}>
+                  Ver detalle completo
+                </Link>
+                {onManageDayOff ? (
+                  <Button
+                    variant="subtle"
+                    icon={CalendarOff}
+                    onClick={() => {
+                      setOpen(false);
+                      onManageDayOff();
+                    }}
+                  >
+                    Gestionar franco
+                  </Button>
+                ) : null}
+              </div>
             </div>,
             document.body,
           )
@@ -264,6 +310,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const [reviewActionError, setReviewActionError] = useState("");
   const [reviewReason, setReviewReason] = useState("");
   const [groupByPerson, setGroupByPerson] = useState(false);
+  // "Gestionar francos": abierto desde el encabezado (fecha sugerida) o desde
+  // el detalle de un día (esa fecha y esa persona preseleccionada).
+  const [dayOffDialog, setDayOffDialog] = useState<{ date: string; search?: string; employeeId?: string } | null>(null);
   const [periodRows, setPeriodRows] = useState<
     Array<{
       employee: Employee;
@@ -476,6 +525,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     periodRows.find((row) => row.employee.id === employeeId)?.summary
     ?? { incidents: 0, status: "Pendiente", accounting: emptyPeriodAccounting(), dailyBreakdown: [] as EmployeePeriodDay[] };
   const monthDays = getMonthDays(period);
+  // Hoy si cae en el período elegido; si no, el primer día del período.
+  const todayKey = argentinaDateKey(new Date());
+  const defaultDayOffDate = todayKey.startsWith(period) ? todayKey : monthDate(period, 1);
   const dailyFor = (employeeId: string) => {
     const map = new Map<number, EmployeePeriodDay>();
     for (const entry of summary(employeeId).dailyBreakdown) map.set(entry.day, entry);
@@ -624,14 +676,19 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         }
         action={
           !pendingOnly ? (
-            <Button
-              variant="subtle"
-              icon={FileBarChart}
-              disabled={exporting}
-              onClick={exportHours}
-            >
-              {exporting ? "Exportando..." : "Exportar horas"}
-            </Button>
+            <>
+              <Button variant="subtle" icon={CalendarOff} onClick={() => setDayOffDialog({ date: defaultDayOffDate })}>
+                Gestionar francos
+              </Button>
+              <Button
+                variant="subtle"
+                icon={FileBarChart}
+                disabled={exporting}
+                onClick={exportHours}
+              >
+                {exporting ? "Exportando..." : "Exportar horas"}
+              </Button>
+            </>
           ) : undefined
         }
       />
@@ -1200,6 +1257,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         accounting={periodSummary.accounting.days[String(day)]}
                         employeeId={employee.id}
                         period={period}
+                        onManageDayOff={() => setDayOffDialog({ date: monthDate(period, day), search: displayLegajo(employee), employeeId: employee.id })}
                       />
                     ))}
                   </tr>
@@ -1349,6 +1407,18 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         </Modal>
       ) : null}
 
+      {dayOffDialog ? (
+        <DayOffManagerDialog
+          initialDate={dayOffDialog.date}
+          initialSearch={dayOffDialog.search}
+          initialSelectedEmployeeId={dayOffDialog.employeeId}
+          canCorrectClosedPeriods={Boolean(user && roleLevel(user.role) === 1)}
+          close={() => setDayOffDialog(null)}
+          // El servicio ya invalidó las cachés derivadas: la grilla y el
+          // resumen se vuelven a pedir sin recargar la página.
+          onSaved={() => setRefresh((value) => value + 1)}
+        />
+      ) : null}
     </>
   );
 }
