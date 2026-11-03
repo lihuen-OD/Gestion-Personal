@@ -194,7 +194,7 @@ Con motivo de corrección de período cerrado se agrega " Motivo: …". Los rec�
 
 ## 15. UI
 
-- Carga de horas (`/horas`): acción "Gestionar francos" en el encabezado y "Gestionar francos de este día" en el detalle de cada celda (mismo modal y mismo servicio). Fecha → personas del alcance con búsqueda → selección múltiple → "Asignar franco" / "Cancelar franco" → guardar → la grilla se refresca sola.
+- Carga de horas (`/horas`): acción "Gestionar francos" en el encabezado y "Gestionar franco" en el detalle de cada celda (mismo modal y mismo servicio). Fecha → personas del alcance con búsqueda → selección múltiple → "Asignar franco" / "Cancelar franco" → guardar → la grilla se refresca sola.
 - Celda de franco: `Franco` + horas computadas (`0 h` si no hay nada reconocido) con estilo propio. `—` sigue significando "sin horas registradas".
 - Grilla por legajo y panel de cierre: la fila de Horas base muestra el franco del día y, si hubo actividad no computada, la cantidad en el detalle.
 
@@ -207,3 +207,11 @@ Ver `backend/prisma/migrations/20261103120000_add_employee_day_off/ROLLBACK.md`.
 - Una jornada en estado `OBSERVADO` por período protegido no cargó horas, pero sus tramos existen. Si en esa fecha hubo otra jornada y RRHH asigna un franco por corrección, el tope por fila evita minutos negativos pero puede descontar de más. Requiere período cerrado + franco por corrección + dos jornadas el mismo día.
 - La reparación técnica de Horas normales (`reconcile-normal-hours.ts`, CLI de staging) reescribe el `source` desde la jornada: una fila reconocida que repare vuelve a ser automática.
 - Las alertas de puntualidad/duración de una jornada en franco se siguen generando como hasta hoy.
+
+## 18. Validación (2026-11-03)
+
+- Backend: 199 archivos / 3263 tests en verde (79 omitidos: integraciones opt-in), `tsc --noEmit`, `npm run build`, `prisma validate`.
+- Integración contra PostgreSQL local real (`DAY_OFF_IT_DATABASE_URL`, base `clock_it_dayoff`): fichada real por `/clock/photo-punch` y post-proceso real; franco antes y después de la fichada, reintento sin duplicados, reconocimiento por `PATCH`, cancelación y reactivación, dos guardados concurrentes, franco vs. convocatoria en paralelo y UUID fuera del alcance (6/6). También se corrieron las integraciones existentes del fichador (`CLOCK_POSTPROCESS_IT_DATABASE_URL` 10/10, `CLOCK_IT_DATABASE_URL` 21/21).
+- Migración: schema anterior + migración = schema nuevo, rollback de `ROLLBACK.md` → schema anterior, reaplicación limpia ("No difference" en los tres pasos).
+- Frontend: 118 archivos / 1293 tests, `tsc -b`, build.
+- QA visual con la app real (backend y Vite locales contra una base QA desechable, Playwright): 1366, 1440, 1920, tablet 820 y mobile 390 sin scroll horizontal de página ni errores de consola; celda `Franco · 0 h` y `Franco · 6h` (reconocido) en la grilla de período y por legajo, detalle del día, modal (selección múltiple, convocado deshabilitado, guardado con refresco de la grilla sin recargar) y alerta en "Alertas de turnos".
