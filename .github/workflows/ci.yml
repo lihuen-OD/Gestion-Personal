@@ -138,7 +138,7 @@ jobs:
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_migrations"
         run: >-
           npx tsx scripts/ci/migrate-clean-database.ts
-          --clone=clock_it_ci,clock_it_ci_devices,clock_it_ci_maint,clock_it_ci_perf,clock_it_ci_postprocess,clock_it_ci_dayoff,deletion_it_ci
+          --clone=clock_it_ci,clock_it_ci_devices,clock_it_ci_maint,clock_it_ci_perf,clock_it_ci_postprocess,clock_it_ci_dayoff,clock_it_ci_manual,deletion_it_ci
 
       # Suites opt-in que corren contra el schema actual, cada una en su propia
       # copia de la base recien migrada. Quedan afuera, a proposito, las dos de
@@ -152,6 +152,7 @@ jobs:
           CLOCK_PERF_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_perf"
           CLOCK_POSTPROCESS_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_postprocess"
           DAY_OFF_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_dayoff"
+          MANUAL_HOURS_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_manual"
           DELETION_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/deletion_it_ci"
         run: >-
           npx vitest run
@@ -161,6 +162,7 @@ jobs:
           src/modules/clock-devices/clockDevices.integration.test.ts
           src/modules/clock-devices/clockDeviceMaintenance.integration.test.ts
           src/modules/employee-day-offs/employeeDayOff.integration.test.ts
+          src/modules/time-entries/manualHoursConflict.integration.test.ts
           src/modules/org-structure/controlledDeletion.integration.test.ts
 
   frontend:

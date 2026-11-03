@@ -47,10 +47,13 @@ type Modules = {
 // PERF-5B: IN 4/10/9, OUT 15/17/22, ROLLOVER 5/15/17.
 // PERF-5C: IN 4/10/9, OUT 15/16/22, ROLLOVER 5/15/17.
 // PERF-5D: IN 4/11/0, OUT 15/17/0, ROLLOVER 5/16/0 (+1 en TX: el INSERT del job; POST = 0).
+// MANUAL_HOURS_VS_CLOCK_PUNCH.md: OUT 15/18/0 (+1 en TX: el lock persona+día que serializa la
+// salida con una carga manual; tiene que ir antes de leer las filas, en su propia sentencia) y
+// ROLLOVER 5/17/0 (+1 en TX: la lectura de horas manuales de la fecha de la jornada vencida).
 const BUDGET = {
   IN: { pre: 4, tx: 11, post: 0 },
-  OUT: { pre: 15, tx: 17, post: 0 },
-  ROLLOVER: { pre: 5, tx: 16, post: 0 },
+  OUT: { pre: 15, tx: 18, post: 0 },
+  ROLLOVER: { pre: 5, tx: 17, post: 0 },
 } as const;
 
 function describeSql(sql: string): Statement {

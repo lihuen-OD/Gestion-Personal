@@ -17,7 +17,9 @@ export type ShiftAlertType =
   | "SEGMENTO_SIN_CLASIFICAR"
   | "JORNADA_FUERA_DE_TURNO"
   // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada registrada en un día de franco.
-  | "ACTIVIDAD_EN_FRANCO";
+  | "ACTIVIDAD_EN_FRANCO"
+  // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a mano.
+  | "ACTIVIDAD_SOBRE_CARGA_MANUAL";
 
 export type ShiftAlertSeverity = "INFO" | "ADVERTENCIA" | "CRITICA";
 export type ShiftAlertStatus = "PENDIENTE" | "RESUELTA" | "DESCARTADA";

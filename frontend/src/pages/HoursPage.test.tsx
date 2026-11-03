@@ -7,6 +7,7 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { employeeDayOffApiService } from "../services/api/employeeDayOffApiService";
+import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
 import type { EmployeePeriodDay } from "../services/api/timeEntryApiService";
 import type { DayAccounting } from "../types/workedTimeAccounting.types";
 import { dayAccounting, periodAccounting } from "../test/workedTimeAccountingFixtures";
@@ -56,6 +57,11 @@ vi.mock("../services/api/timeEntryApiService", async (importOriginal) => {
 vi.mock("../services/api/employeeDayOffApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/employeeDayOffApiService")>();
   return { ...actual, employeeDayOffApiService: { getByDate: vi.fn(), save: vi.fn() } };
+});
+
+vi.mock("../services/api/manualHoursConflictApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/manualHoursConflictApiService")>();
+  return { ...actual, manualHoursConflictApiService: { list: vi.fn(), resolve: vi.fn() } };
 });
 
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
@@ -229,6 +235,7 @@ function mockPending(items: PendingItem[]) {
 }
 
 beforeEach(() => {
+  vi.mocked(manualHoursConflictApiService.list).mockResolvedValue([]);
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue({ costCenters: [] } as never);
   mockPending([]);
   vi.mocked(timeEntryApiService.getSummary).mockResolvedValue({
@@ -1120,5 +1127,88 @@ describe("HoursPage — francos", () => {
     (await waitFor(() => currentDayPopover().getByRole("button", { name: "Gestionar franco" }))).click();
 
     await waitFor(() => expect(employeeDayOffApiService.getByDate).toHaveBeenCalledWith({ date: "2026-08-01", search: "100", page: 1, take: 50 }));
+  });
+});
+
+// docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a
+// mano — revisión visible en la grilla y en el listado del período.
+describe("HoursPage — fichada sobre horas cargadas manualmente", () => {
+  const pending: ManualHoursConflict = {
+    id: "alert-1",
+    employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
+    operationalDate: "2026-08-01",
+    status: "PENDIENTE",
+    decision: null,
+    resolvedAt: null,
+    resolvedByName: null,
+    shift: { id: "shift-1", startAt: "2026-08-01T11:00:00.000Z", endAt: "2026-08-01T17:42:00.000Z", totalMinutes: 402 },
+    days: [{ date: "2026-08-01", manualMinutes: 480, manualStatus: "EN_REVISION", clockMinutes: 402, countedMinutes: 480 }],
+    manualMinutes: 480,
+    clockMinutes: 402,
+    differenceMinutes: -78,
+  };
+
+  beforeEach(() => {
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({ items: [buildPeriodRow()], meta: { total: 1, page: 1, pageSize: 25, hasMore: false } });
+    vi.mocked(manualHoursConflictApiService.list).mockResolvedValue([pending]);
+  });
+
+  it("la celda de su fecha operativa avisa la revisión pendiente y el detalle explica qué computa, sin lenguaje de falta", async () => {
+    authAs("Nivel 3 - Administrativo de Carga Horaria");
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 1\. Revisión pendiente: fichada sobre horas cargadas manualmente/ });
+    expect(trigger.querySelector(".alert-dot.review")).not.toBeNull();
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByText(/Revisión pendiente: se registró una fichada \(6 h 42 min\) en una jornada que ya tenía horas cargadas manualmente \(8 h\)/)).toBeInTheDocument();
+    expect(popover.getByRole("button", { name: "Revisar" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/incumpl|falta de/i);
+  });
+
+  it("listado del período + revisión: usar horas fichadas actualiza la revisión en el acto y vuelve a pedir la grilla sin recargar la página", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    const resolved: ManualHoursConflict = { ...pending, status: "RESUELTA", decision: "USE_CLOCK", resolvedByName: "Supervisión", resolvedAt: "2026-08-02T12:00:00.000Z" };
+    vi.mocked(manualHoursConflictApiService.resolve).mockImplementation(async () => {
+      // Como el backend: desde ahora el listado devuelve la revisión resuelta.
+      vi.mocked(manualHoursConflictApiService.list).mockResolvedValue([resolved]);
+      return resolved;
+    });
+    renderGrid();
+
+    const section = (await screen.findByRole("heading", { name: "Fichadas sobre horas cargadas manualmente" })).closest(".panel") as HTMLElement;
+    expect(within(section).getByText("1 revisión pendiente: mientras tanto computan las horas cargadas.")).toBeInTheDocument();
+    expect(within(section).getByText("−1 h 18 min")).toBeInTheDocument();
+    const gridCalls = vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length;
+
+    within(section).getByRole("button", { name: "Revisar la fichada de Gomez, Ana del 01/08/2026" }).click();
+    (await screen.findByRole("button", { name: "Usar horas fichadas" })).click();
+
+    await waitFor(() => expect(manualHoursConflictApiService.resolve).toHaveBeenCalledWith("alert-1", "USE_CLOCK", undefined));
+    expect(await screen.findByRole("heading", { name: "Revisión resuelta" })).toBeInTheDocument();
+    await waitFor(() => expect(within(section).getByText("Se usaron las horas fichadas.")).toBeInTheDocument());
+    await waitFor(() => expect(vi.mocked(timeEntryApiService.getPeriodEmployees).mock.calls.length).toBeGreaterThan(gridCalls));
+    // La grilla nunca se blanqueó mientras se refrescaba.
+    expect(screen.getByText("Gomez, Ana")).toBeInTheDocument();
+  });
+
+  it("si no se pueden cargar las revisiones, el error queda dentro de su sección con reintento y el resto de la pantalla sigue", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(manualHoursConflictApiService.list).mockRejectedValueOnce(new Error("network")).mockResolvedValue([]);
+    renderGrid();
+
+    expect(await screen.findByText("No pudimos cargar las revisiones de fichadas sobre horas cargadas. Intentá nuevamente.")).toBeInTheDocument();
+    expect(await screen.findByText("Gomez, Ana")).toBeInTheDocument();
+    screen.getByRole("button", { name: /Reintentar/ }).click();
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Fichadas sobre horas cargadas manualmente" })).toBeNull());
+  });
+
+  it("sin revisiones en el período no aparece la sección", async () => {
+    authAs("Nivel 1 - RRHH");
+    vi.mocked(manualHoursConflictApiService.list).mockResolvedValue([]);
+    renderGrid();
+
+    await screen.findByText("Gomez, Ana");
+    expect(screen.queryByRole("heading", { name: "Fichadas sobre horas cargadas manualmente" })).toBeNull();
   });
 });

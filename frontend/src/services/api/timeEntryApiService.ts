@@ -180,6 +180,11 @@ const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   CERRADO: "Cerrado",
 };
 
+/** Rótulo visible del estado de aprobación de una carga ("EN_REVISION" → "En revisión"). */
+export function approvalStatusLabel(status: string | null | undefined): string {
+  return (status && statusFromApi[status as ApiApprovalStatus]) || "Sin estado";
+}
+
 const statusToApi: Partial<Record<TimeStatus, ApiApprovalStatus>> = {
   Borrador: "BORRADOR",
   Pendiente: "PENDIENTE",

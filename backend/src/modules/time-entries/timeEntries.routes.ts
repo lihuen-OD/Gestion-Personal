@@ -22,6 +22,8 @@ import {
   timeEntriesPeriodEmployeesQuerySchema,
   timeEntriesSummaryQuerySchema,
   updateTimeEntrySchema,
+  manualHoursConflictsQuerySchema,
+  resolveManualHoursConflictSchema,
 } from "./timeEntries.schemas";
 
 export const timeEntriesRouter = Router();
@@ -47,6 +49,10 @@ timeEntriesRouter.get("/attendance/punches/:id/photo", requireAnyRole(operationa
 timeEntriesRouter.get("/", requireAnyRole(operationalRoles), validateQuery(listTimeEntriesQuerySchema), asyncHandler(timeEntriesController.list));
 timeEntriesRouter.get("/summary", requireAnyRole(operationalRoles), validateQuery(timeEntriesSummaryQuerySchema), asyncHandler(timeEntriesController.summary));
 timeEntriesRouter.get("/period-employees", requireAnyRole(operationalRoles), validateQuery(timeEntriesPeriodEmployeesQuerySchema), asyncHandler(timeEntriesController.periodEmployees));
+// Fichada sobre horas cargadas a mano (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md):
+// los tres niveles, siempre dentro de employeeAccessWhere.
+timeEntriesRouter.get("/manual-hours-conflicts", requireAnyRole(operationalRoles), validateQuery(manualHoursConflictsQuerySchema), asyncHandler(timeEntriesController.manualHoursConflicts));
+timeEntriesRouter.post("/manual-hours-conflicts/:id/resolve", requireAnyRole(operationalRoles), validateBody(resolveManualHoursConflictSchema), asyncHandler(timeEntriesController.resolveManualHoursConflict));
 timeEntriesRouter.post("/work-shifts/preview", requireAnyRole(operationalRoles), validateBody(previewWorkShiftSchema), asyncHandler(timeEntriesController.previewWorkShift));
 timeEntriesRouter.post("/work-shifts", requireAnyRole(operationalRoles), validateBody(createWorkShiftSchema), asyncHandler(timeEntriesController.createWorkShift));
 timeEntriesRouter.post("/work-shifts/:id/close-manual", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminCloseWorkShiftSchema), asyncHandler(timeEntriesController.closeWorkShiftManually));

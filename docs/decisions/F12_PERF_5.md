@@ -29,8 +29,9 @@ Este fixture tiene menos destinatarios y alertas que staging, así que sus núme
 | PERF-5B | 4 / 10 / 9 = 23 | 15 / 17 / 22 = 54 | 5 / 15 / 17 = 37 |
 | PERF-5C | 4 / 10 / 9 = 23 | 15 / 16 / 22 = 53 | 5 / 15 / 17 = 37 |
 | PERF-5D | 4 / 11 / 0 = 15 | 15 / 17 / 0 = 32 | 5 / 16 / 0 = 21 |
+| Horas manuales + fichada | 4 / 11 / 0 = 15 | 15 / 18 / 0 = 33 | 5 / 17 / 0 = 22 |
 
-PERF-5D suma una sentencia a cada TX (el `INSERT` del job) y deja POST en 0. Lo que salió del request lo ejecuta el worker: en este fixture, 16 sentencias para el job del IN, 32 para el del OUT y 28 para el del rollover. Esas cifras incluyen el claim, el lock, la marca y el cierre de cada paso, y no forman parte del `201`.
+PERF-5D suma una sentencia a cada TX (el `INSERT` del job) y deja POST en 0. La salida suma otra en TX desde `MANUAL_HOURS_VS_CLOCK_PUNCH.md`: el lock persona+día que la serializa con una carga manual de las mismas fechas. Va en su propia sentencia antes de leer las filas del día (una lectura en la misma sentencia usaría la foto previa al lock). El rollover suma la lectura de horas manuales de la fecha de la jornada vencida, sin lock: una carrera sólo podría dejar la fila de 0 h junto a la manual. Lo que salió del request lo ejecuta el worker: en este fixture, 16 sentencias para el job del IN, 32 para el del OUT y 28 para el del rollover. Esas cifras incluyen el claim, el lock, la marca y el cierre de cada paso, y no forman parte del `201`.
 
 En producción, `clock_punch_query_budget` (`shared/observability/clockPunchQueryBudget.ts`) emite por fichada la cantidad de **operaciones Prisma** por fase. Usa AsyncLocalStorage, cuesta un contador por operación y nunca registra SQL, parámetros ni datos personales.
 

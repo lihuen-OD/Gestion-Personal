@@ -107,10 +107,11 @@ Corre sobre un PostgreSQL 18 efímero del runner (la misma versión mayor que Ne
 
 **Suites de integración.** Cada suite opt-in recibe su propia copia de la base recién migrada (`CREATE DATABASE … TEMPLATE`), porque todas vacían su base al empezar.
 
-- **Corren en CI (7):**
+- **Corren en CI (8):**
   - `clock/clock`, `clock/clockPunchPerf` y `clock/clockPunchPostProcess`;
   - `clock-devices/clockDevices` y `clock-devices/clockDeviceMaintenance`;
   - `employee-day-offs/employeeDayOff`;
+  - `time-entries/manualHoursConflict`;
   - `org-structure/controlledDeletion`.
 - **Quedan afuera (2):** `org-structure/reorg/m2Migration` y `org-structure/reorg/cleanupRestore`. Las dos necesitan un schema **previo a M2**:
   - la primera, por diseño: ejecuta la migración M2 dentro de una transacción revertida;

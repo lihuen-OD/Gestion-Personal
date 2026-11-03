@@ -12,6 +12,7 @@ import { evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } 
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { ROLLOVER_OVERFLOW_RESOLUTION_NOTE } from "../time-entries/timeEntries.repository";
 import { notifyMissingExit } from "../time-entries/timeEntries.service";
+import { notifyManualHoursConflict } from "../time-entries/manualHoursConflict";
 import { clearNotificationsListCache } from "../workforce-management/workforce.cache";
 import { entryPayloadSchema, exitPayloadSchema, rolloverPayloadSchema } from "./clockPunchPostProcess.payload";
 import {
@@ -54,6 +55,9 @@ export const POSTPROCESS_STEPS = {
   // define la fecha operativa).
   dayOffEvaluation: "day-off-evaluation",
   exitEvaluation: "exit-evaluation",
+  // MANUAL_HOURS_VS_CLOCK_PUNCH.md: la salida dejó la jornada observada por
+  // horas manuales y creó su alerta sin avisar; este paso manda el aviso.
+  manualHoursNotice: "manual-hours-notice",
   breakdowns: (period: string) => `breakdowns:${period}`,
 } as const;
 
@@ -156,6 +160,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     const audit = payload.audit ?? undefined;
     for (const period of job.periods) await runBreakdownStep(job, period, audit);
     await runStep(job, POSTPROCESS_STEPS.exitEvaluation, (tx) => evaluateShiftExit(job.employeeId, job.workShiftId, payload.actualAt, payload.segments, undefined, { db: tx, rethrow: true }));
+    await runStep(job, POSTPROCESS_STEPS.manualHoursNotice, (tx) => notifyManualHoursConflict(job.workShiftId, { db: tx }));
     return;
   }
   throw new AppError("Unsupported clock punch post-process kind", 500, "CLOCK_POSTPROCESS_KIND_UNSUPPORTED");

@@ -11,7 +11,8 @@ import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import { storageService, type PreparedManagedStorageUpload } from "../../shared/storage/storage.service";
-import { resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { duplicateTimeEntryError, resolveSpecialHourRulesByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { notifyManualHoursConflict } from "./manualHoursConflict";
 import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchPostProcessWriter, ClockPunchTransactionWriter } from "./timeEntries.repository";
 import { enqueueClockPunchPostProcess, entryPostProcess, exitPostProcess, rolloverPostProcess, type ClockPunchPostProcessRequest } from "../clock/clockPunchPostProcess.payload";
 import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
@@ -105,7 +106,7 @@ async function evaluateShiftExitSafely(...args: Parameters<typeof evaluateShiftE
 // usa evaluateShiftExitSafely para las alertas de turno. Un fallo de Motor B
 // (incluido PERIOD_CLOSED, ver 15M.1 §26) no debe poder revertir, invalidar
 // ni convertir en error una fichada/cierre ya persistido.
-async function syncAutomaticHourConceptBreakdownsSafely(employeeId: string, period: string, workShiftId?: string, audit?: AuditContext) {
+export async function syncAutomaticHourConceptBreakdownsSafely(employeeId: string, period: string, workShiftId?: string, audit?: AuditContext) {
   try {
     await automaticHourConceptBreakdownsService.recalculateForEmployeePeriod({ employeeId, period, createdByUserId: audit?.userId, audit });
   } catch (error) {
@@ -259,9 +260,7 @@ async function ensureHourConceptEnabled(employeeId: string, hourConceptId: strin
 
 async function ensureNoDuplicate(employeeId: string, hourConceptId: string, date: Date, exceptId?: string) {
   const duplicate = await timeEntriesRepository.findDuplicate(employeeId, hourConceptId, date, exceptId);
-  if (duplicate) {
-    throw new AppError("Time entry already exists for this employee, date and hour concept", 409, "TIME_ENTRY_DUPLICATED");
-  }
+  if (duplicate) throw duplicateTimeEntryError(duplicate.source);
 }
 
 async function ensureDayIsNotBlocked(employeeId: string, date: Date, hours?: number) {
@@ -1178,6 +1177,12 @@ export const timeEntriesService = {
       audit,
     });
     await evaluateShiftExitSafely(before.employeeId, created.workShift.id, input.endAt, classifiedSegments);
+    // MANUAL_HOURS_VS_CLOCK_PUNCH.md: si la fecha tenía horas manuales, el
+    // cierre dejó la jornada observada con su alerta; el aviso sale acá (sin
+    // post-proceso en el cierre manual). Best-effort: nunca revierte el cierre.
+    await notifyManualHoursConflict(created.workShift.id).catch((error: unknown) => {
+      console.error("MANUAL_HOURS_CONFLICT_NOTIFY_FAILED", { severity: "warning", workShiftId: created.workShift.id, error: error instanceof Error ? error.message : String(error) });
+    });
 
     await auditService.register({
       ...audit,
