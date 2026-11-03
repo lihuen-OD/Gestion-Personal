@@ -142,6 +142,11 @@ Migrations should:
 - be reversible when possible
 - be documented if risky
 
+History rules, enforced by the CI `database` job (`docs/GIT_WORKFLOW.md` §5.2):
+- a migration that already exists on the target branch is never edited, renamed or deleted — a correction is a new migration;
+- a new migration folder is `<14-digit timestamp>_<snake_case_name>`, contains `migration.sql`, and sorts after the latest migration of the target branch;
+- the full history must replay on a clean PostgreSQL and produce exactly `schema.prisma` (`prisma migrate diff --exit-code` empty). The only bootstrap allowed is the `HC-NORMAL` seed row that `20260824170000_normalize_hour_concepts` requires; a new migration must never depend on seed or environment-specific data.
+
 Hand-written rollbacks (`backend/prisma/rollbacks/*.down.sql`, added 2026-10-09):
 - run in one transaction and lock the affected tables before checking anything;
 - **abort without changes** when dropping a column or table would lose information that cannot be re-derived — e.g. any history row (`20261008090000`), any archived row, or a persisted classification that differs from the criterion the previous code would re-derive (`20261008150000`);

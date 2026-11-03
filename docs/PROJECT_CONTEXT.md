@@ -977,7 +977,8 @@ npm run build            # tsc -b && vite build
 * Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real optional FKs to `User` with `onDelete: SetNull` — never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history. See `docs/DATABASE_STANDARDS.md`.
 * Do not add a new frontend caching mechanism without checking `frontend/src/services/cache` (SWR) and `backend/src/shared/cache` (TTL) first.
 * Any public (unauthenticated) endpoint must declare its own abuse protection (rate limiting at minimum) — the global API rate limiter is not sufficient on its own.
-* CI (`.github/workflows/ci.yml`) runs backend/frontend typecheck+test+build on every push to `main` and every pull request — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. It never deploys and never touches a real database; a failing run must be fixed before merging.
+* Branches (`docs/GIT_WORKFLOW.md`): `main` = production, `development` = integration and QA; `feat/*`/`fix/*` start from `development` and return to it by PR; only `development` (or a `hotfix/*`) reaches `main`, by PR.
+* CI (`.github/workflows/ci.yml`) runs backend/database/frontend/fichador on every push to `main` or `development` and every pull request: typecheck+test+build, the migration gate on a clean ephemeral PostgreSQL and the PostgreSQL integration suites — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. It never deploys and never touches a real database; a failing run must be fixed before merging (`CI result` is the check to require).
 * Before starting any large feature (e.g. a new module like Turnos, or a schema-affecting change), do analysis + a written plan first, and only then implement; close the feature with tests, a successful `typecheck`/`test`/`build`, and a validation summary — do not skip straight to code on multi-step work.
 * Document every assumption.
 * Preserve compatibility with existing data.

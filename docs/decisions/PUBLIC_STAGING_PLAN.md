@@ -84,7 +84,7 @@ Nunca usar URLs de deploy previews.
 |---|---|
 | Tipo | Web Service, instancia Starter (paga, siempre activa), **1 instancia** |
 | Región | `virginia` |
-| Repositorio / rama | `main`, deploy **manual** de un SHA con CI verde (auto-deploy apagado) |
+| Repositorio / rama | `main`, deploy **manual** de un SHA con CI verde (auto-deploy apagado). **Pendiente desde el 2026-11-03:** con el flujo de [GIT_WORKFLOW.md](../GIT_WORKFLOW.md) `main` es producción, y staging pasa a seguir `development` (§6.2–§6.3 de ese documento). Se reconfigura en el panel de Render |
 | Root directory | `backend` |
 | Build command | `npm ci --include=dev && npx prisma generate && npm run build` |
 | Pre-deploy command | `DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy` |
@@ -218,7 +218,7 @@ La rama `development` tiene 69 migraciones aplicadas, incluida `20261016150000_a
   - `npx prisma migrate status` debe decir "up to date";
   - el diff contra `schema.prisma`, vacío;
   - confirmar la ventana de restore (PITR) de Neon o tomar un snapshot.
-- **Migración pendiente (2026-10-26).** La rama `fix/staging-fichador-ajustes` agrega `20261026120000_add_clock_device_maintenance_access`: columnas aditivas y CHECKs en `ClockDevice` para el modo mantenimiento. No se aplicó en `development`. La aplica el pre-deploy (`prisma migrate deploy`) del primer despliegue autorizado de ese código; sin ella, la revocación y las rutas de mantenimiento fallan. Tiene rollback manual en `backend/prisma/rollbacks/`.
+- **Migraciones del modo mantenimiento y de francos (actualizado el 2026-11-03).** `20261026120000_add_clock_device_maintenance_access` (columnas aditivas y CHECKs en `ClockDevice`) y `20261103120000_add_employee_day_off` (tabla `EmployeeDayOff` y valor `ACTIVIDAD_EN_FRANCO`) ya están aplicadas en la rama Neon `development`. Se verificó en sólo lectura: `prisma migrate status` dice "up to date" con 71 migraciones, y `migrate diff` contra el `schema.prisma` de la rama `development` da vacío. Producción no tiene ninguna de las dos: las aplica el pre-deploy del primer despliegue autorizado de ese código. Rollbacks manuales en `backend/prisma/rollbacks/` y en `20261103120000_add_employee_day_off/ROLLBACK.md`.
 - **Migración antes que el código, siempre.** El código de PERF-5D escribe `ClockPunchPostProcessJob` dentro de la transacción de cada fichada: sin la migración, toda fichada responde 503. El pre-deploy de §4 lo garantiza en cada deploy. Hoy no tiene nada que aplicar.
 
 ## 11. Workers: arranque gradual
