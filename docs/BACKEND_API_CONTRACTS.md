@@ -1369,6 +1369,7 @@ Body:
 
 Reglas:
 
+- Una sola fila por persona, fecha y concepto. Si ya existe, `409 TIME_ENTRY_DUPLICATED`; si la existente la fijó el fichador, `409 TIME_ENTRY_CLOCK_HOURS_EXIST` (se corrige esa carga, no se carga otra). La verificación se repite dentro de la transacción con el lock persona+día que también toma la salida del fichador (`docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md`).
 - Crea en `BORRADOR` — **excepto si quien carga es RRHH** (Etapa 6L.3): en ese caso queda `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios, sin pasar por `BORRADOR`/`EN_REVISION`. Nivel 2/3 mantienen `BORRADOR`. La decisión es por rol del usuario autenticado (`req.user.role`), nunca por un campo del body — el cliente no puede pedir el estado.
 - Valida que la hora especial esté habilitada para el legajo.
 - Evita duplicado por empleado + fecha + concepto.
@@ -1823,6 +1824,24 @@ Todas las rutas requieren `requireAuth`.
 - `GET /holiday-work/candidates`: empleados `status=ACTIVO` dentro del alcance del usuario (`employeeAccessWhere`), paginados (`take` máximo 500, default 100). `shiftTemplateId` filtra por `shiftAssignments` `HABILITADO`; `withoutShift=true` filtra a quienes no tienen ninguna. Devuelve, por empleado, su sector y sus turnos habituales activos.
 - `GET /holiday-work/assignments?date=YYYY-MM-DD`: convocatorias `status=ACTIVA` para esa fecha, dentro del alcance del usuario.
 - `PUT /holiday-work/assignments` — body `{ date, assignments: [{ employeeId, status?, shiftTemplateId?, expectedStartTime?, expectedEndTime?, notes? }] }` (`status` default `ACTIVA`). **Cada entrada es un upsert independiente para `(date, employeeId)` — nunca reemplaza todas las convocatorias ya guardadas para la fecha.** Un empleado no incluido en el body no se toca. `status=CANCELADA` desactiva sin borrar la fila (mismo criterio que `ShiftAssignment` `DESHABILITADO`); un `employeeId` repetido en el mismo body se rechaza. No crea `TimeSegment`/`TimeEntry`, no toca `DoubleHourRule` ni ninguna tabla de liquidación, no dispara notificaciones. Desde 2026-11-03 convocar (`ACTIVA`) a alguien con franco activo esa fecha responde `409 HOLIDAY_WORK_CONFLICTS_DAY_OFF` (`docs/decisions/EMPLOYEE_DAY_OFF.md` §5).
+
+### Fichadas sobre horas cargadas a mano (`/api/time-entries/manual-hours-conflicts`)
+
+`docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md`. La revisión es la `ShiftAlert` `ACTIVIDAD_SOBRE_CARGA_MANUAL` de una jornada del fichador que cayó en una fecha con horas fijadas por una persona: la salida se registró, la jornada quedó `OBSERVADO` sin cargar horas y computan las horas manuales hasta que alguien decide. Roles RRHH, Supervisión y Carga horaria, siempre dentro de `employeeAccessWhere(user)`. Sin caché backend propia.
+
+```txt
+GET  /api/time-entries/manual-hours-conflicts?period=YYYY-MM[&employeeId=uuid]
+POST /api/time-entries/manual-hours-conflicts/:id/resolve
+```
+
+- `GET`: revisiones pendientes y resueltas cuyas fechas tocan el período. Cada ítem: `{ id, employee: { id, legajo, firstName, lastName }, operationalDate, status: "PENDIENTE" | "RESUELTA", decision: "KEEP_MANUAL" | "USE_CLOCK" | null, resolvedAt, resolvedByName, shift: { id, startAt, endAt, totalMinutes }, days: [{ date, manualMinutes, manualStatus, clockMinutes, countedMinutes }], manualMinutes, clockMinutes, differenceMinutes }`. Una nocturna es un solo ítem con dos `days`. En una resuelta, `manualMinutes`/`clockMinutes` son los que vio quien decidió (auditoría de la decisión) y `countedMinutes`, lo que computa hoy.
+- `POST .../resolve` — body `{ decision: "KEEP_MANUAL" | "USE_CLOCK", correctionReason? }`. Devuelve el ítem actualizado.
+  - `USE_CLOCK`: la fila de Horas base de cada fecha pasa a valer lo fichado (`source` del fichador, `APROBADO`); la jornada pasa a `PROCESADO`; snapshots de cierres no protegidos reconstruidos; Motor B después del commit.
+  - `KEEP_MANUAL`: no cambia horas ni la jornada.
+  - Errores: `403 EMPLOYEE_SCOPE_FORBIDDEN` (fuera del alcance), `404 MANUAL_HOURS_CONFLICT_NOT_FOUND`, `409 MANUAL_HOURS_CONFLICT_ALREADY_RESOLVED` (otra decisión ya tomada; repetir la misma no cambia nada), `409 PERIOD_CLOSED` (Nivel 2/3 con `USE_CLOCK` en período enviado/aprobado), `400 MANUAL_HOURS_CORRECTION_REASON_REQUIRED` (RRHH sin motivo en ese caso), `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` (motor de Horas Especiales, sin escrituras).
+  - Auditoría `ShiftAlert` `UPDATE` en la misma transacción, con empleado, fecha operativa, horas manuales y fichadas por fecha, decisión, usuario y motivo.
+- `POST /api/shifts/alerts/:id/resolve` sobre este tipo → `409 SHIFT_ALERT_REQUIRES_HOURS_DECISION`.
+- La salida del fichador (`/api/clock/photo-punch`) y el cierre manual de RRHH ya no responden `CLOCK_LOCKED_TIME_ENTRY` por una carga manual del día.
 
 ### Francos (`employee-day-offs`, montado en `/api/employee-day-offs`)
 

@@ -32,6 +32,9 @@ export type ClosureSnapshotRecalculation =
   // Se asignó, canceló o reactivó un franco (docs/decisions/EMPLOYEE_DAY_OFF.md
   // §8): las horas automáticas de esa fecha operativa dejan o vuelven a computar.
   | { reason: "EMPLOYEE_DAY_OFF_CHANGED"; date: string }
+  // Se resolvió una fichada sobre horas cargadas a mano usando las horas
+  // fichadas (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+  | { reason: "MANUAL_HOURS_CONFLICT_RESOLVED"; date: string }
   // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
   | { reason: "SPECIAL_HOUR_RECONCILIATION" };
 

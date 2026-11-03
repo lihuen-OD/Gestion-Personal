@@ -97,7 +97,7 @@ Nadie lee `TimeEntry.source` con fines de negocio (el frontend muestra el `sourc
 
 Regla única (`workedTimeAccounting.isAutomaticTimeEntrySource`): **automática ⇔ `source` es un canal de fichador** (`PORTAL_DNI`, `PUBLIC_CLOCK_PHOTO`, `KIOSK`, `BIOTIME`, `FACIAL`). `null` y `ADMIN` son horas fijadas por una persona. Para desgloses, `HourConceptBreakdown.source` ya distinguía `AUTOMATIC`/`MANUAL`.
 
-Una fichada nueva que se fusiona sobre una fila reconocida le devuelve el `source` del fichador: la fila vuelve a ser automática y deja de computar en el franco hasta una nueva revisión. Es deliberado: hay actividad nueva sin revisar, y la jornada nueva genera su propia alerta.
+~~Una fichada nueva que se fusiona sobre una fila reconocida le devuelve el `source` del fichador.~~ **Reemplazado el 2026-11-03** por `docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md`: una fichada nunca modifica horas fijadas por una persona (`null`/`ADMIN`). La fecha queda en revisión (`ACTIVIDAD_SOBRE_CARGA_MANUAL`), la fila reconocida sigue computando y, en un franco, la jornada nueva sigue generando además su alerta `ACTIVIDAD_EN_FRANCO`.
 
 ### 7.2 Qué deja de computar
 
