@@ -9,6 +9,7 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
+    employeeDayOff: { findMany: vi.fn() },
   },
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../work-regimes/workRegimes.service", () => ({
 const mockedPrisma = prisma as unknown as {
   holidayWorkAssignment: { findMany: Mock };
   shiftAssignment: { findMany: Mock };
+  employeeDayOff: { findMany: Mock };
 };
 const mockedHolidayDates = workforceService.holidayDatesInRange as unknown as Mock;
 const mockedRegimes = resolveActiveWorkRegimesForDate as unknown as Mock;
@@ -71,6 +73,7 @@ beforeEach(() => {
   mockedHolidayDates.mockResolvedValue([]);
   mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([]);
   mockedPrisma.shiftAssignment.findMany.mockResolvedValue([]);
+  mockedPrisma.employeeDayOff.findMany.mockResolvedValue([]);
   mockedRegimes.mockResolvedValue(new Map());
 });
 
@@ -215,5 +218,65 @@ describe("resolveWorkObligationCandidates — Etapa 15M.19B", () => {
     const result = await resolveWorkObligationCandidates(dateKey);
 
     expect(result.candidates.map((c) => c.employeeId).sort()).toEqual(["employee-1", "employee-2"]);
+  });
+});
+
+describe("resolveWorkObligationCandidates — franco (docs/decisions/EMPLOYEE_DAY_OFF.md §6)", () => {
+  it("turno habilitado + sin franco: la obligación existe", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment()]);
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.candidates.map((candidate) => candidate.employeeId)).toEqual(["employee-1"]);
+  });
+
+  it("turno habilitado + franco ACTIVO: no existe obligación (no habrá FALTA_INGRESO ni SIN_ACTIVIDAD_REGISTRADA)", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment(), assignment({ employeeId: "employee-2" })]);
+    mockedPrisma.employeeDayOff.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.candidates.map((candidate) => candidate.employeeId)).toEqual(["employee-2"]);
+  });
+
+  it("la consulta sólo mira francos ACTIVO de esa fecha y de los candidatos: un franco CANCELADO no anula nada y vuelve la obligación normal", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment()]);
+    // La base sólo devuelve filas ACTIVO: un franco cancelado no aparece.
+    mockedPrisma.employeeDayOff.findMany.mockResolvedValue([]);
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.candidates).toHaveLength(1);
+    expect(mockedPrisma.employeeDayOff.findMany).toHaveBeenCalledWith({
+      where: { date: new Date(`${dateKey}T00:00:00.000Z`), status: "ACTIVO", employeeId: { in: ["employee-1"] } },
+      select: { employeeId: true },
+    });
+  });
+
+  it("feriado + convocatoria ACTIVA + franco (combinación que la escritura bloquea): si igual coexistieran, gana el franco", async () => {
+    mockedHolidayDates.mockResolvedValue([{ date: dateKey, rules: [{ id: "rule-1", name: "Feriados" }] }]);
+    mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment()]);
+    mockedPrisma.employeeDayOff.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.isHoliday).toBe(true);
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it("turno nocturno: el franco del día de inicio programado anula la obligación de esa noche", async () => {
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment({ shiftTemplate: template({ code: "NOCHE", startTime: "23:00", endTime: "07:00", crossesMidnight: true }) })]);
+    mockedPrisma.employeeDayOff.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it("sin candidatos por turno no consulta francos", async () => {
+    await resolveWorkObligationCandidates(dateKey);
+
+    expect(mockedPrisma.employeeDayOff.findMany).not.toHaveBeenCalled();
   });
 });
