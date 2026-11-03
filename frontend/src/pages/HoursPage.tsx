@@ -32,6 +32,9 @@ import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
+import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
+import { ManualHoursConflictsPanel } from "../components/hours/ManualHoursConflictsPanel";
+import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
 import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import { formatTimeEntryObservation } from "../utils/userFacingText";
 import { statusTone } from "../utils/status";
@@ -68,6 +71,8 @@ function DayCell({
   employeeId,
   period,
   onManageDayOff,
+  manualHoursConflict,
+  onReviewManualHours,
 }: {
   label: string;
   day?: EmployeePeriodDay;
@@ -76,6 +81,10 @@ function DayCell({
   period: string;
   // Abre "Gestionar francos" con este día y esta persona (mismo modal y servicio que el encabezado).
   onManageDayOff?: () => void;
+  // Fichada sobre horas cargadas a mano cuya fecha operativa es este día
+  // (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+  manualHoursConflict?: ManualHoursConflict;
+  onReviewManualHours?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
@@ -125,6 +134,8 @@ function DayCell({
   const dayOff = day?.dayOff ?? null;
   const countedMinutes = accounting?.totalWorkedMinutes ?? 0;
   const uncountedMinutes = accounting?.dayOffUncountedMinutes ?? 0;
+  const reviewPending = manualHoursConflict?.status === "PENDIENTE";
+  const cellLabel = dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`;
   return (
     <td className={dayOff ? "day-cell is-day-off" : "day-cell"}>
       <button
@@ -132,8 +143,8 @@ function DayCell({
         type="button"
         className="day-cell-trigger"
         onClick={() => setOpen((current) => !current)}
-        aria-label={dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`}
-        title={dayOff ? dayOffDescription(dayOff, countedMinutes) : undefined}
+        aria-label={reviewPending ? `${cellLabel}. Revisión pendiente: fichada sobre horas cargadas manualmente` : cellLabel}
+        title={dayOff ? dayOffDescription(dayOff, countedMinutes) : reviewPending ? "Revisión pendiente: fichada sobre horas cargadas manualmente" : undefined}
       >
         {dayOff ? (
           // "Franco · 0 h" (o lo reconocido): nunca "-", que es "sin horas".
@@ -143,6 +154,7 @@ function DayCell({
         )}
         {day?.novelty ? <span className="alert-dot purple" /> : null}
         {accounting && accounting.multiplier > 1 ? <span className="alert-dot orange" /> : null}
+        {reviewPending ? <span className="alert-dot review" /> : null}
       </button>
       {open && position
         ? createPortal(
@@ -152,6 +164,13 @@ function DayCell({
               style={{ left: `${position.left}px`, top: `${position.top}px`, maxWidth: `${DAY_POPOVER_WIDTH}px` }}
             >
               <b>{label}</b>
+              {manualHoursConflict ? (
+                <span className={reviewPending ? "day-cell-manual-review is-pending" : "day-cell-manual-review"}>
+                  {reviewPending
+                    ? `Revisión pendiente: se registró una fichada (${formatDurationMinutes(manualHoursConflict.clockMinutes)}) en una jornada que ya tenía horas cargadas manualmente (${formatDurationMinutes(manualHoursConflict.manualMinutes)}). Computan las cargadas hasta que se decida.`
+                    : `Fichada sobre horas cargadas manualmente: ${manualHoursDecisionText(manualHoursConflict)}`}
+                </span>
+              ) : null}
               {dayOff ? (
                 <>
                   <span className="day-cell-day-off">Franco asignado: no debía trabajar.</span>
@@ -210,6 +229,18 @@ function DayCell({
                 <Link className="table-link" to={`/horas/${employeeId}?period=${period}`} onClick={() => setOpen(false)}>
                   Ver detalle completo
                 </Link>
+                {manualHoursConflict && onReviewManualHours ? (
+                  <Button
+                    variant={reviewPending ? "primary" : "subtle"}
+                    icon={Eye}
+                    onClick={() => {
+                      setOpen(false);
+                      onReviewManualHours();
+                    }}
+                  >
+                    {reviewPending ? "Revisar" : "Ver revisión"}
+                  </Button>
+                ) : null}
                 {onManageDayOff ? (
                   <Button
                     variant="subtle"
@@ -313,6 +344,11 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   // "Gestionar francos": abierto desde el encabezado (fecha sugerida) o desde
   // el detalle de un día (esa fecha y esa persona preseleccionada).
   const [dayOffDialog, setDayOffDialog] = useState<{ date: string; search?: string; employeeId?: string } | null>(null);
+  // Fichadas sobre horas cargadas a mano del período (MANUAL_HOURS_VS_CLOCK_PUNCH.md).
+  const [manualConflicts, setManualConflicts] = useState<ManualHoursConflict[]>([]);
+  const [manualConflictsError, setManualConflictsError] = useState("");
+  const [manualConflictsReload, setManualConflictsReload] = useState(0);
+  const [manualConflictDialog, setManualConflictDialog] = useState<ManualHoursConflict | null>(null);
   const [periodRows, setPeriodRows] = useState<
     Array<{
       employee: Employee;
@@ -495,6 +531,26 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     };
   }, [pendingBreakdownPage, pendingNoveltyPage, pendingOnly, period, refresh, user]);
 
+  // D) Fichadas sobre horas cargadas a mano del período (ambos modos): no
+  // depende de búsqueda/centro/página. Sin loading propio: la sección sólo
+  // aparece si hay revisiones y, en un refresh, conserva las que ya mostraba.
+  useEffect(() => {
+    if (!user) return undefined;
+    let cancelled = false;
+    manualHoursConflictApiService.list(period)
+      .then((items) => {
+        if (cancelled) return;
+        setManualConflicts(items);
+        setManualConflictsError("");
+      })
+      .catch(() => {
+        if (!cancelled) setManualConflictsError("No pudimos cargar las revisiones de fichadas sobre horas cargadas. Intentá nuevamente.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [manualConflictsReload, period, refresh, user]);
+
   // Etapa 14G.4: catálogo de centros de costo para el filtro — ya no bloquea
   // A/B (ver más arriba), así que corre en paralelo a la grilla/bandeja.
   useEffect(() => {
@@ -525,6 +581,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     periodRows.find((row) => row.employee.id === employeeId)?.summary
     ?? { incidents: 0, status: "Pendiente", accounting: emptyPeriodAccounting(), dailyBreakdown: [] as EmployeePeriodDay[] };
   const monthDays = getMonthDays(period);
+  // Una revisión por jornada, marcada en su fecha operativa (una nocturna no
+  // aparece en dos días).
+  const manualConflictByDay = new Map(manualConflicts.map((conflict) => [`${conflict.employee.id}|${conflict.operationalDate}`, conflict]));
   // Hoy si cae en el período elegido; si no, el primer día del período.
   const todayKey = argentinaDateKey(new Date());
   const defaultDayOffDate = todayKey.startsWith(period) ? todayKey : monthDate(period, 1);
@@ -1125,6 +1184,13 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         </>
       ) : null}
 
+      <ManualHoursConflictsPanel
+        conflicts={manualConflicts}
+        error={manualConflictsError}
+        onRetry={() => setManualConflictsReload((value) => value + 1)}
+        onOpen={setManualConflictDialog}
+      />
+
       {!pendingOnly ? (
       <Section
         title="Personas habilitadas para carga"
@@ -1258,6 +1324,11 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         employeeId={employee.id}
                         period={period}
                         onManageDayOff={() => setDayOffDialog({ date: monthDate(period, day), search: displayLegajo(employee), employeeId: employee.id })}
+                        manualHoursConflict={manualConflictByDay.get(`${employee.id}|${monthDate(period, day)}`)}
+                        onReviewManualHours={() => {
+                          const conflict = manualConflictByDay.get(`${employee.id}|${monthDate(period, day)}`);
+                          if (conflict) setManualConflictDialog(conflict);
+                        }}
                       />
                     ))}
                   </tr>
@@ -1405,6 +1476,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             </div>
           </div>
         </Modal>
+      ) : null}
+
+      {manualConflictDialog ? (
+        <ManualHoursConflictDialog
+          conflict={manualConflictDialog}
+          close={() => setManualConflictDialog(null)}
+          // El servicio ya invalidó las cachés derivadas: la revisión se
+          // actualiza en el acto y la grilla y el resumen se vuelven a pedir
+          // sin recargar la página.
+          onResolved={(resolved) => {
+            setManualConflicts((current) => current.map((item) => (item.id === resolved.id ? resolved : item)));
+            setRefresh((value) => value + 1);
+          }}
+        />
       ) : null}
 
       {dayOffDialog ? (
