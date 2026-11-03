@@ -177,7 +177,7 @@ En el plan Free cada deploy de producción cuesta créditos (15 de 300 por mes e
 
 - **CORS:** `CORS_ORIGIN` lleva exactamente los dos origins HTTPS: sin path, sin barra final, sin `localhost`, sin previews y sin comodines.
 - **Autenticación:** el admin usa Bearer, con el refresh en el body; el fichador, `Authorization: ClockDevice <id>.<secret>`. Ninguno usa cookies, así que el `credentials: true` del backend no cambia nada.
-- **Preflight:** tiene que aceptar `Authorization`, `Content-Type` y `X-Clock-App-Version`.
+- **Preflight:** tiene que aceptar `Authorization`, `Content-Type`, `X-Clock-App-Version` y `X-Clock-Maintenance-Session` (modo mantenimiento, [FICHADOR_MAINTENANCE_MODE.md](FICHADOR_MAINTENANCE_MODE.md)). El `cors()` del backend refleja los headers pedidos y no tiene lista fija, así que no hace falta cambiar la configuración.
 - **HTTPS en todo.** Eso da contexto seguro, con lo que funcionan `getUserMedia`, el service worker, IndexedDB y la instalación de la PWA. No puede haber mixed content: `VITE_API_URL` es siempre `https://`.
 
 ## 8. `TRUST_PROXY_HOPS` y rate limits
@@ -218,6 +218,7 @@ La rama `development` tiene 69 migraciones aplicadas, incluida `20261016150000_a
   - `npx prisma migrate status` debe decir "up to date";
   - el diff contra `schema.prisma`, vacío;
   - confirmar la ventana de restore (PITR) de Neon o tomar un snapshot.
+- **Migración pendiente (2026-10-26).** La rama `fix/staging-fichador-ajustes` agrega `20261026120000_add_clock_device_maintenance_access`: columnas aditivas y CHECKs en `ClockDevice` para el modo mantenimiento. No se aplicó en `development`. La aplica el pre-deploy (`prisma migrate deploy`) del primer despliegue autorizado de ese código; sin ella, la revocación y las rutas de mantenimiento fallan. Tiene rollback manual en `backend/prisma/rollbacks/`.
 - **Migración antes que el código, siempre.** El código de PERF-5D escribe `ClockPunchPostProcessJob` dentro de la transacción de cada fichada: sin la migración, toda fichada responde 503. El pre-deploy de §4 lo garantiza en cada deploy. Hoy no tiene nada que aplicar.
 
 ## 11. Workers: arranque gradual

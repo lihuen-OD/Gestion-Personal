@@ -15,7 +15,8 @@ describe("F5 — contrato de enrolamiento de ClockDevice", () => {
     expect(routes).toContain('"/:id/revoke"');
     expect(routes).toContain("requireAuth, requireAnyRole(adminRoles)");
     // F5: register, status, pairing refresh, resolve-pairing. F9: heartbeat por IP y por dispositivo.
-    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(6);
+    // Mantenimiento: IP, canje de código y sesión por dispositivo, y emisión RRHH por usuario.
+    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(10);
   });
 
   it("F9: el heartbeat exige ACTIVE, tiene limitadores propios (IP antes, dispositivo después) y no audita", () => {

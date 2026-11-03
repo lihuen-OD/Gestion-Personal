@@ -25,6 +25,12 @@ export const updateClockDeviceSchema = z.object({
   establishmentId: z.string().uuid().nullable().optional(),
 }).strict().refine((input) => input.name !== undefined || input.establishmentId !== undefined, { message: "Indicá el nombre o el establecimiento." });
 
+// Modo mantenimiento: sólo el código de 6 dígitos que dictó RRHH. `.strict()`:
+// el fichador no puede elegir dispositivo, vencimiento ni nada más.
+export const openMaintenanceSessionSchema = z.object({
+  code: z.string().trim().regex(/^\d{6}$/),
+}).strict();
+
 export const listClockDevicesQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   status: clockDeviceStatusSchema.optional(),

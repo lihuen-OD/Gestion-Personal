@@ -7,7 +7,7 @@ import { auditActionLabel, auditEntityLabel, auditRoleLabel, auditChange, auditD
 // auditoría, este test falla hasta que se sume acá, evitando que un nombre
 // técnico nuevo se filtre sin que nadie lo note.
 const realBackendEntities = [
-  "AttendanceInactivityIncident", "AttendancePunch", "AuditParameter", "DocumentCategory", "DoubleHourRule",
+  "AttendanceInactivityIncident", "AttendancePunch", "AuditParameter", "ClockDevice", "ClockDeviceMaintenance", "DocumentCategory", "DoubleHourRule",
   "Employee", "EmployeeAddress", "EmployeeAssignment", "EmployeeBlockHistory", "EmployeeContact",
   "EmployeeDocument", "EmployeeFieldHistory", "EmployeeHourConcept", "EmployeeTransport", "EmployeeWorkRegime",
   "FinnegansExport", "HolidayWorkAssignment", "HourConcept", "HourConceptBreakdown", "HourConceptRule",

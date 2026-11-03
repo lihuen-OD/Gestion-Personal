@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { AttendancePage } from "./AttendancePage";
+import { ATTENDANCE_REFRESH_INTERVAL_MS, AttendancePage } from "./AttendancePage";
 import { attendanceApiService, type AttendanceInactivityIncident, type AttendanceObservation, type AttendanceShift, type AttendanceSummary } from "../services/api/attendanceApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
@@ -142,7 +142,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("AttendancePage — Etapa 9B (refresh silencioso del poll de 60s)", () => {
+describe("AttendancePage — Etapa 9B (loading grande sólo en la carga inicial)", () => {
   it("muestra el loading grande en la carga inicial, cuando todavía no hay resumen en pantalla", async () => {
     let resolveSummary!: (value: AttendanceSummary) => void;
     vi.mocked(attendanceApiService.getSummary).mockReturnValue(new Promise((resolve) => { resolveSummary = resolve; }));
@@ -155,37 +155,149 @@ describe("AttendancePage — Etapa 9B (refresh silencioso del poll de 60s)", () 
     await screen.findByText("Gomez, Ana");
     expect(document.querySelectorAll(".skeleton-bar").length).toBe(0);
   });
+});
 
-  it("el refresh automático de 60s no blanquea las tablas ni pierde la fecha filtrada", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+// Refresco automático del resumen cada ATTENDANCE_REFRESH_INTERVAL_MS (15 s),
+// sólo con la pestaña visible. Timers falsos acotados a
+// setTimeout/setInterval (Date real) y avance explícito dentro de act: cada
+// aserción depende de cuántos ciclos se avanzaron, nunca de tiempo real.
+describe("AttendancePage — refresco automático cada 15 s con la pestaña visible", () => {
+  const flush = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  let visibility: DocumentVisibilityState = "visible";
+  const setVisibility = (next: DocumentVisibilityState) => act(async () => {
+    visibility = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  beforeEach(() => {
+    visibility = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("refresca recién a los 15 s, en silencio: sin skeleton y sin blanquear la tabla mientras llega la respuesta", async () => {
+    expect(ATTENDANCE_REFRESH_INTERVAL_MS).toBe(15_000);
     vi.mocked(attendanceApiService.getSummary).mockResolvedValueOnce(buildSummary());
-
     renderPage();
-    await vi.waitFor(() => expect(screen.getByText("Gomez, Ana")).toBeInTheDocument());
+    await flush();
+    expect(screen.getByText("Gomez, Ana")).toBeInTheDocument();
 
-    // El input de fecha principal (sin aria-label propio, sólo un ícono) es
-    // el primer <input type="date"> del documento — el segundo es el filtro
-    // de la lista de observaciones, con su propio aria-label.
-    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
-    const dateBeforePoll = dateInput.value;
-    expect(dateBeforePoll).toBeTruthy();
+    let resolveRefresh!: (value: AttendanceSummary) => void;
+    vi.mocked(attendanceApiService.getSummary).mockReturnValue(new Promise((resolve) => { resolveRefresh = resolve; }));
 
-    let resolvePoll!: (value: AttendanceSummary) => void;
-    vi.mocked(attendanceApiService.getSummary).mockReturnValue(new Promise((resolve) => { resolvePoll = resolve; }));
+    await flush(ATTENDANCE_REFRESH_INTERVAL_MS - 1);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(1);
+    await flush(1);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(2);
+    // La carga inicial puede usar la caché; el refresco va siempre a la red.
+    expect(attendanceApiService.getSummary).toHaveBeenNthCalledWith(1, expect.any(String), { networkFirst: false });
+    expect(attendanceApiService.getSummary).toHaveBeenNthCalledWith(2, expect.any(String), { networkFirst: true });
 
-    vi.advanceTimersByTime(60_000);
-    await vi.waitFor(() => expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(2));
-
-    // Mientras la respuesta del poll está en vuelo, la fila anterior sigue
-    // visible (no se reemplaza por el skeleton de carga completo) y la
-    // fecha elegida por el usuario no se pierde.
+    // Respuesta en vuelo: la fila anterior sigue visible, sin skeleton.
     expect(screen.getByText("Gomez, Ana")).toBeInTheDocument();
     expect(document.querySelectorAll(".skeleton-bar").length).toBe(0);
-    expect(dateInput.value).toBe(dateBeforePoll);
 
-    resolvePoll(buildSummary({ openShifts: [buildShift({ id: "shift-2", employee: { id: "employee-2", legajo: "200", dni: "30999888", firstName: "Luis", lastName: "Perez", status: "ACTIVO" } })] }));
+    resolveRefresh(buildSummary({ openShifts: [buildShift({ id: "shift-2", employeeId: "employee-2", employee: { id: "employee-2", legajo: "200", dni: "30999888", firstName: "Luis", lastName: "Perez", status: "ACTIVO" } })] }));
+    await flush();
+    expect(screen.getByText("Perez, Luis")).toBeInTheDocument();
+    expect(screen.queryByText("Gomez, Ana")).not.toBeInTheDocument();
+  });
 
-    await vi.waitFor(() => expect(screen.getByText("Perez, Luis")).toBeInTheDocument());
+  it("conserva la fecha elegida y no toca Problemas de fichada: ni sus filtros ni las páginas ya cargadas", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    const observation = (id: string, firstName: string, lastName: string): AttendanceObservation => ({
+      kind: "SHIFT",
+      occurredAt: "2026-08-27T20:00:00.000Z",
+      shift: buildShift({ id, status: "OBSERVADO", reviewStatus: "PENDIENTE", employee: { id: `employee-${id}`, legajo: id, dni: "30777666", firstName, lastName, status: "ACTIVO" } }),
+    });
+    vi.mocked(attendanceApiService.getObservations).mockImplementation(async (filters) => (filters?.before
+      ? { data: [observation("obs-2", "Marta", "Diaz")], meta: { total: 2, pageSize: 10, hasMore: false, nextBefore: null } }
+      : { data: [observation("obs-1", "Carla", "Ruiz")], meta: { total: 2, pageSize: 10, hasMore: true, nextBefore: "cursor-1" } }));
+
+    renderPage();
+    await flush();
+    // El input de fecha principal es el primer <input type="date"> — el
+    // segundo es el filtro de observaciones, con su propio aria-label.
+    const dateInput = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: "2026-08-27" } });
+    fireEvent.change(screen.getByLabelText("Mostrar"), { target: { value: "SHIFT" } });
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Cargar 10 más" }));
+    await flush();
+    expect(screen.getByText("Diaz, Marta")).toBeInTheDocument();
+    const summaryCalls = vi.mocked(attendanceApiService.getSummary).mock.calls.length;
+    const observationCalls = vi.mocked(attendanceApiService.getObservations).mock.calls.length;
+
+    await flush(ATTENDANCE_REFRESH_INTERVAL_MS);
+
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(summaryCalls + 1);
+    expect(attendanceApiService.getSummary).toHaveBeenLastCalledWith("2026-08-27", { networkFirst: true });
+    expect(dateInput.value).toBe("2026-08-27");
+    expect(screen.getByLabelText("Mostrar")).toHaveValue("SHIFT");
+    expect(attendanceApiService.getObservations).toHaveBeenCalledTimes(observationCalls);
+    expect(screen.getByText("Ruiz, Carla")).toBeInTheDocument();
+    expect(screen.getByText("Diaz, Marta")).toBeInTheDocument();
+  });
+
+  it("con la pestaña oculta no refresca; al volver refresca en el acto y retoma un único ciclo de 15 s", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    renderPage();
+    await flush();
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(1);
+
+    await setVisibility("hidden");
+    await flush(3 * ATTENDANCE_REFRESH_INTERVAL_MS);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(1);
+
+    await setVisibility("visible");
+    await flush();
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(2);
+
+    // Ocultar/mostrar de nuevo no acumula intervalos ni listeners: un único
+    // refresco al volver y después exactamente uno por ciclo.
+    await setVisibility("hidden");
+    await setVisibility("visible");
+    await flush();
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(3);
+    await flush(ATTENDANCE_REFRESH_INTERVAL_MS - 1);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(3);
+    await flush(1);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(4);
+    await flush(ATTENDANCE_REFRESH_INTERVAL_MS);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(5);
+  });
+
+  it("montada con la pestaña oculta hace la carga inicial, pero no arranca el ciclo hasta que vuelva a estar visible", async () => {
+    visibility = "hidden";
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    renderPage();
+    await flush(3 * ATTENDANCE_REFRESH_INTERVAL_MS);
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Gomez, Ana")).toBeInTheDocument();
+
+    await setVisibility("visible");
+    await flush();
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it("al desmontar no deja intervalos ni listeners: ni el tiempo ni visibilitychange vuelven a pedir el resumen", async () => {
+    vi.mocked(attendanceApiService.getSummary).mockResolvedValue(buildSummary());
+    const view = renderPage();
+    await flush();
+    view.unmount();
+
+    await flush(3 * ATTENDANCE_REFRESH_INTERVAL_MS);
+    await setVisibility("hidden");
+    await setVisibility("visible");
+    await flush();
+
+    expect(attendanceApiService.getSummary).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

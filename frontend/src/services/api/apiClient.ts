@@ -142,6 +142,7 @@ const errorMessagesByCode: Record<string, string> = {
   CLOCK_DEVICE_ACTIVATION_CONFLICT: "La solicitud ya no está pendiente o el código venció.",
   CLOCK_DEVICE_NOT_ACTIVE: "Sólo se pueden revocar dispositivos activos.",
   CLOCK_DEVICE_DELETE_FORBIDDEN: "Sólo se pueden eliminar solicitudes pendientes sin actividad.",
+  CLOCK_MAINTENANCE_DEVICE_NOT_ACTIVE: "Sólo un dispositivo activo puede recibir un acceso de mantenimiento.",
   AUDIT_PARAMETER_DUPLICATED: "Ya existe un parámetro de auditoría con ese código.",
   AUDIT_PARAMETER_NOT_FOUND: "No encontramos el parámetro de auditoría solicitado.",
   STORAGE_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",

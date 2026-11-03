@@ -2130,6 +2130,17 @@ model ClockDevice {
   lastIp            String?
   lastUserAgent     String?
   lastAppVersion    String?
+  // Acceso de mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md).
+  // Código temporal que genera RRHH, de un solo uso: sólo su SHA-256 ligado a
+  // este dispositivo. Uno por equipo (generar otro reemplaza al anterior).
+  maintenanceCodeHash           String?
+  maintenanceCodeExpiresAt      DateTime? @db.Timestamptz(3)
+  maintenanceCodeFailedAttempts Int       @default(0)
+  // Sesión corta abierta con ese código: sólo el SHA-256 del token. Las CHECK
+  // de la migración exigen hash y vencimiento juntos, y que sólo un ACTIVE
+  // tenga código o sesión.
+  maintenanceSessionHash        String?
+  maintenanceSessionExpiresAt   DateTime? @db.Timestamptz(3)
   createdAt         DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
 

@@ -26,6 +26,9 @@ export type ClockDevice = {
   updatedAt: string;
 };
 
+/** Código de mantenimiento: se muestra una vez y vive sólo en memoria del modal. */
+export type ClockDeviceMaintenanceCode = { code: string; expiresAt: string; expiresInSeconds: number };
+
 type ListResponse = { data: ClockDevice[]; meta: { total: number; page: number; pageSize: number; hasMore: boolean } };
 
 export const clockDeviceApiService = {
@@ -45,5 +48,8 @@ export const clockDeviceApiService = {
     return response.data;
   },
   revoke: (id: string) => apiRequest<{ data: ClockDevice }>(`/clock-devices/${id}/revoke`, { method: "POST" }).then((response) => response.data),
+  // Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): el modal
+  // muestra el error en contexto, sin aviso global.
+  issueMaintenanceCode: (id: string) => apiRequest<{ data: ClockDeviceMaintenanceCode }>(`/clock-devices/${id}/maintenance-code`, { method: "POST", silentErrors: true }).then((response) => response.data),
   deletePending: (id: string) => apiRequest<void>(`/clock-devices/${id}`, { method: "DELETE" }),
 };

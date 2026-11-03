@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/api/clockDeviceApiService", () => ({
-  clockDeviceApiService: { list: vi.fn(), resolvePairing: vi.fn(), activate: vi.fn(), update: vi.fn(), revoke: vi.fn(), deletePending: vi.fn() },
+  clockDeviceApiService: { list: vi.fn(), resolvePairing: vi.fn(), activate: vi.fn(), update: vi.fn(), revoke: vi.fn(), deletePending: vi.fn(), issueMaintenanceCode: vi.fn() },
 }));
 vi.mock("../services/api/orgStructureApiService", () => ({ orgStructureApiService: { getCatalog: vi.fn() } }));
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn().mockResolvedValue(true) }));
@@ -188,5 +188,95 @@ describe("ClockDevicesPage — refresco silencioso de la conectividad (F9)", () 
     expect(clockDeviceApiService.list).toHaveBeenCalledTimes(2);
     expect(editModal()).not.toBeNull();
     expect(screen.getByLabelText("Nombre del dispositivo *")).toHaveValue("Nombre a medio escribir");
+  });
+});
+
+// Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md)
+describe("ClockDevicesPage — acceso de mantenimiento", () => {
+  const maintenanceModal = () => (screen.queryByRole("heading", { name: "Acceso de mantenimiento" })?.closest(".modal") ?? null) as HTMLElement | null;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(clockDeviceApiService.list).mockResolvedValue(listOf([
+      active(),
+      active({ id: "d5", name: "Oficina vieja", status: "REVOKED", connectivity: null, revokedAt: "2026-10-10T15:00:00Z" }),
+      pending,
+    ]));
+  });
+
+  it("sólo un dispositivo ACTIVE ofrece generar el acceso", async () => {
+    render(<ClockDevicesPage />);
+    await screen.findByText("Pañol principal");
+    expect(within(rowOf("Pañol principal")).getByRole("button", { name: "Generar acceso de mantenimiento para Pañol principal" })).toBeInTheDocument();
+    expect(within(rowOf("Oficina vieja")).queryByRole("button", { name: /mantenimiento/ })).not.toBeInTheDocument();
+    expect(within(rowOf("Solicitud pendiente")).queryByRole("button", { name: /mantenimiento/ })).not.toBeInTheDocument();
+  });
+
+  it("genera el código, lo muestra con su vencimiento y cómo usarlo; otro código lo reemplaza; al cerrar desaparece", async () => {
+    const user = userEvent.setup();
+    vi.mocked(clockDeviceApiService.issueMaintenanceCode)
+      .mockResolvedValueOnce({ code: "482731", expiresAt: "2026-10-26T12:05:00Z", expiresInSeconds: 300 })
+      .mockResolvedValueOnce({ code: "905112", expiresAt: "2026-10-26T12:06:00Z", expiresInSeconds: 300 });
+    render(<ClockDevicesPage />);
+    await user.click(await screen.findByRole("button", { name: "Generar acceso de mantenimiento para Pañol principal" }));
+
+    const dialog = maintenanceModal()!;
+    expect(await within(dialog).findByText("482731")).toBeInTheDocument();
+    expect(clockDeviceApiService.issueMaintenanceCode).toHaveBeenCalledWith("device-2");
+    expect(within(dialog).getByText("Pañol principal")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Vence en (5:00|4:59) · un solo uso/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/mantené presionado el título/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Sirve una sola vez y sólo en este dispositivo/)).toBeInTheDocument();
+    // Nada técnico: ni el id del dispositivo ni el vencimiento ISO.
+    expect(dialog.textContent).not.toMatch(/device-2|2026-10-26T/);
+
+    await user.click(within(dialog).getByRole("button", { name: "Generar nuevo código" }));
+    expect(await within(dialog).findByText("905112")).toBeInTheDocument();
+    expect(within(dialog).queryByText("482731")).not.toBeInTheDocument();
+    expect(clockDeviceApiService.issueMaintenanceCode).toHaveBeenCalledTimes(2);
+
+    await user.click(within(dialog).getByRole("button", { name: "Listo" }));
+    expect(maintenanceModal()).toBeNull();
+    expect(screen.queryByText("905112")).not.toBeInTheDocument();
+  });
+
+  it("un error del backend queda en el modal, en lenguaje humano", async () => {
+    const user = userEvent.setup();
+    vi.mocked(clockDeviceApiService.issueMaintenanceCode).mockRejectedValue(new ApiError("Sólo un dispositivo activo puede recibir un acceso de mantenimiento.", "CLOCK_MAINTENANCE_DEVICE_NOT_ACTIVE", 409));
+    render(<ClockDevicesPage />);
+    await user.click(await screen.findByRole("button", { name: "Generar acceso de mantenimiento para Pañol principal" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sólo un dispositivo activo puede recibir un acceso de mantenimiento.");
+    expect(maintenanceModal()).not.toBeNull();
+  });
+});
+
+describe("ClockDevicesPage — vencimiento del código de mantenimiento", () => {
+  const flush = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    vi.mocked(clockDeviceApiService.list).mockResolvedValue(listOf([active()]));
+    vi.mocked(clockDeviceApiService.issueMaintenanceCode).mockResolvedValue({ code: "482731", expiresAt: "2026-10-26T12:05:00Z", expiresInSeconds: 300 });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("la cuenta regresiva baja con el reloj de la pantalla y al vencer deja de mostrar el código", async () => {
+    render(<ClockDevicesPage />);
+    await flush(250);
+    fireEvent.click(screen.getByRole("button", { name: "Generar acceso de mantenimiento para Pañol principal" }));
+    await flush();
+    expect(screen.getByText("Vence en 5:00 · un solo uso")).toBeInTheDocument();
+
+    await flush(61_000);
+    expect(screen.getByText("Vence en 3:59 · un solo uso")).toBeInTheDocument();
+
+    await flush(240_000);
+    expect(screen.getByText("Vencido")).toBeInTheDocument();
+    expect(screen.queryByText("482731")).not.toBeInTheDocument();
+    expect(screen.getByText("Generá uno nuevo si todavía lo necesitás.")).toBeInTheDocument();
   });
 });

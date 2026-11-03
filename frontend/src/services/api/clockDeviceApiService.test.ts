@@ -26,6 +26,12 @@ describe("clockDeviceApiService administrativo", () => {
     expect(apiRequest).toHaveBeenNthCalledWith(2, "/clock-devices/d2", { method: "DELETE" });
   });
 
+  it("modo mantenimiento: pide el código con POST, sin body ni datos del dispositivo, y muestra el error en contexto", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: { code: "482731", expiresAt: "2026-10-26T12:05:00Z", expiresInSeconds: 300 } });
+    await expect(clockDeviceApiService.issueMaintenanceCode("d1")).resolves.toEqual({ code: "482731", expiresAt: "2026-10-26T12:05:00Z", expiresInSeconds: 300 });
+    expect(apiRequest).toHaveBeenCalledWith("/clock-devices/d1/maintenance-code", { method: "POST", silentErrors: true });
+  });
+
   it("F9: edita con PATCH sólo nombre/establecimiento e invalida la caché de Asistencia", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ data: { id: "d1", name: "Pañol" } });
     await clockDeviceApiService.update("d1", { name: "Pañol", establishmentId: null });

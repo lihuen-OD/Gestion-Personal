@@ -156,6 +156,33 @@ unauthenticated audit-spam vector.
 
 **Boundary:** since F6 the device state is enforced server-side on every punch route; the PWA lock screens for `PENDING`/`REVOKED` are UX on top of that control, not the control itself. The admin app has no fichador: since F11 it does not even have a `/fichador` route.
 
+### Device maintenance access (fichador maintenance mode)
+
+Design and threat model: `docs/decisions/FICHADOR_MAINTENANCE_MODE.md`. There is **no master PIN**: nothing in the code, in `VITE_*`, in browser storage, and nothing shared between devices.
+
+- **Issuing.** A Nivel 1 RRHH user generates a code per `ACTIVE` device (`POST /api/clock-devices/:id/maintenance-code`).
+  - The code is 6 digits from `crypto.randomInt`, expires after 5 minutes and is single use.
+  - It is stored only as `SHA-256("clock-maintenance:<deviceId>:<code>")`, so it is bound to that device.
+  - A new code replaces the previous one.
+  - It is returned once with `Cache-Control: no-store` and is never logged or audited.
+- **Redeeming.** The fichador redeems the code with its own device credential (`POST /api/clock/maintenance/session`, `ACTIVE` only).
+  - Consumption is a single conditional `UPDATE`: hash, expiry, failed-attempt count and `ACTIVE`. Concurrent redemptions of one code yield exactly one session.
+  - Unknown, expired, burned, already used and other-device codes all return the same `401 CLOCK_MAINTENANCE_CODE_INVALID`.
+- **Brute force.**
+  - A per-IP limiter runs before authentication.
+  - Then 10 redemptions per 15 minutes per authenticated device.
+  - 5 failed attempts burn the active code. That counter lives in the database, so it holds across instances, unlike the in-memory limiters.
+- **Session.** It lasts 10 minutes and its token is 32 random bytes, stored only as SHA-256.
+  - It travels in `X-Clock-Maintenance-Session` **in addition to** the device credential. It never replaces or modifies the device's durable `tokenHash`, and the device token is never treated as an administrative session.
+  - Expiry is enforced by the server clock.
+- **Revocation.** It clears the code and the session in the same `UPDATE`. `ClockDevice_maintenance_active_only_check` forbids maintenance state on a non-`ACTIVE` row, and every maintenance route requires `ACTIVE`, so a revoked device keeps no residual maintenance session.
+- **Audit** (entity `ClockDeviceMaintenance`):
+  - `CREATE`: issued, by the RRHH user;
+  - `LOGIN`: redeemed, with the device as technical actor (`userId = NULL`);
+  - `REJECT`: rejected, **only while a code is active** (at most 5 rows per issued code).
+  - Rejections without an active code only produce the log `CLOCK_MAINTENANCE_CODE_REJECTED`, so a device cannot spam the audit trail.
+- **Boundary.** The PWA maintenance screen is not an OS lock. Keeping people inside the fichador is the job of the OS kiosk mode (Android lock task / Apple Guided Access or Single App Mode / ChromeOS kiosk; see `docs/fichador-kiosk/`).
+
 ### Hosting headers of the fichador site
 
 `fichador/scripts/hosting-headers.mjs` generates `dist/_headers`: `nosniff`, `strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, HSTS, `Permissions-Policy` with the camera for its own origin only, and a CSP limited to `'self'` and the environment's API origin (since F3 MediaPipe and Inter are self-hosted; no `unsafe-inline`/`unsafe-eval`, only `'wasm-unsafe-eval'`, which MediaPipe needs to compile its WASM).

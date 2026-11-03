@@ -24,6 +24,9 @@ import { workShiftStatusLabel, workShiftStatusTone } from "../utils/status";
 import { attendanceSourceLabel } from "../utils/attendanceSource";
 
 const OBSERVED_PAGE_SIZE = 10;
+// Refresco automático del resumen mientras la pestaña está visible: una
+// fichada del kiosco aparece en Asistencia sin recargar (sin WebSockets/SSE).
+export const ATTENDANCE_REFRESH_INTERVAL_MS = 15_000;
 
 function observationId(item: AttendanceObservation) {
   if (item.kind === "SHIFT") return `${item.kind}-${item.shift.id}`;
@@ -318,7 +321,7 @@ export function AttendancePage() {
 
   useEffect(() => {
     let cancelled = false;
-    // Etapa 9B: el poll automático de 60s (más abajo) bumpea `refreshKey`,
+    // Etapa 9B: el refresco automático (más abajo) bumpea `refreshKey`,
     // que es dependencia de este efecto — sin esta guarda, cada ciclo volvía
     // a blanquear las tablas de jornadas abiertas/cerradas con el skeleton
     // completo aunque el usuario las estuviera mirando en ese momento. Sólo
@@ -328,7 +331,10 @@ export function AttendancePage() {
     // respuesta nueva.
     if (!summary) setLoading(true);
     setError("");
-    attendanceApiService.getSummary(date)
+    // Desde el primer refresco (automático, al volver a la pestaña o tras una
+    // acción) el resumen se pide a la red: con la caché, cada refresco
+    // mostraba el dato del anterior.
+    attendanceApiService.getSummary(date, { networkFirst: refreshKey > 0 })
       .then((result) => {
         if (!cancelled) setSummary(result);
       })
@@ -343,9 +349,27 @@ export function AttendancePage() {
     };
   }, [date, refreshKey]);
 
+  // Sólo con la pestaña visible: oculta no pide nada; al volver refresca en el
+  // acto y reinicia el ciclo (sin un segundo pedido inmediato). Cada refresco
+  // descarta la respuesta en vuelo anterior (efecto de arriba) y getSummary
+  // deduplica el pedido si sigue pendiente: nunca dos requests de la misma fecha.
   useEffect(() => {
-    const timer = window.setInterval(() => setRefreshKey((value) => value + 1), 60_000);
-    return () => window.clearInterval(timer);
+    let timer: number | undefined;
+    const refresh = () => setRefreshKey((value) => value + 1);
+    const stop = () => window.clearInterval(timer);
+    const start = () => { timer = window.setInterval(refresh, ATTENDANCE_REFRESH_INTERVAL_MS); };
+    const onVisibilityChange = () => {
+      stop();
+      if (document.visibilityState !== "visible") return;
+      refresh();
+      start();
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {

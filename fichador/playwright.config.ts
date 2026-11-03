@@ -43,7 +43,7 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: "chromium", testMatch: "kioskJourney.spec.ts", use: { ...devices["Desktop Chrome"], baseURL: "http://localhost:5185" } },
+    { name: "chromium", testMatch: ["kioskJourney.spec.ts", "maintenanceMode.spec.ts"], use: { ...devices["Desktop Chrome"], baseURL: "http://localhost:5185" } },
     { name: "chromium-fake-face", testMatch: "punchFlow.spec.ts", use: { ...devices["Desktop Chrome"], baseURL: "http://localhost:5186" } },
   ],
 });

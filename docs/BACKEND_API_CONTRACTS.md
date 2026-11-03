@@ -1948,6 +1948,9 @@ Rutas públicas, con rate limit independiente:
 | GET | `/api/clock/device/status` | `Authorization: ClockDevice <id>.<secret>`, cualquier estado | Estado seguro y actualización de metadata de última conexión; un `REVOKED` recibe `200` con su estado para poder mostrarlo |
 | POST | `/api/clock/device/pairing-code/refresh` | idem | Sólo `PENDING`; invalida el código anterior y devuelve código/vencimiento nuevos |
 | POST | `/api/clock/heartbeat` | `Authorization: ClockDevice …`, sólo `ACTIVE` | F9. Sin body. Actualiza `lastSeenAt`, `lastIp` y `lastUserAgent` de la request, y `lastAppVersion` del header `X-Clock-App-Version`; el body nunca se lee. Responde `{ device: { id, name, status, establishment }, serverTime }`. No audita. Si el equipo fue revocado entre la autenticación y la escritura → `403 CLOCK_DEVICE_REVOKED`. No existe en el alias legacy |
+| POST | `/api/clock/maintenance/session` | `Authorization: ClockDevice …`, sólo `ACTIVE` | Modo mantenimiento. Body `.strict()` `{ code }` (6 dígitos). Canjea el código de RRHH de **este** dispositivo, que es de un solo uso, y responde `201 { token, expiresAt, expiresInSeconds, device }` (`Cache-Control: no-store`). Código inexistente, vencido, anulado, usado o de otro equipo → siempre `401 CLOCK_MAINTENANCE_CODE_INVALID` |
+| GET | `/api/clock/maintenance/session` | idem + `X-Clock-Maintenance-Session: <token>` | Diagnóstico del equipo y segundos restantes: `{ expiresAt, expiresInSeconds, device, serverTime }`. Sesión inválida o vencida → `401 CLOCK_MAINTENANCE_SESSION_INVALID` |
+| DELETE | `/api/clock/maintenance/session` | idem | Cierra la sesión de ese token. Siempre `204` (idempotente) |
 
 Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
 min`; además hay un máximo operativo de 20 solicitudes pendientes. La
@@ -1956,6 +1959,11 @@ tiene dos límites propios, que nunca consumen el cupo de fichadas:
 
 - por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`);
 - `10/5 min` por dispositivo ya autenticado.
+
+El modo mantenimiento también tiene limitadores propios: por IP antes de
+autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `10/15 min` por dispositivo para canjear
+códigos y `30/5 min` por dispositivo para leer o cerrar la sesión. Además, 5
+intentos fallidos anulan el código vigente; ese contador vive en la base.
 
 Rutas RRHH (`Bearer` JWT + Nivel 1):
 
@@ -1966,8 +1974,22 @@ Rutas RRHH (`Bearer` JWT + Nivel 1):
 | POST | `/api/clock-devices/resolve-pairing` | Resuelve `{ pairingCode }` a metadata segura de un pendiente vigente |
 | POST | `/api/clock-devices/:id/activate` | `{ pairingCode, name, establishmentId? }`; consume pairing y activa atómicamente |
 | PATCH | `/api/clock-devices/:id` | F9. Body `.strict()` `{ name?, establishmentId? }`, al menos uno; cualquier otro campo → `400 VALIDATION_ERROR`. Detalle abajo |
-| POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED` |
+| POST | `/api/clock-devices/:id/revoke` | Transición terminal `ACTIVE → REVOKED`. También borra el código y la sesión de mantenimiento en el mismo `UPDATE` |
+| POST | `/api/clock-devices/:id/maintenance-code` | Genera un código de mantenimiento: 6 dígitos, vence a los 5 min, de un solo uso y sólo para ese dispositivo. Reemplaza al anterior. Responde `201 { code, expiresAt, expiresInSeconds }` (`Cache-Control: no-store`); el código no se persiste ni se audita en claro. Límite `10/5 min` por usuario. Un dispositivo no `ACTIVE` → `409 CLOCK_MAINTENANCE_DEVICE_NOT_ACTIVE` |
 | DELETE | `/api/clock-devices/:id` | Sólo `PENDING` sin fichadas/intentos |
+
+**Modo mantenimiento.** Diseño y amenazas en
+`docs/decisions/FICHADOR_MAINTENANCE_MODE.md`.
+
+- El `device` de las rutas de sesión es el diagnóstico del propio equipo:
+  `name`, `status`, `establishment { name, zone { name } }`, `activatedAt`,
+  `lastSeenAt`, `lastAppVersion` y `connectivity`. Sin id, IP, user-agent ni
+  hashes.
+- La auditoría usa la entidad `ClockDeviceMaintenance`:
+  - `CREATE`: código generado (usuario RRHH);
+  - `LOGIN`: ingreso desde el fichador (`userId = NULL`, `after.actorClockDeviceId`);
+  - `REJECT`: código rechazado, sólo si había uno vigente (como mucho 5 por
+    código).
 
 **`PATCH /api/clock-devices/:id` (F9):**
 

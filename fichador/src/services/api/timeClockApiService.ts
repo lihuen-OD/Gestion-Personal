@@ -16,6 +16,8 @@ export const clockEndpoints = {
   attempt: (requestId: string) => `/clock/attempts/${encodeURIComponent(requestId)}`,
   // F9: señal de presencia (features/device/useClockDeviceHeartbeat.ts).
   heartbeat: "/clock/heartbeat",
+  // Modo mantenimiento (services/api/clockMaintenanceApiService.ts).
+  maintenanceSession: "/clock/maintenance/session",
 } as const;
 
 /** Tope de espera del POST de fichada: el backend puede tardar ~10 s guardando la foto (F7, §26.10). */

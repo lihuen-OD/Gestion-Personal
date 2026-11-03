@@ -17,6 +17,7 @@ import type { FaceCaptureResult, SubmissionStage } from "../components/time-cloc
 import { CAMERA_PAUSED_MESSAGE } from "../components/time-clock/captureMessages";
 import { formatDateTime, formatTime } from "../utils/date";
 import { kioskActivity } from "../pwa/kioskActivity";
+import { useMaintenanceTrigger } from "../features/maintenance/maintenanceTrigger";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -364,11 +365,15 @@ export function TimeClockPage() {
   };
 
   const success = view?.kind === "success" ? view : null;
+  // Gesto oculto del modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md):
+  // presión larga sobre el encabezado, sólo sin cámara ni fichada en curso. No
+  // agrega nada visible para quien ficha.
+  const maintenanceTrigger = useMaintenanceTrigger(!punch);
 
   return (
     <main className="clock-page">
       <section className="clock-panel">
-        <div className="clock-heading">
+        <div className="clock-heading" {...maintenanceTrigger}>
           <p className="eyebrow">CONTROL HORARIO</p>
           <h1>Fichador de personal</h1>
           <strong>{formatCurrentTime(now)}</strong>

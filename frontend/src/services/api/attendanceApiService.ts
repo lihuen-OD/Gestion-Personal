@@ -188,7 +188,11 @@ export type AttendanceObservation =
 // `getSummary`/`getPeriodEmployees`/`list`/`listByEmployee` de
 // timeEntryApiService).
 export const attendanceApiService = {
-  async getSummary(date?: string) {
+  // `networkFirst`: lo usan los refrescos de AttendancePage. Con
+  // stale-while-revalidate cada refresco mostraba la respuesta del anterior
+  // (una salida del fichador tardaba hasta 2 ciclos en verse). La carga
+  // inicial sigue usando la caché (dedupe de StrictMode, 14G.9).
+  async getSummary(date?: string, options: { networkFirst?: boolean } = {}) {
     const params = new URLSearchParams();
     if (date) params.set("date", date);
     const query = params.toString();
@@ -198,6 +202,7 @@ export const attendanceApiService = {
       policy: cachePolicies.timeEntriesAggregates,
       fetcher: () => apiRequest<AttendanceSummaryResponse>(key, { apiCache: false }).then((response) => response.data),
       validate: (value: AttendanceSummary) => Boolean(value && value.totals && typeof value.totals.open === "number"),
+      networkFirst: options.networkFirst,
     });
   },
 

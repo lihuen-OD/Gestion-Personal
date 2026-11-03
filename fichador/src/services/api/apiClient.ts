@@ -56,6 +56,9 @@ const messagesByCode: Record<string, string> = {
   // regenerándolo: el intento se abandona y la persona empieza de nuevo.
   CLOCK_IDEMPOTENCY_KEY_REUSED: "No pudimos recuperar esta fichada. Volvé a iniciar el proceso.",
   CLOCK_ATTEMPT_PROCESSING: "Estamos confirmando tu fichada…",
+  // Modo mantenimiento: el mismo texto para código inexistente, vencido, usado o de otro equipo.
+  CLOCK_MAINTENANCE_CODE_INVALID: "El código no es válido o ya venció.",
+  CLOCK_MAINTENANCE_SESSION_INVALID: "El acceso de mantenimiento venció.",
   VALIDATION_ERROR: "No pudimos procesar la fichada. Intentá nuevamente.",
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
 };
