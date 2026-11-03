@@ -21,7 +21,8 @@ export default defineConfig({
     launchOptions: { args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] },
   },
   webServer: {
-    command: "npm run build && npx vite preview --port 5195 --strictPort",
+    // Preview recibe otro entorno a propósito: su CSP debe seguir al build.
+    command: "npm run build && VITE_API_URL=https://preview.example.com/api npx vite preview --port 5195 --strictPort",
     url: "http://localhost:5195",
     reuseExistingServer: false,
     timeout: 120_000,

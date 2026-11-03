@@ -87,6 +87,20 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   }
 });
 
+test("dev con backend apagado: error de red sin CSP de hosting", async ({ page }) => {
+  await seedActiveIdentity(page);
+  const violations: string[] = [];
+  page.on("console", (message) => {
+    if (/Content Security Policy|Refused to connect/i.test(message.text())) violations.push(message.text());
+  });
+  const failure = page.waitForEvent("requestfailed", (request) => request.url().endsWith("/api/clock/device/status"));
+  const response = await page.goto("/");
+  expect(response!.headers()["content-security-policy"]).toBeUndefined();
+  expect((await failure).failure()?.errorText).toContain("ERR_CONNECTION_REFUSED");
+  await expect(page.getByText(/No hay conexión con el servidor/)).toBeVisible();
+  expect(violations).toEqual([]);
+});
+
 test("RRHH revoca con la app abierta: el siguiente request bloquea el fichador sin reintentos", async ({ page }) => {
   const apiCalls = await mockApi(page, { revokeOperational: true });
   await seedActiveIdentity(page);

@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
-import { buildApiUrl, securityHeaders } from "./scripts/hosting-headers.mjs";
+import { hostingHeadersPlugin } from "./scripts/write-hosting-headers.mjs";
 import { mediapipeWasmAssets } from "./scripts/mediapipe-assets.mjs";
 import { pwaOptions } from "./scripts/pwa-config.mjs";
 
@@ -15,8 +15,8 @@ const e2eFakeFace = process.env.FICHADOR_E2E_FAKE_FACE === "1";
 // puerto en silencio y quede fuera del CORS del backend.
 // F3: PWA (manifest + service worker, scripts/pwa-config.mjs) y MediaPipe
 // self-hosted (scripts/mediapipe-assets.mjs).
-export default defineConfig(({ mode }) => ({
-  plugins: [react(), mediapipeWasmAssets(), VitePWA(pwaOptions)],
+export default defineConfig({
+  plugins: [react(), mediapipeWasmAssets(), VitePWA(pwaOptions), hostingHeadersPlugin()],
   resolve: {
     alias: e2eFakeFace
       ? [{ find: /^@mediapipe\/tasks-vision$/, replacement: fileURLToPath(new URL("./e2e/support/fakeTasksVision.ts", import.meta.url)) }]
@@ -32,10 +32,11 @@ export default defineConfig(({ mode }) => ({
   // F11: `vite preview` (build local y PWA E2E) sirve los mismos headers de
   // seguridad que el hosting, con la CSP enforced. `vite dev` no: HMR y el
   // preámbulo de React Refresh usan scripts inline.
-  preview: { port: 5175, strictPort: true, headers: securityHeaders(buildApiUrl(mode, fileURLToPath(new URL(".", import.meta.url)))) },
+  // El plugin lee los headers del build, nunca el entorno actual del preview.
+  preview: { port: 5175, strictPort: true },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setupTests.ts"],
     exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
   },
-}));
+});
