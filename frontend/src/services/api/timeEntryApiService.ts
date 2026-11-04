@@ -73,7 +73,10 @@ export type ApiTimeEntry = {
 // `summary.accounting.days[day]` (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
 export type EmployeePeriodDay = {
   day: number;
-  novelty: { label: string } | null;
+  // Una o varias novedades del día: uiColor/noveltyTypeId sólo si los
+  // comparten todas (si no, null). uiColor es string y no NoveltyUiColor
+  // porque puede ser un color histórico inválido — ver dayNoveltyColorClass.
+  novelty: { label: string; uiColor: string | null; noveltyTypeId: string | null } | null;
   // Franco ACTIVO del día (docs/decisions/EMPLOYEE_DAY_OFF.md §15). Lo que
   // computa está en `accounting.days[day]`; esto es la evidencia registrada.
   dayOff?: DayOffActivity | null;

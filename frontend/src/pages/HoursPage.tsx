@@ -30,6 +30,7 @@ import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
+import { dayNoveltyColorClass } from "../utils/noveltyColor";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
@@ -137,6 +138,7 @@ function DayCell({
   const reviewPending = manualHoursConflict?.status === "PENDIENTE";
   const cellLabel = dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`;
   const noveltyDescription = day?.novelty ? `Novedad: ${day.novelty.label}` : undefined;
+  const noveltyTone = day?.novelty ? dayNoveltyColorClass(day.novelty) : undefined;
   const noveltyHours = accounting ? countedMinutes === 0 ? "0 h" : formatCompactDurationMinutes(countedMinutes) : "-";
   const reviewDescription = reviewPending ? "Revisión pendiente: fichada sobre horas cargadas manualmente" : undefined;
   return (
@@ -151,9 +153,10 @@ function DayCell({
       >
         {dayOff ? (
           // "Franco · 0 h" (o lo reconocido): nunca "-", que es "sin horas".
-          <DayOffMark countedMinutes={countedMinutes} />
+          // Una novedad del mismo día queda como marca secundaria, no se oculta.
+          <DayOffMark countedMinutes={countedMinutes} noveltyTone={noveltyTone} />
         ) : day?.novelty ? (
-          <span className="day-cell-novelty-mark">
+          <span className={`day-cell-novelty-mark cell-novelty-pill ${noveltyTone}`}>
             <span className="day-cell-novelty-label">Novedad</span>
             <span className="day-cell-novelty-hours">{noveltyHours}</span>
           </span>

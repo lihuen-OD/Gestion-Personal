@@ -1130,6 +1130,65 @@ describe("HoursPage — francos", () => {
   });
 });
 
+// Chip de novedad en la grilla de período: color del tipo (ver
+// dayNoveltyColorClass); con franco, el franco manda y la novedad no se oculta.
+describe("HoursPage — novedades en la grilla de período", () => {
+  function mockDay(entry: Pick<EmployeePeriodDay, "day" | "novelty"> & Partial<EmployeePeriodDay>, days: DayAccounting[] = []) {
+    vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
+      items: [buildPeriodRow({ days, dailyBreakdown: [{ dayOff: null, specialHourRuleNames: [], specialHourConflict: false, ...entry }] })],
+      meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
+    });
+  }
+
+  it("una novedad muestra el chip con el color de su tipo, sin el punto genérico", async () => {
+    authAs("Nivel 1 - RRHH");
+    mockDay({ day: 3, novelty: { label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" } });
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 3\. Novedad: Vacaciones/ });
+    expect(trigger.closest("td")).toHaveClass("is-novelty");
+    expect(trigger.querySelector(".day-cell-novelty-mark")).toHaveClass("novelty-color-teal");
+    expect(trigger.querySelector(".alert-dot.purple")).toBeNull();
+  });
+
+  it("varias novedades de colores distintos: estilo neutro propio, nunca un color del catálogo como fallback", async () => {
+    authAs("Nivel 1 - RRHH");
+    mockDay({ day: 4, novelty: { label: "Vacaciones, Enfermedad", uiColor: null, noveltyTypeId: null } });
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 4\. Novedad: Vacaciones, Enfermedad/ });
+    const mark = trigger.querySelector(".day-cell-novelty-mark")!;
+    expect(mark).toHaveClass("novelty-mixed");
+    expect(mark.className).not.toMatch(/novelty-color-/);
+  });
+
+  it("franco + novedad: FRANCO sigue siendo el estado principal y la novedad queda como mini-chip con su color", async () => {
+    authAs("Nivel 1 - RRHH");
+    mockDay(
+      { day: 5, novelty: { label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" }, dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 } },
+      [dayAccounting(5, { base: 0, sereno: 0, colectivo: 0 })],
+    );
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 5: Franco asignado.*\. Novedad: Vacaciones$/ });
+    expect(trigger.closest("td")).toHaveClass("is-day-off");
+    expect(trigger.closest("td")).not.toHaveClass("is-novelty");
+    expect(trigger).toHaveTextContent("Franco");
+    expect(trigger).toHaveTextContent("0 h");
+    const tag = trigger.querySelector(".day-off-novelty-tag");
+    expect(tag).toHaveTextContent("Nov.");
+    expect(tag).toHaveClass("novelty-color-teal");
+    // Un solo chip principal: no se apila el chip grande de novedad.
+    expect(trigger.querySelector(".day-cell-novelty-mark")).toBeNull();
+    expect(trigger).toHaveAttribute("title", expect.stringContaining("Novedad: Vacaciones"));
+
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByText("Franco asignado: no debía trabajar.")).toBeInTheDocument();
+    expect(popover.getByText("Novedad: Vacaciones")).toBeInTheDocument();
+  });
+});
+
 // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a
 // mano — revisión visible en la grilla y en el listado del período.
 describe("HoursPage — fichada sobre horas cargadas manualmente", () => {
