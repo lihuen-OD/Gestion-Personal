@@ -4,11 +4,21 @@ import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils
 // Franco en una celda de grilla (docs/decisions/EMPLOYEE_DAY_OFF.md §15):
 // "Franco" + lo que computa ese día según la contabilidad del backend. Nunca
 // "—", que sigue significando "sin horas registradas".
-export function DayOffMark({ countedMinutes }: { countedMinutes: number }) {
+// `noveltyTone`: clase de color de una novedad del mismo día. El franco sigue
+// siendo el estado principal; la novedad queda como marca secundaria en la
+// línea de horas, sin sumar alto a la celda.
+export function DayOffMark({ countedMinutes, noveltyTone }: { countedMinutes: number; noveltyTone?: string }) {
+  const hours = <span className="day-off-mark-hours">{countedMinutes > 0 ? formatCompactDurationMinutes(countedMinutes) : "0 h"}</span>;
   return (
     <span className="day-off-mark">
       <span className="day-off-mark-label">Franco</span>
-      <span className="day-off-mark-hours">{countedMinutes > 0 ? formatCompactDurationMinutes(countedMinutes) : "0 h"}</span>
+      {noveltyTone ? (
+        <span className="day-off-mark-row">
+          {hours}
+          {/* El detalle ("Novedad: …") ya está en el aria-label/title de la celda. */}
+          <span className={`day-off-novelty-tag cell-novelty-pill ${noveltyTone}`} aria-hidden="true">Nov.</span>
+        </span>
+      ) : hours}
     </span>
   );
 }
