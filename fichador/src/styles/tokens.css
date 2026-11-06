@@ -1,0 +1,130 @@
+/*
+ * Fichador — tokens visuales («Calma y certeza», Etapa 0 aprobada).
+ * Identidad derivada de Gestión Personal: Inter, azul #2563EB y neutros
+ * fríos. Es la única fuente de color, tipografía, espaciado, radios,
+ * elevación, movimiento y safe areas: el resto de las hojas sólo usa estas
+ * variables.
+ */
+:root {
+  /* Superficies y texto */
+  --color-canvas: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f2f4f7;
+  --color-surface-3: #e9ecf1;
+  --color-ink: #0b1220;
+  --color-ink-2: #3b4658;
+  --color-ink-3: #5f6b7d; /* texto secundario: 5,4:1 sobre blanco */
+  --color-ink-4: #98a2b3; /* sólo deshabilitado o decorativo */
+  --color-line: #e4e7ec;
+  --color-line-strong: #d0d5dd;
+  --color-line-input: #818b9c; /* borde de campos: 3,4:1 (WCAG 1.4.11) */
+
+  /* Acción */
+  --color-accent: #2563eb; /* 5,2:1 sobre blanco */
+  --color-accent-press: #1d4ed8;
+  --color-accent-soft: #eef4ff;
+  --color-accent-line: #c7d7fe;
+  --color-accent-ink: #1e40af;
+  --color-exit: #111827;
+  --color-exit-press: #000000;
+
+  /* Semánticos */
+  --color-ok: #067647;
+  --color-ok-strong: #079455;
+  --color-ok-soft: #ecfdf3;
+  --color-ok-line: #abefc6;
+  --color-warn: #b54708;
+  --color-warn-strong: #f79009;
+  --color-warn-soft: #fffaeb;
+  --color-warn-line: #fedf89;
+  --color-danger: #b42318;
+  --color-danger-strong: #d92d20;
+  --color-danger-press: #b42318;
+  --color-danger-soft: #fef3f2;
+  --color-danger-line: #fecdca;
+  --color-scrim: rgba(11, 18, 32, 0.5);
+
+  /* Tipografía */
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-md: 17px;
+  --text-lg: 19px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-tight: -0.02em;
+
+  /* Espaciado (base 4) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+
+  /* Radios */
+  --radius-sm: 10px;
+  --radius-control: 14px;
+  --radius-card: 18px;
+  --radius-sheet: 28px;
+  --radius-pill: 999px;
+
+  /* Elevación */
+  --shadow-1: 0 1px 2px rgba(11, 18, 32, 0.05), 0 8px 24px -8px rgba(11, 18, 32, 0.1);
+  --shadow-2: 0 2px 6px rgba(11, 18, 32, 0.06), 0 32px 64px -16px rgba(11, 18, 32, 0.3);
+
+  /* Controles: ningún objetivo táctil por debajo de 44 px */
+  --target-min: 44px;
+  --control-h: 48px;
+  --field-h: 56px;
+  --action-h: 60px;
+
+  /* Foco */
+  --focus-ring: 3px solid var(--color-accent);
+  --focus-offset: 2px;
+
+  /* Movimiento: --motion = 0 con movimiento reducido */
+  --motion: 1;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: calc(var(--motion) * 120ms);
+  --dur-base: calc(var(--motion) * 200ms);
+
+  /* Safe areas (iPhone/iPad instalados con viewport-fit=cover) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Margen de página: crece con el tamaño de pantalla */
+  --page-pad: var(--space-4);
+}
+
+@media (min-width: 600px) {
+  :root {
+    --field-h: 60px;
+    --action-h: 68px;
+    --page-pad: var(--space-6);
+  }
+}
+
+/* Teléfono horizontal y alturas cortas: controles algo más compactos. */
+@media (orientation: landscape) and (max-height: 540px) {
+  :root {
+    --field-h: 52px;
+    --action-h: 56px;
+    --page-pad: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0;
+  }
+}
