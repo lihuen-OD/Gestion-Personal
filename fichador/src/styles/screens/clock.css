@@ -1,0 +1,339 @@
+/*
+ * Fichador — pantalla de fichada (TimeClockPage), confirmación, cooldown y
+ * 404. La página nunca bloquea el scroll: el panel se centra con márgenes
+ * automáticos cuando entra y, cuando no entra, la página se desplaza (nada
+ * queda recortado arriba ni abajo).
+ */
+.clock-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding:
+    max(var(--page-pad), var(--safe-top))
+    max(var(--page-pad), var(--safe-right))
+    max(var(--page-pad), var(--safe-bottom))
+    max(var(--page-pad), var(--safe-left));
+}
+
+.clock-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+  width: min(560px, 100%);
+  margin: auto;
+  padding: var(--space-7);
+  border-radius: var(--radius-sheet);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* Encabezado: también recibe la presión larga del modo mantenimiento, sin
+   seleccionar texto ni abrir el menú del sistema. */
+.clock-heading {
+  display: grid;
+  gap: var(--space-1);
+  text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+.clock-heading h1 {
+  font-size: 26px;
+}
+
+.clock-heading strong {
+  margin-top: var(--space-2);
+  color: var(--color-accent);
+  font-size: 40px;
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+/* Búsqueda */
+.clock-dni-field > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.clock-dni-field input {
+  height: var(--field-h);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+
+.clock-dni-field .icon-button {
+  width: var(--field-h);
+  height: var(--field-h);
+  border: 1px solid var(--color-line-input);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+}
+
+.clock-results-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.clock-results-list button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: var(--color-surface);
+  text-align: left;
+  transition: background-color var(--dur-fast);
+}
+
+.clock-results-list button + button {
+  border-top: 1px solid var(--color-line);
+}
+
+.clock-results-list button:active {
+  background: var(--color-surface-3);
+}
+
+.clock-results-list button:focus-visible {
+  outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  .clock-results-list button:hover {
+    background: var(--color-surface-2);
+  }
+}
+
+.clock-results-list b {
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.clock-results-list span {
+  color: var(--color-ink-3);
+  font-size: 14px;
+}
+
+/* Persona elegida y estado de la jornada */
+.clock-employee,
+.clock-open {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+}
+
+.clock-employee b,
+.clock-open b {
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.clock-employee span,
+.clock-open span {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.clock-employee .table-link {
+  justify-self: start;
+}
+
+.clock-open {
+  border-color: var(--color-warn-line);
+  background: var(--color-warn-soft);
+}
+
+.clock-open span {
+  color: var(--color-ink-2);
+}
+
+/* Espera entre fichadas: informativa, no es un error. */
+.clock-cooldown {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-warn-line);
+  border-radius: var(--radius-card);
+  background: var(--color-warn-soft);
+}
+
+.clock-cooldown-icon {
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  color: var(--color-warn);
+}
+
+.clock-cooldown div {
+  display: grid;
+  gap: 2px;
+}
+
+.clock-cooldown b {
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+}
+
+.clock-cooldown span {
+  color: var(--color-warn);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Aviso neutro (p. ej. la cámara se pausó). */
+.clock-notice {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1.45;
+}
+
+/* Acciones de fichada */
+.clock-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.clock-actions .button {
+  min-height: var(--action-h);
+  border-radius: var(--radius-card);
+  font-size: 18px;
+  gap: 10px;
+}
+
+.clock-actions .button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.clock-actions .button.primary:not(:disabled) {
+  box-shadow: 0 10px 24px -12px rgba(37, 99, 235, 0.65);
+}
+
+/* Confirmación con la hora del servidor (vuelve sola al inicio). */
+.clock-success {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-7) var(--space-5);
+  border: 1px solid var(--color-ok-line);
+  border-radius: var(--radius-card);
+  background: var(--color-ok-soft);
+  text-align: center;
+}
+
+.clock-success-icon {
+  width: 64px;
+  height: 64px;
+  color: var(--color-ok-strong);
+}
+
+.clock-success b {
+  color: var(--color-ok);
+  font-size: 24px;
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+}
+
+.clock-success-name {
+  color: var(--color-ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.clock-success-time {
+  color: var(--color-ink);
+  font-size: 56px;
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.clock-success small {
+  max-width: 420px;
+  color: var(--color-ink-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.clock-success-hint {
+  margin-top: var(--space-1);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+/* 404 */
+.not-found-text {
+  text-align: center;
+}
+
+.not-found-actions {
+  display: grid;
+}
+
+.not-found-actions .button {
+  min-height: 56px;
+  font-size: var(--text-md);
+}
+
+@media (max-width: 599px) {
+  .clock-panel {
+    gap: var(--space-4);
+    padding: var(--space-6) var(--space-5);
+    border-radius: 24px;
+  }
+  .clock-heading h1 {
+    font-size: 24px;
+  }
+  .clock-heading strong {
+    font-size: 36px;
+  }
+  .clock-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Teléfono horizontal: el panel ocupa el ancho disponible y el encabezado se
+   compacta para que la búsqueda y las acciones entren mejor. */
+@media (orientation: landscape) and (max-height: 540px) {
+  .clock-panel {
+    gap: var(--space-3);
+    padding: var(--space-5) var(--space-6);
+  }
+  .clock-heading {
+    gap: 0;
+  }
+  .clock-heading h1 {
+    font-size: 20px;
+  }
+  .clock-heading strong {
+    margin-top: 2px;
+    font-size: 28px;
+  }
+}

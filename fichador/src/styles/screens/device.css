@@ -1,0 +1,268 @@
+/*
+ * Fichador — Gate del dispositivo (configuración, aprobación, revocado) y
+ * guía de puesta en marcha. Centrado con márgenes automáticos: con poca
+ * altura la página se desplaza en lugar de recortar.
+ */
+.device-gate {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding:
+    max(var(--page-pad), var(--safe-top))
+    max(var(--page-pad), var(--safe-right))
+    max(var(--page-pad), var(--safe-bottom))
+    max(var(--page-pad), var(--safe-left));
+  background: var(--color-canvas);
+}
+
+.device-gate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(520px, 100%);
+  margin: auto;
+  padding: var(--space-8) var(--space-7);
+  border-radius: var(--radius-sheet);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
+  text-align: center;
+}
+
+.device-gate-card h1 {
+  font-size: 26px;
+}
+
+.device-gate-card > .muted {
+  max-width: 430px;
+  font-size: var(--text-md);
+  color: var(--color-ink-2);
+}
+
+.device-gate-card > .button,
+.device-gate-card > .error {
+  width: 100%;
+}
+
+.device-gate-card > .button {
+  min-height: 56px;
+  font-size: var(--text-md);
+}
+
+.device-gate-icon {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-card);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.device-gate-icon.danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.device-gate-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.device-policy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
+}
+
+.device-policy svg {
+  margin-top: 2px;
+  color: var(--color-accent);
+}
+
+/* Código de vinculación */
+.pairing-code {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-5);
+  border: 1px solid var(--color-accent-line);
+  border-radius: var(--radius-card);
+  background: var(--color-accent-soft);
+}
+
+.pairing-code small {
+  color: var(--color-accent-ink);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+}
+
+.pairing-code strong {
+  color: var(--color-ink);
+  font-size: 40px;
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.16em;
+  line-height: 1.1;
+}
+
+.pairing-code span {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+/* Confirmación destructiva (borrar la configuración local) */
+.device-confirm {
+  display: grid;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-danger-line);
+  border-radius: var(--radius-card);
+  background: var(--color-danger-soft);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+
+.device-confirm strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--color-ink);
+  font-size: 16px;
+}
+
+.device-confirm-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.device-confirm-actions .button {
+  white-space: normal;
+}
+
+/* Guía de puesta en marcha */
+.setup-guide {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-4) 18px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+
+.setup-guide > svg {
+  margin-top: 2px;
+  color: var(--color-accent);
+}
+
+.setup-guide > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setup-guide b {
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+}
+
+.setup-guide ol {
+  display: grid;
+  gap: var(--space-1);
+  margin: 2px 0 0;
+  padding-left: 20px;
+}
+
+.setup-guide-note {
+  color: var(--color-ink-3);
+  font-size: 14px;
+}
+
+.setup-guide .setup-guide-install {
+  justify-self: start;
+  margin-top: var(--space-1);
+}
+
+.setup-guide.done {
+  border-color: var(--color-ok-line);
+  background: var(--color-ok-soft);
+}
+
+.setup-guide.done > svg {
+  color: var(--color-ok);
+}
+
+.setup-guide.warning {
+  border-color: var(--color-warn-line);
+  background: var(--color-warn-soft);
+}
+
+.setup-guide.warning > svg {
+  color: var(--color-warn);
+}
+
+.setup-checklist {
+  width: 100%;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-line);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.setup-checklist summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--target-min);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent-ink);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.setup-checklist ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-2);
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+@media (max-width: 599px) {
+  .device-gate-card {
+    padding: var(--space-7) var(--space-5);
+    border-radius: 24px;
+  }
+  .device-gate-card h1 {
+    font-size: 24px;
+  }
+  .pairing-code strong {
+    font-size: 32px;
+  }
+}
+
+@media (max-width: 420px) {
+  .device-confirm-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
