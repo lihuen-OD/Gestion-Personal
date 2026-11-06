@@ -92,7 +92,7 @@ Large documents (over about 20 KB, for example `docs/BACKEND_API_CONTRACTS.md`, 
 
 These files hold area rules. Claude Code loads them automatically when it reads or edits a matching file; other agents, including Codex, do not load them automatically and must open them. In every agent, read the whole file **before starting** a task of that type, even when the first file opened is outside its paths:
 
-- `.claude/rules/frontend-ui.md`: any task that creates or changes UI in `frontend/` or `fichador/` (screens, components, layout, styles, design-system usage, visual refactors, UI QA).
+- `.claude/rules/frontend-ui.md`: any task that creates or changes UI in `frontend/` or `fichador/` (screens, components, layout, styles, design-system usage, visual refactors, UI QA). `fichador/` has its own visual system, defined in that file's "Fichador visual system" section.
 - `.claude/rules/org-structure.md`: any task that reads, creates, changes, migrates, deletes or reports on the models named in the organizational-reorganization rule in "Critical project rules" (also `EstablishmentUnit` and `Province`), including schema changes, migrations, seeds, scripts, queries and reports, wherever the first file is.
 
 ## Context and sessions
