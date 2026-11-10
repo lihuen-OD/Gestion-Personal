@@ -70,6 +70,19 @@ describe("ClockDeviceGate — sólo un ClockDevice ACTIVE opera (F6)", () => {
     expect(clockDeviceSession.isActive()).toBe(false);
   });
 
+  it("PENDING: el vencimiento del código usa la hora Argentina en 24 h (P1, Etapa 2)", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("PENDING"));
+    // 18:26 UTC = 15:26 en Argentina: nunca "03:26 p. m."
+    vi.mocked(clockDeviceApiService.refreshPairing).mockResolvedValue({ pairingCode: "K7Q4M2", pairingExpiresAt: "2026-11-06T18:26:00.000Z" });
+    renderGate();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Generar código nuevo" }));
+
+    expect(await screen.findByText("Vence a las 15:26")).toBeInTheDocument();
+    expect(screen.queryByText(/p\. ?m\./)).not.toBeInTheDocument();
+  });
+
   it("REVOKED al abrir: deshabilitado y sólo ofrece configurar como nuevo, con confirmación", async () => {
     const user = userEvent.setup();
     vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);

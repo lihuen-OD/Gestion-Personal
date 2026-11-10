@@ -58,7 +58,8 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Marcar ingreso/ })).toBeDisabled();
+  // Etapa 2: sin persona elegida no hay ninguna acción de fichada.
+  await expect(page.getByRole("button", { name: /Marcar (ingreso|salida)/ })).toHaveCount(0);
 
   await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
   await page.getByRole("button", { name: /Gomez, Ana/ }).click();

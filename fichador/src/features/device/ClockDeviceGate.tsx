@@ -8,6 +8,7 @@ import { clockDeviceStorage, type StoredClockDeviceIdentity } from "./clockDevic
 import { DeviceInstallHint, DeviceSetupChecklist } from "./DeviceSetupGuide";
 import { useClockDeviceHeartbeat } from "./useClockDeviceHeartbeat";
 import { useClockWakeLock } from "./useClockWakeLock";
+import { formatTime } from "../../utils/date";
 
 const POLL_MS = 7_500;
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
@@ -181,7 +182,7 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     <p className="muted">{description}</p>
     {/* F10: instalar antes de configurar (la configuración del navegador no pasa al ícono en iOS). */}
     {!loading && !identity ? <DeviceInstallHint stage="setup" /> : null}
-    {pending && pairing ? <div className="pairing-code" aria-label={`Código ${pairing.code}`}><small>CÓDIGO DE VINCULACIÓN</small><strong>{pairing.code}</strong><span>Vence a las {new Date(pairing.expiresAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span></div> : null}
+    {pending && pairing ? <div className="pairing-code" aria-label={`Código ${pairing.code}`}><small>CÓDIGO DE VINCULACIÓN</small><strong>{pairing.code}</strong><span>Vence a las {formatTime(pairing.expiresAt)}</span></div> : null}
     {pending && !pairing ? <div className="device-policy"><CheckCircle2 size={17} /><span>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</span></div> : null}
     {pending ? <DeviceInstallHint stage="pending" /> : null}
     {error ? <p className="error">{error}</p> : null}

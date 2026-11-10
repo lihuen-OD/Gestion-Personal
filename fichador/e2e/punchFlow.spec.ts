@@ -86,12 +86,12 @@ test("ACTIVE → busca → estado → ficha → confirmación con hora del servi
   await expect(page.getByText("Entrada registrada")).toBeVisible();
   await expect(page.getByText("Ana Gomez")).toBeVisible();
   await expect(page.getByText("08:01", { exact: true })).toBeVisible();
-  await expect(page.getByText("Podés continuar.")).toBeVisible();
+  await expect(page.getByText("Volviendo al inicio…")).toBeVisible();
 
   // Retorno automático: el kiosco queda listo para la próxima persona.
   await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveValue("", { timeout: 6_000 });
   await expect(page.getByText("Entrada registrada")).toBeHidden();
-  await expect(page.getByRole("button", { name: /Marcar ingreso/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Marcar (ingreso|salida)/ })).toHaveCount(0);
 
   expect(operational(calls).map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /clock/employees", "POST /clock/status", "POST /clock/photo-punch"]);
   expectOnlyClockNamespace(operational(calls));
@@ -277,13 +277,12 @@ test("segundo plano con la cámara abierta: se apaga, avisa y no se reabre sola;
   expect(punchBodies(calls)).toHaveLength(1);
 });
 
-test("con un ingreso abierto, 'Marcar salida' es la acción principal", async ({ page }) => {
+test("con un ingreso abierto, 'Marcar salida' es la única acción", async ({ page }) => {
   await openKiosk(page, { openShift: { id: "shift-open", startAt: new Date(Date.now() - 3 * 3_600_000).toISOString() } });
   await selectEmployee(page);
   const salida = page.getByRole("button", { name: /Marcar salida/ });
   const ingreso = page.getByRole("button", { name: /Marcar ingreso/ });
   await expect(salida).toBeEnabled();
   await expect(salida).toHaveClass(/\bprimary\b/);
-  await expect(ingreso).toBeDisabled();
-  await expect(ingreso).not.toHaveClass(/\bprimary\b/);
+  await expect(ingreso).toHaveCount(0);
 });
