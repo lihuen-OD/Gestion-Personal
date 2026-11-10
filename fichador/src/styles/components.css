@@ -82,6 +82,17 @@
   background: transparent;
 }
 
+/* Botón ocupado ("Verificando…", "Borrando…"): sigue deshabilitado, pero el
+   texto informa un estado y se lee con contraste AA (el deshabilitado común
+   usa un gris decorativo). El spinner toma el color del texto. */
+.button:disabled[aria-busy="true"] {
+  color: var(--color-ink-2);
+}
+
+.button .kiosk-spinner {
+  color: inherit;
+}
+
 @media (hover: hover) {
   .button.primary:hover:not(:disabled) {
     background: var(--color-accent-press);
@@ -201,6 +212,18 @@ input[aria-invalid="true"] {
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   line-height: 1.45;
+}
+
+/* Error con ícono al frente: el texto queda alineado aunque ocupe varias líneas. */
+.error.has-icon {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+}
+
+.error.has-icon > svg {
+  margin-top: 1px;
 }
 
 /* ---------- Carga ---------- */

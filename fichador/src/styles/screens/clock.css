@@ -1,7 +1,7 @@
 /*
- * Fichador — tarjeta centrada que comparten la página 404 y el modo
- * mantenimiento (.clock-page / .clock-panel). La pantalla de fichada usa
- * screens/kiosk.css desde la Etapa 2.
+ * Fichador — tarjeta centrada de la página 404 (.clock-page / .clock-panel).
+ * La pantalla de fichada usa screens/kiosk.css desde la Etapa 2 y el modo
+ * mantenimiento, screens/maintenance.css desde la Etapa 5.
  *
  * La página nunca bloquea el scroll: el panel se centra con márgenes
  * automáticos cuando entra y, cuando no entra, la página se desplaza.
