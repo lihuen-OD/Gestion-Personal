@@ -479,6 +479,8 @@ export function TimeClockPage() {
             onCancel={cancelCapture}
             onInterrupted={cameraInterrupted}
             onConfirm={(capture) => void confirmPhotoPunch(capture)}
+            employeeLabel={employee ? `${employeeFullName(employee)} · Legajo ${employee.legajo}` : undefined}
+            now={now}
           />
         </Suspense>
       ) : null}

@@ -1,32 +1,58 @@
 /*
- * Fichador — captura facial (FaceCaptureModal).
+ * Fichador — captura facial (FaceCaptureModal). Etapa 3 del rediseño
+ * «Calma y certeza».
  *
- * La geometría de .face-guide (24 %/52 % horizontal, 14 %/72 % vertical en
- * 4:3; 19 %/62 % y 17 %/64 % en 3:4) acompaña la región que valida
- * statusForDetection(): no se cambia sólo por estética.
+ * GEOMETRÍA (no cambiar por estética): .face-guide (24 %/52 % horizontal,
+ * 14 %/72 % vertical en 4:3; 19 %/62 % y 17 %/64 % en 3:4) acompaña la región
+ * que valida statusForDetection() (centro del rostro en 24–76 % × 14–86 % del
+ * frame y tamaño mínimo 22 % × 24 %). Por eso el visor conserva siempre su
+ * proporción 4:3 (3:4 en teléfono vertical): el tamaño cambia con la pantalla,
+ * la proporción no. La guía es simétrica, así que el espejo de la vista previa
+ * no la desplaza. El color sólo acompaña el estado real del detector.
  */
+
+/* ---------- Hoja ---------- */
+.capture-modal .modal {
+  width: min(780px, 100%);
+  animation: kiosk-rise calc(var(--motion) * 260ms) var(--ease) both;
+}
+
+.capture-modal .modal-head {
+  padding: var(--space-6) var(--space-4) var(--space-3) var(--space-6);
+}
+
+.capture-modal .modal-head-text {
+  padding-top: 0;
+}
+
+.capture-modal .modal-head-text h3 {
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.capture-modal .modal-head-text p {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
 .face-capture {
   display: grid;
   gap: var(--space-4);
 }
 
-.face-subtitle {
-  color: var(--color-ink-2);
-  font-size: var(--text-sm);
-  line-height: 1.45;
-}
-
-/* El video conserva su proporción y achica el ancho según el alto
-   disponible, para que el estado y las acciones queden a la vista. */
+/* ---------- Visor ---------- */
+/* El ancho sale del alto disponible para que estado y acciones queden a la vista. */
 .face-video-shell {
   position: relative;
-  width: min(100%, max(260px, calc((100vh - 380px) * 4 / 3)));
-  width: min(100%, max(260px, calc((100dvh - 380px) * 4 / 3)));
+  width: min(100%, max(260px, calc((100vh - 390px) * 4 / 3)));
+  width: min(100%, max(260px, calc((100dvh - 390px) * 4 / 3)));
   aspect-ratio: 4 / 3;
   margin-inline: auto;
   overflow: hidden;
+  isolation: isolate;
   border-radius: 22px;
-  background: #1b2230;
+  background: var(--color-viewfinder);
 }
 
 .face-video {
@@ -59,11 +85,111 @@
   top: 14%;
   width: 52%;
   height: 72%;
-  border: 3px solid rgba(255, 255, 255, 0.9);
+  border: 3px solid var(--color-guide);
   border-radius: 50%;
-  box-shadow: 0 0 0 200vmax rgba(11, 18, 32, 0.38);
+  box-shadow: 0 0 0 200vmax var(--color-viewfinder-veil);
+  transition:
+    border-color calc(var(--motion) * 220ms) var(--ease),
+    box-shadow calc(var(--motion) * 220ms) var(--ease);
 }
 
+.face-video-shell[data-tone="warn"] .face-guide {
+  border-color: var(--color-guide-warn);
+}
+
+/* Verde sólo cuando el detector ya confirmó (state.valid). */
+.face-video-shell[data-tone="ok"] .face-guide {
+  border-color: var(--color-guide-ok);
+  box-shadow:
+    0 0 0 200vmax var(--color-viewfinder-veil),
+    0 0 0 8px var(--color-guide-ok-glow);
+}
+
+/* Enviando: la guía se aquieta; la foto tomada queda a la vista. */
+.face-video-shell[data-phase="submitting"] .face-guide {
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 200vmax rgba(11, 18, 32, 0.18);
+}
+
+.face-video-shell[data-phase="preparing"] .face-guide,
+.face-video-shell[data-phase="off"] .face-guide {
+  display: none;
+}
+
+/* Preparando / cámara sin imagen: mensaje centrado sobre el visor. */
+.face-center {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--color-viewfinder);
+  color: var(--color-viewfinder-ink);
+  font-size: 15px;
+  text-align: center;
+}
+
+.face-center .kiosk-spinner {
+  color: inherit;
+}
+
+.face-capture .kiosk-spinner.is-large {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+/* Píldoras del visor: tipo de fichada y hora (decorativas, aria-hidden). */
+.face-chip {
+  position: absolute;
+  top: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  background: var(--color-viewfinder-chip);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: var(--weight-semibold);
+}
+
+.face-chip.is-start {
+  left: 14px;
+}
+
+.face-chip.is-end {
+  right: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Feedback breve al capturar; con movimiento reducido no se ve. */
+.face-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  animation: face-flash calc(var(--motion) * 320ms + 0.01ms) ease-out both;
+}
+
+@keyframes face-flash {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* ---------- Estado ---------- */
 .face-status {
   display: flex;
   align-items: center;
@@ -76,28 +202,86 @@
   font-size: 16px;
   font-weight: var(--weight-medium);
   line-height: 1.4;
+  transition:
+    background-color calc(var(--motion) * 200ms) var(--ease),
+    border-color calc(var(--motion) * 200ms) var(--ease);
 }
 
-.face-status > svg {
-  flex-shrink: 0;
+.face-status > svg,
+.face-status > .kiosk-spinner {
+  flex: none;
 }
 
-.face-status.valid {
+.face-status.tone-neutral {
+  background: var(--color-surface-2);
+  color: var(--color-ink-2);
+}
+
+.face-status.tone-neutral > svg {
+  color: var(--color-ink-3);
+}
+
+.face-status.tone-ok {
   border-color: var(--color-ok-line);
   background: var(--color-ok-soft);
 }
 
-.face-status.valid > svg {
+.face-status.tone-ok > svg {
   color: var(--color-ok);
 }
 
-.face-status.invalid {
+.face-status.tone-warn {
   border-color: var(--color-warn-line);
   background: var(--color-warn-soft);
 }
 
-.face-status.invalid > svg {
+.face-status.tone-warn > svg {
   color: var(--color-warn);
+}
+
+.face-status.tone-danger {
+  border-color: var(--color-danger-line);
+  background: var(--color-danger-soft);
+}
+
+.face-status.tone-danger > svg {
+  color: var(--color-danger);
+}
+
+/* Envío: nunca un éxito; sólo la etapa real (registrando / verificando / confirmando). */
+.face-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 88px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: 16px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
+}
+
+.face-progress strong {
+  display: block;
+  color: var(--color-ink);
+  font-size: 17px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.35;
+}
+
+.face-progress div > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-ink-2);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+/* ---------- Acciones ---------- */
+.face-capture .form-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--space-3);
 }
 
 .face-capture .form-actions .button {
@@ -105,42 +289,64 @@
   font-size: var(--text-md);
 }
 
-.face-capture .form-actions .button.primary {
-  flex: 1 1 auto;
+.face-capture .form-actions .face-confirm {
+  font-size: 18px;
 }
 
-@media (min-width: 600px) {
-  .face-capture .form-actions .button {
-    min-width: 160px;
+.face-capture .form-actions .face-confirm svg {
+  width: 22px;
+  height: 22px;
+}
+
+.face-capture .button.face-confirm.is-exit:not(:disabled) {
+  background: var(--color-exit);
+}
+
+@media (hover: hover) {
+  .face-capture .button.face-confirm.is-exit:hover:not(:disabled) {
+    background: var(--color-exit-press);
   }
 }
 
-/* Teléfono: acciones fijas al pie mientras el diálogo se desplaza; en los
-   más angostos, apiladas (Confirmar abajo, al alcance del pulgar). */
-@media (max-width: 420px) {
-  .face-capture .form-actions {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 599px) {
-  .face-capture .form-actions {
-    position: sticky;
-    bottom: calc(-1 * var(--space-5));
-    z-index: 1;
-    margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
-    padding: var(--space-3) var(--space-5) var(--space-5);
-    border-radius: 0 0 var(--radius-sheet) var(--radius-sheet);
-    background: var(--color-surface);
-    box-shadow: 0 -1px 0 var(--color-line);
-  }
-}
-
-/* Teléfono vertical: video 3:4. */
+/* ---------- Teléfono vertical: pantalla completa, visor 3:4 ---------- */
 @media (max-width: 599px) and (orientation: portrait) {
+  .capture-modal.modal-backdrop {
+    padding: 0;
+    background: var(--color-surface);
+  }
+  .capture-modal .modal {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
+  }
+  .capture-modal .modal-head {
+    padding: calc(var(--safe-top) + var(--space-3)) var(--space-3) 0 var(--space-4);
+  }
+  .capture-modal .modal-head-text h3 {
+    font-size: 20px;
+  }
+  .capture-modal .modal-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: var(--space-3) var(--space-4) 0;
+  }
+  /* Visor y estado bajo el encabezado; acciones al pie (el espacio que sobra
+     queda entre ambos: el visor no se estira para no romper la geometría). */
+  .face-capture {
+    flex: 1;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+  .face-capture .form-actions {
+    align-self: end;
+  }
   .face-video-shell {
-    width: min(100%, max(220px, calc((100vh - 360px) * 3 / 4)));
-    width: min(100%, max(220px, calc((100dvh - 360px) * 3 / 4)));
+    width: min(100%, max(220px, calc((100vh - 300px) * 3 / 4)));
+    width: min(100%, max(220px, calc((100dvh - 300px) * 3 / 4)));
     aspect-ratio: 3 / 4;
   }
   .face-guide {
@@ -149,31 +355,89 @@
     width: 62%;
     height: 64%;
   }
+  /* Acciones al pie, al alcance del pulgar; si el contenido no entra quedan
+     fijas al pie del desplazamiento (nunca fuera de alcance). */
+  .face-capture .form-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+    margin: 0 calc(-1 * var(--space-4));
+    padding: var(--space-3) var(--space-4) calc(var(--safe-bottom) + var(--space-4));
+    background: var(--color-surface);
+  }
 }
 
-/* Teléfono horizontal: video a la izquierda, estado y acciones a la derecha,
-   todo dentro de la pantalla. */
+@media (max-width: 379px) {
+  .face-capture .form-actions {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.9fr);
+  }
+  .face-capture .form-actions .face-confirm {
+    font-size: 17px;
+  }
+  .face-capture .form-actions .face-confirm svg {
+    display: none;
+  }
+}
+
+/* ---------- Teléfono horizontal: visor a la izquierda, estado y acciones a
+   la derecha, todo dentro de la pantalla ---------- */
 @media (orientation: landscape) and (max-height: 540px) {
-  .face-capture {
+  .capture-modal.modal-backdrop {
+    padding: 0;
+    background: var(--color-surface);
+  }
+  .capture-modal .modal {
+    display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto auto 1fr;
-    column-gap: var(--space-5);
-    row-gap: var(--space-3);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "vf head"
+      "vf status"
+      "vf actions";
+    gap: var(--space-3) var(--space-5);
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding:
+      calc(var(--safe-top) + var(--space-3))
+      calc(var(--safe-right) + var(--space-5))
+      calc(var(--safe-bottom) + var(--space-3))
+      calc(var(--safe-left) + var(--space-3));
+    border-radius: 0;
+    box-shadow: none;
+    animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
   }
-  .face-capture > * {
-    grid-column: 2;
+  .capture-modal .modal-head {
+    grid-area: head;
+    padding: 0;
   }
-  .face-capture > .face-video-shell {
-    grid-column: 1;
-    grid-row: 1 / span 3;
+  .capture-modal .modal-head-text h3 {
+    font-size: 19px;
+  }
+  .capture-modal .modal-body,
+  .capture-modal .face-capture {
+    display: contents;
+  }
+  /* 4:3 fijo: el alto manda y nunca supera ~56 % del ancho. */
+  .face-video-shell {
+    grid-area: vf;
+    align-self: center;
     width: auto;
-    height: max(180px, calc(100vh - 150px));
-    height: max(180px, calc(100dvh - 150px));
+    height: min(calc(100vh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-3)), calc(56vw * 3 / 4));
+    height: min(calc(100dvh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-3)), calc(56vw * 3 / 4));
+    margin: 0;
   }
-  .face-capture > .form-actions {
-    align-self: end;
+  .face-status,
+  .face-progress {
+    grid-area: status;
+    align-self: start;
   }
-  .face-capture .form-actions .button {
-    min-width: 0;
+  .face-capture .form-actions {
+    grid-area: actions;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  }
+  .face-capture .form-actions .face-confirm svg {
+    display: none;
   }
 }

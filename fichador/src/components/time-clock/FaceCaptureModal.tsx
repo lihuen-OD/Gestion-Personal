@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Camera, CheckCircle2, Loader2, X } from "lucide-react";
+import { Camera, CameraOff, CheckCircle2, LogIn, LogOut, ScanFace, SunDim, Users, ZoomIn, type LucideIcon } from "lucide-react";
 import { FaceDetector, FilesetResolver, type Detection } from "@mediapipe/tasks-vision";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { isIOSDevice } from "../../pwa/platform";
+import { formatClock } from "../../utils/date";
 import { CAMERA_PAUSED_MESSAGE } from "./captureMessages";
 
 export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
@@ -138,13 +139,37 @@ function encodedImageBytes(dataUrl: string) {
   return Math.floor(payload.length * 0.75);
 }
 
-export function FaceDetectionStatus({ state }: { state: FaceState }) {
-  const valid = state.valid;
-  const Icon = state.status === "LOADING" ? Loader2 : valid ? CheckCircle2 : AlertTriangle;
+/**
+ * Etapa 3 del rediseño («Calma y certeza»): tono e ícono de cada estado REAL
+ * del detector. Sólo presentación: qué estado hay y si es válido lo decide
+ * statusForDetection(); "ok" (verde) aparece únicamente con state.valid.
+ */
+export type CaptureTone = "neutral" | "ok" | "warn" | "danger";
+
+const STATUS_ICONS: Record<Exclude<FaceState["status"], "LOADING">, LucideIcon> = {
+  VALID: CheckCircle2,
+  NO_FACE: ScanFace,
+  MULTIPLE_FACES: Users,
+  FACE_TOO_SMALL: ZoomIn,
+  LOW_LIGHT: SunDim,
+  CAMERA_ERROR: CameraOff,
+};
+
+export function captureTone(state: FaceState): CaptureTone {
+  if (state.valid) return "ok";
+  if (state.status === "LOADING") return "neutral";
+  // F10: la pausa por segundo plano se avisa sin error.
+  if (state.status === "CAMERA_ERROR") return state.message === CAMERA_PAUSED_MESSAGE ? "neutral" : "danger";
+  return "warn";
+}
+
+export function FaceDetectionStatus({ state, message = state.message }: { state: FaceState; message?: string }) {
+  const tone = captureTone(state);
+  const Icon = state.status === "LOADING" ? null : STATUS_ICONS[state.status];
   return (
-    <div className={`face-status ${valid ? "valid" : "invalid"}`} role="status" aria-live="polite">
-      <Icon size={18} className={state.status === "LOADING" ? "spin-icon" : ""} />
-      <span>{state.message}</span>
+    <div className={`face-status tone-${tone} ${state.valid ? "valid" : "invalid"}`} role="status" aria-live="polite">
+      {Icon ? <Icon size={22} strokeWidth={1.75} aria-hidden="true" /> : <span className="kiosk-spinner" aria-hidden="true" />}
+      <span>{message}</span>
     </div>
   );
 }
@@ -180,7 +205,18 @@ const SUBMISSION_TEXT: Record<SubmissionStage, { title: string; detail: string }
  *   queda invalidada y se empieza de nuevo. Después de confirmar, el envío
  *   sigue su curso (la foto ya se tomó).
  */
-export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted, submitting = false, submissionStage = "sending" }: { punchType: "IN" | "OUT"; onCancel: () => void; onConfirm: (result: FaceCaptureResult) => void; onInterrupted?: () => void; submitting?: boolean; submissionStage?: SubmissionStage }) {
+export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted, submitting = false, submissionStage = "sending", employeeLabel, now }: {
+  punchType: "IN" | "OUT";
+  onCancel: () => void;
+  onConfirm: (result: FaceCaptureResult) => void;
+  onInterrupted?: () => void;
+  submitting?: boolean;
+  submissionStage?: SubmissionStage;
+  /** Etapa 3 (sólo presentación): "Ana Gómez · Legajo 100" bajo el título. */
+  employeeLabel?: string;
+  /** Etapa 3 (sólo presentación): hora Argentina en el visor. */
+  now?: Date;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
@@ -196,6 +232,9 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   const [state, setState] = useState<FaceState>({ status: "LOADING", message: "Buscando rostro...", valid: false });
   const [cameraLabel, setCameraLabel] = useState<string>();
   const [frozenFrame, setFrozenFrame] = useState<string | null>(null);
+  // Etapa 3 (sólo presentación): el video ya muestra imagen. Distingue
+  // "preparando la cámara" de "buscando rostro" dentro del mismo estado LOADING.
+  const [videoPlaying, setVideoPlaying] = useState(false);
 
   // Apaga detector y cámara y suelta el video. Idempotente.
   const stopCamera = useCallback(() => {
@@ -378,28 +417,50 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
     if (!submitting) submitGuardRef.current = false;
   }, [submitting]);
 
+  // Etapa 3: fase visual derivada del estado real (no agrega estados funcionales).
+  // La cámara quedó sin imagen (falló al abrir, se pausó o se apagó el detector):
+  // stopCamera() ya soltó el video antes de fijar CAMERA_ERROR.
+  const cameraOff = state.status === "CAMERA_ERROR" && !frozenFrame && (!videoPlaying || !videoRef.current?.srcObject);
+  const phase = submitting ? "submitting" : cameraOff ? "off" : state.status === "LOADING" && !videoPlaying ? "preparing" : "live";
+  const tone = phase === "submitting" ? "neutral" : captureTone(state);
+  const paused = state.message === CAMERA_PAUSED_MESSAGE;
+  const EntryIcon = punchType === "IN" ? LogIn : LogOut;
+
   return (
-    <Modal title="Confirmar fichada con foto" close={onCancel} closeDisabled={submitting}>
+    <Modal title="Confirmar fichada con foto" subtitle={employeeLabel} close={onCancel} closeDisabled={submitting} className="capture-modal">
       <div className="face-capture">
-        <p className="face-subtitle">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
-        <div className="face-video-shell">
-          <video ref={videoRef} className={frozenFrame ? "face-video is-frozen" : "face-video"} muted playsInline />
+        <p className="sr-only">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
+        <div className="face-video-shell" data-phase={phase} data-tone={tone}>
+          <video ref={videoRef} className={frozenFrame ? "face-video is-frozen" : "face-video"} muted playsInline onPlaying={() => setVideoPlaying(true)} />
           {frozenFrame ? <img className="face-frozen" src={frozenFrame} alt="Foto tomada para esta fichada" /> : null}
           <div className="face-guide" aria-hidden="true" />
+          {phase === "preparing" ? (
+            <div className="face-center" aria-hidden="true"><span className="kiosk-spinner is-large" /></div>
+          ) : null}
+          {phase === "off" ? (
+            <div className="face-center" aria-hidden="true">
+              <CameraOff size={40} strokeWidth={1.5} />
+              <span>{paused ? "Cámara en pausa" : "La cámara no está disponible"}</span>
+            </div>
+          ) : null}
+          <span className="face-chip is-start" aria-hidden="true"><EntryIcon size={16} strokeWidth={2} />{punchType === "IN" ? "Ingreso" : "Salida"}</span>
+          {now ? <span className="face-chip is-end" aria-hidden="true">{formatClock(now).time}</span> : null}
+          {/* Feedback breve al capturar: sólo la foto tomada, nunca una confirmación. */}
+          {frozenFrame ? <span className="face-flash" aria-hidden="true" /> : null}
         </div>
-        {submitting ? null : <FaceDetectionStatus state={state} />}
+        {submitting ? null : <FaceDetectionStatus state={state} message={phase === "preparing" ? "Preparando la cámara…" : state.message} />}
         {submitting ? (
-          <div className="face-status valid" role="status" aria-live="polite">
-            <Loader2 size={18} className="spin-icon" />
-            <span>
-              <b>{SUBMISSION_TEXT[submissionStage].title}</b><br />
-              {SUBMISSION_TEXT[submissionStage].detail}
-            </span>
+          <div className="face-progress" role="status" aria-live="polite">
+            <span className="kiosk-spinner is-large" aria-hidden="true" />
+            <div>
+              <strong>{SUBMISSION_TEXT[submissionStage].title}</strong>
+              <span>{SUBMISSION_TEXT[submissionStage].detail}</span>
+            </div>
           </div>
         ) : null}
         <div className="form-actions">
-          <Button variant="ghost" icon={X} onClick={onCancel} disabled={submitting}>Cancelar</Button>
-          <Button variant="primary" icon={Camera} disabled={!state.valid} loading={submitting} onClick={confirm}>
+          <Button variant="subtle" onClick={onCancel} disabled={submitting}>Cancelar</Button>
+          <Button variant="primary" className={`face-confirm ${punchType === "OUT" ? "is-exit" : "is-entry"}`} icon={Camera} disabled={!state.valid} loading={submitting} onClick={confirm}>
             {submitting ? "Procesando…" : punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
           </Button>
         </div>
