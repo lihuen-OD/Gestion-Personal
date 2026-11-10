@@ -6,18 +6,22 @@
 // (features/punch/punchSubmission.ts), el cooldown se muestra con cuenta
 // regresiva local y una fichada confirmada vuelve sola al estado inicial.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, Clock3, LogIn, LogOut, RefreshCw } from "lucide-react";
 import { getUserErrorMessage, type ApiError } from "../services/api/apiClient";
 import { isClockDeviceAuthFailure } from "../services/api/clockDeviceSession";
 import { timeClockApiService, type ClockEmployee, type ClockPunchResult } from "../services/api/timeClockApiService";
 import { submitPunch, type PunchOutcome } from "../features/punch/punchSubmission";
-import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import type { FaceCaptureResult, SubmissionStage } from "../components/time-clock/FaceCaptureModal";
 import { CAMERA_PAUSED_MESSAGE } from "../components/time-clock/captureMessages";
-import { formatDateTime, formatTime } from "../utils/date";
 import { kioskActivity } from "../pwa/kioskActivity";
 import { useMaintenanceTrigger } from "../features/maintenance/maintenanceTrigger";
+import { ClockAmbient, type ClockStep } from "../features/clock/ClockAmbient";
+import { EmployeeSearch, MIN_SEARCH_LENGTH, type SearchState } from "../features/clock/EmployeeSearch";
+import { EmployeeStatus, type ShiftView } from "../features/clock/EmployeeStatus";
+import { CooldownNotice, DockNotice, PunchDock } from "../features/clock/PunchDock";
+import { PunchResult } from "../features/clock/PunchResult";
+import { employeeFullName } from "../features/clock/employeeLabels";
+import { useOnlineStatus } from "../features/clock/useOnlineStatus";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -53,7 +57,7 @@ type PunchFlow =
   | { step: "submitting"; punchType: PunchType; requestId: string; stage: SubmissionStage };
 type PunchView =
   | { kind: "success"; punchType: PunchType; employee: ClockEmployee; at: string; previousOpenShiftAt?: string }
-  | { kind: "cooldown"; deadline: number }
+  | { kind: "cooldown"; deadline: number; totalSeconds: number }
   | { kind: "error"; message: string }
   // F10: aviso neutro (no es un error), p. ej. la cámara se pausó al pasar a segundo plano.
   | { kind: "notice"; message: string };
@@ -77,14 +81,6 @@ function useSecondsLeft(deadline: number | undefined) {
   return deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0;
 }
 
-function employeeIdentity(employee: ClockEmployee) {
-  return employee.dniSuffix ? `Legajo ${employee.legajo} · DNI terminado en ${employee.dniSuffix}` : `Legajo ${employee.legajo}`;
-}
-
-function formatCurrentTime(value: Date) {
-  return value.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-}
-
 /** Espera de un cooldown: la del backend (0 incluido, por eso `??`) o el fallback local. */
 function cooldownSeconds(failure: ApiError) {
   return failure.retryAfterSeconds ?? FALLBACK_COOLDOWN_SECONDS;
@@ -105,6 +101,10 @@ export function TimeClockPage() {
   const [loading, setLoading] = useState(false);
   const [punch, setPunch] = useState<PunchFlow | null>(null);
   const [view, setView] = useState<PunchView | null>(null);
+  // P3 (sólo vista): texto para el que ya llegó la respuesta de la búsqueda.
+  // Distingue "buscando" de "sin resultados" sin cambiar la consulta.
+  const [searchedFor, setSearchedFor] = useState("");
+  const online = useOnlineStatus();
   // Guardas síncronas: un doble tap llega antes del re-render.
   const intentLock = useRef(false);
   const submitLock = useRef(false);
@@ -134,7 +134,10 @@ export function TimeClockPage() {
       setError("");
       try {
         const items = await timeClockApiService.searchEmployees(query);
-        if (!cancelled) setMatches(items);
+        if (!cancelled) {
+          setMatches(items);
+          setSearchedFor(query);
+        }
       } catch (searchError) {
         if (!cancelled) setError(getUserErrorMessage(searchError, "No se pudo buscar empleados."));
       } finally {
@@ -161,6 +164,7 @@ export function TimeClockPage() {
     setStatus(undefined);
     setSearch("");
     setMatches([]);
+    setSearchedFor("");
     setError("");
     setView(null);
     setPunch(null);
@@ -186,7 +190,6 @@ export function TimeClockPage() {
   }, [view, cooldownActive]);
 
   const canSubmit = Boolean(selected?.id) && !loading && !punch && !cooldownActive && view?.kind !== "success";
-  const employeeLabel = useMemo(() => status?.employee, [status]);
   const openShiftMinutes = useMemo(() => {
     if (!status?.openShift?.startAt) return 0;
     return Math.max(0, Math.round((now.getTime() - new Date(status.openShift.startAt).getTime()) / 60_000));
@@ -243,6 +246,7 @@ export function TimeClockPage() {
     setView(null);
     setSearch("");
     setMatches([]);
+    setSearchedFor("");
     setError("");
   };
 
@@ -286,7 +290,8 @@ export function TimeClockPage() {
     // fichador (F6). No es un error de red ni de la fichada.
     if (isClockDeviceAuthFailure(failure)) return;
     if (failure.code === "CLOCK_PUNCH_COOLDOWN") {
-      setView({ kind: "cooldown", deadline: Date.now() + cooldownSeconds(failure) * 1000 });
+      const totalSeconds = cooldownSeconds(failure);
+      setView({ kind: "cooldown", deadline: Date.now() + totalSeconds * 1000, totalSeconds });
       return;
     }
     if (failure.code === "CLOCK_IDEMPOTENCY_KEY_REUSED" && import.meta.env.DEV) {
@@ -366,116 +371,107 @@ export function TimeClockPage() {
 
   const success = view?.kind === "success" ? view : null;
   // Gesto oculto del modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md):
-  // presión larga sobre el encabezado, sólo sin cámara ni fichada en curso. No
+  // presión larga sobre el reloj, sólo sin cámara ni fichada en curso. No
   // agrega nada visible para quien ficha.
   const maintenanceTrigger = useMaintenanceTrigger(!punch);
 
+  const onSearchChange = (value: string) => {
+    setSearch(value);
+    setSelected(undefined);
+    setStatus(undefined);
+    setView(null);
+    setError("");
+  };
+
+  // Confirmación (sólo con respuesta exitosa del backend): reemplaza toda la
+  // pantalla hasta que el kiosco vuelve solo al inicio.
+  if (success) {
+    return (
+      <PunchResult
+        punchType={success.punchType}
+        employeeName={employeeFullName(success.employee)}
+        at={success.at}
+        previousOpenShiftAt={success.previousOpenShiftAt}
+      />
+    );
+  }
+
+  // Etapa 2 del rediseño: sólo presentación. Qué se busca, qué acción
+  // corresponde y si está habilitada sigue saliendo del estado de arriba.
+  const query = search.trim();
+  const searchState: SearchState = selected ? "idle"
+    : error ? "error"
+      : query.length === 0 ? "idle"
+        : query.length < MIN_SEARCH_LENGTH ? "hint"
+          : loading || searchedFor !== query ? "pending"
+            : matches.length ? "results" : "empty";
+
+  const employee = status?.employee ?? selected;
+  const shift: ShiftView = loading ? { kind: "loading" }
+    : !status ? { kind: "unknown" }
+      : !status.openShift ? { kind: "none" }
+        : openShiftExceeded ? { kind: "late", startAt: status.openShift.startAt }
+          : { kind: "open", startAt: status.openShift.startAt, minutes: openShiftMinutes };
+
+  // Una sola acción: la que corresponde al legajo (canClockIn y canClockOut
+  // nunca están habilitadas a la vez). Mismo criterio de F10 (exitIsPrimary).
+  const punchType: PunchType = exitIsPrimary ? "OUT" : "IN";
+  const punchLabel = punchType === "OUT" ? "Marcar salida" : openShiftExceeded ? "Marcar nuevo ingreso" : "Marcar ingreso";
+  const punchEnabled = punchType === "OUT" ? canClockOut : canClockIn;
+
+  let notice = null;
+  if (view?.kind === "cooldown" && cooldownActive) notice = <CooldownNotice secondsLeft={cooldownRemaining} totalSeconds={view.totalSeconds} />;
+  else if (view?.kind === "error") {
+    const tone = view.message === OFFLINE_MESSAGE || view.message === UNCONFIRMED_MESSAGE ? "warn" : "danger";
+    const icon = view.message === OFFLINE_MESSAGE ? "offline" : view.message === UNCONFIRMED_MESSAGE ? "unconfirmed" : "error";
+    notice = <DockNotice tone={tone} icon={icon} role="alert">{view.message}</DockNotice>;
+  } else if (view?.kind === "notice") notice = <DockNotice tone="neutral" icon="paused" role="status">{view.message}</DockNotice>;
+  else if (error && selected) notice = <DockNotice tone="danger" icon="error" role="alert">{error}</DockNotice>;
+
+  const step: ClockStep = punch ? 3 : selected ? 2 : 1;
+
   return (
-    <main className="clock-page">
-      <section className="clock-panel">
-        <div className="clock-heading" {...maintenanceTrigger}>
-          <p className="eyebrow">CONTROL HORARIO</p>
-          <h1>Fichador de personal</h1>
-          <strong>{formatCurrentTime(now)}</strong>
+    <main className="kiosk">
+      <ClockAmbient now={now} step={step} online={online} maintenanceTrigger={maintenanceTrigger} />
+
+      <section className="kiosk-panel" aria-label="Fichada">
+        <div className="kiosk-panel-inner">
+          {selected && employee ? (
+            <>
+              <EmployeeStatus
+                employee={employee}
+                shift={shift}
+                now={now}
+                refreshing={loading}
+                refreshDisabled={Boolean(punch) || loading}
+                onRefresh={() => void refreshStatus()}
+                onChange={clearEmployee}
+              />
+              <PunchDock
+                notice={notice}
+                punchType={punchType}
+                label={punchLabel}
+                enabled={punchEnabled}
+                statusLoading={loading}
+                onPunch={() => startPunch(punchType)}
+              />
+            </>
+          ) : (
+            <EmployeeSearch
+              value={search}
+              state={searchState}
+              matches={matches}
+              errorMessage={error}
+              onChange={onSearchChange}
+              onClear={() => onSearchChange("")}
+              onSelect={(match) => void selectEmployee(match)}
+            />
+          )}
         </div>
-
-        {success ? (
-          <div className="clock-success" role="status" aria-live="polite">
-            <CheckCircle2 className="clock-success-icon" aria-hidden="true" />
-            <b>{success.punchType === "IN" ? "Entrada registrada" : "Salida registrada"}</b>
-            <span className="clock-success-name">{success.employee.firstName} {success.employee.lastName}</span>
-            <strong className="clock-success-time" aria-label={`Hora ${formatTime(success.at)}`}>{formatTime(success.at)}</strong>
-            {success.previousOpenShiftAt ? (
-              <small>El ingreso anterior del {formatDateTime(success.previousOpenShiftAt)} quedó marcado como olvido de salida.</small>
-            ) : null}
-            <span className="clock-success-hint">Podés continuar.</span>
-          </div>
-        ) : (
-          <>
-            <label className="clock-dni-field">
-              Buscar por nombre o apellido
-              <div>
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    setSelected(undefined);
-                    setStatus(undefined);
-                    setView(null);
-                    setError("");
-                  }}
-                  placeholder="Ej.: Pérez Juan"
-                />
-                {/* F10: actualizar el estado del legajo (no es una búsqueda); gira mientras consulta. */}
-                <button type="button" className="icon-button" onClick={() => void refreshStatus()} title="Actualizar estado" aria-label="Actualizar estado" disabled={!selected || Boolean(punch) || loading}>
-                  <RefreshCw className={selected && loading ? "spin-icon" : undefined} />
-                </button>
-              </div>
-            </label>
-
-            {matches.length ? (
-              <div className="clock-results-list">
-                {matches.map((employee) => (
-                  <button key={employee.id} type="button" onClick={() => void selectEmployee(employee)}>
-                    <b>{employee.lastName}, {employee.firstName}</b>
-                    <span>{employeeIdentity(employee)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {employeeLabel ? (
-              <div className="clock-employee">
-                <b>{employeeLabel.lastName}, {employeeLabel.firstName}</b>
-                <span>{employeeIdentity(employeeLabel)}</span>
-                <button type="button" className="table-link" onClick={clearEmployee}>Cambiar empleado</button>
-              </div>
-            ) : null}
-
-            {status?.openShift ? (
-              <div className="clock-open">
-                <b>Ingreso abierto</b>
-                <span>Registrado: {formatDateTime(status.openShift.startAt)}</span>
-                {openShiftExceeded ? <span>Ese día quedó con olvido de salida. Podés marcar un nuevo ingreso; RRHH lo revisa desde Asistencia.</span> : null}
-              </div>
-            ) : null}
-
-            {selected ? (
-              <p className="muted">El fichador registra únicamente entrada y salida. Los conceptos horarios se calculan o cargan luego desde la gestión horaria.</p>
-            ) : null}
-
-            {view?.kind === "cooldown" && cooldownActive ? (
-              <div className="clock-cooldown" role="status">
-                <Clock3 className="clock-cooldown-icon" aria-hidden="true" />
-                <div>
-                  <b>Ya registraste una fichada hace unos segundos.</b>
-                  <span role="timer" aria-live="off">Podés volver a intentar en {cooldownRemaining} s.</span>
-                </div>
-              </div>
-            ) : null}
-
-            {/* F10: la acción que corresponde al estado del legajo es la principal
-                (sólo jerarquía visual; habilitarlas sigue siendo canClockIn/canClockOut).
-                Con un ingreso abierto, la salida; sin ingreso abierto o con la
-                jornada vencida (olvido de salida), el ingreso. */}
-            <div className="clock-actions">
-              <Button variant={exitIsPrimary ? "subtle" : "primary"} icon={LogIn} disabled={!canClockIn} onClick={() => startPunch("IN")}>
-                {openShiftExceeded ? "Marcar nuevo ingreso" : "Marcar ingreso"}
-              </Button>
-              <Button variant={exitIsPrimary ? "primary" : "subtle"} icon={LogOut} disabled={!canClockOut} onClick={() => startPunch("OUT")}>
-                Marcar salida
-              </Button>
-            </div>
-
-            {view?.kind === "error" ? <p className="error" role="alert">{view.message}</p> : null}
-            {view?.kind === "notice" ? <p className="clock-notice" role="status">{view.message}</p> : null}
-            {error ? <p className="error" role="alert">{error}</p> : null}
-          </>
-        )}
       </section>
 
       {punch ? (
-        <Suspense fallback={<LoadingState text="Preparando cámara..." />}>
+        <Suspense fallback={<div className="kiosk-loading"><LoadingState text="Preparando cámara..." /></div>}>
           <FaceCaptureModal
             punchType={punch.punchType}
             submitting={punch.step === "submitting"}

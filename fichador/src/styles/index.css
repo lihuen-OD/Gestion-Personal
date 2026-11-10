@@ -11,6 +11,7 @@
 @import "./base.css";
 @import "./components.css";
 @import "./screens/clock.css";
+@import "./screens/kiosk.css";
 @import "./screens/capture.css";
 @import "./screens/device.css";
 @import "./screens/maintenance.css";

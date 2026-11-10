@@ -91,7 +91,8 @@ afterEach(() => {
 describe("Modo mantenimiento sobre el fichador real", () => {
   it("quien ficha no ve ninguna opción administrativa: ni botones, ni textos, ni ids", async () => {
     await renderKiosk();
-    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") || button.textContent)).toEqual(["Actualizar estado", "Marcar ingreso", "Marcar salida"]);
+    // Etapa 2: en reposo el fichador no muestra ningún botón (sólo la búsqueda).
+    expect(screen.queryAllByRole("button").map((button) => button.getAttribute("aria-label") || button.textContent)).toEqual([]);
     expect(document.body.textContent).not.toMatch(/mantenimiento|Reconfigurar|Administraci|Salir|Recargar|código/i);
     expect(document.body.textContent).not.toContain(IDENTITY.id);
     expect(requests("POST /clock/maintenance/session")).toHaveLength(0);
@@ -116,14 +117,14 @@ describe("Modo mantenimiento sobre el fichador real", () => {
   it("con un código válido reemplaza al fichador por el modo mantenimiento y al salir vuelve al fichador normal", async () => {
     await renderKiosk();
     await enterMaintenance();
-    expect(screen.queryByRole("button", { name: "Marcar ingreso" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Buscar por nombre o apellido")).not.toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(false);
     // La sesión operativa del equipo no cambió: el token de mantenimiento va aparte.
     expect(clockDeviceSession.isActive()).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Volver al fichador" }));
     await advance(0);
-    expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
     expect(screen.queryByText("Modo mantenimiento")).not.toBeInTheDocument();
     expect(requests("DELETE /clock/maintenance/session")).toHaveLength(1);
     expect(kioskActivity.isIdle()).toBe(true);
@@ -133,7 +134,7 @@ describe("Modo mantenimiento sobre el fichador real", () => {
     await renderKiosk();
     await enterMaintenance();
     await advance(600_000);
-    expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Modo mantenimiento" })).not.toBeInTheDocument();
   });
 
