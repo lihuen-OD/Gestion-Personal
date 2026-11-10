@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, KeyRound, MonitorSmartphone, RefreshCw, ShieldAlert } from "lucide-react";
+import { AlertCircle, Clock3, KeyRound, RefreshCw, ShieldAlert, Tablet, WifiOff, type LucideIcon } from "lucide-react";
+import { Brand } from "../../components/ui/Brand";
 import { ApiError, getUserErrorMessage } from "../../services/api/apiClient";
 import { clockDeviceApiService, type ClockDeviceState } from "../../services/api/clockDeviceApiService";
 import { clockDeviceSession, type ClockDeviceAuthFailure } from "../../services/api/clockDeviceSession";
@@ -155,48 +156,107 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     } finally { setBusy(false); }
   };
 
+  // Foco (sólo presentación): al abrir la confirmación el botón que la abrió
+  // desaparece; el foco pasa a "Cancelar" (la opción segura) y, si se cancela,
+  // vuelve al botón que la abrió.
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
+  const resetTriggerRef = useRef<HTMLButtonElement>(null);
+  const confirmWasOpen = useRef(false);
+  useEffect(() => {
+    if (confirmingReset) confirmCancelRef.current?.focus();
+    else if (confirmWasOpen.current) resetTriggerRef.current?.focus();
+    confirmWasOpen.current = confirmingReset;
+  }, [confirmingReset]);
+
   // Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md): sólo con
   // la sesión operativa abierta. Revocar o perder la credencial lo desmonta.
   if (device?.status === "ACTIVE" && !credentialLost) return <ClockMaintenanceMode onReconfigure={reset}>{children}</ClockMaintenanceMode>;
 
   const revoked = device?.status === "REVOKED";
   const pending = device?.status === "PENDING";
-  const transientError = Boolean(identity && error && !device && !credentialLost);
-  const title = loading ? "Verificando dispositivo"
-    : revoked ? "Dispositivo deshabilitado"
-      : credentialLost ? "Autorización perdida"
-        : pending ? "Esperando aprobación"
-          : transientError ? "No pudimos verificar el dispositivo"
-            : "Configurar este dispositivo";
-  const description = revoked ? "Este dispositivo fue deshabilitado por RRHH. No se puede usar para fichar."
-    : credentialLost ? "Este dispositivo perdió su autorización. Volvé a configurarlo."
-      : pending ? "Pedile a RRHH que ingrese este código en Gestión Personal. Esta pantalla se habilitará automáticamente."
-        : transientError ? "Revisá la conexión a Internet. La configuración de este equipo se conserva."
-          : "Este equipo debe vincularse con Gestión Personal antes de mostrar el fichador.";
+  // Hay identidad guardada pero todavía no hay un estado confirmado por el
+  // servidor: al abrir, mientras se reintenta o tras NOT_ACTIVE. Nunca se
+  // muestra como "configurar" (la identidad existe) ni como habilitado.
+  const unverified = Boolean(identity && !device && !credentialLost);
+  // El reintento en curso conserva la pantalla de error con "Verificando…".
+  const transientError = unverified && Boolean(error || busy);
+  const verifying = loading || (unverified && !transientError);
+  const setup = !verifying && !identity;
   const danger = revoked || credentialLost;
+  const view = verifying ? GATE_VIEWS.verifying
+    : revoked ? GATE_VIEWS.revoked
+      : credentialLost ? GATE_VIEWS.lost
+        : pending ? (pairing ? GATE_VIEWS.pending : GATE_VIEWS.pendingWithoutCode)
+          : transientError ? GATE_VIEWS.transient
+            : GATE_VIEWS.setup;
 
-  return <main className="device-gate"><section className="device-gate-card">
-    <div className={`device-gate-icon ${danger ? "danger" : ""}`}>{revoked ? <ShieldAlert /> : credentialLost ? <KeyRound /> : loading ? <RefreshCw className="spin" /> : <MonitorSmartphone />}</div>
-    <p className="eyebrow">FICHADOR</p>
-    <h1>{title}</h1>
-    <p className="muted">{description}</p>
-    {/* F10: instalar antes de configurar (la configuración del navegador no pasa al ícono en iOS). */}
-    {!loading && !identity ? <DeviceInstallHint stage="setup" /> : null}
-    {pending && pairing ? <div className="pairing-code" aria-label={`Código ${pairing.code}`}><small>CÓDIGO DE VINCULACIÓN</small><strong>{pairing.code}</strong><span>Vence a las {formatTime(pairing.expiresAt)}</span></div> : null}
-    {pending && !pairing ? <div className="device-policy"><CheckCircle2 size={17} /><span>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</span></div> : null}
-    {pending ? <DeviceInstallHint stage="pending" /> : null}
-    {error ? <p className="error">{error}</p> : null}
-    {!loading && !identity ? <button className="button primary" disabled={busy} onClick={() => void configure()}>{busy ? "Configurando…" : "Configurar dispositivo"}</button> : null}
-    {!loading && !identity ? <DeviceSetupChecklist /> : null}
-    {pending ? <button className="button subtle" disabled={busy} onClick={() => void refreshPairing()}>{busy ? "Generando…" : "Generar código nuevo"}</button> : null}
-    {transientError ? <button className="button primary" disabled={busy} onClick={() => void retry()}>{busy ? "Verificando…" : "Reintentar"}</button> : null}
-    {danger && !confirmingReset ? <button className="button subtle" onClick={() => setConfirmingReset(true)}>{revoked ? "Configurar como nuevo dispositivo" : "Reconfigurar dispositivo"}</button> : null}
-    {danger && confirmingReset ? <div className="device-confirm" role="alertdialog" aria-label="Confirmar reconfiguración">
-      <p><strong>¿Borrar la configuración de este equipo?</strong> Se elimina la identidad guardada y vas a tener que generar un código nuevo para que RRHH lo apruebe otra vez.</p>
-      <div className="device-confirm-actions">
-        <button className="button subtle" disabled={busy} onClick={() => setConfirmingReset(false)}>Cancelar</button>
-        <button className="button danger" disabled={busy} onClick={() => void reset()}>{busy ? "Borrando…" : "Borrar y configurar"}</button>
+  const busyLabel = (text: string) => <><span className="kiosk-spinner" aria-hidden="true" />{text}</>;
+
+  return <div className="device-gate">
+    <header className="device-gate-top"><Brand /></header>
+    <main className={`device-gate-body${verifying ? " is-single" : ""}`} aria-labelledby="device-gate-title">
+      <div className="device-gate-lead">
+        <span className={`device-gate-tile ${view.tone}`} aria-hidden="true">{verifying ? <span className="kiosk-spinner device-gate-tile-spinner" /> : <view.Icon strokeWidth={1.75} />}</span>
+        <h1 id="device-gate-title">{view.title}</h1>
+        <p className="device-gate-desc" role={verifying ? "status" : undefined}>{view.description}</p>
       </div>
-    </div> : null}
-  </section></main>;
+
+      {verifying ? null : <div className="device-gate-main">
+        {pending && pairing ? <section className="pairing" aria-labelledby="pairing-label">
+          <p id="pairing-label" className="pairing-label">Código de vinculación</p>
+          {/* El lector de pantalla recibe el código deletreado; la vista, en casillas. */}
+          <p className="sr-only">{spellPairingCode(pairing.code)}</p>
+          <p className="pairing-code" aria-hidden="true">{pairingCodeParts(pairing.code)}</p>
+          <p className="pairing-expiry"><Clock3 size={16} strokeWidth={2} aria-hidden="true" />Vence a las {formatTime(pairing.expiresAt)}</p>
+        </section> : null}
+        {pending && !pairing ? <div className="device-gate-note" role="note"><KeyRound size={20} strokeWidth={1.75} aria-hidden="true" /><p>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</p></div> : null}
+        {/* La aprobación llega por la consulta periódica que ya hace el Gate. */}
+        {pending ? <p className="device-gate-waiting" role="status"><span className="device-gate-waiting-dot" aria-hidden="true" />Se habilita sola cuando RRHH lo apruebe</p> : null}
+
+        <div className="device-gate-stack">
+          {/* F10: instalar antes de configurar (la configuración del navegador no pasa al ícono en iOS). */}
+          {setup ? <DeviceInstallHint stage="setup" /> : null}
+          {error ? <p className="error device-gate-error" role="alert"><AlertCircle size={20} strokeWidth={2} aria-hidden="true" /><span>{error}</span></p> : null}
+          {setup ? <button className="button primary device-gate-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void configure()}>{busy ? busyLabel("Configurando…") : "Configurar dispositivo"}</button> : null}
+          {setup ? <DeviceSetupChecklist /> : null}
+          {pending ? <button className={`button ${pairing ? "subtle" : "primary"} device-gate-action`} disabled={busy} aria-busy={busy || undefined} onClick={() => void refreshPairing()}>{busy ? busyLabel("Generando…") : <><RefreshCw aria-hidden="true" />Generar código nuevo</>}</button> : null}
+          {pending ? <DeviceInstallHint stage="pending" /> : null}
+          {transientError ? <button className="button primary device-gate-action" disabled={busy} aria-busy={busy || undefined} onClick={() => void retry()}>{busy ? busyLabel("Verificando…") : "Reintentar"}</button> : null}
+          {danger && !confirmingReset ? <button ref={resetTriggerRef} className="button subtle device-gate-action" onClick={() => setConfirmingReset(true)}>{revoked ? "Configurar como nuevo dispositivo" : "Reconfigurar dispositivo"}</button> : null}
+          {danger && confirmingReset ? <div className="device-confirm" role="alertdialog" aria-label="Confirmar reconfiguración" aria-describedby="device-confirm-text">
+            <p id="device-confirm-text"><strong>¿Borrar la configuración de este equipo?</strong> Se elimina la identidad guardada y vas a tener que generar un código nuevo para que RRHH lo apruebe otra vez.</p>
+            <div className="device-confirm-actions">
+              <button ref={confirmCancelRef} className="button subtle" disabled={busy} onClick={() => setConfirmingReset(false)}>Cancelar</button>
+              <button className="button danger" disabled={busy} aria-busy={busy || undefined} onClick={() => void reset()}>{busy ? busyLabel("Borrando…") : "Borrar y configurar"}</button>
+            </div>
+          </div> : null}
+        </div>
+      </div>}
+    </main>
+  </div>;
+}
+
+type GateView = { title: string; description: string; Icon: LucideIcon; tone: "" | "is-danger" | "is-neutral" };
+
+/** Textos e íconos de cada estado del Gate (el estado lo decide el servidor). */
+const GATE_VIEWS = {
+  verifying: { title: "Verificando dispositivo", description: "Un momento.", Icon: Tablet, tone: "is-neutral" },
+  setup: { title: "Configurar este dispositivo", description: "Este equipo debe vincularse con Gestión Personal antes de mostrar el fichador.", Icon: Tablet, tone: "" },
+  pending: { title: "Esperando aprobación", description: "Pedile a RRHH que ingrese este código en Gestión Personal.", Icon: Tablet, tone: "" },
+  pendingWithoutCode: { title: "Esperando aprobación", description: "Este equipo ya está registrado y espera la aprobación de RRHH.", Icon: Tablet, tone: "" },
+  transient: { title: "No pudimos verificar el dispositivo", description: "Revisá la conexión a Internet. La configuración de este equipo se conserva.", Icon: WifiOff, tone: "is-neutral" },
+  revoked: { title: "Dispositivo deshabilitado", description: "Este dispositivo fue deshabilitado por RRHH. No se puede usar para fichar.", Icon: ShieldAlert, tone: "is-danger" },
+  lost: { title: "Autorización perdida", description: "Este dispositivo perdió su autorización. Volvé a configurarlo.", Icon: KeyRound, tone: "is-danger" },
+} satisfies Record<string, GateView>;
+
+/** Casillas del código tal como lo emite el backend ("ABCD-2345"): un carácter por casilla, el guion como separador. */
+function pairingCodeParts(code: string) {
+  return Array.from(code).map((char, index) => (char === "-"
+    ? <span key={index} className="pairing-sep">-</span>
+    : <span key={index} className="pairing-char">{char}</span>));
+}
+
+/** "ABCD-2345" → "A B C D, 2 3 4 5": se lee carácter por carácter. */
+function spellPairingCode(code: string) {
+  return code.split("-").map((group) => Array.from(group).join(" ")).join(", ");
 }
