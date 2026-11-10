@@ -5,9 +5,11 @@ import { X } from "lucide-react";
 // Copia de frontend/src/components/ui/Modal.tsx (mismo markup y clases). El
 // portal a document.body se conserva: el backdrop `position: fixed` cubre
 // todo el viewport sin depender de los contenedores de la página.
-export function Modal({ title, subtitle, close, children, closeDisabled = false }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean }) {
+// `className` (opcional) va en el backdrop: permite una composición propia por
+// pantalla (p. ej. la captura facial, Etapa 3) sin tocar las demás.
+export function Modal({ title, subtitle, close, children, closeDisabled = false, className }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean; className?: string }) {
   return createPortal(
-    <div className="modal-backdrop">
+    <div className={className ? `modal-backdrop ${className}` : "modal-backdrop"}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <div className="modal-head-text">
