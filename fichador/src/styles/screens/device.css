@@ -118,16 +118,7 @@
   font-size: var(--text-md);
 }
 
-/* Botón ocupado ("Generando…", "Verificando…"): sigue deshabilitado, pero el
-   texto informa un estado y se lee con contraste AA (el deshabilitado común
-   usa un gris decorativo). El spinner toma el color del texto. */
-.device-gate .button:disabled[aria-busy="true"] {
-  color: var(--color-ink-2);
-}
-
-.device-gate .button .kiosk-spinner {
-  color: inherit;
-}
+/* El botón ocupado (aria-busy) usa la regla común de components.css. */
 
 .device-gate-error {
   display: flex;
