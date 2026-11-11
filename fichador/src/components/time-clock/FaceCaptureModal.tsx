@@ -6,6 +6,8 @@ import { Button } from "../ui/Button";
 import { isIOSDevice } from "../../pwa/platform";
 import { formatClock } from "../../utils/date";
 import { CAMERA_PAUSED_MESSAGE } from "./captureMessages";
+import { FaceHud } from "./FaceHud";
+import { faceBoxToView, normalizedFaceBox, type ViewBox } from "./faceOverlay";
 
 export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
 
@@ -103,6 +105,13 @@ function statusForDetection(detections: Detection[], video: HTMLVideoElement): F
   return { status: "VALID", message: "Rostro detectado. Ya podés confirmar la fichada.", valid: true, score };
 }
 
+/** «Biometric Future»: caja del único rostro detectado, llevada al visor (sólo presentación). */
+function overlayFor(detections: Detection[], video: HTMLVideoElement, shell: HTMLElement | null): ViewBox | null {
+  const box = normalizedFaceBox(detections, video.videoWidth, video.videoHeight);
+  if (!box || !shell) return null;
+  return faceBoxToView(box, { width: video.videoWidth, height: video.videoHeight }, { width: shell.clientWidth, height: shell.clientHeight });
+}
+
 function averageBrightness(video: HTMLVideoElement) {
   const canvas = document.createElement("canvas");
   canvas.width = 80;
@@ -168,8 +177,11 @@ export function FaceDetectionStatus({ state, message = state.message }: { state:
   const Icon = state.status === "LOADING" ? null : STATUS_ICONS[state.status];
   return (
     <div className={`face-status tone-${tone} ${state.valid ? "valid" : "invalid"}`} role="status" aria-live="polite">
-      {Icon ? <Icon size={22} strokeWidth={1.75} aria-hidden="true" /> : <span className="kiosk-spinner" aria-hidden="true" />}
-      <span>{message}</span>
+      {/* «Biometric Future»: única señal de estado de la captura, con el tono del detector. */}
+      <span className="face-status-icon" aria-hidden="true">
+        {Icon ? <Icon size={22} strokeWidth={1.9} /> : <span className="kiosk-spinner" />}
+      </span>
+      <span className="face-status-text">{message}</span>
     </div>
   );
 }
@@ -220,6 +232,8 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   returnFocus?: () => HTMLElement | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // «Biometric Future» (sólo presentación): visor medido para ubicar la malla.
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
   // R6-01 (Etapa 6B-5): el ciclo de detección espera con requestAnimationFrame
@@ -242,6 +256,9 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   // Etapa 3 (sólo presentación): el video ya muestra imagen. Distingue
   // "preparando la cámara" de "buscando rostro" dentro del mismo estado LOADING.
   const [videoPlaying, setVideoPlaying] = useState(false);
+  // «Biometric Future» (sólo presentación): dónde se ve el único rostro que
+  // devolvió el detector, en % del visor. No interviene en la validación.
+  const [faceView, setFaceView] = useState<ViewBox | null>(null);
 
   // Apaga detector y cámara y suelta el video. Idempotente.
   const stopCamera = useCallback(() => {
@@ -341,9 +358,11 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
           const brightness = averageBrightness(currentVideo);
           if (brightness < 42) {
             setState({ status: "LOW_LIGHT", message: "La imagen está muy oscura. Buscá mejor iluminación.", valid: false });
+            setFaceView(null);
           } else {
             const detections = currentDetector.detectForVideo(currentVideo, performance.now()).detections;
             setState(statusForDetection(detections, currentVideo));
+            setFaceView(overlayFor(detections, currentVideo, shellRef.current));
           }
           detectTimerRef.current = window.setTimeout(detect, 220);
         };
@@ -443,10 +462,11 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
     <Modal title="Confirmar fichada con foto" subtitle={employeeLabel} close={onCancel} closeDisabled={submitting} className="capture-modal" returnFocus={returnFocus}>
       <div className="face-capture">
         <p className="sr-only">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
-        <div className="face-video-shell" data-phase={phase} data-tone={tone}>
+        <div ref={shellRef} className="face-video-shell" data-phase={phase} data-tone={tone}>
           <video ref={videoRef} className={frozenFrame ? "face-video is-frozen" : "face-video"} muted playsInline onPlaying={() => setVideoPlaying(true)} />
           {frozenFrame ? <img className="face-frozen" src={frozenFrame} alt="Foto tomada para esta fichada" /> : null}
           <div className="face-guide" aria-hidden="true" />
+          <FaceHud phase={phase} view={phase === "off" ? null : faceView} />
           {phase === "preparing" ? (
             <div className="face-center" aria-hidden="true"><span className="kiosk-spinner is-large" /></div>
           ) : null}

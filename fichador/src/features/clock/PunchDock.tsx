@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AlertCircle, Camera, CameraOff, Clock3, LogIn, LogOut, WifiOff, type LucideIcon } from "lucide-react";
+import { AlertCircle, Camera, CameraOff, Clock3, LogIn, LogOut, ScanFace, WifiOff, type LucideIcon } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 
 export type NoticeTone = "neutral" | "warn" | "danger";
@@ -45,7 +45,8 @@ export function CooldownNotice({ secondsLeft, totalSeconds }: { secondsLeft: num
 
 /**
  * Paso 2 → 3: una única acción, la que corresponde al estado real del legajo.
- * Ingreso en azul, salida en grafito. Qué acción y si está habilitada lo
+ * Ingreso en cian, salida en índigo («Biometric Future»); el ícono también
+ * los distingue. Qué acción y si está habilitada lo
  * decide TimeClockPage (canClockIn/canClockOut); acá sólo se presenta.
  */
 export function PunchDock({ notice, punchType, label, enabled, statusLoading, statusUnknown = false, onPunch }: {
@@ -63,6 +64,11 @@ export function PunchDock({ notice, punchType, label, enabled, statusLoading, st
   const icon = statusUnknown ? undefined : exit ? LogOut : LogIn;
   return (
     <div className="kiosk-dock">
+      {/* Anticipa el paso 3 (decorativo): no indica ninguna verificación. */}
+      <span className="kiosk-lens" aria-hidden="true">
+        <span className="kiosk-lens-sweep" />
+        <ScanFace size={44} strokeWidth={1.5} />
+      </span>
       {notice}
       <Button variant="primary" className={`kiosk-action ${tone}`} icon={icon} disabled={!enabled} onClick={onPunch}>
         {label}

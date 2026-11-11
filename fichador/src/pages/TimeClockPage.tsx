@@ -520,9 +520,12 @@ export function TimeClockPage() {
   else if (statusError) notice = <DockNotice tone="danger" icon="error" role="alert">{statusError}</DockNotice>;
 
   const step: ClockStep = punch ? 3 : selected ? 2 : 1;
+  // «Biometric Future» (sólo presentación): la grilla ubica reloj y panel según
+  // el paso, y compacta el reloj mientras hay una búsqueda escrita.
+  const searching = !selected && search.length > 0;
 
   return (
-    <main className="kiosk">
+    <main className="kiosk" data-step={step} data-searching={searching ? "" : undefined}>
       <ClockAmbient now={now} step={step} online={online} maintenanceTrigger={maintenanceTrigger} />
 
       <section ref={panelRef} className="kiosk-panel" aria-label="Fichada" tabIndex={-1}>

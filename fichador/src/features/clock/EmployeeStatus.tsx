@@ -104,8 +104,15 @@ export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabl
   return (
     <>
       <div className="kiosk-person">
-        <span className="kiosk-avatar is-large" aria-hidden="true">{employeeInitials(employee)}</span>
+        <span className="kiosk-orb" aria-hidden="true">
+          <svg className="kiosk-orb-ring" viewBox="0 0 100 100" focusable="false">
+            <circle cx="50" cy="50" r="47" pathLength={100} />
+            <circle className="kiosk-orb-arc" cx="50" cy="50" r="47" pathLength={100} />
+          </svg>
+          <span className="kiosk-avatar is-large">{employeeInitials(employee)}</span>
+        </span>
         <div className="kiosk-person-text">
+          <p className="kiosk-eyebrow" aria-hidden="true">Empleado seleccionado</p>
           <h2>{employeeFullName(employee)}</h2>
           <p>{employeeIdentity(employee)}</p>
         </div>

@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { Info, ScanFace, ShieldCheck } from "lucide-react";
 import { formatDateTime, formatLongDate, formatTime } from "../../utils/date";
 
 /**
@@ -16,10 +16,15 @@ export function PunchResult({ punchType, employeeName, at, previousOpenShiftAt }
   const time = formatTime(at);
   return (
     <main className="kiosk-result" role="status" aria-live="polite">
+      {/* Sello «Biometric Future»: confirma la fichada que aceptó el servidor. */}
       <span className="kiosk-result-check" aria-hidden="true">
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M5 12.5l4.5 4.5L19 7.5" />
+        <svg className="kiosk-emblem" viewBox="0 0 160 160" focusable="false">
+          <circle className="kiosk-emblem-orbit" cx="80" cy="80" r="78" />
+          <circle className="kiosk-emblem-ring" cx="80" cy="80" r="64" pathLength={100} />
+          <circle className="kiosk-emblem-core" cx="80" cy="80" r="50" />
+          <path className="kiosk-emblem-check" d="M60 81 l13 13 l27 -29" pathLength={1} />
         </svg>
+        <span className="kiosk-emblem-pulse" />
       </span>
       <h1 className="kiosk-result-title">{punchType === "IN" ? "Entrada registrada" : "Salida registrada"}</h1>
       <p className="kiosk-result-name">{employeeName}</p>
@@ -28,6 +33,12 @@ export function PunchResult({ punchType, employeeName, at, previousOpenShiftAt }
         <span>{time}</span>
       </p>
       <p className="kiosk-result-date">{formatLongDate(at)}</p>
+      {/* Toda fichada del kiosco lleva la foto tomada en el paso 3: es evidencia, no una verificación de identidad. */}
+      <p className="kiosk-result-evidence">
+        <span className="kiosk-result-evidence-icon" aria-hidden="true"><ScanFace size={20} strokeWidth={1.75} /></span>
+        Foto tomada para esta fichada
+        <ShieldCheck className="kiosk-result-evidence-ok" size={18} strokeWidth={1.75} aria-hidden="true" />
+      </p>
       {previousOpenShiftAt ? (
         <div className="kiosk-notice tone-neutral kiosk-result-note" role="note">
           <Info size={22} strokeWidth={1.75} aria-hidden="true" />
