@@ -203,6 +203,17 @@
   color: var(--color-ink-3);
 }
 
+/* F6-05: último minuto. El texto ("Se cierra en 0:42") ya lo dice; el tono acompaña. */
+.maintenance-timer.is-ending {
+  background: var(--color-warn-soft);
+  box-shadow: 0 0 0 1px var(--color-warn-line);
+  color: var(--color-warn);
+}
+
+.maintenance-timer.is-ending svg {
+  color: var(--color-warn);
+}
+
 .maintenance-timer strong {
   min-width: 4ch;
   color: var(--color-ink);

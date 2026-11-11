@@ -194,6 +194,16 @@
   font-size: var(--text-sm);
 }
 
+/* F6-08: qué hacer si ya pasó la hora (sin cuenta regresiva local). */
+.pairing-renew {
+  max-width: 340px;
+  margin-top: var(--space-1);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  text-align: center;
+}
+
 /* Espera: la consulta periódica habilita el fichador al aprobarse. */
 .device-gate-waiting {
   display: inline-flex;
@@ -229,6 +239,18 @@
   50% {
     opacity: 0.35;
   }
+}
+
+/* F6-07: la consulta de aprobación está interrumpida (no es un error del
+   equipo ni un rechazo): tono de advertencia, sin el punto que "respira". */
+.device-gate-waiting.is-interrupted {
+  background: var(--color-warn-soft);
+  box-shadow: 0 0 0 1px var(--color-warn-line);
+  color: var(--color-warn);
+}
+
+.device-gate-waiting.is-interrupted svg {
+  flex: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

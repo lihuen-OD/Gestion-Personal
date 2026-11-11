@@ -7,6 +7,7 @@ import { clockDeviceSession } from "../../services/api/clockDeviceSession";
 import { kioskActivity } from "../../pwa/kioskActivity";
 import { TimeClockPage } from "../../pages/TimeClockPage";
 import { MAINTENANCE_LONG_PRESS_MS } from "./maintenanceTrigger";
+import { MAINTENANCE_EXPIRED_NOTICE_MS, MAINTENANCE_EXPIRED_TITLE } from "./ClockMaintenanceMode";
 
 /**
  * Modo mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md) sobre el
@@ -134,6 +135,9 @@ describe("Modo mantenimiento sobre el fichador real", () => {
     await renderKiosk();
     await enterMaintenance();
     await advance(600_000);
+    // Etapa 6B-4 (F6-05): antes de volver, un aviso breve explica el vencimiento.
+    expect(screen.getByRole("heading", { name: MAINTENANCE_EXPIRED_TITLE })).toBeInTheDocument();
+    await advance(MAINTENANCE_EXPIRED_NOTICE_MS);
     expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Modo mantenimiento" })).not.toBeInTheDocument();
   });

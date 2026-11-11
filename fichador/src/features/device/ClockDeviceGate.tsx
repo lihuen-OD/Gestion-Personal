@@ -12,6 +12,23 @@ import { useClockWakeLock } from "./useClockWakeLock";
 import { formatTime } from "../../utils/date";
 
 const POLL_MS = 7_500;
+/**
+ * Etapa 6B-4 (F6-06): esperas entre reintentos automáticos de la verificación
+ * cuando el servidor no respondió (la última se repite). Siempre es la misma
+ * consulta real al servidor que el botón "Reintentar"; volver a tener red sólo
+ * adelanta el próximo intento.
+ */
+export const VERIFY_RETRY_DELAYS_MS: readonly number[] = [5_000, 10_000, 20_000, 30_000, 60_000];
+/** F6-07: fallas seguidas de la consulta de aprobación antes de avisarlo (un corte breve no parpadea). */
+export const POLL_FAILURES_BEFORE_NOTICE = 2;
+export const POLL_INTERRUPTED_MESSAGE = "No pudimos consultar la aprobación. Seguimos intentando.";
+export const AUTO_RETRY_MESSAGE = "Volvemos a intentar automáticamente.";
+/**
+ * Etapa 6B-5 (F6-08): la hora de vencimiento la da el servidor; el equipo no
+ * decide si ya pasó (su reloj puede estar desajustado). Se explica qué hacer
+ * si pasó, sin afirmar que el código sigue vigente ni generar otro solo.
+ */
+export const PAIRING_RENEW_HINT = "Si ya pasó esa hora, generá un código nuevo.";
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
 
 async function registerOnce() {
@@ -31,6 +48,10 @@ async function registerWithCrossTabLock() {
 }
 
 const isInvalidCredential = (error: unknown) => error instanceof ApiError && error.code === "CLOCK_DEVICE_INVALID_CREDENTIAL";
+/** Una respuesta sólo vale para la identidad que la pidió (p. ej. no después de reconfigurar). */
+const sameIdentity = (a: StoredClockDeviceIdentity | null, b: StoredClockDeviceIdentity) => a !== null && a.id === b.id && a.secret === b.secret;
+/** 429 con espera informada por el backend: hasta cuándo no consultar. */
+const retryAfterDeadline = (error: unknown) => (error instanceof ApiError && error.retryAfterSeconds ? Date.now() + error.retryAfterSeconds * 1_000 : 0);
 
 /**
  * Único dueño de la identidad del equipo. Sólo con el backend confirmando
@@ -52,6 +73,14 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const alive = useRef(true);
   const identityRef = useRef<StoredClockDeviceIdentity | null>(null);
+  // F6-07: fallas seguidas de la consulta de aprobación (se avisa desde POLL_FAILURES_BEFORE_NOTICE).
+  const [pollFailures, setPollFailures] = useState(0);
+  // F6-06/F6-07: no consultar antes de lo que pidió el backend con un 429.
+  const quietUntil = useRef(0);
+  // F6-06: fallas seguidas de la verificación. Cada falla cambia el valor (y
+  // reprograma el próximo intento) aunque el error repita el mismo texto.
+  const [verifyFailures, setVerifyFailures] = useState(0);
+  const verifyInFlight = useRef(false);
 
   // La sesión operativa se abre en el mismo paso que el estado ACTIVE, antes
   // de que el fichador se monte, y se cierra con cualquier otro estado.
@@ -61,17 +90,23 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     setDevice(next);
     setCredentialLost(false);
     setError("");
+    setPollFailures(0);
+    setVerifyFailures(0);
   }, []);
 
   const verify = useCallback(async (owner: StoredClockDeviceIdentity) => {
     try {
       const next = await clockDeviceApiService.status(owner);
-      if (alive.current) applyDevice(owner, next);
+      if (alive.current && sameIdentity(identityRef.current, owner)) applyDevice(owner, next);
     } catch (statusError) {
-      if (!alive.current) return;
+      if (!alive.current || !sameIdentity(identityRef.current, owner)) return;
       clockDeviceSession.end();
+      quietUntil.current = retryAfterDeadline(statusError);
       if (isInvalidCredential(statusError)) { setDevice(null); setCredentialLost(true); }
-      else setError(getUserErrorMessage(statusError, "No pudimos verificar este dispositivo."));
+      else {
+        setError(getUserErrorMessage(statusError, "No pudimos verificar este dispositivo."));
+        setVerifyFailures((failures) => failures + 1);
+      }
     }
   }, [applyDevice]);
 
@@ -97,13 +132,35 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
     }
   }), [verify]);
 
+  // Espera de aprobación: la consulta periódica habilita el fichador sólo
+  // cuando el servidor responde ACTIVE. F6-07: de a una por vez, respeta el
+  // 429, cuenta las fallas (para avisarlas) y, al volver la red, consulta en
+  // el acto. Una respuesta de otra identidad (reconfigurado) no se aplica.
   useEffect(() => {
-    if (!identity || device?.status !== "PENDING") return;
-    const poll = window.setInterval(async () => {
-      try { applyDevice(identity, await clockDeviceApiService.status(identity)); }
-      catch (pollError) { if (isInvalidCredential(pollError)) { setDevice(null); setCredentialLost(true); } }
-    }, POLL_MS);
-    return () => window.clearInterval(poll);
+    if (!identity || device?.status !== "PENDING") return undefined;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight || Date.now() < quietUntil.current) return;
+      inFlight = true;
+      try {
+        const next = await clockDeviceApiService.status(identity);
+        if (alive.current && sameIdentity(identityRef.current, identity)) applyDevice(identity, next);
+      } catch (pollError) {
+        if (!alive.current || !sameIdentity(identityRef.current, identity)) return;
+        if (isInvalidCredential(pollError)) { setDevice(null); setCredentialLost(true); return; }
+        quietUntil.current = retryAfterDeadline(pollError);
+        setPollFailures((failures) => failures + 1);
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), POLL_MS);
+    const onOnline = () => void poll();
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", onOnline);
+    };
   }, [identity, device?.status, applyDevice]);
 
   // F9: con la sesión operativa abierta (ACTIVE) el equipo avisa que sigue
@@ -135,10 +192,32 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
   };
 
   const retry = async () => {
-    if (!identity) return;
+    if (!identity || verifyInFlight.current) return;
+    verifyInFlight.current = true;
     setBusy(true); setError("");
-    try { await verify(identity); } finally { setBusy(false); }
+    try { await verify(identity); } finally { verifyInFlight.current = false; if (alive.current) setBusy(false); }
   };
+
+  // F6-06: sin respuesta del servidor ("No pudimos verificar"), se reintenta
+  // solo con espera creciente y, si vuelve la red, en el acto. Es el mismo
+  // `retry` del botón (consulta real, sin registrar nada nuevo); el resultado
+  // lo decide el servidor (ACTIVE, PENDING, REVOKED o credencial inválida).
+  const retryRef = useRef(retry);
+  retryRef.current = retry;
+  const awaitingRetry = Boolean(identity && !device && !credentialLost && !loading && error && !busy);
+  useEffect(() => {
+    if (!awaitingRetry) return undefined;
+    const backoff = VERIFY_RETRY_DELAYS_MS[Math.min(Math.max(verifyFailures - 1, 0), VERIFY_RETRY_DELAYS_MS.length - 1)]!;
+    const timer = window.setTimeout(() => void retryRef.current(), Math.max(backoff, quietUntil.current - Date.now()));
+    const onOnline = () => {
+      if (Date.now() >= quietUntil.current) void retryRef.current();
+    };
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [awaitingRetry, verifyFailures]);
 
   // Borra SÓLO la identidad local (IndexedDB) y cierra la sesión en memoria; el
   // backend no se toca. true = borrada (lo usa también el modo mantenimiento).
@@ -208,10 +287,15 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
           <p className="sr-only">{spellPairingCode(pairing.code)}</p>
           <p className="pairing-code" aria-hidden="true">{pairingCodeParts(pairing.code)}</p>
           <p className="pairing-expiry"><Clock3 size={16} strokeWidth={2} aria-hidden="true" />Vence a las {formatTime(pairing.expiresAt)}</p>
+          <p className="pairing-renew">{PAIRING_RENEW_HINT}</p>
         </section> : null}
         {pending && !pairing ? <div className="device-gate-note" role="note"><KeyRound size={20} strokeWidth={1.75} aria-hidden="true" /><p>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</p></div> : null}
         {/* La aprobación llega por la consulta periódica que ya hace el Gate. */}
-        {pending ? <p className="device-gate-waiting" role="status"><span className="device-gate-waiting-dot" aria-hidden="true" />Se habilita sola cuando RRHH lo apruebe</p> : null}
+        {pending && pollFailures < POLL_FAILURES_BEFORE_NOTICE ? <p className="device-gate-waiting" role="status"><span className="device-gate-waiting-dot" aria-hidden="true" />Se habilita sola cuando RRHH lo apruebe</p> : null}
+        {/* F6-07: la consulta falló varias veces seguidas; el código y la espera se conservan. */}
+        {pending && pollFailures >= POLL_FAILURES_BEFORE_NOTICE ? <p className="device-gate-waiting is-interrupted" role="status"><WifiOff size={16} strokeWidth={2} aria-hidden="true" />{POLL_INTERRUPTED_MESSAGE}</p> : null}
+        {/* F6-06: el reintento automático corre solo; el botón queda para adelantarlo. */}
+        {transientError ? <p className="device-gate-waiting" role="status"><span className="device-gate-waiting-dot" aria-hidden="true" />{AUTO_RETRY_MESSAGE}</p> : null}
 
         <div className="device-gate-stack">
           {/* F10: instalar antes de configurar (la configuración del navegador no pasa al ícono en iOS). */}

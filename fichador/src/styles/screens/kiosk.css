@@ -454,8 +454,13 @@
   transition: background-color var(--dur-fast);
 }
 
+/* Deshabilitado sólo con una fichada en curso (queda detrás del diálogo). */
+.kiosk-change:disabled {
+  color: var(--color-ink-3);
+}
+
 @media (hover: hover) {
-  .kiosk-change:hover {
+  .kiosk-change:hover:not(:disabled) {
     background: var(--color-accent-soft);
   }
 }
@@ -524,9 +529,9 @@
   color: #fff;
 }
 
-.kiosk-status-retry {
-  display: flex;
-  justify-content: flex-end;
+/* Destino neutro del foco al cerrar la cámara (Etapa 6B-2): no es un control. */
+.kiosk-panel:focus {
+  outline: none;
 }
 
 /* ---------- Dock: avisos junto a la acción ---------- */
@@ -615,7 +620,12 @@
 }
 
 /* La acción: ingreso azul, salida grafito. */
+/* La acción: con texto agrandado o espaciado (WCAG 1.4.12) el texto pasa a
+   dos líneas en vez de ensanchar el botón fuera de su columna (F6-11; antes
+   sólo la variante de jornada desconocida, 6B-1). Con espaciado normal entra
+   en una línea en todos los tamaños. */
 .button.kiosk-action {
+  white-space: normal;
   width: 100%;
   min-height: var(--action-h);
   gap: var(--space-3);

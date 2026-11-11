@@ -23,12 +23,14 @@ function since(startAt: string, now: Date) {
  * Paso 2: quién ficha y en qué estado está su jornada. El estado sale tal
  * cual de /clock/status (TimeClockPage); acá sólo se presenta.
  */
-export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabled, onRefresh, onChange }: {
+export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabled, changeDisabled = false, onRefresh, onChange }: {
   employee: ClockEmployee;
   shift: ShiftView;
   now: Date;
   refreshing: boolean;
   refreshDisabled: boolean;
+  /** Con una fichada en curso (cámara abierta o envío) no se cambia de empleado. */
+  changeDisabled?: boolean;
   onRefresh: () => void;
   onChange: () => void;
 }) {
@@ -85,8 +87,18 @@ export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabl
       </div>
     );
   } else {
-    // Sin estado (falló la consulta): el aviso del error queda junto a la acción.
-    status = <div className="kiosk-status-retry">{refresh}</div>;
+    // Sin estado confirmado (falló la consulta, F6-02): no se ofrece ninguna
+    // fichada hasta actualizar. El motivo queda en el aviso junto a la acción.
+    status = (
+      <div className="kiosk-status st-none">
+        <span className="kiosk-status-icon"><AlertTriangle size={20} strokeWidth={1.75} aria-hidden="true" /></span>
+        <span className="kiosk-status-text">
+          <strong>No pudimos consultar tu jornada</strong>
+          <span>Tocá actualizar para volver a intentar.</span>
+        </span>
+        {refresh}
+      </div>
+    );
   }
 
   return (
@@ -97,7 +109,7 @@ export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabl
           <h2>{employeeFullName(employee)}</h2>
           <p>{employeeIdentity(employee)}</p>
         </div>
-        <button type="button" className="kiosk-change" onClick={onChange} aria-label="Cambiar empleado">
+        <button type="button" className="kiosk-change" onClick={onChange} disabled={changeDisabled} aria-label="Cambiar empleado">
           Cambiar
         </button>
       </div>
