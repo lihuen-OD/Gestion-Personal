@@ -281,6 +281,12 @@ input[aria-invalid="true"] {
   box-shadow: var(--shadow-2);
 }
 
+/* El diálogo sólo recibe foco como destino neutro (Etapa 6B-2): no es un
+   control, no lleva anillo. Los controles internos conservan el suyo. */
+.modal:focus {
+  outline: none;
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;

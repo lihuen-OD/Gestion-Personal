@@ -529,6 +529,11 @@
   color: #fff;
 }
 
+/* Destino neutro del foco al cerrar la cámara (Etapa 6B-2): no es un control. */
+.kiosk-panel:focus {
+  outline: none;
+}
+
 /* ---------- Dock: avisos junto a la acción ---------- */
 .kiosk-dock {
   position: sticky;

@@ -110,6 +110,7 @@ export function MaintenanceAccessDialog({ onCancel, onGranted }: { onCancel: () 
             <input
               ref={input}
               id={inputId}
+              data-autofocus=""
               value={code}
               onChange={(event) => {
                 setCode(event.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH));

@@ -129,6 +129,9 @@ export function TimeClockPage() {
   const alive = useRef(true);
   // Contador de consultas de estado (una por pedido, incluidos los refrescos).
   const statusSeq = useRef(0);
+  // Etapa 6B-2: destino del foco al cerrar la cámara si "Marcar…" quedó
+  // deshabilitado (p. ej. por la espera entre fichadas).
+  const panelRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     alive.current = true;
@@ -491,7 +494,7 @@ export function TimeClockPage() {
     <main className="kiosk">
       <ClockAmbient now={now} step={step} online={online} maintenanceTrigger={maintenanceTrigger} />
 
-      <section className="kiosk-panel" aria-label="Fichada">
+      <section ref={panelRef} className="kiosk-panel" aria-label="Fichada" tabIndex={-1}>
         <div className="kiosk-panel-inner">
           {selected && employee ? (
             <>
@@ -540,6 +543,7 @@ export function TimeClockPage() {
             onConfirm={(capture) => void confirmPhotoPunch(capture)}
             employeeLabel={`${employeeFullName(punch.employee)} · Legajo ${punch.employee.legajo}`}
             now={now}
+            returnFocus={() => panelRef.current}
           />
         </Suspense>
       ) : null}

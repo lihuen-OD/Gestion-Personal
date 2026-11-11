@@ -205,7 +205,7 @@ const SUBMISSION_TEXT: Record<SubmissionStage, { title: string; detail: string }
  *   queda invalidada y se empieza de nuevo. Después de confirmar, el envío
  *   sigue su curso (la foto ya se tomó).
  */
-export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted, submitting = false, submissionStage = "sending", employeeLabel, now }: {
+export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted, submitting = false, submissionStage = "sending", employeeLabel, now, returnFocus }: {
   punchType: "IN" | "OUT";
   onCancel: () => void;
   onConfirm: (result: FaceCaptureResult) => void;
@@ -216,6 +216,8 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   employeeLabel?: string;
   /** Etapa 3 (sólo presentación): hora Argentina en el visor. */
   now?: Date;
+  /** Etapa 6B-2: destino del foco al cerrar si el botón que abrió la cámara ya no está disponible. */
+  returnFocus?: () => HTMLElement | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -427,7 +429,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   const EntryIcon = punchType === "IN" ? LogIn : LogOut;
 
   return (
-    <Modal title="Confirmar fichada con foto" subtitle={employeeLabel} close={onCancel} closeDisabled={submitting} className="capture-modal">
+    <Modal title="Confirmar fichada con foto" subtitle={employeeLabel} close={onCancel} closeDisabled={submitting} className="capture-modal" returnFocus={returnFocus}>
       <div className="face-capture">
         <p className="sr-only">Ubicá tu rostro dentro del recuadro para registrar la {punchType === "IN" ? "entrada" : "salida"}.</p>
         <div className="face-video-shell" data-phase={phase} data-tone={tone}>
@@ -459,7 +461,8 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
           </div>
         ) : null}
         <div className="form-actions">
-          <Button variant="subtle" onClick={onCancel} disabled={submitting}>Cancelar</Button>
+          {/* Etapa 6B-2: foco inicial en la opción segura (cancelar no registra nada). */}
+          <Button variant="subtle" onClick={onCancel} disabled={submitting} data-autofocus="">Cancelar</Button>
           <Button variant="primary" className={`face-confirm ${punchType === "OUT" ? "is-exit" : "is-entry"}`} icon={Camera} disabled={!state.valid} loading={submitting} onClick={confirm}>
             {submitting ? "Procesando…" : punchType === "IN" ? "Confirmar ingreso" : "Confirmar salida"}
           </Button>
