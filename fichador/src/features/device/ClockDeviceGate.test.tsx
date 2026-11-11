@@ -70,6 +70,19 @@ describe("ClockDeviceGate — sólo un ClockDevice ACTIVE opera (F6)", () => {
     expect(clockDeviceSession.isActive()).toBe(false);
   });
 
+  it("PENDING: el vencimiento del código usa la hora Argentina en 24 h (P1, Etapa 2)", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("PENDING"));
+    // 18:26 UTC = 15:26 en Argentina: nunca "03:26 p. m."
+    vi.mocked(clockDeviceApiService.refreshPairing).mockResolvedValue({ pairingCode: "K7Q4M2", pairingExpiresAt: "2026-11-06T18:26:00.000Z" });
+    renderGate();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Generar código nuevo" }));
+
+    expect(await screen.findByText("Vence a las 15:26")).toBeInTheDocument();
+    expect(screen.queryByText(/p\. ?m\./)).not.toBeInTheDocument();
+  });
+
   it("REVOKED al abrir: deshabilitado y sólo ofrece configurar como nuevo, con confirmación", async () => {
     const user = userEvent.setup();
     vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
@@ -155,6 +168,59 @@ describe("ClockDeviceGate — sólo un ClockDevice ACTIVE opera (F6)", () => {
     expect(screen.queryByRole("button", { name: /Reconfigurar|Configurar como nuevo/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Reintentar" }));
     await waitFor(() => expect(screen.getByText("Fichador de personal")).toBeInTheDocument());
+    expect(clockDeviceStorage.clear).not.toHaveBeenCalled();
+  });
+});
+
+// Etapa 4 del rediseño: la presentación refleja sólo el estado confirmado.
+describe("ClockDeviceGate — presentación (Etapa 4)", () => {
+  it("mientras reintenta conserva la pantalla de error ocupada: nunca muestra 'Configurar este dispositivo'", async () => {
+    const user = userEvent.setup();
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    let answer: (value: ReturnType<typeof device>) => void = () => undefined;
+    vi.mocked(clockDeviceApiService.status)
+      .mockRejectedValueOnce(new NetworkError())
+      .mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    renderGate();
+
+    await user.click(await screen.findByRole("button", { name: "Reintentar" }));
+
+    expect(screen.getByRole("heading", { name: "No pudimos verificar el dispositivo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Verificando…" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "Configurar este dispositivo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Configurar dispositivo" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Fichador de personal")).not.toBeInTheDocument();
+
+    await act(async () => { answer(device("PENDING")); });
+    expect(await screen.findByRole("heading", { name: "Esperando aprobación" })).toBeInTheDocument();
+  });
+
+  it("el código de vinculación se anuncia deletreado y se muestra en casillas", async () => {
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(undefined);
+    vi.mocked(clockDeviceApiService.register).mockResolvedValue({ identity: IDENTITY, device: { ...device("PENDING"), pairingCode: "ABCD-2345", pairingExpiresAt: "2026-11-06T18:26:00.000Z" } });
+    renderGate();
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Configurar dispositivo" }));
+
+    const pairing = await screen.findByRole("region", { name: "Código de vinculación" });
+    expect(pairing).toHaveTextContent("A B C D, 2 3 4 5");
+    expect(pairing.querySelectorAll(".pairing-char")).toHaveLength(8);
+    expect(pairing.querySelector(".pairing-code")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Se habilita sola cuando RRHH lo apruebe");
+    expect(clockDeviceSession.isActive()).toBe(false);
+  });
+
+  it("la confirmación lleva el foco a 'Cancelar' y, al cancelar, vuelve al botón que la abrió", async () => {
+    const user = userEvent.setup();
+    vi.mocked(clockDeviceStorage.get).mockResolvedValue(IDENTITY);
+    vi.mocked(clockDeviceApiService.status).mockResolvedValue(device("REVOKED"));
+    renderGate();
+
+    await user.click(await screen.findByRole("button", { name: "Configurar como nuevo dispositivo" }));
+    expect(screen.getByRole("button", { name: "Cancelar" })).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Configurar como nuevo dispositivo" })).toHaveFocus();
     expect(clockDeviceStorage.clear).not.toHaveBeenCalled();
   });
 });

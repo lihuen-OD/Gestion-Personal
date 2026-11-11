@@ -1,0 +1,17 @@
+/*
+ * Fichador standalone — hoja de estilos (Etapa 1 del rediseño «Calma y
+ * certeza»). Propia del fichador: no comparte reglas con el admin (desde F6
+ * evoluciona por su cuenta). Orden de cascada: tokens → base → componentes →
+ * pantallas. Sin !important y sin bloqueos de scroll.
+ *
+ * Inter viene self-hosted de @fontsource/inter (importado en main.tsx, pesos
+ * 400–700) y entra al precache del service worker.
+ */
+@import "./tokens.css";
+@import "./base.css";
+@import "./components.css";
+@import "./screens/clock.css";
+@import "./screens/kiosk.css";
+@import "./screens/capture.css";
+@import "./screens/device.css";
+@import "./screens/maintenance.css";

@@ -88,13 +88,15 @@ test("mantener presionado el encabezado 5 s abre el acceso; con el código de RR
   await dialog.getByRole("button", { name: "Ingresar" }).click();
   await expect(page.getByRole("heading", { name: "Modo mantenimiento" })).toBeVisible();
   await expect(page.getByText("Zona Centro · Planta Norte")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Marcar ingreso" })).toHaveCount(0);
+  // El panel reemplaza al fichador: ni la búsqueda ni las acciones de fichada.
+  await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Marcar (ingreso|salida)/ })).toHaveCount(0);
   const open = calls.find((entry) => entry.call === "POST /clock/maintenance/session" && entry.body?.includes("482731"))!;
   expect(open.authorization).toBe(`ClockDevice ${DEVICE_ID}.${DEVICE_SECRET}`);
   expect(open.maintenance).toBeUndefined();
 
   await page.getByRole("button", { name: "Volver al fichador" }).click();
-  await expect(page.getByRole("button", { name: "Marcar ingreso" })).toBeVisible();
+  await expect(page.getByLabel("Buscar por nombre o apellido")).toBeVisible();
   await expect.poll(() => calls.filter((entry) => entry.call === "DELETE /clock/maintenance/session").map((entry) => entry.maintenance)).toEqual([TOKEN]);
   // El token de mantenimiento nunca queda guardado en el navegador.
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }))).not.toContain("t".repeat(43));

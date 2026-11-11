@@ -141,3 +141,63 @@ describe("MaintenanceAccessDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("MaintenanceAccessDialog — presentación (Etapa 5)", () => {
+  it("las casillas sólo muestran el código: el campo etiquetado sigue siendo el único control", async () => {
+    const user = userEvent.setup();
+    const { input } = renderDialog();
+    const cells = document.querySelectorAll(".maintenance-code-cell");
+    expect(cells).toHaveLength(6);
+    cells.forEach((cell) => expect(cell).toHaveAttribute("aria-hidden", "true"));
+    expect(screen.getAllByRole("textbox")).toEqual([input]);
+    expect(input).toHaveAttribute("inputmode", "numeric");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveAttribute("maxlength", "6");
+
+    await user.type(input, "482");
+    expect([...cells].map((cell) => cell.textContent)).toEqual(["4", "8", "2", "", "", ""]);
+    expect(cells[3]).toHaveClass("is-current");
+    await user.type(input, "731");
+    expect([...cells].map((cell) => cell.textContent).join("")).toBe("482731");
+    expect(cells[5]).toHaveClass("is-current");
+  });
+
+  it("un cursor a mitad del código vuelve al final; una selección (para reemplazar) se respeta", () => {
+    const { input } = renderDialog();
+    const field = input as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "4827" } });
+    field.setSelectionRange(1, 1);
+    fireEvent.select(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([4, 4]);
+    field.setSelectionRange(0, 4);
+    fireEvent.select(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 4]);
+  });
+
+  it("verificando: botón ocupado, Cancelar y Cerrar deshabilitados (no se puede salir a mitad)", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+    const { input } = renderDialog();
+    await user.type(input, "482731{Enter}");
+    const busy = await screen.findByRole("button", { name: "Verificando…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cerrar" })).toBeDisabled();
+    expect(input).toBeDisabled();
+  });
+
+  it("tras un código rechazado el foco vuelve al campo, listo para reintentar", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: { code: "CLOCK_MAINTENANCE_CODE_INVALID", message: "x" } })));
+    const { input } = renderDialog();
+    await user.type(input, "111111{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(INVALID_CODE_MESSAGE);
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(input).toBeEnabled();
+    expect(document.querySelector(".maintenance-code")).toHaveClass("is-invalid");
+    await user.type(input, "4");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(document.querySelector(".maintenance-code")).not.toHaveClass("is-invalid");
+  });
+});

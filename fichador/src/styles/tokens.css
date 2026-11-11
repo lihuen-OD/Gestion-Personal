@@ -1,0 +1,178 @@
+/*
+ * Fichador — tokens visuales («Biometric Future», variante oscura aprobada el
+ * 2026-11-11; reemplaza los valores claros de «Calma y certeza»). Mantiene el
+ * ADN de Gestión Personal: Inter, azul de marca #2563EB y colores semánticos,
+ * sobre azul noche con luz cian. Es la única fuente de color, tipografía,
+ * espaciado, radios, elevación, movimiento y safe areas: el resto de las hojas
+ * sólo usa estas variables. Contrastes medidos sobre --color-surface.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Superficies y texto */
+  --color-canvas: #071330;
+  --color-canvas-deep: #030817;
+  --color-surface: #0c1c40;
+  --color-surface-2: #10234d;
+  --color-surface-3: #17305f;
+  --color-ink: #eaf4ff;
+  --color-ink-2: #b9cbe8;
+  --color-ink-3: #8fa5c9; /* texto secundario: ≥ 5:1 sobre las superficies */
+  --color-ink-4: #5d7196; /* sólo deshabilitado o decorativo */
+  --color-line: rgba(130, 190, 255, 0.16);
+  --color-line-strong: rgba(130, 190, 255, 0.3);
+  --color-line-input: #6582b8; /* borde de campos: ≥ 3:1 (WCAG 1.4.11) */
+
+  /* Acción. --color-accent es el acento de texto, bordes, foco e íconos
+     (cian, legible sobre oscuro); los rellenos con texto blanco usan
+     --color-accent-fill (azul de marca, 5,2:1 con blanco). */
+  --color-accent: #67e8f9;
+  --color-accent-fill: #2563eb;
+  --color-accent-press: #1d4ed8;
+  --color-accent-soft: rgba(34, 211, 238, 0.13);
+  --color-accent-line: rgba(34, 211, 238, 0.42);
+  --color-accent-ink: #67e8f9;
+  /* Ingreso: cian con texto oscuro (≥ 10:1). Salida: índigo con texto blanco (6,3:1). */
+  --color-entry: #22d3ee;
+  --color-entry-press: #06b6d4;
+  --color-on-entry: #03111f;
+  --color-exit: #4f46e5;
+  --color-exit-press: #4338ca;
+
+  /* Semánticos (texto claro sobre oscuro; "strong" para rellenos y puntos) */
+  --color-ok: #34d399;
+  --color-ok-2: #6ee7b7;
+  --color-ok-strong: #10b981;
+  --color-ok-soft: rgba(52, 211, 153, 0.12);
+  --color-ok-line: rgba(52, 211, 153, 0.45);
+  --color-warn: #fbbf24;
+  --color-warn-strong: #f59e0b;
+  --color-warn-soft: rgba(251, 191, 36, 0.1);
+  --color-warn-line: rgba(251, 191, 36, 0.45);
+  --color-danger: #fca5a5;
+  --color-danger-strong: #dc2626;
+  --color-danger-press: #b91c1c;
+  --color-danger-soft: rgba(248, 113, 113, 0.12);
+  --color-danger-line: rgba(248, 113, 113, 0.5);
+  --color-scrim: rgba(2, 6, 18, 0.72);
+
+  /* Luz cian (firma visual) y vidrio */
+  --color-cyan: #22d3ee;
+  --color-cyan-2: #67e8f9;
+  --color-cyan-3: #a5f3fc;
+  --color-cyan-glow: rgba(34, 211, 238, 0.45);
+  --color-blue-2: #3b82f6;
+  --glass: rgba(12, 28, 64, 0.72);
+  --glass-strong: rgba(14, 33, 74, 0.9);
+  --glass-hover: rgba(20, 44, 94, 0.92);
+  --glass-blur: blur(18px) saturate(140%);
+  --glow-cyan: 0 0 0 1px var(--color-accent-line), 0 0 28px -6px var(--color-cyan-glow);
+
+  /* Visor de la captura facial */
+  --color-viewfinder: #040a1a;
+  --color-viewfinder-ink: #c7d7f0; /* ≥ 10:1 sobre el visor */
+  --color-viewfinder-veil: rgba(2, 6, 18, 0.55); /* fuera de la guía */
+  --color-viewfinder-chip: rgba(3, 10, 28, 0.78); /* texto claro encima: ≥ 5:1 aun sobre video blanco */
+  --color-guide: rgba(234, 244, 255, 0.78);
+  --color-guide-warn: #fbbf24;
+  --color-guide-ok: #6ee7b7;
+  --color-guide-ok-glow: rgba(52, 211, 153, 0.3);
+
+  /* Tipografía */
+  --weight-light: 300;
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-md: 17px;
+  --text-lg: 19px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --tracking-tight: -0.02em;
+
+  /* Espaciado (base 4) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+
+  /* Radios */
+  --radius-sm: 10px;
+  --radius-control: 14px;
+  --radius-card: 18px;
+  --radius-sheet: 28px;
+  --radius-pill: 999px;
+
+  /* Elevación */
+  --shadow-1: 0 24px 64px -28px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-2: 0 32px 90px -24px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* Controles: ningún objetivo táctil por debajo de 44 px */
+  --target-min: 44px;
+  --control-h: 48px;
+  --field-h: 56px;
+  --action-h: 60px;
+
+  /* Foco */
+  --focus-ring: 3px solid var(--color-accent);
+  --focus-offset: 2px;
+
+  /* Movimiento: --motion = 0 con movimiento reducido */
+  --motion: 1;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: calc(var(--motion) * 120ms);
+  --dur-base: calc(var(--motion) * 200ms);
+
+  /* Safe areas (iPhone/iPad instalados con viewport-fit=cover) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Margen de página: crece con el tamaño de pantalla */
+  --page-pad: var(--space-4);
+}
+
+@media (min-width: 600px) {
+  :root {
+    --field-h: 60px;
+    --action-h: 68px;
+    --page-pad: var(--space-6);
+  }
+}
+
+/* Teléfono horizontal y alturas cortas: controles algo más compactos. */
+@media (orientation: landscape) and (max-height: 540px) {
+  :root {
+    --field-h: 52px;
+    --action-h: 56px;
+    --page-pad: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion: 0;
+  }
+}
+
+/* Bajo consumo (data-power="low", ver utils/powerMode.ts): superficies
+   opacas, sin desenfoques ni brillos. Las animaciones decorativas se apagan
+   en cada hoja con el mismo selector. */
+:root[data-power="low"] {
+  --glass: #0c1c40;
+  --glass-strong: #0e2148;
+  --glass-hover: #142c5e;
+  --glass-blur: none;
+  --glow-cyan: 0 0 0 1px var(--color-accent-line);
+  --shadow-1: none;
+  --shadow-2: 0 0 0 1px var(--color-line-strong);
+}

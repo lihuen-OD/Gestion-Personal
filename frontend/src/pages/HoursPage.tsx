@@ -30,12 +30,13 @@ import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
+import { dayNoveltyColorClass } from "../utils/noveltyColor";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
 import { ManualHoursConflictsPanel } from "../components/hours/ManualHoursConflictsPanel";
 import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
-import { formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
+import { formatCompactDurationMinutes, formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
 import { formatTimeEntryObservation } from "../utils/userFacingText";
 import { statusTone } from "../utils/status";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
@@ -136,23 +137,32 @@ function DayCell({
   const uncountedMinutes = accounting?.dayOffUncountedMinutes ?? 0;
   const reviewPending = manualHoursConflict?.status === "PENDIENTE";
   const cellLabel = dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`;
+  const noveltyDescription = day?.novelty ? `Novedad: ${day.novelty.label}` : undefined;
+  const noveltyTone = day?.novelty ? dayNoveltyColorClass(day.novelty) : undefined;
+  const noveltyHours = accounting ? countedMinutes === 0 ? "0 h" : formatCompactDurationMinutes(countedMinutes) : "-";
+  const reviewDescription = reviewPending ? "Revisión pendiente: fichada sobre horas cargadas manualmente" : undefined;
   return (
-    <td className={dayOff ? "day-cell is-day-off" : "day-cell"}>
+    <td className={dayOff ? "day-cell is-day-off" : day?.novelty ? "day-cell is-novelty" : "day-cell"}>
       <button
         ref={triggerRef}
         type="button"
         className="day-cell-trigger"
         onClick={() => setOpen((current) => !current)}
-        aria-label={reviewPending ? `${cellLabel}. Revisión pendiente: fichada sobre horas cargadas manualmente` : cellLabel}
-        title={dayOff ? dayOffDescription(dayOff, countedMinutes) : reviewPending ? "Revisión pendiente: fichada sobre horas cargadas manualmente" : undefined}
+        aria-label={[cellLabel, noveltyDescription, reviewDescription].filter(Boolean).join(". ")}
+        title={[dayOff ? dayOffDescription(dayOff, countedMinutes) : undefined, noveltyDescription, reviewDescription].filter(Boolean).join(" · ") || undefined}
       >
         {dayOff ? (
           // "Franco · 0 h" (o lo reconocido): nunca "-", que es "sin horas".
-          <DayOffMark countedMinutes={countedMinutes} />
+          // Una novedad del mismo día queda como marca secundaria, no se oculta.
+          <DayOffMark countedMinutes={countedMinutes} noveltyTone={noveltyTone} />
+        ) : day?.novelty ? (
+          <span className={`day-cell-novelty-mark cell-novelty-pill ${noveltyTone}`}>
+            <span className="day-cell-novelty-label">Novedad</span>
+            <span className="day-cell-novelty-hours">{noveltyHours}</span>
+          </span>
         ) : (
-          <span className={day?.novelty ? "day-cell-value has-novelty" : "day-cell-value"}>{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
+          <span className="day-cell-value">{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
         )}
-        {day?.novelty ? <span className="alert-dot purple" /> : null}
         {accounting && accounting.multiplier > 1 ? <span className="alert-dot orange" /> : null}
         {reviewPending ? <span className="alert-dot review" /> : null}
       </button>

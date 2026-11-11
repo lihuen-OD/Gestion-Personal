@@ -1,0 +1,1781 @@
+/*
+ * Fichador — pantalla principal («Biometric Future», variante oscura aprobada
+ * el 2026-11-11). Referencia visual: el prototipo aprobado en
+ * ~/claude-design-references/Gestion-Personal/fichador-biometric/ (copia local
+ * fuera del repo). Hora → persona → acción.
+ *
+ * Composición (data-step y data-searching en <main class="kiosk">, sólo
+ * presentación; los decide TimeClockPage):
+ * - Paso 1: el reloj con anillo luminoso es protagonista y la búsqueda queda
+ *   debajo, centradas. Con una búsqueda escrita el anillo se compacta para
+ *   dejar lugar a los resultados.
+ * - Pasos 2–3: el reloj pasa a la barra superior y la persona ocupa una
+ *   tarjeta: identidad y jornada a la izquierda, la acción a la derecha (una
+ *   columna en vertical o en pantallas angostas).
+ * - Teléfono horizontal (alto ≤ 540 px): dos columnas compactas.
+ * Las capas ambientales son decorativas y se apagan con movimiento reducido o
+ * bajo consumo (`:root[data-power="low"]`).
+ */
+
+.kiosk {
+  --k-gutter: clamp(16px, 3.2vw, 40px);
+  --k-ring: clamp(200px, min(42vh, 72vw), 440px);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(14px, 2.6vh, 32px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding:
+    calc(var(--safe-top) + 10px)
+    calc(var(--safe-right) + var(--k-gutter))
+    calc(var(--safe-bottom) + 16px)
+    calc(var(--safe-left) + var(--k-gutter));
+}
+
+/* ---------- Capas ambientales (decorativas) ---------- */
+.kiosk-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Grilla tenue, desvanecida hacia los bordes. */
+.kiosk-backdrop::after {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(120, 180, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 180, 255, 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  content: "";
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 0%, transparent 78%);
+}
+
+.kiosk-backdrop::before {
+  position: absolute;
+  top: -30vmax;
+  left: -28vmax;
+  width: 70vmax;
+  height: 70vmax;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.14) 0%, rgba(34, 211, 238, 0) 62%);
+  content: "";
+  animation: kiosk-drift 26s ease-in-out infinite alternate;
+}
+
+.kiosk-floor {
+  position: absolute;
+  right: -20%;
+  bottom: 0;
+  left: -20%;
+  height: 36vh;
+  overflow: hidden;
+  perspective: 420px;
+  perspective-origin: 50% 0%;
+  opacity: 0.5;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 70%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 70%);
+}
+
+/* El piso se desplaza con transform (compositor), no con background-position. */
+.kiosk-floor::before {
+  position: absolute;
+  inset: -60% 0 0;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.22) 1px, transparent 1px);
+  background-size: 64px 64px;
+  content: "";
+  transform: rotateX(70deg);
+  transform-origin: 50% 100%;
+  animation: kiosk-floor 18s linear infinite;
+}
+
+/* ---------- Barra superior: marca y conexión ---------- */
+.kiosk-top {
+  order: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 52px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.brand-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #12306a, #0a1a3d);
+  box-shadow: inset 0 0 0 1px var(--color-accent-line), 0 0 24px -6px var(--color-cyan-glow);
+  color: var(--color-cyan-2);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.brand-name {
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+}
+
+.brand-org {
+  color: var(--color-ink-3);
+  font-size: var(--text-xs);
+}
+
+.kiosk-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.kiosk-pill.is-offline {
+  border-color: var(--color-danger-line);
+  background: var(--color-surface);
+  color: var(--color-danger);
+  font-weight: var(--weight-semibold);
+}
+
+.kiosk-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-ok);
+  animation: kiosk-pulse-dot 2.4s ease-out infinite;
+}
+
+/* ---------- Reloj con anillo ---------- */
+/* Bloque de la hora: también recibe la presión larga del mantenimiento. */
+.kiosk-clock {
+  order: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+.kiosk-dial {
+  position: relative;
+  width: var(--k-ring);
+  height: var(--k-ring);
+  transition: width calc(var(--motion) * 640ms) var(--ease), height calc(var(--motion) * 640ms) var(--ease);
+}
+
+.kiosk-dial-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.kiosk-dial-outer {
+  fill: none;
+  stroke: var(--color-line);
+  stroke-width: 0.6;
+}
+
+.kiosk-dial-ticks line {
+  stroke: rgba(140, 200, 255, 0.22);
+  stroke-width: 0.5;
+}
+
+.kiosk-dial-ticks line.is-major {
+  stroke: var(--color-cyan-2);
+  stroke-width: 1;
+}
+
+.kiosk-dial-track {
+  fill: none;
+  stroke: rgba(120, 180, 255, 0.08);
+  stroke-width: 1.6;
+}
+
+.kiosk-dial-seconds {
+  fill: none;
+  stroke: var(--color-cyan);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.8));
+  transition: stroke-dasharray calc(var(--motion) * 400ms) var(--ease);
+}
+
+.kiosk-dial-spin {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  animation: fichador-spin 48s linear infinite;
+}
+
+.kiosk-dial-spin circle {
+  fill: none;
+}
+
+.kiosk-dial-spin.is-a circle {
+  stroke: rgba(103, 232, 249, 0.7);
+  stroke-width: 1.2;
+  stroke-dasharray: 16 84;
+  stroke-linecap: round;
+}
+
+.kiosk-dial-spin.is-b {
+  animation-duration: 90s;
+  animation-direction: reverse;
+}
+
+.kiosk-dial-spin.is-b circle {
+  stroke: rgba(59, 130, 246, 0.5);
+  stroke-width: 2.4;
+  stroke-dasharray: 0.6 2.4;
+}
+
+.kiosk-dial-dot {
+  fill: var(--color-cyan-2);
+}
+
+.kiosk-dial-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.kiosk-time {
+  display: flex;
+  align-items: baseline;
+  color: var(--color-ink);
+  font-size: calc(var(--k-ring) * 0.235);
+  font-weight: var(--weight-light);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-shadow: 0 0 32px rgba(34, 211, 238, 0.35);
+}
+
+/* Segundos: secundarios, en cian (≥ 4,5:1 sobre el fondo). */
+.kiosk-time-seconds {
+  margin-left: 0.12em;
+  color: var(--color-cyan-2);
+  font-size: 0.3em;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0;
+  text-shadow: none;
+}
+
+.kiosk-dial-caption {
+  margin-top: calc(var(--k-ring) * 0.035);
+  color: var(--color-ink-3);
+  font-size: clamp(11px, calc(var(--k-ring) * 0.03), 13px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.kiosk-date {
+  margin-top: clamp(8px, 1.6vh, 16px);
+  color: var(--color-ink-2);
+  font-size: clamp(17px, 2vw, 22px);
+  text-align: center;
+}
+
+/* ---------- Pasos ---------- */
+.kiosk-steps {
+  order: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 3vw, 40px);
+  width: min(100%, 900px);
+  margin: 0 auto auto;
+  padding: 0;
+  list-style: none;
+}
+
+.kiosk-steps li {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  transition: color var(--dur-base);
+}
+
+.kiosk-step-label {
+  min-width: 0;
+}
+
+.kiosk-step-number {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 50%;
+  background: var(--color-canvas);
+  color: var(--color-ink-3);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.kiosk-steps li.is-current {
+  color: var(--color-ink);
+  font-weight: var(--weight-medium);
+}
+
+.kiosk-steps li.is-current .kiosk-step-number {
+  border-color: var(--color-cyan);
+  background: var(--color-cyan);
+  box-shadow: 0 0 20px -2px var(--color-cyan-glow);
+  color: var(--color-on-entry);
+}
+
+.kiosk-steps li.is-done .kiosk-step-number {
+  border-color: var(--color-ok-line);
+  background: #0b2a33;
+  color: var(--color-ok);
+}
+
+/* ---------- Panel de interacción ---------- */
+.kiosk-panel {
+  order: 2;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 680px);
+}
+
+/* Destino neutro del foco al cerrar la cámara (Etapa 6B-2): no es un control. */
+.kiosk-panel:focus {
+  outline: none;
+}
+
+.kiosk-panel-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.kiosk-intro {
+  text-align: center;
+}
+
+.kiosk-intro h2 {
+  font-size: clamp(26px, 3.4vw, 36px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.kiosk-intro p {
+  margin-top: 6px;
+  color: var(--color-ink-3);
+  font-size: var(--text-md);
+}
+
+/* Búsqueda */
+.kiosk-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: clamp(60px, 7.4vh, 70px);
+  border: 1px solid var(--color-line-input);
+  border-radius: 20px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-1);
+  color: var(--color-cyan-2);
+  transition: border-color var(--dur-fast), box-shadow var(--dur-base);
+}
+
+.kiosk-search:focus-within {
+  border-color: var(--color-cyan);
+  box-shadow: var(--shadow-1), 0 0 0 4px rgba(34, 211, 238, 0.16), 0 0 40px -10px var(--color-cyan-glow);
+}
+
+.kiosk-search > svg {
+  margin-left: 20px;
+}
+
+.kiosk-search input {
+  flex: 1;
+  align-self: stretch;
+  min-height: 0;
+  padding: 0 var(--space-2) 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: clamp(18px, 1.9vw, 22px);
+  font-weight: var(--weight-regular);
+}
+
+.kiosk-search input:focus,
+.kiosk-search input:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+.kiosk-search input::placeholder {
+  color: var(--color-ink-3);
+}
+
+.kiosk-search-trail {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 60px;
+  height: 100%;
+  color: var(--color-ink-2);
+}
+
+.kiosk-search-trail .icon-button {
+  color: var(--color-ink-2);
+}
+
+.kiosk-search-results:empty {
+  display: none;
+}
+
+.kiosk-helper {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.kiosk-results {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kiosk-results li {
+  animation: kiosk-rise calc(var(--motion) * 420ms) var(--ease) both;
+}
+
+.kiosk-results li:nth-child(2) { animation-delay: calc(var(--motion) * 45ms); }
+.kiosk-results li:nth-child(3) { animation-delay: calc(var(--motion) * 90ms); }
+.kiosk-results li:nth-child(4) { animation-delay: calc(var(--motion) * 135ms); }
+.kiosk-results li:nth-child(n + 5) { animation-delay: calc(var(--motion) * 180ms); }
+
+.kiosk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  color: var(--color-ink-3);
+  text-align: left;
+  transition: border-color var(--dur-fast), background-color var(--dur-fast), box-shadow var(--dur-base), transform var(--dur-fast);
+}
+
+.kiosk-row:active:not(.is-skeleton) {
+  transform: scale(0.99);
+}
+
+.kiosk-row:focus-visible {
+  outline-offset: 2px;
+}
+
+.kiosk-row:focus-visible,
+.kiosk-row:not(.is-skeleton):hover {
+  border-color: var(--color-accent-line);
+  background: var(--glass-hover);
+  box-shadow: 0 0 30px -12px var(--color-cyan-glow);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-row > svg {
+  transition: transform var(--dur-fast);
+}
+
+.kiosk-row:not(.is-skeleton):hover > svg,
+.kiosk-row:focus-visible > svg {
+  transform: translateX(3px);
+}
+
+.kiosk-row-text {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kiosk-row-name {
+  color: var(--color-ink);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.kiosk-row-name mark {
+  background: none;
+  color: var(--color-cyan-2);
+}
+
+.kiosk-row-meta {
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.kiosk-skeleton-name {
+  width: 58%;
+  height: 14px;
+}
+
+.kiosk-skeleton-meta {
+  width: 38%;
+  height: 12px;
+  margin-top: 8px;
+}
+
+.kiosk-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #1e4fbf 0%, #0c1f4c 75%);
+  box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  color: var(--color-cyan-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+.kiosk-row.is-skeleton .kiosk-avatar {
+  box-shadow: none;
+}
+
+.kiosk-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-6) var(--space-5);
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: var(--glass-strong);
+  text-align: center;
+  animation: kiosk-rise calc(var(--motion) * 220ms) var(--ease) both;
+}
+
+.kiosk-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-empty strong {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.kiosk-empty p {
+  max-width: 360px;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+/* ---------- Persona y jornada (pasos 2–3) ---------- */
+.kiosk-person {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2vw, 24px);
+  animation: kiosk-rise calc(var(--motion) * 320ms) var(--ease) both;
+}
+
+.kiosk-orb {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: clamp(72px, 8vw, 100px);
+  aspect-ratio: 1;
+}
+
+.kiosk-orb .kiosk-avatar.is-large {
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 35% 30%, #1f56d1 0%, #0b1f4a 72%);
+  box-shadow: inset 0 0 0 1px var(--color-accent-line), 0 0 36px -8px var(--color-cyan-glow);
+  color: #fff;
+  font-size: clamp(24px, 2.6vw, 32px);
+}
+
+.kiosk-orb-ring {
+  position: absolute;
+  inset: -9px;
+  width: calc(100% + 18px);
+  height: calc(100% + 18px);
+  animation: fichador-spin 14s linear infinite;
+}
+
+.kiosk-orb-ring circle {
+  fill: none;
+  stroke: var(--color-line-strong);
+  stroke-width: 0.8;
+}
+
+.kiosk-orb-ring .kiosk-orb-arc {
+  stroke: var(--color-cyan-2);
+  stroke-width: 1.8;
+  stroke-dasharray: 20 80;
+  stroke-linecap: round;
+}
+
+.kiosk-person-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.kiosk-eyebrow {
+  margin-bottom: 6px;
+  color: var(--color-cyan-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.kiosk-person-text h2 {
+  font-size: clamp(24px, 3vw, 40px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.kiosk-person-text p:not(.kiosk-eyebrow) {
+  margin-top: 6px;
+  color: var(--color-ink-3);
+  font-size: var(--text-md);
+}
+
+.kiosk-change {
+  align-self: flex-start;
+  min-height: var(--target-min);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-accent-ink);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+  transition: background-color var(--dur-fast);
+}
+
+/* Deshabilitado sólo con una fichada en curso (queda detrás del diálogo). */
+.kiosk-change:disabled {
+  color: var(--color-ink-3);
+}
+
+@media (hover: hover) {
+  .kiosk-change:hover:not(:disabled) {
+    background: var(--color-accent-soft);
+  }
+}
+
+.kiosk-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 14px var(--space-3) 14px 18px;
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: rgba(6, 16, 40, 0.72);
+  animation: kiosk-rise calc(var(--motion) * 360ms) var(--ease) both;
+}
+
+.kiosk-status-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.kiosk-status-text {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+  min-width: 0;
+}
+
+.kiosk-status-text > strong {
+  color: var(--color-ink);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.kiosk-status-text > span {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.st-none .kiosk-status-icon {
+  background: rgba(130, 190, 255, 0.08);
+  color: var(--color-ink-2);
+}
+
+.kiosk-status.st-open {
+  border-color: var(--color-accent-line);
+}
+
+.st-open .kiosk-status-icon {
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-status.st-late {
+  border-color: var(--color-warn-line);
+}
+
+.st-late .kiosk-status-icon {
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
+}
+
+/* ---------- Dock: anticipo del escaneo, avisos y acción ---------- */
+.kiosk-dock {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+}
+
+.kiosk-dock > * {
+  justify-self: stretch;
+}
+
+.kiosk-lens {
+  position: relative;
+  display: grid;
+  justify-self: center;
+  place-items: center;
+  width: clamp(92px, 10vw, 128px);
+  aspect-ratio: 1;
+  margin-bottom: var(--space-2);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.14) 0%, rgba(34, 211, 238, 0) 70%);
+  box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-lens::before {
+  position: absolute;
+  inset: -10px;
+  border: 1px dashed rgba(103, 232, 249, 0.4);
+  border-radius: 50%;
+  content: "";
+  animation: fichador-spin 26s linear infinite;
+}
+
+.kiosk-lens-sweep {
+  position: absolute;
+  inset: 14%;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.kiosk-lens-sweep::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 30%;
+  border-bottom: 1px solid var(--color-cyan-3);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0), rgba(103, 232, 249, 0.45));
+  content: "";
+  animation: kiosk-lens-sweep 2.8s ease-in-out infinite;
+}
+
+.kiosk-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 14px var(--space-4);
+  border: 1px solid;
+  border-radius: 18px;
+  background-color: var(--color-surface);
+  animation: kiosk-rise calc(var(--motion) * 220ms) var(--ease) both;
+}
+
+.kiosk-notice > svg {
+  margin-top: 1px;
+}
+
+.kiosk-notice strong {
+  display: block;
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.35;
+}
+
+.kiosk-notice p {
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.kiosk-notice strong + p {
+  margin-top: 2px;
+  color: var(--color-ink-2);
+}
+
+.kiosk-notice.tone-neutral {
+  border-color: var(--color-line-strong);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-notice.tone-warn {
+  border-color: var(--color-warn-line);
+  background-image: linear-gradient(var(--color-warn-soft), var(--color-warn-soft));
+  color: var(--color-warn);
+}
+
+.kiosk-notice.tone-danger {
+  border-color: var(--color-danger-line);
+  background-image: linear-gradient(var(--color-danger-soft), var(--color-danger-soft));
+  color: var(--color-danger);
+}
+
+.kiosk-ring {
+  flex: none;
+  margin-top: 1px;
+  transform: rotate(-90deg);
+}
+
+.kiosk-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.kiosk-ring-track {
+  stroke: var(--color-warn-line);
+}
+
+.kiosk-ring-bar {
+  stroke: var(--color-warn-strong);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.25s linear;
+}
+
+/* La acción: ingreso cian (texto oscuro), salida índigo (texto blanco). Con
+   texto agrandado o espaciado (WCAG 1.4.12) pasa a dos líneas en vez de
+   ensanchar el botón fuera de su columna (F6-11). */
+.button.kiosk-action {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  width: 100%;
+  min-height: var(--action-h);
+  gap: var(--space-3);
+  padding: 12px var(--space-6);
+  border: 1px solid transparent;
+  border-radius: 20px;
+  font-size: clamp(19px, 1.9vw, 22px);
+  letter-spacing: -0.01em;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.button.kiosk-action svg {
+  width: 26px;
+  height: 26px;
+}
+
+.button.kiosk-action.is-entry {
+  background-color: var(--color-entry);
+  background-image: linear-gradient(135deg, #22d3ee 0%, #67e8f9 55%, #38bdf8 100%);
+  box-shadow: 0 14px 44px -14px rgba(34, 211, 238, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  color: var(--color-on-entry);
+}
+
+.button.kiosk-action.is-exit {
+  border-color: rgba(165, 180, 252, 0.45);
+  background-color: var(--color-accent-fill);
+  background-image: linear-gradient(135deg, var(--color-accent-fill) 0%, var(--color-exit) 100%);
+  box-shadow: 0 14px 44px -14px rgba(79, 70, 229, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+/* Brillo que recorre la acción (decorativo). */
+.button.kiosk-action::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.28) 50%, transparent 65%);
+  content: "";
+  transform: translateX(-100%);
+  animation: kiosk-sheen 4.8s var(--ease) 1.2s infinite;
+}
+
+.button.kiosk-action:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.button.kiosk-action:disabled {
+  border-color: var(--color-line);
+  background-color: var(--color-surface-3);
+  background-image: none;
+  box-shadow: none;
+  color: var(--color-ink-3);
+}
+
+.button.kiosk-action:disabled::after {
+  content: none;
+}
+
+@media (hover: hover) {
+  .button.kiosk-action.is-entry:hover:not(:disabled) {
+    background-color: var(--color-entry-press);
+    background-image: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);
+  }
+  .button.kiosk-action.is-exit:hover:not(:disabled) {
+    background-color: var(--color-accent-press);
+    background-image: linear-gradient(135deg, var(--color-accent-press) 0%, var(--color-exit-press) 100%);
+  }
+}
+
+.kiosk-caption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.kiosk-spinner {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  color: var(--color-ink-3);
+  animation: fichador-spin 0.8s linear infinite;
+}
+
+.kiosk-spinner.is-small {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+/* Carga de la cámara (chunk diferido) */
+.kiosk-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: var(--color-scrim);
+}
+
+.kiosk-loading .empty {
+  min-height: 0;
+  padding: var(--space-6) var(--space-7);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-2);
+}
+
+.kiosk-loading .skeleton-bar {
+  width: 120px;
+  height: 12px;
+}
+
+/* ---------- Búsqueda en curso: el reloj se compacta ---------- */
+.kiosk[data-searching] .kiosk-clock {
+  margin-top: 0;
+}
+
+.kiosk[data-searching] {
+  --k-ring: clamp(132px, min(19vh, 36vw), 196px);
+}
+
+.kiosk[data-searching] .kiosk-dial-caption {
+  display: none;
+}
+
+.kiosk[data-searching] .kiosk-date {
+  margin-top: 6px;
+  font-size: var(--text-md);
+}
+
+@media (max-height: 860px) {
+  .kiosk[data-searching] .kiosk-steps {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .kiosk[data-searching] .kiosk-intro {
+    display: none;
+  }
+}
+
+/* ---------- Pasos 2–3: reloj en la barra, tarjeta de la persona ---------- */
+.kiosk:not([data-step="1"]) .kiosk-clock {
+  position: absolute;
+  top: calc(var(--safe-top) + 10px);
+  left: 50%;
+  justify-content: center;
+  min-height: 52px;
+  margin: 0;
+  transform: translateX(-50%);
+}
+
+.kiosk:not([data-step="1"]) .kiosk-dial {
+  width: auto;
+  height: auto;
+}
+
+.kiosk:not([data-step="1"]) .kiosk-dial-svg,
+.kiosk:not([data-step="1"]) .kiosk-dial-spin,
+.kiosk:not([data-step="1"]) .kiosk-dial-caption,
+.kiosk:not([data-step="1"]) .kiosk-time-seconds,
+.kiosk:not([data-step="1"]) .kiosk-date {
+  display: none;
+}
+
+.kiosk:not([data-step="1"]) .kiosk-dial-face {
+  position: static;
+}
+
+.kiosk:not([data-step="1"]) .kiosk-time {
+  color: var(--color-ink-2);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  text-shadow: none;
+}
+
+.kiosk:not([data-step="1"]) .kiosk-panel {
+  width: min(100%, 1000px);
+  margin-top: auto;
+}
+
+.kiosk:not([data-step="1"]) .kiosk-panel-inner {
+  position: relative;
+  display: grid;
+  grid-template-areas:
+    "person dock"
+    "status dock";
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  grid-template-rows: auto 1fr;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 28px;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-1);
+  animation: kiosk-rise calc(var(--motion) * 520ms) var(--ease) both;
+}
+
+/* Filo de luz sobre la tarjeta. */
+.kiosk:not([data-step="1"]) .kiosk-panel-inner::before {
+  position: absolute;
+  top: 0;
+  right: 10%;
+  left: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-cyan-2), transparent);
+  content: "";
+}
+
+.kiosk:not([data-step="1"]) .kiosk-person {
+  grid-area: person;
+  align-self: end;
+  padding: clamp(20px, 3vw, 40px) clamp(20px, 3vw, 40px) var(--space-6);
+}
+
+.kiosk:not([data-step="1"]) .kiosk-status {
+  grid-area: status;
+  align-self: start;
+  margin: 0 clamp(20px, 3vw, 40px) clamp(20px, 3vw, 40px);
+}
+
+.kiosk:not([data-step="1"]) .kiosk-dock {
+  grid-area: dock;
+  align-content: center;
+  padding: clamp(20px, 3vw, 40px);
+  border-left: 1px solid var(--color-line);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.06) 0%, rgba(34, 211, 238, 0) 70%);
+}
+
+.kiosk:not([data-step="1"]) .kiosk-steps {
+  margin-top: 0;
+}
+
+/* Una columna: vertical o pantallas angostas. */
+@media (max-width: 860px), (orientation: portrait) {
+  .kiosk:not([data-step="1"]) .kiosk-panel {
+    width: min(100%, 640px);
+  }
+  .kiosk:not([data-step="1"]) .kiosk-panel-inner {
+    grid-template-areas:
+      "person"
+      "status"
+      "dock";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-dock {
+    border-top: 1px solid var(--color-line);
+    border-left: 0;
+  }
+  .kiosk-lens {
+    display: none;
+  }
+}
+
+/* ---------- Confirmación ---------- */
+.kiosk-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding:
+    calc(var(--safe-top) + var(--space-7))
+    calc(var(--safe-right) + var(--space-6))
+    calc(var(--safe-bottom) + var(--space-6))
+    calc(var(--safe-left) + var(--space-6));
+  text-align: center;
+  animation: kiosk-fade calc(var(--motion) * 200ms) both;
+}
+
+.kiosk-result-check {
+  position: relative;
+  display: block;
+  flex: none;
+  width: clamp(112px, 17vh, 168px);
+  aspect-ratio: 1;
+  margin-top: auto;
+}
+
+.kiosk-emblem {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.kiosk-emblem-orbit {
+  fill: none;
+  stroke: var(--color-ok-line);
+  stroke-width: 0.8;
+  stroke-dasharray: 2 5;
+  transform-origin: 80px 80px;
+  animation: fichador-spin 40s linear infinite;
+}
+
+.kiosk-emblem-ring {
+  fill: none;
+  stroke: var(--color-ok);
+  stroke-width: 1.4;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transform: rotate(-90deg);
+  transform-origin: 80px 80px;
+  animation: kiosk-draw calc(var(--motion) * 900ms + 0.01ms) var(--ease) forwards;
+}
+
+.kiosk-emblem-core {
+  fill: rgba(52, 211, 153, 0.14);
+  stroke: var(--color-ok-2);
+  stroke-width: 1.4;
+}
+
+.kiosk-emblem-check {
+  fill: none;
+  stroke: var(--color-ok-2);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.7));
+  animation: kiosk-draw calc(var(--motion) * 600ms + 0.01ms) var(--ease) calc(var(--motion) * 350ms) forwards;
+}
+
+.kiosk-emblem-pulse {
+  position: absolute;
+  inset: 19%;
+  border-radius: 50%;
+  animation: kiosk-ripple 1.8s ease-out 2;
+}
+
+.kiosk-result-title {
+  margin-top: clamp(16px, 3vh, 28px);
+  color: var(--color-ok-2);
+  font-size: clamp(28px, 3.8vw, 44px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  animation: kiosk-rise calc(var(--motion) * 260ms) var(--ease) calc(var(--motion) * 120ms) both;
+}
+
+.kiosk-result-name {
+  max-width: 680px;
+  margin-top: 8px;
+  color: var(--color-ink);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+  animation: kiosk-rise calc(var(--motion) * 260ms) var(--ease) calc(var(--motion) * 160ms) both;
+}
+
+.kiosk-result-time {
+  margin-top: clamp(8px, 1.6vh, 16px);
+  color: var(--color-ink);
+  font-size: clamp(64px, 12vh, 132px);
+  font-weight: var(--weight-light);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-shadow: 0 0 36px rgba(34, 211, 238, 0.35);
+  animation: kiosk-rise calc(var(--motion) * 300ms) var(--ease) calc(var(--motion) * 200ms) both;
+}
+
+.kiosk-result-date {
+  margin-top: 8px;
+  color: var(--color-ink-2);
+  font-size: var(--text-lg);
+  animation: kiosk-rise calc(var(--motion) * 300ms) var(--ease) calc(var(--motion) * 240ms) both;
+}
+
+.kiosk-result-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: clamp(14px, 2.4vh, 24px);
+  padding: 8px 16px 8px 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background: var(--glass-strong);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  animation: kiosk-rise calc(var(--motion) * 300ms) var(--ease) calc(var(--motion) * 280ms) both;
+}
+
+.kiosk-result-evidence-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #0b2a44;
+  box-shadow: inset 0 0 0 1px var(--color-accent-line);
+  color: var(--color-cyan-2);
+}
+
+.kiosk-result-evidence-ok {
+  color: var(--color-ok);
+}
+
+.kiosk-result-note {
+  max-width: 520px;
+  margin-top: var(--space-6);
+  text-align: left;
+}
+
+.kiosk-result-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: var(--space-7);
+  color: var(--color-ink-3);
+  font-size: 14px;
+}
+
+/* Misma duración que SUCCESS_RESET_MS (TimeClockPage); lo controla
+   features/clock/PunchResult.timing.test.mjs. */
+.kiosk-result-bar {
+  overflow: hidden;
+  width: 200px;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(130, 190, 255, 0.12);
+}
+
+.kiosk-result-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-cyan), var(--color-ok));
+  transform-origin: left;
+  animation: kiosk-fill 3.5s linear both;
+}
+
+@keyframes kiosk-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes kiosk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes kiosk-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes kiosk-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes kiosk-drift {
+  to {
+    transform: translate(8vmax, 6vmax) scale(1.08);
+  }
+}
+
+@keyframes kiosk-floor {
+  from {
+    transform: rotateX(70deg) translateY(0);
+  }
+  to {
+    transform: rotateX(70deg) translateY(64px);
+  }
+}
+
+@keyframes kiosk-pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(52, 211, 153, 0);
+  }
+}
+
+@keyframes kiosk-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  40%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes kiosk-lens-sweep {
+  0%,
+  100% {
+    transform: translateY(-40%);
+  }
+  50% {
+    transform: translateY(260%);
+  }
+}
+
+@keyframes kiosk-ripple {
+  from {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45);
+  }
+  to {
+    box-shadow: 0 0 0 40px rgba(52, 211, 153, 0);
+  }
+}
+
+/* ---------- Teléfonos ---------- */
+@media (max-width: 760px) {
+  .kiosk-steps {
+    gap: 10px;
+  }
+  /* Sólo el paso actual lleva texto visible; los demás quedan para lectores. */
+  .kiosk-steps li:not(.is-current) .kiosk-step-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 420px) {
+  .kiosk:not([data-step="1"]) .brand-text {
+    display: none;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-person,
+  .kiosk:not([data-step="1"]) .kiosk-dock {
+    padding: var(--space-4);
+  }
+  .kiosk:not([data-step="1"]) .kiosk-status {
+    margin: 0 var(--space-4) var(--space-4);
+    padding: 12px;
+    gap: 12px;
+  }
+  .kiosk-orb {
+    width: 60px;
+  }
+  .kiosk-orb .kiosk-avatar.is-large {
+    font-size: 21px;
+  }
+  .kiosk-orb-ring {
+    inset: -6px;
+    width: calc(100% + 12px);
+    height: calc(100% + 12px);
+  }
+  .kiosk-status-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+}
+
+/* Teléfonos en vertical: la acción va en un dock fijo al pie de la tarjeta,
+   siempre al alcance del pulgar aunque el contenido no entre. */
+@media (max-width: 600px) and (orientation: portrait) {
+  .kiosk:not([data-step="1"]) .kiosk-panel-inner {
+    overflow: visible;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-dock {
+    position: sticky;
+    bottom: calc(var(--safe-bottom) + 8px);
+    z-index: 3;
+    border-radius: 0 0 27px 27px;
+    background: var(--color-surface);
+    box-shadow: 0 -12px 24px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* Teléfonos angostos: el nombre y la jornada necesitan el ancho (el avatar y
+   el ícono de estado son redundantes). */
+@media (max-width: 379px) {
+  .kiosk-orb,
+  .kiosk-status-icon {
+    display: none;
+  }
+}
+
+/* Teléfonos bajos en vertical: la acción y la guía entran sin desplazar. */
+@media (orientation: portrait) and (max-height: 700px) {
+  .kiosk {
+    --k-ring: clamp(180px, min(36vh, 68vw), 440px);
+    gap: 14px;
+  }
+  .kiosk-dial-caption {
+    display: none;
+  }
+  .kiosk-eyebrow {
+    display: none;
+  }
+  .kiosk-person-text h2 {
+    font-size: 24px;
+  }
+  .kiosk-result {
+    padding-top: calc(var(--safe-top) + var(--space-5));
+  }
+  .kiosk-result-check {
+    width: 84px;
+  }
+  .kiosk-result-title {
+    margin-top: var(--space-3);
+    font-size: 24px;
+  }
+  .kiosk-result-name {
+    margin-top: 4px;
+    font-size: var(--text-lg);
+  }
+  .kiosk-result-time {
+    font-size: 52px;
+  }
+  .kiosk-result-evidence {
+    margin-top: var(--space-3);
+  }
+  .kiosk-result-note {
+    margin-top: var(--space-4);
+  }
+  .kiosk-result-footer {
+    padding-top: var(--space-4);
+  }
+}
+
+/* Escritorios grandes (≥ 1680 × 1000): la interacción gana escala. */
+@media (min-width: 1680px) and (min-height: 1000px) {
+  .kiosk {
+    --field-h: 70px;
+    --action-h: 80px;
+  }
+  .kiosk-panel {
+    width: min(100%, 760px);
+  }
+  .kiosk:not([data-step="1"]) .kiosk-panel {
+    width: min(100%, 1180px);
+  }
+  .kiosk-person-text h2 {
+    font-size: 46px;
+  }
+  .kiosk-orb {
+    width: 116px;
+  }
+  .kiosk-orb .kiosk-avatar.is-large {
+    font-size: 36px;
+  }
+  .button.kiosk-action {
+    font-size: 24px;
+  }
+}
+
+/* ---------- Teléfono horizontal y alturas cortas ---------- */
+@media (orientation: landscape) and (max-height: 540px) {
+  .kiosk {
+    --k-ring: clamp(170px, 58vh, 260px);
+    display: grid;
+    grid-template-areas:
+      "top top"
+      "clock panel";
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    align-items: start;
+    column-gap: clamp(16px, 4vw, 48px);
+    row-gap: 8px;
+    padding-top: calc(var(--safe-top) + 6px);
+  }
+  .kiosk-top {
+    grid-area: top;
+  }
+  .kiosk-clock {
+    grid-area: clock;
+    align-self: center;
+    margin: 0;
+  }
+  .kiosk[data-searching] .kiosk-clock {
+    align-self: start;
+  }
+  .kiosk-panel {
+    grid-area: panel;
+    align-self: center;
+    width: 100%;
+  }
+  .kiosk[data-searching] .kiosk-panel {
+    align-self: start;
+  }
+  .kiosk-steps,
+  .kiosk-intro p,
+  .kiosk-lens,
+  .kiosk-eyebrow {
+    display: none;
+  }
+  .kiosk-intro h2 {
+    font-size: var(--text-xl);
+  }
+  /* Pasos 2–3: la tarjeta ocupa el ancho, en dos columnas. */
+  .kiosk:not([data-step="1"]) {
+    grid-template-areas:
+      "top top"
+      "panel panel";
+  }
+  .kiosk:not([data-step="1"]) .kiosk-panel {
+    width: min(100%, 1000px);
+    margin: 0 auto;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-panel-inner {
+    grid-template-areas:
+      "person dock"
+      "status dock";
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    grid-template-rows: auto 1fr;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-dock {
+    border-top: 0;
+    border-left: 1px solid var(--color-line);
+  }
+  .kiosk:not([data-step="1"]) .kiosk-person,
+  .kiosk:not([data-step="1"]) .kiosk-dock {
+    padding: 18px;
+  }
+  .kiosk:not([data-step="1"]) .kiosk-status {
+    margin: 0 18px 18px;
+  }
+  .kiosk-orb {
+    width: 64px;
+  }
+  .kiosk-orb .kiosk-avatar.is-large {
+    font-size: 22px;
+  }
+  .kiosk-person-text h2 {
+    font-size: 24px;
+  }
+  .kiosk-caption {
+    display: none;
+  }
+  .kiosk-result {
+    padding-top: calc(var(--safe-top) + var(--space-4));
+    padding-bottom: calc(var(--safe-bottom) + var(--space-3));
+  }
+  .kiosk-result-check {
+    width: 92px;
+  }
+  .kiosk-result-title {
+    margin-top: var(--space-3);
+    font-size: 24px;
+  }
+  .kiosk-result-name {
+    font-size: var(--text-md);
+  }
+  .kiosk-result-time {
+    margin-top: 6px;
+    font-size: 56px;
+  }
+  .kiosk-result-date {
+    margin-top: 4px;
+    font-size: 14px;
+  }
+  .kiosk-result-evidence {
+    margin-top: var(--space-3);
+  }
+  .kiosk-result-note {
+    margin-top: var(--space-3);
+  }
+  .kiosk-result-footer {
+    padding-top: var(--space-3);
+  }
+}
+
+/* ---------- Movimiento reducido y bajo consumo ----------
+   Sin bucles decorativos ni desplazamientos. Los indicadores de progreso
+   (spinners y la barra de regreso) siguen: comunican estado. */
+@media (prefers-reduced-motion: reduce) {
+  .kiosk-backdrop::before,
+  .kiosk-floor::before,
+  .kiosk-pill-dot,
+  .kiosk-dial-spin,
+  .kiosk-orb-ring,
+  .kiosk-lens::before,
+  .kiosk-lens-sweep::after,
+  .button.kiosk-action::after,
+  .kiosk-emblem-orbit,
+  .kiosk-emblem-pulse {
+    animation: none;
+  }
+  .button.kiosk-action::after,
+  .kiosk-lens-sweep::after {
+    content: none;
+  }
+}
+
+:root[data-power="low"] .kiosk-backdrop::before,
+:root[data-power="low"] .kiosk-floor {
+  display: none;
+}
+
+:root[data-power="low"] .kiosk-pill-dot,
+:root[data-power="low"] .kiosk-dial-spin,
+:root[data-power="low"] .kiosk-orb-ring,
+:root[data-power="low"] .kiosk-lens::before,
+:root[data-power="low"] .kiosk-emblem-orbit,
+:root[data-power="low"] .kiosk-emblem-pulse {
+  animation: none;
+}
+
+:root[data-power="low"] .button.kiosk-action::after,
+:root[data-power="low"] .kiosk-lens-sweep::after {
+  content: none;
+  animation: none;
+}
+
+:root[data-power="low"] .kiosk-dial-seconds,
+:root[data-power="low"] .kiosk-emblem-check {
+  filter: none;
+}
+
+:root[data-power="low"] .kiosk-time,
+:root[data-power="low"] .kiosk-result-time {
+  text-shadow: none;
+}

@@ -140,6 +140,7 @@ const mockedPrisma = prisma as unknown as {
   timeEntry: { aggregate: Mock; groupBy: Mock; findMany: Mock; create: Mock; update: Mock; count: Mock };
   hourConceptBreakdown: { findMany: Mock; aggregate: Mock };
   monthlyTimeClosure: { findMany: Mock };
+  employeeDayOff: { findMany: Mock };
   novelty: { findMany: Mock; count: Mock; findFirst: Mock };
   $transaction: Mock;
   __tx: TxMocks;
@@ -2716,6 +2717,71 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       expect(day).toMatchObject({ specialHourConflict: true, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"] });
       // normal residual 4 h ×2.5 = 10 h + Sereno 4 h ×2.5 = 10 h → 20 h; real 8 h.
       expect(result.items[0]!.summary.accounting.days["16"]).toMatchObject({ multiplier: 2.5, totalWorkedMinutes: 480, settlement: expect.objectContaining({ totalMinutes: 1200 }) });
+    });
+  });
+
+  // Marca de novedad de la grilla: un chip por día aunque lo cubran varias;
+  // color y tipo sólo si son compartidos, nunca el de la primera por orden.
+  describe("novedad del día (color del chip)", () => {
+    const august = (day: number) => new Date(Date.UTC(2026, 7, day));
+    function coveringNovelty(day: number, noveltyType: { id: string; name: string; uiColor: string }) {
+      return { employeeId: "employee-1", fromDate: august(day), toDate: null, noveltyType: { ...noveltyType, allowsDateRange: false } };
+    }
+    const dayOf = (result: Awaited<ReturnType<typeof timeEntriesRepository.findPeriodEmployees>>, day: number) =>
+      result.items[0]!.summary.dailyBreakdown.find((entry) => entry.day === day);
+
+    beforeEach(() => {
+      mockedPrisma.timeEntry.findMany.mockResolvedValue([]);
+      mockedPrisma.hourConceptBreakdown.findMany.mockResolvedValue([]);
+    });
+
+    it("una sola novedad devuelve su uiColor y su tipo", async () => {
+      mockedPrisma.novelty.findMany.mockResolvedValueOnce([coveringNovelty(10, { id: "nt-vacaciones", name: "Vacaciones", uiColor: "teal" })]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(mockedPrisma.novelty.findMany.mock.calls.at(0)?.[0].select.noveltyType).toEqual({ select: { id: true, name: true, uiColor: true, allowsDateRange: true } });
+      expect(dayOf(result, 10)?.novelty).toEqual({ label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" });
+    });
+
+    it("varias novedades con el mismo color devuelven ese uiColor (sin tipo único)", async () => {
+      mockedPrisma.novelty.findMany.mockResolvedValueOnce([
+        coveringNovelty(11, { id: "nt-licencia", name: "Licencia", uiColor: "amber" }),
+        coveringNovelty(11, { id: "nt-tramite", name: "Trámite", uiColor: "amber" }),
+      ]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(dayOf(result, 11)?.novelty).toEqual({ label: "Licencia, Trámite", uiColor: "amber", noveltyTypeId: null });
+    });
+
+    it("varias novedades con colores diferentes devuelven uiColor null, sin importar el orden", async () => {
+      const licencia = coveringNovelty(12, { id: "nt-licencia", name: "Licencia", uiColor: "amber" });
+      const enfermedad = coveringNovelty(12, { id: "nt-enfermedad", name: "Enfermedad", uiColor: "red" });
+
+      mockedPrisma.novelty.findMany.mockResolvedValueOnce([licencia, enfermedad]);
+      const first = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+      mockedPrisma.novelty.findMany.mockResolvedValueOnce([enfermedad, licencia]);
+      const reversed = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(dayOf(first, 12)?.novelty).toEqual({ label: "Licencia, Enfermedad", uiColor: null, noveltyTypeId: null });
+      expect(dayOf(reversed, 12)?.novelty).toMatchObject({ uiColor: null, noveltyTypeId: null });
+    });
+
+    it("franco + novedad el mismo día: el día trae ambos, el franco no oculta la novedad", async () => {
+      mockedPrisma.novelty.findMany.mockResolvedValueOnce([coveringNovelty(14, { id: "nt-vacaciones", name: "Vacaciones", uiColor: "teal" })]);
+      mockedPrisma.employeeDayOff.findMany.mockResolvedValueOnce([{ id: "dayoff-14", employeeId: "employee-1", date: august(14), notes: null }]);
+      mockedPrisma.workShift.findMany.mockResolvedValueOnce([]);
+
+      const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
+
+      expect(dayOf(result, 14)).toEqual({
+        day: 14,
+        novelty: { label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" },
+        dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 },
+        specialHourRuleNames: [],
+        specialHourConflict: false,
+      });
     });
   });
 });

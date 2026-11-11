@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type SyntheticEvent } from "react";
+import { AlertCircle } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
 import { ApiError } from "../../services/api/apiClient";
@@ -23,9 +24,24 @@ function failureMessage(error: unknown) {
 }
 
 /**
+ * Las casillas muestran el código en orden: un cursor (invisible) que quedó a
+ * mitad del código —por un toque o una flecha— vuelve al final. Una selección
+ * (seleccionar todo para reemplazar o pegar) se respeta.
+ */
+function keepCaretAtEnd(event: SyntheticEvent<HTMLInputElement>) {
+  const field = event.currentTarget;
+  const end = field.value.length;
+  if (field.selectionStart === field.selectionEnd && field.selectionStart !== end) field.setSelectionRange(end, end);
+}
+
+/**
  * "Acceso de mantenimiento" (docs/decisions/FICHADOR_MAINTENANCE_MODE.md). Sólo
  * pide el código que generó RRHH: sin pistas, sin ids y con el mismo mensaje
  * para cualquier código que no sirve. El backend decide; acá no hay PIN.
+ *
+ * Presentación (Etapa 5): un único campo numérico real, transparente, sobre
+ * seis casillas que lo muestran. El campo conserva la etiqueta, el teclado
+ * numérico, el pegado y la validación; las casillas son sólo visuales.
  */
 export function MaintenanceAccessDialog({ onCancel, onGranted }: { onCancel: () => void; onGranted: (access: GrantedMaintenance) => void }) {
   const [code, setCode] = useState("");
@@ -33,6 +49,7 @@ export function MaintenanceAccessDialog({ onCancel, onGranted }: { onCancel: () 
   const [error, setError] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
+  const inputId = useId();
 
   useEffect(() => {
     alive.current = true;
@@ -41,6 +58,12 @@ export function MaintenanceAccessDialog({ onCancel, onGranted }: { onCancel: () 
       alive.current = false;
     };
   }, []);
+
+  // Foco (sólo presentación): tras un error el campo se vuelve a habilitar en
+  // el render siguiente; recién ahí puede recibir el foco otra vez.
+  useEffect(() => {
+    if (error && !busy) input.current?.focus();
+  }, [error, busy]);
 
   // Cada tecla reinicia la espera; mientras se verifica no se cierra.
   useEffect(() => {
@@ -69,34 +92,46 @@ export function MaintenanceAccessDialog({ onCancel, onGranted }: { onCancel: () 
       setError(failureMessage(openError));
       setCode("");
       setBusy(false);
-      input.current?.focus();
     }
   };
 
+  const current = Math.min(code.length, CODE_LENGTH - 1);
+  const codeState = busy ? " is-busy" : error ? " is-invalid" : "";
+
   return (
-    <Modal title="Acceso de mantenimiento" close={onCancel} closeDisabled={busy}>
+    <Modal title="Acceso de mantenimiento" subtitle="Ingresá el código de 6 dígitos que generó RRHH." close={onCancel} closeDisabled={busy}>
       <form className="maintenance-access" onSubmit={(event) => void submit(event)}>
-        <label>
-          Código
-          <input
-            ref={input}
-            value={code}
-            onChange={(event) => {
-              setCode(event.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH));
-              setError("");
-            }}
-            inputMode="numeric"
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={CODE_LENGTH}
-            disabled={busy}
-            aria-invalid={error ? true : undefined}
-          />
-        </label>
-        {error ? <p className="error" role="alert">{error}</p> : null}
+        <div className="maintenance-code-field">
+          <label htmlFor={inputId}>Código</label>
+          <div className={`maintenance-code${codeState}`}>
+            {Array.from({ length: CODE_LENGTH }, (_, index) => (
+              <span key={index} className={`maintenance-code-cell${index === current ? " is-current" : ""}`} aria-hidden="true">{code[index] ?? null}</span>
+            ))}
+            <input
+              ref={input}
+              id={inputId}
+              data-autofocus=""
+              value={code}
+              onChange={(event) => {
+                setCode(event.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH));
+                setError("");
+              }}
+              onSelect={keepCaretAtEnd}
+              inputMode="numeric"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={CODE_LENGTH}
+              disabled={busy}
+              aria-invalid={error ? true : undefined}
+            />
+          </div>
+        </div>
+        {error ? <p className="error has-icon" role="alert"><AlertCircle size={20} strokeWidth={2} aria-hidden="true" /><span>{error}</span></p> : null}
         <div className="form-actions">
           <Button type="button" onClick={onCancel} disabled={busy}>Cancelar</Button>
-          <Button type="submit" variant="primary" loading={busy} disabled={code.length !== CODE_LENGTH}>{busy ? "Verificando…" : "Ingresar"}</Button>
+          <Button type="submit" variant="primary" loading={busy} aria-busy={busy || undefined} disabled={code.length !== CODE_LENGTH}>
+            {busy ? <><span className="kiosk-spinner" aria-hidden="true" />Verificando…</> : "Ingresar"}
+          </Button>
         </div>
       </form>
     </Modal>

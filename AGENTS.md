@@ -1,164 +1,103 @@
 # AGENTS.md
 
-## Identity
+Shared instructions for every coding agent working in this repository (Claude Code and Codex). Claude Code loads this file through `CLAUDE.md`; Codex reads it directly. Each rule lives in exactly one place: here or in a `.claude/rules/` file referenced below.
 
-You are a Super Senior Full Stack Software Engineer and Senior Product Designer working inside this repository.
+Repository: Gestion-Personal — `backend/` (Express + Prisma + PostgreSQL), `frontend/` (React admin SPA) and `fichador/` (standalone React PWA time clock).
 
-You must behave as a responsible software engineer and product builder, not as a fast code generator.
+## Role and standard
 
-Your mission is to deliver software that is:
-- secure
-- reliable
-- scalable
-- maintainable
-- observable
-- testable
-- visually professional
-- consistent with the existing architecture
-- consistent with the product design system
-- ready for real production use
+Act as a Super Senior Full Stack Software Engineer and Senior Product Designer, working as technical lead and product design lead. Think like a software architect, full stack developer, security engineer, backend engineer, frontend engineer, database engineer, DevOps engineer, QA engineer, code reviewer, senior product designer and design system engineer. Do not behave as a blind or fast code generator.
 
-You must think like:
-- Software Architect
-- Full Stack Senior Developer
-- Security Engineer
-- Backend Engineer
-- Frontend Engineer
-- Database Engineer
-- DevOps Engineer
-- QA Engineer
-- Code Reviewer
-- Senior Product Designer
-- Design System Engineer
+Deliver software that is secure, reliable, scalable, maintainable, observable, testable and performant; consistent with the existing architecture and the design system; visually professional (UI quality and enterprise product design); and ready for real production use, including deployment, developer experience and production reliability.
 
-## Mandatory context reading
+Golden rule: every change must be production-minded. Do not only make it work. Make it correct, safe, maintainable, visually professional and easy to evolve.
 
-Before making any relevant change, read and consider:
+## Working process (proportional to risk)
 
-1. `docs/PROJECT_CONTEXT.md`
-2. `docs/PROJECT_UI_CONTEXT.md`
-3. `docs/GLOBAL_ENGINEERING_STANDARDS.md`
-4. `docs/ARCHITECTURE_STANDARDS.md`
-5. `docs/SECURITY_STANDARDS.md`
-6. `docs/DESIGN_SYSTEM_STANDARDS.md`
-7. `docs/UI_QA_CHECKLIST.md`
-8. The files directly related to the requested change
+Scale the process to the size and risk of the change:
 
-If a document does not exist, continue with the best available context and mention it.
+- **Small, safe change** (local, reversible, no data, secrets, schema, permissions or shared configuration involved): inspect the related files, make the focused change, run the basic checks for the touched area (typecheck or tests) and report. No separate plan is needed.
+- **Complex change** (several steps or areas, a new module, `schema.prisma`, public contracts): follow the full process below, and the large-feature rule in "Critical project rules".
+- **Sensitive operation** (shared databases, destructive data operations, permissions or security configuration, secrets, push or merge to shared branches, personal data): get explicit authorization first, prepare a verifiable backup and a rollback procedure, and stop when the authorized step is done.
 
-## Non-negotiable engineering rules
-
-- Do not invent business rules.
-- Do not invent endpoints, tables, fields, environment variables or services without checking the codebase.
-- Do not duplicate logic.
-- Do not add dependencies unless clearly justified.
-- Do not perform massive refactors for small tasks.
-- Do not remove working code without explaining why.
-- Do not break existing public contracts unless explicitly requested.
-- Do not hardcode secrets, tokens, URLs, credentials or private keys.
-- Do not expose sensitive data.
-- Do not rely on frontend validation only.
-- Do not leave security checks only in the UI.
-- Do not ignore build, types, tests or lint errors.
-- Do not create overengineered solutions.
-
-## Rules added after the 2026-08 technical audit and subsequent sanitization stages
-
-- `docs/PROJECT_CONTEXT.md` and `docs/PROJECT_UI_CONTEXT.md` have gone stale before (they described a frontend-only/mock system after a real backend already existed). Verify their claims against `ls backend/src/modules` / `ls frontend/src` before following them; if they contradict the code, follow the code and flag the doc as stale.
-- A new `backend/src/modules/<name>` must be documented in `docs/BACKEND_API_CONTRACTS.md` and `docs/ARCHITECTURE_STANDARDS.md` in the same change.
-- Changes to `employees`, `time-entries`, `novelties` or `auth` business logic require an accompanying test (mock the repository layer with `vi.mock`, follow the existing `*.service.test.ts` files as a pattern).
-- Before creating a new frontend `*MockService.ts`, check whether a real `*ApiService` already covers it, and whether any existing mock with the same purpose has zero real importers.
-- Do not bypass a module's repository layer with direct `prisma.*` calls from its service.
-- Do not add a new cache mechanism without checking the existing frontend (`services/cache`) and backend (`shared/cache`) systems first.
-- Every public/unauthenticated endpoint needs its own rate limiting, not just the global API limiter.
-- Do not reimplement date/time/timezone math per module — `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper; reuse it. Real instants are stored as `TIMESTAMPTZ`, calendar-only fields as `@db.Date` (see `docs/DATABASE_STANDARDS.md`).
-- The organizational model is in an approved but **not yet implemented** reorganization — read `docs/decisions/ORG_LOCATION_REORGANIZATION.md` before touching `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Position`, `Employee` labor data, `EmployeeCompany`, `CostCenter*`, `DoubleHourRule` scope or `ClockDevice` location.
-  - **Current model (still what the code and database do):** `Company → BusinessUnit → Establishment → Area → Sector`, with `Position.sectorId` / `Employee.sectorId` as single FKs into it. Do not extend it: no new consumers of the old chain, and no second parent FK on those models.
-  - **Target model (to be built only through the ADR's stages):** two independent single-parent trees — Organization `Company → BusinessUnit → Sector → Area` and Locations `Zone → Establishment`. Position organizational scope via `PositionOrgScope` (one or more nodes; a node covers its descendants). Employee work locations via `EmployeeWorkLocation` (zone + establishments, dated, no overlaps). Do not describe or treat the target model as implemented until its stage lands.
-  - `CostCenter`'s many-to-many join tables are the only approved M:N against the structure, in both models.
-  - `PositionSalaryCategory` remains the only source of a position's salary category/categories. Do not reintroduce denormalized location/name fields or a single "suggested category" field on `Position`, and do not copy a position's scope into editable employee fields.
-- Legacy org-structure cleanup is authorized **only on the `development` database, only for old-model records listed in a frozen inventory, and only through the ADR's gated, transactional script** after a verified backup and a reviewed rehearsal on an isolated copy. Never delete or re-key employees (legajos), never delete hours, novelties, documents, labor movements, histories or other person-related records, never clean the whole database, never touch production, never rely on `CASCADE`/`SET NULL` as a shortcut, and never free a `DoubleHourRule` reference by setting its scope to `NULL` (that widens the rule) or by deleting the rule.
-- Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real FKs to `User` with `onDelete: SetNull`. Never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history.
-- Branch flow (`docs/GIT_WORKFLOW.md`): `main` is production and is never committed to directly; `development` is the integration branch; every `feat/*`/`fix/*` starts from `development` and returns to it by PR; `main` only receives the `development → main` PR (or a `hotfix/*`, §4). Never force-push `main` or `development`, and never deploy from a PR or a feature branch.
-- `.github/workflows/ci.yml` validates backend/database/frontend/fichador (typecheck, test, build, migration gate on a clean ephemeral PostgreSQL, PostgreSQL integration suites) on every push to `main` or `development` and every pull request — see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`. Run the same commands locally before pushing; a failing run must be fixed, not bypassed.
-- Before starting a large feature (a new module, or anything touching `schema.prisma`), produce analysis and a plan first; implement only after that plan is agreed, and close the feature with tests plus a green `typecheck`/`test`/`build` and a validation summary.
-- Before adding or changing anything about data loading, caching, pagination, refresh behavior or calendars (frontend or backend), read `docs/PERFORMANCE_STANDARDS.md` first — it is the permanent standard distilled from the 9A-9H performance series and includes the one known open gap (fichador audit-trail on `expireOpenWorkShifts`, see its §10; the photo-less `clockInResolved`/`clockOutResolved` paths it also named were removed in fichador F0) that must stay undocumented deuda, not be "fixed" silently outside a dedicated fichador stage.
-
-## Non-negotiable design rules
-
-Frontend work is not complete if it only compiles.
-
-The UI must be visually production-ready:
-- no overlapping elements
-- no overflowing KPI values
-- no stretched mobile layouts on desktop
-- no excessive empty desktop space
-- no inconsistent components
-- no generic AI-looking interface
-- no icons covering numbers or text
-- no random spacing
-- no weak dashboard structure
-
-For enterprise systems, desktop quality is mandatory.
-Validate:
-- 1366x768
-- 1440x900
-- 1920x1080
-- tablet
-- mobile
-
-## Work process
-
-For every task:
+Full process for complex changes:
 
 1. Understand the request.
-2. Inspect the current implementation.
-3. Identify affected areas:
-   - frontend
-   - backend
-   - database
-   - security
-   - tests
-   - deployment
-   - UI/design system
-4. Prefer the smallest correct solution.
+2. Inspect the current implementation and the related files; understand the project structure and the existing patterns.
+3. Identify affected areas: frontend, backend, database, security, tests, deployment, UI/design system.
+4. Prefer the smallest correct solution; avoid unnecessary changes.
 5. Reuse existing patterns and components.
 6. Implement the change.
 7. Validate types, imports, build and tests when possible.
-8. Review security.
+8. Review security and possible regressions.
 9. Review visual quality when UI is involved.
 10. Explain what changed.
 11. Explain how to test it.
 
-## Decision principles
+Prefer: simple over complex, explicit over clever, maintainable over short, secure by default, typed code, clear names, small functions, separation of concerns, existing patterns, reusable components, consistent design, incremental improvements.
 
-Prefer:
-- simple over complex
-- explicit over clever
-- maintainable over short
-- secure by default
-- typed code
-- clear names
-- small functions
-- separation of concerns
-- existing patterns
-- reusable components
-- consistent design
-- incremental improvements
+Avoid: premature abstraction, unnecessary dependencies, large files, duplicate business logic, hidden side effects, insecure defaults, inconsistent error handling, unvalidated inputs, fragile code, undocumented breaking changes. UI-specific items are in the UI rules.
 
-Avoid:
-- premature abstraction
-- unnecessary dependencies
-- large files
-- duplicate business logic
-- hidden side effects
-- insecure defaults
-- inconsistent error handling
-- unvalidated inputs
-- fragile code
-- undocumented breaking changes
-- generic AI-generated UI
-- mobile-only layouts for enterprise systems
+## Engineering rules
+
+- Do not invent business rules, endpoints, tables, fields, environment variables or services without checking the codebase.
+- Preserve the existing architecture. Do not break existing public contracts unless explicitly requested.
+- Keep changes focused: no massive refactors for small tasks; do not remove working code without explaining why.
+- Do not duplicate logic. Do not create overengineered solutions. Do not add dependencies unless clearly justified.
+- Write clear, typed code and handle errors properly.
+- Validate inputs. Do not rely on frontend validation only, and do not leave security checks only in the UI.
+- Protect sensitive data: do not hardcode secrets, tokens, URLs, credentials or private keys, and do not expose sensitive data.
+- Do not ignore build, types, tests or lint errors.
+
+## Critical project rules (always apply)
+
+- Before trusting `docs/PROJECT_CONTEXT.md` or `docs/PROJECT_UI_CONTEXT.md`, cross-check against `ls backend/src/modules` and `ls frontend/src` — these docs have gone stale before (they described a frontend-only/mock system after a real backend was already built). If they contradict the code, say so and follow the code.
+- Any new `backend/src/modules/<name>` must be added, in the same change, to `docs/BACKEND_API_CONTRACTS.md` and to the module lists in `docs/ARCHITECTURE_STANDARDS.md` / `docs/PROJECT_CONTEXT.md`.
+- No change to `employees`, `time-entries`, `novelties` or `auth` business logic is complete without an accompanying test (`*.service.test.ts`, mocking the repository layer — see existing examples in those modules).
+- Before adding a new `*MockService.ts` in the frontend, check for an existing one with the same purpose and confirm it has zero real importers before reusing/removing it; do not add a mock when a real `*ApiService` already exists.
+- Do not call `prisma.*` directly from a service if the module already has a repository layer; use it, or explain why not.
+- Do not add a new caching mechanism (frontend or backend) without checking `frontend/src/services/cache` and `backend/src/shared/cache` first.
+- Any public/unauthenticated endpoint must declare its own rate limiting — the global API limiter alone is not enough.
+- Do not reimplement date/time/timezone math per module — `backend/src/shared/datetime/argentinaTime.ts` is the single shared helper; reuse it. Real instants are `TIMESTAMPTZ`, calendar-only fields are `@db.Date` (see `docs/DATABASE_STANDARDS.md`).
+- The organizational reorganization is **implemented** (code through M2, applied to `development` on 2026-10-09; production and demo not migrated) — read `docs/decisions/ORG_LOCATION_REORGANIZATION.md` and `docs/decisions/A8_M2_PREPARATION.md` (§12.15) before touching `Company`, `BusinessUnit`, `Establishment`, `Area`, `Sector`, `Zone`, `Position`, `PositionOrgScope`, `Employee` labor data, `EmployeeWorkLocation`, the `Employee*Period` history, `EmployeeCompany`, `CostCenter*`, `DoubleHourRule` scope or `ClockDevice` location.
+  - Details (model in effect, legacy columns, approved many-to-many and salary-category sources): `.claude/rules/org-structure.md`. Read it before any task on these models.
+- The legacy org-structure cleanup already ran on `development` (2026-10-09, `backend/scripts/dev-org-wipe.ts`, record in `A8_M2_PREPARATION.md` §12.15). Any further destructive data operation needs new explicit authorization, a verified restorable backup and a gated transactional script with in-transaction conservation checks. Never delete or re-key legajos, never delete hours/novelties/documents/fichadas/audit or other person-related records outside the authorized scope, never clean the whole database, never touch production or demo, never use `CASCADE`/`SET NULL` as a shortcut, and never free a `DoubleHourRule` reference by nulling its scope (widens the rule) or deleting the rule.
+- Authorship fields (`createdByUserId`, `approvedByUserId`, `uploadedByUserId`, etc.) are real FKs to `User` with `onDelete: SetNull`. Never `Cascade` from `User` to a historical record, and never delete a `User` row that has related history.
+- Branch flow (`docs/GIT_WORKFLOW.md`): `main` is production and is never committed to directly; `development` is the integration branch; every `feat/*`/`fix/*` starts from `development` and returns to it by PR; `main` only receives the `development → main` PR (or a `hotfix/*`, §4). Never force-push `main` or `development`, and never deploy from a PR or a feature branch.
+- `.github/workflows/ci.yml` runs backend/database/frontend/fichador on every push to `main` or `development` and every pull request: typecheck+test+build, plus the migration gate (full history on a clean ephemeral PostgreSQL, empty diff against `schema.prisma`, existing migrations immutable) and the PostgreSQL integration suites (see `docs/DEVOPS_DEPLOYMENT_STANDARDS.md`). Run the same commands locally before pushing; do not weaken or bypass this pipeline to make a red run go green.
+- Before starting a large feature (a new module, or anything that touches `schema.prisma`), do analysis and write a plan first; only implement after that plan is agreed, and close the feature with tests plus a green `typecheck`/`test`/`build` and a validation summary. Do not skip straight to code on multi-step work.
+- Before adding or changing anything about data loading, caching, pagination, refresh behavior or calendars (frontend or backend), read `docs/PERFORMANCE_STANDARDS.md` first — it is the permanent standard distilled from the 9A-9H performance series and includes the one known open gap (fichador audit-trail on `expireOpenWorkShifts`, see its §10; the photo-less `clockInResolved`/`clockOutResolved` paths it also named were removed in fichador F0) that must stay documented debt, not be "fixed" silently outside a dedicated fichador stage.
+
+## Documentation: consult selectively
+
+Repository documentation is the source of truth for engineering and design rules. Read what the task needs, not everything. If a document does not exist, continue with the best available context and mention it.
+
+| Task | Read first |
+| :- | :- |
+| Any change | The files directly related to the change; `docs/GLOBAL_ENGINEERING_STANDARDS.md` |
+| Product or domain context | `docs/PROJECT_CONTEXT.md`, `docs/PROJECT_UI_CONTEXT.md` (verify against the code first; see "Critical project rules") |
+| Architecture, a new module or a cross-module change | `docs/ARCHITECTURE_STANDARDS.md`, `docs/BACKEND_STANDARDS.md`, the relevant module section of `docs/BACKEND_API_CONTRACTS.md` |
+| Security, auth, permissions, public endpoints, personal data | `docs/SECURITY_STANDARDS.md` |
+| Schema, migrations, data model | `docs/DATABASE_STANDARDS.md`; the migration gate in `docs/DEVOPS_DEPLOYMENT_STANDARDS.md` |
+| Data loading, caching, pagination, refresh, calendars | `docs/PERFORMANCE_STANDARDS.md` |
+| Tests | `docs/TESTING_QA_STANDARDS.md` |
+| UI in `frontend/` or `fichador/` | `.claude/rules/frontend-ui.md` (it lists the UI documents and reference images) |
+| Git, PR, CI, deploy | `docs/GIT_WORKFLOW.md`, `docs/DEVOPS_DEPLOYMENT_STANDARDS.md` |
+| Code review | `docs/CODE_REVIEW_CHECKLIST.md` |
+| Organizational structure models | `.claude/rules/org-structure.md` |
+
+Large documents (over about 20 KB, for example `docs/BACKEND_API_CONTRACTS.md`, `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md` and the org ADRs): locate the relevant heading first, then read that whole section and the sections it references. For schema, destructive-data or fichador work, read the mandated sections in full (for example `docs/decisions/A8_M2_PREPARATION.md` §12.15). Never paraphrase a document's conditions from memory.
+
+## Specialized rules (when to read them)
+
+These files hold area rules. Claude Code loads them automatically when it reads or edits a matching file; other agents, including Codex, do not load them automatically and must open them. In every agent, read the whole file **before starting** a task of that type, even when the first file opened is outside its paths:
+
+- `.claude/rules/frontend-ui.md`: any task that creates or changes UI in `frontend/` or `fichador/` (screens, components, layout, styles, design-system usage, visual refactors, UI QA). `fichador/` has its own visual system, defined in that file's "Fichador visual system" section.
+- `.claude/rules/org-structure.md`: any task that reads, creates, changes, migrates, deletes or reports on the models named in the organizational-reorganization rule in "Critical project rules" (also `EstablishmentUnit` and `Province`), including schema changes, migrations, seeds, scripts, queries and reports, wherever the first file is.
+
+## Context and sessions
+
+Recommendation, not a requirement: start a new session when the objective changes or when the accumulated context is no longer useful (long history, large documents no longer relevant). Carry over only the decisions in effect, the affected files, the verifications and the pending items.
 
 ## Final answer format
 
@@ -172,46 +111,3 @@ When finishing a task, respond with:
 6. Risks or pending improvements.
 
 Keep the answer concise unless the task is complex.
-
-# Mandatory visual reference rule
-
-Before modifying any frontend UI, always read:
-
-- `docs/PROJECT_CONTEXT.md`
-- `docs/PROJECT_UI_CONTEXT.md`
-- `docs/FRONTEND_STANDARDS.md`
-- `docs/DESIGN_SYSTEM_STANDARDS.md`
-- `docs/UI_QA_CHECKLIST.md`
-
-Also inspect the visual reference images in:
-
-- `docs/reference-ui/dashboard-reference.png`
-- `docs/reference-ui/list-reference.png`
-- `docs/reference-ui/detail-reference.png`
-- `docs/reference-ui/form-reference.png`
-- `docs/reference-ui/sidebar-topbar-reference.png`
-
-The images in `docs/reference-ui/` are the mandatory visual reference.
-
-Do not invent a new visual identity.
-
-The frontend must match the reference UI system:
-
-- Same sidebar style
-- Same topbar style
-- Same page structure
-- Same card style
-- Same KPI card style
-- Same table style
-- Same form style
-- Same button style
-- Same badge style
-- Same spacing
-- Same typography
-- Same border radius
-- Same shadows
-- Same enterprise density
-
-For visual refactors, modify only layout, styles and reusable UI components.
-
-Do not modify business logic, routes, services, models, validations, data structure or existing functionality unless explicitly requested.

@@ -72,7 +72,7 @@ async function selectEmployee() {
   const user = userEvent.setup();
   render(<TimeClockPage />);
   await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
-  const resultButton = await screen.findByText("Gomez, Ana");
+  const resultButton = await screen.findByRole("button", { name: /Gomez, Ana/ });
   await user.click(resultButton);
   await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalledWith("employee-1"));
   return user;
@@ -97,7 +97,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     const { container } = render(<TimeClockPage />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
-    await user.click(await screen.findByText("Gomez, Ana"));
+    await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalled());
 
     expect(container.textContent).not.toMatch(/Sereno/);
@@ -111,7 +111,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     const { container } = render(<TimeClockPage />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
-    await user.click(await screen.findByText("Gomez, Ana"));
+    await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalled());
 
     expect(container.textContent).not.toMatch(/priority/i);
@@ -176,7 +176,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     const user = userEvent.setup();
     render(<TimeClockPage />);
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
-    await user.click(await screen.findByText("Gomez, Ana"));
+    await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
 
     expect(await screen.findByText("No pudimos consultar el estado del legajo seleccionado.")).toBeInTheDocument();
   });
@@ -201,13 +201,13 @@ async function confirmCapture(user: ReturnType<typeof userEvent.setup>, punch: R
 // F1 — fichador standalone: mismo flujo que /fichador del admin, ahora
 // cubierto también para errores de red/HTTP, verificación e idempotencia.
 describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () => {
-  it("carga inicial: muestra sólo el fichador, con los botones deshabilitados hasta elegir empleado", () => {
+  it("carga inicial: muestra sólo el fichador, sin acciones de fichada hasta elegir empleado", () => {
     render(<TimeClockPage />);
 
     expect(screen.getByRole("heading", { name: "Fichador de personal" })).toBeInTheDocument();
     expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Marcar (nuevo )?ingreso/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText(/Cerrar sesión/i)).not.toBeInTheDocument();
   });
@@ -234,7 +234,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
 
     expect(await screen.findByText(/No hay conexión con el servidor/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Marcar (ingreso|salida)/i })).not.toBeInTheDocument();
   });
 
   it("403 (dispositivo deshabilitado) en la búsqueda: mensaje de negocio, sin detalle técnico", async () => {
@@ -367,7 +367,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
   async function searchAndSelect() {
     fireEvent.change(screen.getByLabelText("Buscar por nombre o apellido"), { target: { value: "Gomez" } });
     await flush(300);
-    fireEvent.click(screen.getByText("Gomez, Ana"));
+    fireEvent.click(screen.getByRole("button", { name: /Gomez, Ana/ }));
     await flush();
   }
 
@@ -400,7 +400,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     expect(screen.getByText("Ana Gomez")).toBeInTheDocument();
     expect(screen.getByText("08:01")).toBeInTheDocument();
     expect(screen.queryByText("12:30")).not.toBeInTheDocument();
-    expect(screen.getByText("Podés continuar.")).toBeInTheDocument();
+    expect(screen.getByText("Volviendo al inicio…")).toBeInTheDocument();
     expect(screen.queryByTestId("face-capture-modal")).not.toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(false);
     // Nada técnico en pantalla.
@@ -411,7 +411,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     expect(screen.queryByText("Entrada registrada")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Buscar por nombre o apellido")).toHaveValue("");
     expect(screen.queryByText("Legajo 100 · DNI terminado en 456")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Marcar ingreso/i })).not.toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(true);
   });
 
@@ -539,7 +539,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     expect(screen.getByText("Ya registraste una fichada hace unos segundos.")).toBeInTheDocument();
     expect(screen.getByRole("timer")).toHaveTextContent(`Podés volver a intentar en ${FALLBACK_COOLDOWN_SECONDS} s.`);
     expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/CLOCK_|retryAfterSeconds/);
     const callsBefore = allBackendCalls();
@@ -552,7 +552,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     expect(screen.queryByText("Ya registraste una fichada hace unos segundos.")).not.toBeInTheDocument();
     // Según el estado real del legajo (sin ingreso abierto): ingreso sí, salida no.
     expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
     // El empleado sigue elegido; nada se fichó solo ni se consultó.
     expect(screen.getByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
     expect(allBackendCalls()).toEqual(callsBefore);
@@ -660,7 +660,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     await flush();
 
     expect(screen.getByRole("alert")).toHaveTextContent("Ya existe un ingreso abierto para este empleado.");
-    expect(screen.getByText("Ingreso abierto")).toBeInTheDocument();
+    expect(screen.getByText("Jornada abierta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Marcar salida/i })).toBeEnabled();
   });
 
@@ -708,32 +708,33 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
 describe("TimeClockPage — F10: acción principal, actualizar estado y cámara pausada", () => {
   const ingreso = () => screen.getByRole("button", { name: /Marcar (nuevo )?ingreso/i });
   const salida = () => screen.getByRole("button", { name: /Marcar salida/i });
+  // Etapa 2: una sola acción. La que no corresponde al legajo no se ofrece.
+  const sinIngreso = () => expect(screen.queryByRole("button", { name: /Marcar (nuevo )?ingreso/i })).not.toBeInTheDocument();
+  const sinSalida = () => expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
 
-  it("sin ingreso abierto: el ingreso es la acción principal", async () => {
+  it("sin ingreso abierto: el ingreso es la única acción", async () => {
     mockNoOpenShift();
     await selectEmployee();
+    await waitFor(() => expect(ingreso()).toBeEnabled());
     expect(ingreso()).toHaveClass("primary");
-    expect(salida()).not.toHaveClass("primary");
-    expect(salida()).toBeDisabled();
+    sinSalida();
   });
 
-  it("con un ingreso abierto: la salida pasa a ser la principal y el ingreso queda deshabilitado y secundario", async () => {
+  it("con un ingreso abierto: la salida es la única acción y el ingreso no se ofrece", async () => {
     mockOpenShift();
     await selectEmployee();
+    await waitFor(() => expect(salida()).toBeEnabled());
     expect(salida()).toHaveClass("primary");
-    expect(salida()).toBeEnabled();
-    expect(ingreso()).not.toHaveClass("primary");
-    expect(ingreso()).toBeDisabled();
+    sinIngreso();
   });
 
-  it("con la jornada vencida (olvido de salida): 'Marcar nuevo ingreso' es la principal y la salida vieja no", async () => {
+  it("con la jornada vencida (olvido de salida): 'Marcar nuevo ingreso' es la única acción y la salida vieja no se ofrece", async () => {
     vi.mocked(timeClockApiService.status).mockResolvedValue({ employee: employeeMatch, openShift: { id: "shift-old", startAt: isoHoursAgo(21) } });
     await selectEmployee();
-    expect(ingreso()).toHaveTextContent("Marcar nuevo ingreso");
+    await waitFor(() => expect(ingreso()).toHaveTextContent("Marcar nuevo ingreso"));
     expect(ingreso()).toHaveClass("primary");
     expect(ingreso()).toBeEnabled();
-    expect(salida()).not.toHaveClass("primary");
-    expect(salida()).toBeDisabled();
+    sinSalida();
   });
 
   it("'Actualizar estado' usa el ícono de actualizar (no una lupa) y conserva su nombre accesible", async () => {
@@ -804,7 +805,7 @@ describe("TimeClockPage — gesto oculto de mantenimiento", () => {
     vi.useRealTimers();
 
     await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
-    await user.click(await screen.findByText("Gomez, Ana"));
+    await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Marcar ingreso" }));
     expect(await screen.findByTestId("face-capture-modal")).toBeInTheDocument();
@@ -812,5 +813,79 @@ describe("TimeClockPage — gesto oculto de mantenimiento", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await hold();
     expect(requestAccess).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Etapa 2 del rediseño («Calma y certeza»): hora Argentina (P1), estados de
+// la búsqueda (P3), conexión del equipo y pasos. Sólo presentación: no cambia
+// qué se consulta ni cuándo se puede fichar.
+describe("TimeClockPage — Etapa 2: hora, búsqueda y orientación", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("muestra la hora y la fecha de Argentina (P1), con los segundos aparte", () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-11-06T15:30:05.000Z")); // 12:30:05 en Argentina
+    render(<TimeClockPage />);
+
+    expect(screen.getByText("12:30")).toBeInTheDocument();
+    expect(screen.getByText("05")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("Viernes 6 de noviembre")).toBeInTheDocument();
+  });
+
+  it("búsqueda (P3): con una letra pide 2 sin consultar, avisa mientras busca y dice cuando no hay coincidencias", async () => {
+    let resolveSearch: (items: never[]) => void = () => undefined;
+    vi.mocked(timeClockApiService.searchEmployees).mockImplementation(() => new Promise((resolve) => { resolveSearch = resolve; }));
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre o apellido");
+
+    await user.type(input, "Z");
+    expect(screen.getByText("Escribí al menos 2 letras.")).toBeInTheDocument();
+    expect(timeClockApiService.searchEmployees).not.toHaveBeenCalled();
+
+    await user.type(input, "z");
+    expect(screen.getByRole("img", { name: "Buscando" })).toBeInTheDocument();
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Zz"));
+    await act(async () => resolveSearch([]));
+
+    expect(await screen.findByText("No encontramos a “Zz”")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Buscando" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Marcar (ingreso|salida)/i })).not.toBeInTheDocument();
+  });
+
+  it("búsqueda: resalta la coincidencia sin cambiar el nombre accesible del resultado", async () => {
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "gom");
+
+    const result = await screen.findByRole("button", { name: /Gomez, Ana/ });
+    expect(result.querySelector("mark")).toHaveTextContent("Gom");
+  });
+
+  it("muestra 'Sin conexión' cuando el equipo pierde la red y lo quita al volver (sólo informativo)", () => {
+    const onLine = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+    render(<TimeClockPage />);
+    expect(screen.queryByText("Sin conexión")).not.toBeInTheDocument();
+
+    onLine.mockReturnValue(false);
+    act(() => { window.dispatchEvent(new Event("offline")); });
+    expect(screen.getByText("Sin conexión")).toBeInTheDocument();
+
+    onLine.mockReturnValue(true);
+    act(() => { window.dispatchEvent(new Event("online")); });
+    expect(screen.queryByText("Sin conexión")).not.toBeInTheDocument();
+    onLine.mockRestore();
+  });
+
+  it("los pasos acompañan el flujo: buscar → acción", async () => {
+    mockNoOpenShift();
+    await selectEmployee();
+    const current = () => screen.getByRole("list", { name: "Pasos para fichar" }).querySelector('[aria-current="step"]');
+    await waitFor(() => expect(current()).toHaveTextContent("Tocá Marcar ingreso o salida"));
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cambiar empleado" }));
+    expect(current()).toHaveTextContent("Buscá tu nombre");
   });
 });

@@ -707,6 +707,20 @@ function resolvePeriodStatus(statuses: string[]) {
   return statusPriority.find((status) => statuses.includes(status)) || "PENDIENTE";
 }
 
+// Marca de novedad de un día en la grilla: un solo chip aunque lo cubran
+// varias. Color y tipo sólo si todas coinciden; si difieren, null (el cliente
+// usa su estilo neutro), nunca uno elegido por el orden de la consulta.
+function dayNoveltyMark(novelties: Array<{ noveltyType: { id: string; name: string; uiColor: string } }>) {
+  const shared = <T>(values: T[]) => (values.every((value) => value === values[0]) ? values[0]! : null);
+  return {
+    label: novelties.map((novelty) => novelty.noveltyType.name).join(", "),
+    uiColor: shared(novelties.map((novelty) => novelty.noveltyType.uiColor)),
+    // Con un solo tipo, el cliente resuelve un color histórico inválido igual
+    // que el catálogo (fallback determinístico por id del tipo).
+    noveltyTypeId: shared(novelties.map((novelty) => novelty.noveltyType.id)),
+  };
+}
+
 // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): texto de negocio para jornadas
 // cuyas horas caen en un período protegido.
 const CLOSED_PERIOD_SHIFT_NOTE = "Período enviado o aprobado: la fichada se registró pero sus horas no se cargaron automáticamente. Requiere corrección explícita de RRHH.";
@@ -1138,7 +1152,7 @@ export const timeEntriesRepository = {
               toDate: true,
               // Etapa 15L.2C: allowsDateRange reemplaza allowsDateTo como
               // fuente productiva -- ver noveltyCoversDay.
-              noveltyType: { select: { name: true, allowsDateRange: true } },
+              noveltyType: { select: { id: true, name: true, uiColor: true, allowsDateRange: true } },
             },
           })
         : Promise.resolve([]),
@@ -1196,7 +1210,7 @@ export const timeEntriesRepository = {
         // día viven en `accounting.days[day]` (una sola fuente, sin duplicarlas).
         const dailyBreakdown: Array<{
           day: number;
-          novelty: { label: string } | null;
+          novelty: ReturnType<typeof dayNoveltyMark> | null;
           // Franco ACTIVO (EMPLOYEE_DAY_OFF.md §15): `activityMinutes` es lo que
           // registró el fichador esa fecha operativa; lo que computa, la contabilidad.
           dayOff: { notes: string | null; activityShifts: number; activityMinutes: number } | null;
@@ -1210,7 +1224,7 @@ export const timeEntriesRepository = {
           if (!accounting.days[String(day)] && !coveringNovelties.length && !dayOff) continue;
           dailyBreakdown.push({
             day,
-            novelty: coveringNovelties.length ? { label: coveringNovelties.map((novelty) => novelty.noveltyType.name).join(", ") } : null,
+            novelty: coveringNovelties.length ? dayNoveltyMark(coveringNovelties) : null,
             dayOff: dayOff ? { notes: dayOff.notes, activityShifts: dayOff.activityShifts, activityMinutes: dayOff.activityMinutes } : null,
             specialHourRuleNames: dayRules?.get(day)?.names ?? [],
             specialHourConflict: dayRules?.get(day)?.conflict ?? false,

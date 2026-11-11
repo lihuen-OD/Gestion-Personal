@@ -219,3 +219,46 @@ describe("MaintenancePanel — acciones", () => {
     expect(screen.getByRole("button", { name: "Reconfigurar" })).toBeEnabled();
   });
 });
+
+describe("MaintenancePanel — presentación y foco (Etapa 5)", () => {
+  it("los estados se leen en texto; la señal de color es sólo decorativa", () => {
+    renderPanel();
+    const device = screen.getByRole("region", { name: "Dispositivo" });
+    const app = screen.getByRole("region", { name: "Aplicación" });
+    for (const [region, text] of [[device, "Activo"], [device, "En línea"], [app, "Con conexión"]] as const) {
+      const value = within(region).getByText(text);
+      const dot = value.querySelector(".maintenance-dot");
+      expect(dot).toHaveAttribute("aria-hidden", "true");
+    }
+    act(() => { window.dispatchEvent(new Event("offline")); });
+    expect(within(app).getByText("Sin conexión").querySelector(".maintenance-dot")).toHaveClass("is-warn");
+  });
+
+  it("abrir la confirmación lleva el foco al campo de la palabra; Cancelar lo devuelve al botón que la abrió", () => {
+    renderPanel();
+    const trigger = screen.getByRole("button", { name: "Reconfigurar dispositivo" });
+    fireEvent.click(trigger);
+    expect(screen.getByLabelText("Escribí RECONFIGURAR para confirmar")).toHaveFocus();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByRole("button", { name: "Reconfigurar dispositivo" })).toHaveFocus();
+  });
+
+  it("mientras reconfigura, nada más se puede accionar; si falla, el foco vuelve al campo", async () => {
+    let finish: (cleared: boolean) => void = () => undefined;
+    renderPanel({ onReconfigure: () => new Promise<boolean>((resolve) => { finish = resolve; }) });
+    fireEvent.click(screen.getByRole("button", { name: "Reconfigurar dispositivo" }));
+    const field = screen.getByLabelText("Escribí RECONFIGURAR para confirmar");
+    fireEvent.change(field, { target: { value: "RECONFIGURAR" } });
+    fireEvent.click(screen.getByRole("button", { name: "Reconfigurar" }));
+    const busy = screen.getByRole("button", { name: "Reconfigurando…" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    for (const name of ["Volver al fichador", "Recargar aplicación", "Cancelar"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(field).toBeDisabled();
+
+    await act(async () => { finish(false); });
+    expect(screen.getByRole("alert")).toHaveTextContent("No pudimos borrar la vinculación de este equipo. Intentá nuevamente.");
+    expect(field).toBeEnabled();
+    expect(field).toHaveFocus();
+  });
+});

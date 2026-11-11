@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Download, Smartphone } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, Download } from "lucide-react";
 import { useInstallPrompt } from "../../pwa/installPrompt";
 import { isIOSDevice, isStandaloneMode } from "../../pwa/platform";
 
@@ -22,7 +22,7 @@ export function DeviceInstallHint({ stage }: { stage: "setup" | "pending" }) {
     if (standalone || !ios) return null;
     return (
       <div className="setup-guide warning" role="note">
-        <AlertTriangle size={17} aria-hidden="true" />
+        <AlertTriangle size={20} strokeWidth={1.75} aria-hidden="true" />
         <div>
           <b>Este equipo se está configurando desde el navegador</b>
           <p>Si después lo agregás a la pantalla de inicio, vas a tener que configurarlo de nuevo desde el ícono.</p>
@@ -35,12 +35,12 @@ export function DeviceInstallHint({ stage }: { stage: "setup" | "pending" }) {
     <>
       {standalone ? (
         <div className="setup-guide done" role="note">
-          <CheckCircle2 size={17} aria-hidden="true" />
+          <CheckCircle2 size={20} strokeWidth={1.75} aria-hidden="true" />
           <div><b>Fichador instalado en este equipo</b></div>
         </div>
       ) : (
         <div className="setup-guide" role="note">
-          <Smartphone size={17} aria-hidden="true" />
+          <Download size={20} strokeWidth={1.75} aria-hidden="true" />
           <div>
             <b>Instalá el fichador en este equipo</b>
             <p>Para usarlo como fichador, agregalo a la pantalla de inicio y configuralo desde el ícono instalado.</p>
@@ -72,7 +72,7 @@ export function DeviceSetupChecklist() {
   return (
     <>
       <details className="setup-checklist">
-        <summary>Cómo dejar este equipo listo</summary>
+        <summary>Cómo dejar este equipo listo<ChevronRight size={18} aria-hidden="true" /></summary>
         <ol>
           <li>Instalalo en la pantalla de inicio y abrilo siempre desde el ícono.</li>
           <li>Configurá el dispositivo y pedile a RRHH que lo apruebe con el código que aparece en pantalla.</li>
