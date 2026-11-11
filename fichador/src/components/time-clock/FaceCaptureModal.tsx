@@ -222,7 +222,12 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<FaceDetector | null>(null);
+  // R6-01 (Etapa 6B-5): el ciclo de detección espera con requestAnimationFrame
+  // mientras el video no tiene datos y con setTimeout después. Cada handle se
+  // guarda aparte y se cancela sólo con su API: un número de un tipo puede
+  // coincidir con uno del otro y cancelaría un temporizador ajeno.
   const frameRef = useRef<number>();
+  const detectTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const submitGuardRef = useRef(false);
   // F8: con la foto ya capturada la cámara se apaga; la detección no sigue
   // corriendo sobre el video negro (mostraba "imagen muy oscura" durante el envío).
@@ -240,10 +245,13 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
 
   // Apaga detector y cámara y suelta el video. Idempotente.
   const stopCamera = useCallback(() => {
-    if (frameRef.current) {
+    if (frameRef.current !== undefined) {
       window.cancelAnimationFrame(frameRef.current);
-      window.clearTimeout(frameRef.current);
       frameRef.current = undefined;
+    }
+    if (detectTimerRef.current !== undefined) {
+      window.clearTimeout(detectTimerRef.current);
+      detectTimerRef.current = undefined;
     }
     detectorRef.current?.close();
     detectorRef.current = null;
@@ -319,6 +327,9 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
         detectorRef.current = detector;
 
         const detect = () => {
+          // El handle que disparó esta vuelta ya no está pendiente.
+          frameRef.current = undefined;
+          detectTimerRef.current = undefined;
           if (capturedRef.current || stopped()) return;
           const currentVideo = videoRef.current;
           const currentDetector = detectorRef.current;
@@ -334,7 +345,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
             const detections = currentDetector.detectForVideo(currentVideo, performance.now()).detections;
             setState(statusForDetection(detections, currentVideo));
           }
-          frameRef.current = window.setTimeout(detect, 220) as unknown as number;
+          detectTimerRef.current = window.setTimeout(detect, 220);
         };
         detect();
       } catch {

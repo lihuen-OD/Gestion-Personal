@@ -23,6 +23,12 @@ export const VERIFY_RETRY_DELAYS_MS: readonly number[] = [5_000, 10_000, 20_000,
 export const POLL_FAILURES_BEFORE_NOTICE = 2;
 export const POLL_INTERRUPTED_MESSAGE = "No pudimos consultar la aprobación. Seguimos intentando.";
 export const AUTO_RETRY_MESSAGE = "Volvemos a intentar automáticamente.";
+/**
+ * Etapa 6B-5 (F6-08): la hora de vencimiento la da el servidor; el equipo no
+ * decide si ya pasó (su reloj puede estar desajustado). Se explica qué hacer
+ * si pasó, sin afirmar que el código sigue vigente ni generar otro solo.
+ */
+export const PAIRING_RENEW_HINT = "Si ya pasó esa hora, generá un código nuevo.";
 let registrationPromise: ReturnType<typeof clockDeviceApiService.register> | null = null;
 
 async function registerOnce() {
@@ -281,6 +287,7 @@ export function ClockDeviceGate({ children }: { children: ReactNode }) {
           <p className="sr-only">{spellPairingCode(pairing.code)}</p>
           <p className="pairing-code" aria-hidden="true">{pairingCodeParts(pairing.code)}</p>
           <p className="pairing-expiry"><Clock3 size={16} strokeWidth={2} aria-hidden="true" />Vence a las {formatTime(pairing.expiresAt)}</p>
+          <p className="pairing-renew">{PAIRING_RENEW_HINT}</p>
         </section> : null}
         {pending && !pairing ? <div className="device-gate-note" role="note"><KeyRound size={20} strokeWidth={1.75} aria-hidden="true" /><p>La identidad está guardada. Generá un código nuevo para continuar la aprobación.</p></div> : null}
         {/* La aprobación llega por la consulta periódica que ya hace el Gate. */}

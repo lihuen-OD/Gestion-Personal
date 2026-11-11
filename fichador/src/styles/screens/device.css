@@ -194,6 +194,16 @@
   font-size: var(--text-sm);
 }
 
+/* F6-08: qué hacer si ya pasó la hora (sin cuenta regresiva local). */
+.pairing-renew {
+  max-width: 340px;
+  margin-top: var(--space-1);
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  text-align: center;
+}
+
 /* Espera: la consulta periódica habilita el fichador al aprobarse. */
 .device-gate-waiting {
   display: inline-flex;
