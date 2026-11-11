@@ -18,11 +18,18 @@ html {
   text-size-adjust: 100%;
 }
 
+/* Azul noche con luz cian (estático; la capa animada vive en la pantalla de
+   fichada). El color sólido de --color-canvas queda como base del contraste. */
 body {
   margin: 0;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--color-canvas);
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(1200px 760px at 50% -12%, rgba(14, 42, 94, 0.95) 0%, rgba(14, 42, 94, 0) 62%),
+    radial-gradient(900px 700px at 105% 110%, rgba(79, 70, 229, 0.2) 0%, rgba(79, 70, 229, 0) 60%),
+    linear-gradient(180deg, var(--color-canvas) 0%, var(--color-canvas-deep) 100%);
+  background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: var(--text-md);

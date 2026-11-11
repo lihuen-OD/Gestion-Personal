@@ -3,7 +3,7 @@
 import { MEDIAPIPE_MODEL_PATH, MEDIAPIPE_WASM_PATH, NOSIMD_FILES, SIMD_FILES } from "./mediapipe-assets.mjs";
 
 // Mismo color que el lienzo del sistema visual (--color-canvas) y el meta theme-color de index.html.
-export const THEME_COLOR = "#f4f5f7";
+export const THEME_COLOR = "#071330";
 
 export const manifest = {
   name: "Fichador | Los O'Dwyer",

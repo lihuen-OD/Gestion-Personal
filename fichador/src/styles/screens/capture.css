@@ -1,24 +1,68 @@
 /*
- * Fichador — captura facial (FaceCaptureModal). Etapa 3 del rediseño
- * «Calma y certeza».
+ * Fichador — captura facial (FaceCaptureModal) «Biometric Future»: escaneo
+ * inmersivo a pantalla completa, visor con marco luminoso, línea de barrido,
+ * marcas, malla decorativa sobre la caja del rostro detectado e indicadores.
+ * Nada de esto valida ni afirma identidad: el detector sólo confirma que hay
+ * un rostro en posición y la fichada lleva una foto como evidencia.
  *
  * GEOMETRÍA (no cambiar por estética): .face-guide (24 %/52 % horizontal,
  * 14 %/72 % vertical en 4:3; 19 %/62 % y 17 %/64 % en 3:4) acompaña la región
  * que valida statusForDetection() (centro del rostro en 24–76 % × 14–86 % del
  * frame y tamaño mínimo 22 % × 24 %). Por eso el visor conserva siempre su
- * proporción 4:3 (3:4 en teléfono vertical): el tamaño cambia con la pantalla,
- * la proporción no. La guía es simétrica, así que el espejo de la vista previa
- * no la desplaza. El color sólo acompaña el estado real del detector.
+ * proporción 4:3 (3:4 en vertical): el tamaño cambia con la pantalla, la
+ * proporción no. La guía es simétrica, así que el espejo de la vista previa no
+ * la desplaza. Los valores viven sólo en --guide-* y el HUD (.face-hud) los
+ * reutiliza. El color sólo acompaña el estado real del detector.
  */
 
-/* ---------- Hoja ---------- */
+/* ---------- Pantalla completa ---------- */
+.capture-modal.modal-backdrop {
+  padding: 0;
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(1100px 700px at 30% -10%, rgba(14, 42, 94, 0.95) 0%, rgba(14, 42, 94, 0) 62%),
+    linear-gradient(180deg, var(--color-canvas) 0%, var(--color-canvas-deep) 100%);
+}
+
 .capture-modal .modal {
-  width: min(780px, 100%);
-  animation: kiosk-rise calc(var(--motion) * 260ms) var(--ease) both;
+  --cap-gutter: clamp(16px, 2.8vw, 40px);
+  display: grid;
+  grid-template-areas:
+    "vf ."
+    "vf head"
+    "vf status"
+    "vf checks"
+    "vf actions"
+    "vf .";
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 30vw, 440px);
+  grid-template-rows: 1fr auto auto auto auto 1fr;
+  gap: var(--space-4) clamp(16px, 2.8vw, 40px);
+  /* Crece con el contenido (texto agrandado o espaciado) en vez de comprimir
+     la fila del visor; como mínimo ocupa toda la pantalla. */
+  align-self: flex-start;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding:
+    calc(var(--safe-top) + var(--cap-gutter))
+    calc(var(--safe-right) + var(--cap-gutter))
+    calc(var(--safe-bottom) + var(--cap-gutter))
+    calc(var(--safe-left) + var(--cap-gutter));
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: kiosk-fade calc(var(--motion) * 260ms) var(--ease) both;
+}
+
+.capture-modal .modal-body,
+.capture-modal .face-capture {
+  display: contents;
 }
 
 .capture-modal .modal-head {
-  padding: var(--space-6) var(--space-4) var(--space-3) var(--space-6);
+  grid-area: head;
+  padding: 0;
 }
 
 .capture-modal .modal-head-text {
@@ -26,33 +70,50 @@
 }
 
 .capture-modal .modal-head-text h3 {
-  font-size: 22px;
+  font-size: clamp(20px, 1.9vw, 26px);
+  font-weight: var(--weight-semibold);
   letter-spacing: -0.02em;
   line-height: 1.25;
 }
 
 .capture-modal .modal-head-text p {
-  font-size: 15px;
+  margin-top: 2px;
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
-.face-capture {
-  display: grid;
-  gap: var(--space-4);
+.capture-modal .modal-head .icon-button {
+  border: 1px solid var(--color-line);
 }
 
 /* ---------- Visor ---------- */
-/* El ancho sale del alto disponible para que estado y acciones queden a la vista. */
 .face-video-shell {
+  --guide-left: 24%;
+  --guide-top: 14%;
+  --guide-width: 52%;
+  --guide-height: 72%;
+  --hud: var(--color-cyan-2);
   position: relative;
-  width: min(100%, max(260px, calc((100vh - 390px) * 4 / 3)));
-  width: min(100%, max(260px, calc((100dvh - 390px) * 4 / 3)));
+  grid-area: vf;
+  align-self: center;
+  justify-self: center;
+  width: min(100%, calc((100vh - 2 * var(--cap-gutter) - var(--safe-top) - var(--safe-bottom)) * 4 / 3));
+  width: min(100%, calc((100dvh - 2 * var(--cap-gutter) - var(--safe-top) - var(--safe-bottom)) * 4 / 3));
   aspect-ratio: 4 / 3;
-  margin-inline: auto;
   overflow: hidden;
   isolation: isolate;
-  border-radius: 22px;
+  border-radius: 28px;
   background: var(--color-viewfinder);
+  box-shadow: 0 0 0 1px var(--color-line-strong), 0 30px 80px -30px rgba(0, 0, 0, 0.85), 0 0 70px -24px rgba(34, 211, 238, 0.4);
+}
+
+.face-video-shell[data-tone="ok"] {
+  --hud: var(--color-guide-ok);
+}
+
+.face-video-shell[data-tone="warn"] {
+  --hud: var(--color-guide-warn);
 }
 
 .face-video {
@@ -81,11 +142,11 @@
 
 .face-guide {
   position: absolute;
-  left: 24%;
-  top: 14%;
-  width: 52%;
-  height: 72%;
-  border: 3px solid var(--color-guide);
+  left: var(--guide-left);
+  top: var(--guide-top);
+  width: var(--guide-width);
+  height: var(--guide-height);
+  border: 2px dashed var(--color-guide);
   border-radius: 50%;
   box-shadow: 0 0 0 200vmax var(--color-viewfinder-veil);
   transition:
@@ -99,21 +160,213 @@
 
 /* Verde sólo cuando el detector ya confirmó (state.valid). */
 .face-video-shell[data-tone="ok"] .face-guide {
+  border-style: solid;
   border-color: var(--color-guide-ok);
   box-shadow:
     0 0 0 200vmax var(--color-viewfinder-veil),
-    0 0 0 8px var(--color-guide-ok-glow);
+    0 0 0 6px var(--color-guide-ok-glow),
+    0 0 28px 2px var(--color-guide-ok-glow);
 }
 
 /* Enviando: la guía se aquieta; la foto tomada queda a la vista. */
 .face-video-shell[data-phase="submitting"] .face-guide {
-  border-color: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 0 200vmax rgba(11, 18, 32, 0.18);
+  border-style: solid;
+  border-color: rgba(234, 244, 255, 0.5);
+  box-shadow: 0 0 0 200vmax rgba(2, 6, 18, 0.3);
 }
 
 .face-video-shell[data-phase="preparing"] .face-guide,
 .face-video-shell[data-phase="off"] .face-guide {
   display: none;
+}
+
+/* ---------- HUD (decorativo, misma geometría que la guía) ---------- */
+.face-hud {
+  position: absolute;
+  left: var(--guide-left);
+  top: var(--guide-top);
+  z-index: 1;
+  width: var(--guide-width);
+  height: var(--guide-height);
+  pointer-events: none;
+}
+
+.face-video-shell[data-phase="preparing"] .face-hud,
+.face-video-shell[data-phase="off"] .face-hud {
+  display: none;
+}
+
+.face-hud-ticks {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.face-hud-ticks ellipse {
+  fill: none;
+  stroke: var(--hud);
+  stroke-width: 7;
+  stroke-dasharray: 0.14 0.86;
+  opacity: 0.45;
+  transition: stroke calc(var(--motion) * 220ms);
+}
+
+.face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-ticks ellipse {
+  animation: face-tick-pulse 1.8s ease-in-out infinite;
+}
+
+.face-video-shell[data-tone="ok"] .face-hud-ticks ellipse {
+  opacity: 0.9;
+}
+
+/* Línea de barrido dentro del óvalo, sólo con la cámara en vivo. */
+.face-hud-scan {
+  position: absolute;
+  inset: 0;
+  display: none;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.face-video-shell[data-phase="live"] .face-hud-scan {
+  display: block;
+}
+
+.face-hud-sweep {
+  position: absolute;
+  top: -40%;
+  right: 0;
+  left: 0;
+  height: 40%;
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0) 0%, rgba(34, 211, 238, 0.22) 82%, rgba(165, 243, 252, 0.9) 97%, rgba(165, 243, 252, 0) 100%);
+  animation: face-sweep 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.face-video-shell[data-tone="ok"] .face-hud-sweep {
+  opacity: 0.45;
+  animation-duration: 3.6s;
+}
+
+/* Marcos: se cierran sobre la guía cuando el rostro queda en posición. */
+.face-hud-corner {
+  position: absolute;
+  width: 20%;
+  height: 15%;
+  border: 0 solid var(--hud);
+  filter: drop-shadow(0 0 4px var(--hud));
+  transition: transform calc(var(--motion) * 700ms) var(--ease), border-color calc(var(--motion) * 220ms);
+}
+
+.face-hud-corner.is-tl { top: -9%; left: -17%; border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 10px; --out: translate(-8px, -8px); }
+.face-hud-corner.is-tr { top: -9%; right: -17%; border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 10px; --out: translate(8px, -8px); }
+.face-hud-corner.is-bl { bottom: -9%; left: -17%; border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 10px; --out: translate(-8px, 8px); }
+.face-hud-corner.is-br { bottom: -9%; right: -17%; border-bottom-width: 3px; border-right-width: 3px; border-bottom-right-radius: 10px; --out: translate(8px, 8px); }
+
+.face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-corner {
+  transform: var(--out);
+  animation: face-bracket 1.8s ease-in-out infinite;
+}
+
+/* Malla decorativa sobre la caja del único rostro detectado (≈ cada 220 ms). */
+.face-mesh {
+  position: absolute;
+  z-index: 1;
+  opacity: 0.35;
+  pointer-events: none;
+  transition:
+    left 220ms linear,
+    top 220ms linear,
+    width 220ms linear,
+    height 220ms linear,
+    opacity calc(var(--motion) * 320ms) var(--ease);
+}
+
+.face-video-shell[data-tone="ok"] .face-mesh {
+  opacity: 0.95;
+}
+
+.face-video-shell[data-phase="submitting"] .face-mesh {
+  opacity: 0.45;
+}
+
+.face-mesh-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.face-mesh-lines line {
+  stroke: var(--color-cyan-2);
+  stroke-width: 0.9;
+  stroke-opacity: 0.7;
+}
+
+.face-mesh-dots circle {
+  fill: var(--color-cyan-3);
+  opacity: 0.9;
+}
+
+/* Respiración de la malla: opacidad del contenedor (compositor), sin repintar el SVG. */
+.face-video-shell[data-tone="ok"] .face-mesh {
+  animation: face-breathe 3.2s ease-in-out infinite;
+}
+
+/* Etiqueta del HUD (abajo a la izquierda). */
+.face-hud-label {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-viewfinder-chip);
+  color: var(--hud);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.face-video-shell[data-tone="neutral"] .face-hud-label,
+.face-video-shell[data-tone="danger"] .face-hud-label {
+  color: var(--color-cyan-3);
+}
+
+.face-hud-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+  animation: face-blink 1.2s steps(2, jump-none) infinite;
+}
+
+/* Enviando: anillo de progreso sobre la foto tomada. */
+.face-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 8, 20, 0.3);
+}
+
+.face-busy span {
+  width: 72px;
+  height: 72px;
+  border: 3px solid rgba(103, 232, 249, 0.2);
+  border-top-color: var(--color-cyan-2);
+  border-radius: 50%;
+  box-shadow: 0 0 30px -6px var(--color-cyan-glow);
+  animation: fichador-spin 0.9s linear infinite;
 }
 
 /* Preparando / cámara sin imagen: mensaje centrado sobre el visor. */
@@ -129,17 +382,29 @@
   padding: var(--space-6);
   background: var(--color-viewfinder);
   color: var(--color-viewfinder-ink);
-  font-size: 15px;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
   text-align: center;
 }
 
-.face-center .kiosk-spinner {
-  color: inherit;
+.face-video-shell[data-phase="off"] .face-center {
+  background:
+    repeating-linear-gradient(135deg, rgba(248, 113, 113, 0.05) 0 12px, transparent 12px 24px),
+    #0a0f24;
 }
 
-.face-capture .kiosk-spinner.is-large {
-  width: 28px;
-  height: 28px;
+.face-video-shell[data-phase="off"] .face-center > svg {
+  color: var(--color-danger);
+}
+
+.face-center .kiosk-spinner {
+  color: var(--color-cyan-2);
+}
+
+.face-capture .kiosk-spinner.is-large,
+.face-center .kiosk-spinner.is-large {
+  width: 40px;
+  height: 40px;
   border-width: 3px;
 }
 
@@ -151,17 +416,19 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
+  min-height: 32px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-pill);
   background: var(--color-viewfinder-chip);
-  color: #fff;
-  font-size: 13.5px;
+  color: var(--color-ink);
+  font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
 }
 
 .face-chip.is-start {
   left: 14px;
+  color: var(--color-cyan-2);
 }
 
 .face-chip.is-end {
@@ -177,30 +444,23 @@
   background: #fff;
   opacity: 0;
   pointer-events: none;
-  animation: face-flash calc(var(--motion) * 320ms + 0.01ms) ease-out both;
+  animation: face-flash calc(var(--motion) * 420ms + 0.01ms) ease-out both;
 }
 
-@keyframes face-flash {
-  from {
-    opacity: 0.65;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-/* ---------- Estado ---------- */
+/* ---------- Estado y controles ---------- */
 .face-status {
   display: flex;
+  grid-area: status;
   align-items: center;
   gap: var(--space-3);
-  min-height: 56px;
+  min-height: 64px;
   padding: var(--space-3) var(--space-4);
-  border: 1px solid transparent;
-  border-radius: 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: var(--color-surface);
   color: var(--color-ink);
-  font-size: 16px;
-  font-weight: var(--weight-medium);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
   line-height: 1.4;
   transition:
     background-color calc(var(--motion) * 200ms) var(--ease),
@@ -212,18 +472,14 @@
   flex: none;
 }
 
-.face-status.tone-neutral {
-  background: var(--color-surface-2);
-  color: var(--color-ink-2);
-}
-
-.face-status.tone-neutral > svg {
-  color: var(--color-ink-3);
+.face-status.tone-neutral > svg,
+.face-status.tone-neutral > .kiosk-spinner {
+  color: var(--color-cyan-2);
 }
 
 .face-status.tone-ok {
   border-color: var(--color-ok-line);
-  background: var(--color-ok-soft);
+  background-image: linear-gradient(var(--color-ok-soft), var(--color-ok-soft));
 }
 
 .face-status.tone-ok > svg {
@@ -232,7 +488,7 @@
 
 .face-status.tone-warn {
   border-color: var(--color-warn-line);
-  background: var(--color-warn-soft);
+  background-image: linear-gradient(var(--color-warn-soft), var(--color-warn-soft));
 }
 
 .face-status.tone-warn > svg {
@@ -241,7 +497,7 @@
 
 .face-status.tone-danger {
   border-color: var(--color-danger-line);
-  background: var(--color-danger-soft);
+  background-image: linear-gradient(var(--color-danger-soft), var(--color-danger-soft));
 }
 
 .face-status.tone-danger > svg {
@@ -251,20 +507,22 @@
 /* Envío: nunca un éxito; sólo la etapa real (registrando / verificando / confirmando). */
 .face-progress {
   display: flex;
+  grid-area: status;
   align-items: center;
   gap: var(--space-4);
   min-height: 88px;
   padding: var(--space-4) var(--space-5);
-  border-radius: 16px;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+  border: 1px solid var(--color-accent-line);
+  border-radius: 20px;
+  background: var(--color-surface);
+  color: var(--color-cyan-2);
   animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
 }
 
 .face-progress strong {
   display: block;
   color: var(--color-ink);
-  font-size: 17px;
+  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   line-height: 1.35;
 }
@@ -273,24 +531,85 @@
   display: block;
   margin-top: 2px;
   color: var(--color-ink-2);
-  font-size: 15px;
+  font-size: var(--text-sm);
   line-height: 1.45;
+}
+
+.face-checks {
+  display: grid;
+  grid-area: checks;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.face-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-ink-3);
+  font-size: var(--text-sm);
+}
+
+.face-check-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: var(--weight-bold);
+  transition: background-color calc(var(--motion) * 320ms), border-color calc(var(--motion) * 320ms);
+}
+
+.face-check.is-ok,
+.face-check.is-active,
+.face-check.is-bad {
+  color: var(--color-ink);
+}
+
+.face-check.is-ok .face-check-mark {
+  border-color: var(--color-ok);
+  background: var(--color-ok);
+  color: var(--color-on-entry);
+}
+
+.face-check.is-active .face-check-mark {
+  border-color: var(--color-cyan);
+  animation: face-pulse-ring 1.6s ease-out infinite;
+}
+
+.face-check.is-bad .face-check-mark {
+  border-color: var(--color-warn);
+  background: var(--color-warn);
+  color: #1a1203;
 }
 
 /* ---------- Acciones ---------- */
 .face-capture .form-actions {
   display: grid;
+  grid-area: actions;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: var(--space-3);
 }
 
 .face-capture .form-actions .button {
   min-height: var(--action-h);
+  border-radius: 18px;
   font-size: var(--text-md);
+  white-space: normal;
+}
+
+.face-capture .form-actions .button.subtle {
+  border-color: var(--color-line-strong);
+  background: rgba(130, 190, 255, 0.06);
 }
 
 .face-capture .form-actions .face-confirm {
-  font-size: 18px;
+  font-size: 19px;
 }
 
 .face-capture .form-actions .face-confirm svg {
@@ -298,62 +617,82 @@
   height: 22px;
 }
 
+.face-capture .button.face-confirm.is-entry:not(:disabled) {
+  background-color: var(--color-entry);
+  background-image: linear-gradient(135deg, #22d3ee 0%, #67e8f9 55%, #38bdf8 100%);
+  box-shadow: 0 14px 44px -14px rgba(34, 211, 238, 0.75);
+  color: var(--color-on-entry);
+}
+
 .face-capture .button.face-confirm.is-exit:not(:disabled) {
-  background: var(--color-exit);
+  background-color: var(--color-accent-fill);
+  background-image: linear-gradient(135deg, var(--color-accent-fill) 0%, var(--color-exit) 100%);
+  box-shadow: 0 14px 44px -14px rgba(79, 70, 229, 0.85);
+  color: #fff;
 }
 
 @media (hover: hover) {
+  .face-capture .button.subtle:hover:not(:disabled) {
+    border-color: var(--color-accent-line);
+    background: var(--color-accent-soft);
+  }
+  .face-capture .button.face-confirm.is-entry:hover:not(:disabled) {
+    background-image: linear-gradient(135deg, #06b6d4 0%, #22d3ee 100%);
+  }
   .face-capture .button.face-confirm.is-exit:hover:not(:disabled) {
-    background: var(--color-exit-press);
+    background-image: linear-gradient(135deg, var(--color-accent-press) 0%, var(--color-exit-press) 100%);
   }
 }
 
-/* ---------- Teléfono vertical: pantalla completa, visor 3:4 ---------- */
-@media (max-width: 599px) and (orientation: portrait) {
-  .capture-modal.modal-backdrop {
-    padding: 0;
-    background: var(--color-surface);
-  }
+/* ---------- Vertical: visor 3:4 arriba, estado y acciones abajo ---------- */
+@media (orientation: portrait) {
+  /* El grupo queda centrado en alto; en pantallas chicas lo llena y las
+     acciones quedan fijas al pie. */
   .capture-modal .modal {
-    width: 100%;
-    min-height: 100%;
-    margin: 0;
-    border-radius: 0;
-    box-shadow: none;
-    animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
+    grid-template-areas:
+      "."
+      "head"
+      "vf"
+      "status"
+      "checks"
+      "actions"
+      ".";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 1fr auto auto auto auto auto 1fr;
+    row-gap: var(--space-3);
+    padding-bottom: 0;
   }
-  .capture-modal .modal-head {
-    padding: calc(var(--safe-top) + var(--space-3)) var(--space-3) 0 var(--space-4);
-  }
-  .capture-modal .modal-head-text h3 {
-    font-size: 20px;
-  }
-  .capture-modal .modal-body {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    padding: var(--space-3) var(--space-4) 0;
-  }
-  /* Visor y estado bajo el encabezado; acciones al pie (el espacio que sobra
-     queda entre ambos: el visor no se estira para no romper la geometría). */
-  .face-capture {
-    flex: 1;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    gap: var(--space-3);
-  }
+  .capture-modal .modal-head,
+  .face-status,
+  .face-progress,
+  .face-checks,
   .face-capture .form-actions {
-    align-self: end;
+    width: min(100%, 600px);
+    justify-self: center;
   }
   .face-video-shell {
-    width: min(100%, max(220px, calc((100vh - 300px) * 3 / 4)));
-    width: min(100%, max(220px, calc((100dvh - 300px) * 3 / 4)));
+    --guide-left: 19%;
+    --guide-top: 17%;
+    --guide-width: 62%;
+    --guide-height: 64%;
+    width: min(100%, max(220px, calc(48vh * 3 / 4)));
+    width: min(100%, max(220px, calc(48dvh * 3 / 4)));
     aspect-ratio: 3 / 4;
   }
-  .face-guide {
-    left: 19%;
-    top: 17%;
-    width: 62%;
-    height: 64%;
+  .face-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .face-check {
+    padding: 6px 12px 6px 6px;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-pill);
+    background: var(--glass);
+  }
+  .face-check-mark {
+    width: 22px;
+    height: 22px;
   }
   /* Acciones al pie, al alcance del pulgar; si el contenido no entra quedan
      fijas al pie del desplazamiento (nunca fuera de alcance). */
@@ -361,10 +700,36 @@
     position: sticky;
     bottom: 0;
     z-index: 2;
+    align-self: end;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
-    margin: 0 calc(-1 * var(--space-4));
-    padding: var(--space-3) var(--space-4) calc(var(--safe-bottom) + var(--space-4));
-    background: var(--color-surface);
+    padding: var(--space-3) 0 calc(var(--safe-bottom) + var(--space-4));
+    background: linear-gradient(180deg, rgba(3, 8, 23, 0) 0%, var(--color-canvas-deep) 30%);
+  }
+}
+
+/* Tablets en vertical: visor más grande. */
+@media (orientation: portrait) and (min-width: 700px) {
+  .face-video-shell {
+    width: min(100%, calc(56vh * 3 / 4));
+    width: min(100%, calc(56dvh * 3 / 4));
+  }
+}
+
+/* Teléfonos y tablets bajos en vertical: guía y acción a la vista. */
+@media (orientation: portrait) and (max-height: 760px) {
+  .face-video-shell {
+    width: min(100%, max(200px, calc(40vh * 3 / 4)));
+    width: min(100%, max(200px, calc(40dvh * 3 / 4)));
+  }
+  .capture-modal .modal-head-text h3 {
+    font-size: 19px;
+  }
+  .face-checks {
+    display: none;
+  }
+  .face-status {
+    min-height: 0;
+    font-size: var(--text-sm);
   }
 }
 
@@ -378,66 +743,160 @@
   .face-capture .form-actions .face-confirm svg {
     display: none;
   }
+  .face-chip,
+  .face-hud-label {
+    top: 10px;
+    font-size: 11px;
+  }
+  .face-hud-label {
+    top: auto;
+    bottom: 10px;
+  }
 }
 
 /* ---------- Teléfono horizontal: visor a la izquierda, estado y acciones a
    la derecha, todo dentro de la pantalla ---------- */
 @media (orientation: landscape) and (max-height: 540px) {
-  .capture-modal.modal-backdrop {
-    padding: 0;
-    background: var(--color-surface);
-  }
   .capture-modal .modal {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    --cap-gutter: var(--space-3);
     grid-template-areas:
       "vf head"
       "vf status"
-      "vf actions";
+      "vf actions"
+      "vf .";
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto 1fr;
     gap: var(--space-3) var(--space-5);
-    width: 100%;
-    min-height: 100%;
-    margin: 0;
-    padding:
-      calc(var(--safe-top) + var(--space-3))
-      calc(var(--safe-right) + var(--space-5))
-      calc(var(--safe-bottom) + var(--space-3))
-      calc(var(--safe-left) + var(--space-3));
-    border-radius: 0;
-    box-shadow: none;
-    animation: kiosk-fade calc(var(--motion) * 200ms) var(--ease) both;
-  }
-  .capture-modal .modal-head {
-    grid-area: head;
-    padding: 0;
   }
   .capture-modal .modal-head-text h3 {
     font-size: 19px;
   }
-  .capture-modal .modal-body,
-  .capture-modal .face-capture {
-    display: contents;
-  }
   /* 4:3 fijo: el alto manda y nunca supera ~56 % del ancho. */
   .face-video-shell {
-    grid-area: vf;
     align-self: center;
     width: auto;
     height: min(calc(100vh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-3)), calc(56vw * 3 / 4));
     height: min(calc(100dvh - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-3)), calc(56vw * 3 / 4));
-    margin: 0;
+    border-radius: 20px;
   }
-  .face-status,
-  .face-progress {
-    grid-area: status;
-    align-self: start;
+  .face-checks,
+  .face-hud-label {
+    display: none;
+  }
+  .face-status {
+    min-height: 0;
+    font-size: var(--text-sm);
   }
   .face-capture .form-actions {
-    grid-area: actions;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
   }
   .face-capture .form-actions .face-confirm svg {
     display: none;
   }
+}
+
+/* ---------- Movimiento ---------- */
+@keyframes face-flash {
+  from {
+    opacity: 0.55;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes face-sweep {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(350%);
+  }
+}
+
+@keyframes face-tick-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+@keyframes face-bracket {
+  0%,
+  100% {
+    transform: var(--out);
+  }
+  50% {
+    transform: none;
+  }
+}
+
+@keyframes face-breathe {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes face-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes face-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(34, 211, 238, 0);
+  }
+}
+
+/* Movimiento reducido: sin barrido ni bucles; el estado se comunica con
+   color, texto e íconos. La malla aparece sin transición. */
+@media (prefers-reduced-motion: reduce) {
+  .face-hud-scan,
+  .face-video-shell[data-phase="live"] .face-hud-scan {
+    display: none;
+  }
+  .face-hud-ticks ellipse,
+  .face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-ticks ellipse,
+  .face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-corner,
+  .face-video-shell[data-tone="ok"] .face-mesh,
+  .face-hud-dot,
+  .face-check.is-active .face-check-mark {
+    animation: none;
+  }
+  .face-mesh {
+    transition: none;
+  }
+}
+
+/* Bajo consumo: sin barrido, brillos ni bucles decorativos. */
+:root[data-power="low"] .face-video-shell[data-phase="live"] .face-hud-scan {
+  display: none;
+}
+
+:root[data-power="low"] .face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-ticks ellipse,
+:root[data-power="low"] .face-video-shell[data-phase="live"]:not([data-tone="ok"]) .face-hud-corner,
+:root[data-power="low"] .face-video-shell[data-tone="ok"] .face-mesh,
+:root[data-power="low"] .face-hud-dot,
+:root[data-power="low"] .face-check.is-active .face-check-mark {
+  animation: none;
+}
+
+:root[data-power="low"] .face-hud-corner {
+  filter: none;
+}
+
+:root[data-power="low"] .face-video-shell {
+  box-shadow: 0 0 0 1px var(--color-line-strong);
 }
