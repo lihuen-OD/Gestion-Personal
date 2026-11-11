@@ -1,11 +1,11 @@
-import { Check } from "lucide-react";
 import { FACE_MESH, meshFrame, type ViewBox } from "./faceOverlay";
 
 /**
  * «Biometric Future» — capa visual del visor. Todo es decorativo (aria-hidden)
- * y sale del estado REAL de la captura: la fase de la cámara, si el detector
- * ya confirmó un rostro válido y la caja del único rostro detectado. Nunca
- * afirma una identidad: el sistema detecta un rostro y toma una foto.
+ * y sin texto: la única señal escrita del estado es el panel de estado de la
+ * captura. Sale del estado REAL: la fase de la cámara, si el detector ya
+ * confirmó un rostro válido y la caja del único rostro detectado. Nunca afirma
+ * una identidad: el sistema detecta un rostro y toma una foto.
  *
  * La geometría de marcos, marcas y barrido usa las mismas variables que
  * .face-guide (screens/capture.css), así que acompaña la región que valida
@@ -29,15 +29,8 @@ const MESH_SVG = (
   </svg>
 );
 
-function hudLabel(phase: CapturePhase, valid: boolean) {
-  if (phase === "preparing") return "Iniciando";
-  if (phase === "submitting") return "Foto tomada";
-  if (phase === "off") return "";
-  return valid ? "En posición" : "Escaneando";
-}
 
-export function FaceHud({ phase, valid, view }: { phase: CapturePhase; valid: boolean; view: ViewBox | null }) {
-  const label = hudLabel(phase, valid);
+export function FaceHud({ phase, view }: { phase: CapturePhase; view: ViewBox | null }) {
   const mesh = view ? meshFrame(view) : null;
   return (
     <>
@@ -57,50 +50,7 @@ export function FaceHud({ phase, valid, view }: { phase: CapturePhase; valid: bo
           {MESH_SVG}
         </div>
       ) : null}
-      {label ? (
-        <span className="face-hud-label" aria-hidden="true"><span className="face-hud-dot" />{label}</span>
-      ) : null}
       {phase === "submitting" ? <span className="face-busy" aria-hidden="true"><span /></span> : null}
     </>
-  );
-}
-
-type CheckState = "ok" | "active" | "todo" | "bad";
-const CHECK_TEXT: Record<CheckState, string> = { ok: "listo", active: "en curso", todo: "pendiente", bad: "revisar" };
-
-/**
- * Controles de la captura derivados del estado real del detector (no agrega
- * reglas): la luz se mide antes de detectar; con NO_FACE o FACE_TOO_SMALL el
- * rostro no está en posición; con MULTIPLE_FACES hay más de uno.
- */
-export function captureChecks(phase: CapturePhase, status: string): { label: string; state: CheckState }[] {
-  const camera: CheckState = phase === "preparing" ? "active" : phase === "off" ? "bad" : "ok";
-  const live = phase === "live" || phase === "submitting";
-  const detected = live && status !== "LOADING";
-  const light: CheckState = !live ? "todo" : status === "LOW_LIGHT" ? "bad" : detected ? "ok" : "active";
-  const measured = detected && status !== "LOW_LIGHT";
-  const single: CheckState = !measured ? "todo" : status === "MULTIPLE_FACES" ? "bad" : status === "NO_FACE" ? "active" : "ok";
-  const placed: CheckState = !measured ? "todo" : status === "VALID" ? "ok" : status === "MULTIPLE_FACES" ? "todo" : "bad";
-  return [
-    { label: "Cámara lista", state: camera },
-    { label: "Buena luz", state: light },
-    { label: "Un solo rostro", state: single },
-    { label: "Rostro en el recuadro", state: placed },
-  ];
-}
-
-export function CaptureChecks({ phase, status }: { phase: CapturePhase; status: string }) {
-  return (
-    <ul className="face-checks" aria-label="Controles de la captura">
-      {captureChecks(phase, status).map((item) => (
-        <li key={item.label} className={`face-check is-${item.state}`}>
-          <span className="face-check-mark" aria-hidden="true">
-            {item.state === "ok" ? <Check size={14} strokeWidth={2.5} /> : item.state === "bad" ? "!" : null}
-          </span>
-          <span>{item.label}</span>
-          <span className="sr-only">: {CHECK_TEXT[item.state]}</span>
-        </li>
-      ))}
-    </ul>
   );
 }

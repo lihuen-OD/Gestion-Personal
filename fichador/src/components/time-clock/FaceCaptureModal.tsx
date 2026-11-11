@@ -6,7 +6,7 @@ import { Button } from "../ui/Button";
 import { isIOSDevice } from "../../pwa/platform";
 import { formatClock } from "../../utils/date";
 import { CAMERA_PAUSED_MESSAGE } from "./captureMessages";
-import { CaptureChecks, FaceHud } from "./FaceHud";
+import { FaceHud } from "./FaceHud";
 import { faceBoxToView, normalizedFaceBox, type ViewBox } from "./faceOverlay";
 
 export type FaceValidationStatus = "VALID" | "NO_FACE" | "MULTIPLE_FACES" | "LOW_LIGHT" | "FACE_TOO_SMALL" | "CAMERA_ERROR";
@@ -177,8 +177,11 @@ export function FaceDetectionStatus({ state, message = state.message }: { state:
   const Icon = state.status === "LOADING" ? null : STATUS_ICONS[state.status];
   return (
     <div className={`face-status tone-${tone} ${state.valid ? "valid" : "invalid"}`} role="status" aria-live="polite">
-      {Icon ? <Icon size={22} strokeWidth={1.75} aria-hidden="true" /> : <span className="kiosk-spinner" aria-hidden="true" />}
-      <span>{message}</span>
+      {/* «Biometric Future»: única señal de estado de la captura, con el tono del detector. */}
+      <span className="face-status-icon" aria-hidden="true">
+        {Icon ? <Icon size={22} strokeWidth={1.9} /> : <span className="kiosk-spinner" />}
+      </span>
+      <span className="face-status-text">{message}</span>
     </div>
   );
 }
@@ -463,7 +466,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
           <video ref={videoRef} className={frozenFrame ? "face-video is-frozen" : "face-video"} muted playsInline onPlaying={() => setVideoPlaying(true)} />
           {frozenFrame ? <img className="face-frozen" src={frozenFrame} alt="Foto tomada para esta fichada" /> : null}
           <div className="face-guide" aria-hidden="true" />
-          <FaceHud phase={phase} valid={state.valid} view={phase === "off" ? null : faceView} />
+          <FaceHud phase={phase} view={phase === "off" ? null : faceView} />
           {phase === "preparing" ? (
             <div className="face-center" aria-hidden="true"><span className="kiosk-spinner is-large" /></div>
           ) : null}
@@ -479,7 +482,6 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
           {frozenFrame ? <span className="face-flash" aria-hidden="true" /> : null}
         </div>
         {submitting ? null : <FaceDetectionStatus state={state} message={phase === "preparing" ? "Preparando la cámara…" : state.message} />}
-        {phase === "off" ? null : <CaptureChecks phase={phase} status={state.status} />}
         {submitting ? (
           <div className="face-progress" role="status" aria-live="polite">
             <span className="kiosk-spinner is-large" aria-hidden="true" />
