@@ -231,6 +231,18 @@
   }
 }
 
+/* F6-07: la consulta de aprobación está interrumpida (no es un error del
+   equipo ni un rechazo): tono de advertencia, sin el punto que "respira". */
+.device-gate-waiting.is-interrupted {
+  background: var(--color-warn-soft);
+  box-shadow: 0 0 0 1px var(--color-warn-line);
+  color: var(--color-warn);
+}
+
+.device-gate-waiting.is-interrupted svg {
+  flex: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .device-gate-waiting-dot {
     animation: none;

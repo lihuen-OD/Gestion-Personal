@@ -11,6 +11,11 @@ import type { GrantedMaintenance } from "./MaintenanceAccessDialog";
 /** Cada cuánto se actualiza el diagnóstico (y se confirma la sesión) con la pantalla visible. */
 export const MAINTENANCE_REFRESH_MS = 30_000;
 export const RECONFIGURE_CONFIRMATION_WORD = "RECONFIGURAR";
+/** Etapa 6B-4 (F6-05): desde cuántos segundos antes del vencimiento se avisa. */
+export const MAINTENANCE_EXPIRY_WARNING_SECONDS = 60;
+export const MAINTENANCE_EXPIRY_WARNING = "El acceso vence en menos de un minuto.";
+/** Por qué se sale del panel: "expired" = el servidor dio la sesión por vencida o venció su plazo. */
+export type MaintenanceExitReason = "expired";
 
 const connectivityLabel: Record<NonNullable<ClockMaintenanceDevice["connectivity"]>, string> = {
   ONLINE: "En línea",
@@ -60,7 +65,8 @@ function Detail({ label, value, tone }: { label: string; value: string; tone?: T
  */
 export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = () => window.location.reload() }: {
   access: GrantedMaintenance;
-  onExit: () => void;
+  /** Sin motivo: salida voluntaria. "expired": venció (plazo del servidor o 401 de sesión). */
+  onExit: (reason?: MaintenanceExitReason) => void;
   /** true = la identidad local se borró. */
   onReconfigure: () => Promise<boolean>;
   reloadApp?: () => void;
@@ -75,8 +81,12 @@ export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = ()
   const [reconfigureError, setReconfigureError] = useState("");
   const [, setTick] = useState(0);
   const alive = useRef(true);
+  // F6-05b: el panel sale una sola vez (vencimiento, 401 o salida voluntaria),
+  // aunque coincidan un clic, un tick de la cuenta y la respuesta del servidor.
+  const exited = useRef(false);
   const token = access.token;
   const secondsLeft = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
+  const ending = secondsLeft > 0 && secondsLeft <= MAINTENANCE_EXPIRY_WARNING_SECONDS;
 
   const endSession = useCallback(() => clockMaintenanceApiService.end(token).catch(() => undefined), [token]);
 
@@ -92,9 +102,21 @@ export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = ()
     const timer = window.setInterval(() => setTick((tick) => tick + 1), 1_000);
     return () => window.clearInterval(timer);
   }, []);
+  const leave = useCallback((reason?: MaintenanceExitReason) => {
+    if (exited.current) return;
+    exited.current = true;
+    onExit(reason);
+  }, [onExit]);
+  /**
+   * F6-05b: la cuenta en pantalla se actualiza una vez por segundo; el plazo
+   * real se comprueba contra el reloj en el instante de cada acción (mismo
+   * `deadline`, sin otro temporizador ni otra fuente). Vencido, la acción no se
+   * ejecuta y se sale por el mismo camino del vencimiento (aviso de F6-05).
+   */
+  const sessionExpired = () => Date.now() >= deadline;
   useEffect(() => {
-    if (secondsLeft === 0) onExit();
-  }, [secondsLeft, onExit]);
+    if (secondsLeft === 0) leave("expired");
+  }, [secondsLeft, leave]);
 
   const refresh = useCallback(async () => {
     try {
@@ -105,10 +127,10 @@ export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = ()
       setVerifiedAt(now);
       setDeadline(now + current.expiresInSeconds * 1_000);
     } catch (refreshError) {
-      if (alive.current && refreshError instanceof ApiError && refreshError.code === "CLOCK_MAINTENANCE_SESSION_INVALID") onExit();
+      if (alive.current && refreshError instanceof ApiError && refreshError.code === "CLOCK_MAINTENANCE_SESSION_INVALID") leave("expired");
       // Sin red o 5xx: queda la última verificación a la vista.
     }
-  }, [token, onExit]);
+  }, [token, leave]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -134,17 +156,31 @@ export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = ()
   }, [refresh]);
 
   const exit = () => {
+    if (sessionExpired()) {
+      leave("expired");
+      return;
+    }
     void endSession();
-    onExit();
+    leave();
   };
 
   const reload = () => {
+    if (exited.current) return;
+    if (sessionExpired()) {
+      leave("expired");
+      return;
+    }
     void endSession();
     reloadApp();
   };
 
   const reconfigure = async () => {
-    if (confirmation.trim().toUpperCase() !== RECONFIGURE_CONFIRMATION_WORD || reconfiguring) return;
+    if (confirmation.trim().toUpperCase() !== RECONFIGURE_CONFIRMATION_WORD || reconfiguring || exited.current) return;
+    // Vencida la sesión no se inicia: ni cierre en el servidor ni borrado de la identidad local.
+    if (sessionExpired()) {
+      leave("expired");
+      return;
+    }
     setReconfiguring(true);
     setReconfigureError("");
     // Sale antes del reset: el request toma la credencial en el momento.
@@ -182,11 +218,13 @@ export function MaintenancePanel({ access, onExit, onReconfigure, reloadApp = ()
           <Button icon={ArrowLeft} onClick={exit} disabled={reconfiguring} className="maintenance-back">
             <span>Volver{" "}<span className="maintenance-back-long">al fichador</span></span>
           </Button>
-          <div className="maintenance-timer" role="timer" aria-live="off">
+          <div className={`maintenance-timer${ending ? " is-ending" : ""}`} role="timer" aria-live="off">
             <Clock3 aria-hidden="true" />
             <span>Se cierra en</span>
             <strong>{formatCountdown(secondsLeft)}</strong>
           </div>
+          {/* F6-05: el último minuto se anuncia una sola vez (la cuenta en sí no se lee segundo a segundo). */}
+          <p className="sr-only" role="status">{ending ? MAINTENANCE_EXPIRY_WARNING : ""}</p>
         </div>
       </div>
 
