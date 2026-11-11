@@ -22,6 +22,7 @@ import { CooldownNotice, DockNotice, PunchDock } from "../features/clock/PunchDo
 import { PunchResult } from "../features/clock/PunchResult";
 import { employeeFullName } from "../features/clock/employeeLabels";
 import { useOnlineStatus } from "../features/clock/useOnlineStatus";
+import { useIdleTimeout } from "../features/clock/useIdleTimeout";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -30,6 +31,19 @@ const FaceCaptureModal = lazy(() =>
 const MAX_CLOCK_SHIFT_MINUTES = 20 * 60;
 /** Cuánto queda visible la confirmación antes de volver solo al inicio. */
 export const SUCCESS_RESET_MS = 3_500;
+/**
+ * Etapa 6B-3 (P2): sin interacción real, una búsqueda o un empleado elegido
+ * vuelven solos al inicio. Una fichada típica (buscar, elegir, leer el estado,
+ * tocar la acción) lleva 10–20 s: 45 s dejan margen para leer sin dejar a la
+ * vista nombre, legajo y jornada de alguien que ya se fue.
+ */
+export const KIOSK_IDLE_MS = 45_000;
+/**
+ * Cámara abierta sin confirmar ni tocar nada: se cierra y el kiosco vuelve al
+ * inicio. Ubicarse frente a la cámara puede llevar más que elegir un nombre,
+ * por eso el plazo es mayor. Nunca corre con la fichada enviándose.
+ */
+export const CAPTURE_IDLE_MS = 60_000;
 /** A partir de cuándo el envío avisa que puede demorar (la foto puede tardar ~10 s). */
 const SLOW_SUBMIT_MS = 4_000;
 /**
@@ -196,6 +210,23 @@ export function TimeClockPage() {
     intentLock.current = false;
     submitLock.current = false;
   }, []);
+
+  // Etapa 6B-3 (P2): kiosco abandonado. Dos plazos que nunca corren a la vez:
+  // - pantalla principal (búsqueda, selección, avisos), sin intención de fichar en curso;
+  // - cámara abierta sin confirmar (paso "capturing").
+  // Ninguno corre con la fichada enviándose (envío, verificación o
+  // confirmación del resultado) ni sobre la pantalla de éxito, que tiene su
+  // propio retorno. Al vencer, el kiosco vuelve al inicio: la intención y su
+  // requestId se descartan sin enviar nada, la cámara se apaga al desmontarse
+  // y las consultas pendientes quedan sin efecto (statusQuery = null).
+  const kioskIdle = !punch && view?.kind !== "success" && Boolean(search.trim() || selected || view);
+  useIdleTimeout(kioskIdle, KIOSK_IDLE_MS, () => {
+    if (!punch && !submitLock.current) resetKiosk();
+  });
+  useIdleTimeout(punch?.step === "capturing", CAPTURE_IDLE_MS, () => {
+    // Un "Confirmar" que llegó en el mismo instante ya tomó el envío: no se toca.
+    if (punch?.step === "capturing" && !submitLock.current) resetKiosk();
+  });
 
   // Éxito: la confirmación queda visible un momento y el kiosco vuelve solo
   // al inicio (sin recargar la app ni tocar la credencial del equipo).
