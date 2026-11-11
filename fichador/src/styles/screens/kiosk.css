@@ -454,8 +454,13 @@
   transition: background-color var(--dur-fast);
 }
 
+/* Deshabilitado sólo con una fichada en curso (queda detrás del diálogo). */
+.kiosk-change:disabled {
+  color: var(--color-ink-3);
+}
+
 @media (hover: hover) {
-  .kiosk-change:hover {
+  .kiosk-change:hover:not(:disabled) {
     background: var(--color-accent-soft);
   }
 }
@@ -522,11 +527,6 @@
 .st-late .kiosk-status-icon {
   background: var(--color-warn-strong);
   color: #fff;
-}
-
-.kiosk-status-retry {
-  display: flex;
-  justify-content: flex-end;
 }
 
 /* ---------- Dock: avisos junto a la acción ---------- */
@@ -648,6 +648,13 @@
   background: var(--color-surface-3);
   box-shadow: none;
   color: var(--color-ink-3);
+}
+
+/* Jornada desconocida (F6-02): acción deshabilitada que no afirma ingreso ni
+   salida. Su texto es más largo: con texto agrandado o espaciado (WCAG
+   1.4.12) pasa a dos líneas en vez de ensanchar el botón fuera de su columna. */
+.button.kiosk-action.is-unknown {
+  white-space: normal;
 }
 
 @media (hover: hover) {

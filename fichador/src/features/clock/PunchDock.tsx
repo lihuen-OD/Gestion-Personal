@@ -48,19 +48,23 @@ export function CooldownNotice({ secondsLeft, totalSeconds }: { secondsLeft: num
  * Ingreso en azul, salida en grafito. Qué acción y si está habilitada lo
  * decide TimeClockPage (canClockIn/canClockOut); acá sólo se presenta.
  */
-export function PunchDock({ notice, punchType, label, enabled, statusLoading, onPunch }: {
+export function PunchDock({ notice, punchType, label, enabled, statusLoading, statusUnknown = false, onPunch }: {
   notice: ReactNode;
   punchType: "IN" | "OUT";
   label: string;
   enabled: boolean;
   statusLoading: boolean;
+  /** F6-02: sin estado confirmado la acción no afirma ingreso ni salida (sin ícono de ninguno). */
+  statusUnknown?: boolean;
   onPunch: () => void;
 }) {
   const exit = punchType === "OUT";
+  const tone = statusUnknown ? "is-unknown" : exit ? "is-exit" : "is-entry";
+  const icon = statusUnknown ? undefined : exit ? LogOut : LogIn;
   return (
     <div className="kiosk-dock">
       {notice}
-      <Button variant="primary" className={`kiosk-action ${exit ? "is-exit" : "is-entry"}`} icon={exit ? LogOut : LogIn} disabled={!enabled} onClick={onPunch}>
+      <Button variant="primary" className={`kiosk-action ${tone}`} icon={icon} disabled={!enabled} onClick={onPunch}>
         {label}
       </Button>
       {statusLoading ? (
