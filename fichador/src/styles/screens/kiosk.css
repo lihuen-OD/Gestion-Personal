@@ -28,10 +28,12 @@
   gap: clamp(14px, 2.6vh, 32px);
   min-height: 100vh;
   min-height: 100dvh;
+  /* --keyboard-inset (features/clock/useKeyboardInset.ts): alto que tapa el
+     teclado virtual; así los últimos resultados pueden subir por encima de él. */
   padding:
     calc(var(--safe-top) + 10px)
     calc(var(--safe-right) + var(--k-gutter))
-    calc(var(--safe-bottom) + 16px)
+    calc(var(--safe-bottom) + 16px + var(--keyboard-inset, 0px))
     calc(var(--safe-left) + var(--k-gutter));
 }
 
@@ -1081,6 +1083,78 @@
 @media (max-width: 600px) {
   .kiosk[data-searching] .kiosk-intro {
     display: none;
+  }
+}
+
+/* ---------- Teclado virtual: buscador siempre a la vista ----------
+   Safari (y Chrome móvil) desplazan la página al abrir el teclado para
+   mostrar el campo. Si después el layout se reacomoda (el reloj se compacta al
+   escribir), el campo sale de la vista. Por eso, en pantallas táctiles:
+   - el layout de búsqueda se aplica ya al enfocar el campo, antes de que el
+     navegador calcule el desplazamiento, y sin transición;
+   - en teléfonos el reloj grande se oculta mientras se busca, así el campo
+     queda arriba y los resultados debajo, dentro del área visible;
+   - el campo queda fijo arriba al desplazar la lista (sticky).
+   Con puntero fino (escritorio) nada de esto cambia. */
+@media (pointer: coarse) {
+  .kiosk-dial {
+    transition: none;
+  }
+  .kiosk:has(.kiosk-search input:focus) {
+    --k-ring: clamp(132px, min(19vh, 36vw), 196px);
+  }
+  .kiosk:has(.kiosk-search input:focus) .kiosk-clock {
+    margin-top: 0;
+  }
+  .kiosk:has(.kiosk-search input:focus) .kiosk-dial-caption {
+    display: none;
+  }
+  .kiosk[data-step="1"] .kiosk-search {
+    position: sticky;
+    top: var(--safe-top);
+    z-index: 4;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (orientation: landscape) and (max-height: 540px) {
+  .kiosk[data-searching],
+  .kiosk:has(.kiosk-search input:focus) {
+    justify-content: flex-start;
+  }
+  .kiosk[data-searching] :is(.kiosk-dial, .kiosk-date, .kiosk-intro, .kiosk-steps),
+  .kiosk:has(.kiosk-search input:focus) :is(.kiosk-dial, .kiosk-date, .kiosk-intro, .kiosk-steps) {
+    display: none;
+  }
+}
+
+/* Pantallas táctiles bajas (iPhone SE, teléfono horizontal): con el teclado
+   abierto queda muy poco alto visible. Mientras hay una búsqueda escrita, la
+   barra de marca se oculta para que el campo y la primera fila entren. Se ata
+   al texto y no al foco: tocar un resultado quita el foco del campo, y si el
+   layout cambiara en ese momento el toque caería fuera de la fila. */
+@media (pointer: coarse) and (max-height: 700px) {
+  .kiosk[data-searching] .kiosk-top {
+    display: none;
+  }
+}
+
+/* Teléfono horizontal buscando: el buscador ocupa todo el ancho (el reloj ya no está). */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 540px) {
+  .kiosk[data-searching],
+  .kiosk:has(.kiosk-search input:focus) {
+    grid-template-areas:
+      "top"
+      "panel";
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kiosk[data-searching] .kiosk-clock,
+  .kiosk:has(.kiosk-search input:focus) .kiosk-clock {
+    grid-area: panel;
+  }
+  .kiosk[data-searching] .kiosk-panel,
+  .kiosk:has(.kiosk-search input:focus) .kiosk-panel {
+    width: min(100%, 680px);
+    justify-self: center;
   }
 }
 

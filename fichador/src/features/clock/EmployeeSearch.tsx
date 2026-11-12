@@ -2,6 +2,7 @@ import { useRef, type KeyboardEvent } from "react";
 import { AlertCircle, ChevronRight, Search, X } from "lucide-react";
 import type { ClockEmployee } from "../../services/api/timeClockApiService";
 import { employeeIdentity, employeeInitials, employeeListName } from "./employeeLabels";
+import { useKeyboardInset } from "./useKeyboardInset";
 
 /** Mínimo de caracteres para consultar al backend (TimeClockPage). */
 export const MIN_SEARCH_LENGTH = 2;
@@ -40,6 +41,8 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
   onSelect: (employee: ClockEmployee) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  // Teclado virtual: la página reserva el alto que tapa el teclado (screens/kiosk.css).
+  useKeyboardInset();
   const list = useRef<HTMLUListElement>(null);
   const rows = () => Array.from(list.current?.querySelectorAll<HTMLButtonElement>(".kiosk-row") ?? []);
 
