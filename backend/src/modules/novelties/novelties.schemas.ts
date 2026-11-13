@@ -51,4 +51,8 @@ export const bulkApproveNoveltiesSchema = z.object({ ids: z.array(z.string().uui
 
 export type ListNoveltiesQuery = z.infer<typeof listNoveltiesQuerySchema>;
 export type CreateNoveltyInput = z.infer<typeof createNoveltySchema>;
+// Lo que el servicio persiste: el input validado más las cantidades que
+// deriva el backend (quantityMinutes, docs/decisions/NOVELTY_COVERAGE_ENGINE.md).
+// quantityMinutes no es un campo del body: el cliente nunca lo manda.
+export type CreateNoveltyCommand = CreateNoveltyInput & { quantityMinutes?: number | null };
 export type RejectNoveltyInput = z.infer<typeof rejectNoveltySchema>;

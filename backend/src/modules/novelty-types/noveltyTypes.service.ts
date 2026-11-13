@@ -84,6 +84,82 @@ function assertFinnegansConfigCoherent(effective: {
   }
 }
 
+// Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md): misma
+// regla que el CHECK "NoveltyType_coverage_config_check" de la migración
+// 20261113180000_add_novelty_coverage_engine, con mensajes en lenguaje de
+// negocio. Se valida el estado RESULTANTE (en PATCH: fila actual + patch),
+// nunca se corrige en silencio un campo incoherente.
+export type CoverageConfig = {
+  coverageMode: "NONE" | "FIXED_MINUTES" | "MANUAL_MINUTES" | "EXPECTED_SCHEDULE";
+  coverageFixedMinutes: number | null | undefined;
+  coverageDayRule: "EVERY_DAY" | "SELECTED_WEEKDAYS" | "WORK_OBLIGATION";
+  coverageWeekdays: number[];
+  coverageOnDayOff: "NO_COVERAGE" | "COVER" | null | undefined;
+  coverageOnHoliday: "NO_COVERAGE" | "COVER" | "ONLY_IF_CONVOKED" | null | undefined;
+  coverageAppliesSpecialHours: boolean;
+  coverageCountsTowardTotal: boolean;
+  allowsHours: boolean;
+  allowsDateRange: boolean;
+};
+
+function coverageConfigError(message: string): never {
+  throw new AppError(message, 400, "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID");
+}
+
+export function assertCoverageConfigCoherent(config: CoverageConfig) {
+  const hasFixedMinutes = config.coverageFixedMinutes != null;
+  const hasWeekdays = config.coverageWeekdays.length > 0;
+  const hasSpecialDayPolicies = config.coverageOnDayOff != null || config.coverageOnHoliday != null;
+
+  if (config.coverageMode === "NONE") {
+    if (hasFixedMinutes) coverageConfigError("Una novedad que no registra tiempo no puede tener una cantidad fija.");
+    if (config.coverageDayRule !== "EVERY_DAY" || hasWeekdays || hasSpecialDayPolicies) {
+      coverageConfigError("Una novedad que no registra tiempo no define días, francos ni feriados.");
+    }
+    if (config.coverageAppliesSpecialHours) coverageConfigError("Una novedad que no registra tiempo no puede aplicar reglas de domingos y feriados.");
+    if (config.coverageCountsTowardTotal) coverageConfigError("Una novedad que no registra tiempo no puede sumar al total del día.");
+    return;
+  }
+
+  if (config.coverageMode !== "FIXED_MINUTES" && hasFixedMinutes) {
+    coverageConfigError("La cantidad fija sólo se indica cuando la novedad registra una cantidad fija.");
+  }
+
+  if (config.coverageMode === "MANUAL_MINUTES") {
+    if (config.allowsDateRange) coverageConfigError("Si el tiempo lo indica quien carga la novedad, la novedad es de un único día: desactivá \"Permite rango\".");
+    if (!config.allowsHours) coverageConfigError("Si el tiempo lo indica quien carga la novedad, tiene que permitir cargar una cantidad de horas.");
+    if (config.coverageDayRule !== "EVERY_DAY" || hasWeekdays || hasSpecialDayPolicies) {
+      coverageConfigError("Si el tiempo lo indica quien carga la novedad, vale para la fecha cargada: no se configuran días, francos ni feriados.");
+    }
+    return;
+  }
+
+  if (config.coverageMode === "EXPECTED_SCHEDULE" && config.coverageDayRule !== "WORK_OBLIGATION") {
+    coverageConfigError("La jornada que el empleado tenía que cumplir sólo existe en los días que tenía que trabajar.");
+  }
+
+  if (config.coverageMode === "FIXED_MINUTES" && (config.coverageFixedMinutes == null || config.coverageFixedMinutes < 1 || config.coverageFixedMinutes > 1440)) {
+    coverageConfigError("La cantidad fija tiene que estar entre 1 minuto y 24 horas.");
+  }
+
+  if (config.coverageDayRule === "WORK_OBLIGATION") {
+    if (hasWeekdays) coverageConfigError("Con \"días que tenía que trabajar\" no se eligen días de la semana: los decide la jornada del empleado.");
+    if (hasSpecialDayPolicies) {
+      coverageConfigError("Con \"días que tenía que trabajar\" no se configura qué pasa con francos y feriados: lo deciden el franco y la convocatoria del empleado.");
+    }
+    return;
+  }
+
+  if (config.coverageDayRule === "SELECTED_WEEKDAYS" && !hasWeekdays) coverageConfigError("Elegí al menos un día de la semana.");
+  if (config.coverageDayRule === "EVERY_DAY" && hasWeekdays) coverageConfigError("Con \"todos los días\" no se eligen días de la semana.");
+  if (config.coverageOnDayOff == null) coverageConfigError("Indicá qué pasa si el empleado tiene franco ese día.");
+  if (config.coverageOnHoliday == null) coverageConfigError("Indicá qué pasa si ese día es feriado.");
+}
+
+function pick<T>(patch: T | undefined, current: T): T {
+  return patch !== undefined ? patch : current;
+}
+
 export const noveltyTypesService = {
   async list(query: ListNoveltyTypesQuery) {
     const [items, total] = await noveltyTypesRepository.findMany(query);
@@ -110,6 +186,18 @@ export const noveltyTypesService = {
       finnegansName: data.finnegansName,
       allowsHours: Boolean(data.allowsHours),
     });
+    assertCoverageConfigCoherent({
+      coverageMode: data.coverageMode ?? "NONE",
+      coverageFixedMinutes: data.coverageFixedMinutes,
+      coverageDayRule: data.coverageDayRule ?? "EVERY_DAY",
+      coverageWeekdays: data.coverageWeekdays ?? [],
+      coverageOnDayOff: data.coverageOnDayOff,
+      coverageOnHoliday: data.coverageOnHoliday,
+      coverageAppliesSpecialHours: Boolean(data.coverageAppliesSpecialHours),
+      coverageCountsTowardTotal: Boolean(data.coverageCountsTowardTotal),
+      allowsHours: Boolean(data.allowsHours),
+      allowsDateRange: data.allowsDateRange ?? true,
+    });
     const item = await execute(() => noveltyTypesRepository.create(data));
     invalidateNoveltyTypesCache();
     await auditChange("CREATE", item, audit);
@@ -127,6 +215,18 @@ export const noveltyTypesService = {
       finnegansCode: data.finnegansCode !== undefined ? data.finnegansCode : current.finnegansCode,
       finnegansName: data.finnegansName !== undefined ? data.finnegansName : current.finnegansName,
       allowsHours: data.allowsHours !== undefined ? data.allowsHours : current.allowsHours,
+    });
+    assertCoverageConfigCoherent({
+      coverageMode: pick(data.coverageMode, current.coverageMode),
+      coverageFixedMinutes: pick(data.coverageFixedMinutes, current.coverageFixedMinutes),
+      coverageDayRule: pick(data.coverageDayRule, current.coverageDayRule),
+      coverageWeekdays: pick(data.coverageWeekdays, current.coverageWeekdays),
+      coverageOnDayOff: pick(data.coverageOnDayOff, current.coverageOnDayOff),
+      coverageOnHoliday: pick(data.coverageOnHoliday, current.coverageOnHoliday),
+      coverageAppliesSpecialHours: pick(data.coverageAppliesSpecialHours, current.coverageAppliesSpecialHours),
+      coverageCountsTowardTotal: pick(data.coverageCountsTowardTotal, current.coverageCountsTowardTotal),
+      allowsHours: pick(data.allowsHours, current.allowsHours),
+      allowsDateRange: pick(data.allowsDateRange, current.allowsDateRange),
     });
     const item = await execute(() => noveltyTypesRepository.update(id, data));
     invalidateNoveltyTypesCache();

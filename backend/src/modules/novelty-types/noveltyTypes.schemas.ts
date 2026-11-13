@@ -9,6 +9,22 @@ export const recordStatusSchema = z.enum(["ACTIVO", "INACTIVO"]);
 // legacy que reemplazaba (timeImpact/blocksTimeEntry/setsWorkedHoursToZero).
 export const noveltyTimeEntryBehaviorSchema = z.enum(["NO_BLOQUEA", "BLOQUEA_NUEVA_CARGA"]);
 export const finnegansValueUnitSchema = z.enum(["HOURS", "DAYS", "UNIT"]);
+// Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md). Mismos
+// valores que los enums de schema.prisma; la coherencia entre campos la
+// valida noveltyTypes.service.ts::assertCoverageConfigCoherent (y el CHECK
+// "NoveltyType_coverage_config_check" en la base).
+export const noveltyCoverageModeSchema = z.enum(["NONE", "FIXED_MINUTES", "MANUAL_MINUTES", "EXPECTED_SCHEDULE"]);
+export const noveltyCoverageDayRuleSchema = z.enum(["EVERY_DAY", "SELECTED_WEEKDAYS", "WORK_OBLIGATION"]);
+export const noveltyCoverageDayOffPolicySchema = z.enum(["NO_COVERAGE", "COVER"]);
+export const noveltyCoverageHolidayPolicySchema = z.enum(["NO_COVERAGE", "COVER", "ONLY_IF_CONVOKED"]);
+export const noveltyRealWorkCompatibilitySchema = z.enum(["COMPATIBLE", "INCOMPATIBLE"]);
+// 0 = domingo .. 6 = sábado (mismo criterio que ShiftAssignment.weekdays).
+// Se normaliza sin repetidos y ordenado: la base no puede exigir unicidad en
+// un CHECK.
+export const coverageWeekdaysSchema = z
+  .array(z.number().int().min(0).max(6))
+  .max(7)
+  .transform((days) => Array.from(new Set(days)).sort((left, right) => left - right));
 export const roleSchema = z.enum([
   "Nivel 1 - RRHH",
   "Nivel 2 - Supervisión / Gestión",
@@ -79,6 +95,19 @@ export const createNoveltyTypeSchema = z.object({
     "Nivel 3 - Administrativo de Carga Horaria",
   ]),
   approvalRoles: z.array(roleSchema).default(["Nivel 1 - RRHH"]),
+  // Cobertura horaria: defaults neutros (no registra tiempo, no suma).
+  coverageMode: noveltyCoverageModeSchema.default("NONE"),
+  coverageFixedMinutes: z.number().int().min(1).max(1440).optional().nullable(),
+  coverageDayRule: noveltyCoverageDayRuleSchema.default("EVERY_DAY"),
+  coverageWeekdays: coverageWeekdaysSchema.default([]),
+  // Sin default funcional: obligatorias sólo para reglas por calendario con
+  // cobertura (las exige el servicio).
+  coverageOnDayOff: noveltyCoverageDayOffPolicySchema.optional().nullable(),
+  coverageOnHoliday: noveltyCoverageHolidayPolicySchema.optional().nullable(),
+  coverageAppliesSpecialHours: z.boolean().default(false),
+  coverageCountsTowardTotal: z.boolean().default(false),
+  realWorkCompatibility: noveltyRealWorkCompatibilitySchema.default("COMPATIBLE"),
+  requiresObservation: z.boolean().default(false),
 });
 
 export const updateNoveltyTypeSchema = createNoveltyTypeSchema.partial();

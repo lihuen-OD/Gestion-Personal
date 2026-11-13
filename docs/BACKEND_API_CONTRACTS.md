@@ -1132,6 +1132,31 @@ NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED` / `NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUI
 NOVELTY_TYPE_HOURS_DAYS_CONFLICT`, Etapa 15L.5) — estructuralmente inviable,
 ese tipo nunca tendría `quantityDays` para exportar.
 
+**Cobertura horaria** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`, etapa 1,
+aditivo): `POST`/`PATCH` aceptan y todas las lecturas devuelven:
+
+```json
+{
+  "coverageMode": "FIXED_MINUTES",
+  "coverageFixedMinutes": 480,
+  "coverageDayRule": "WORK_OBLIGATION",
+  "coverageWeekdays": [],
+  "coverageOnDayOff": null,
+  "coverageOnHoliday": null,
+  "coverageAppliesSpecialHours": true,
+  "coverageCountsTowardTotal": true,
+  "realWorkCompatibility": "INCOMPATIBLE",
+  "requiresObservation": false
+}
+```
+
+- `coverageMode`: `NONE` (default) · `FIXED_MINUTES` · `MANUAL_MINUTES` · `EXPECTED_SCHEDULE`.
+- `coverageDayRule`: `EVERY_DAY` (default) · `SELECTED_WEEKDAYS` · `WORK_OBLIGATION`. `coverageWeekdays`: 0 = domingo … 6 = sábado; el backend los devuelve sin repetidos y ordenados.
+- `coverageOnDayOff`: `NO_COVERAGE` · `COVER`. `coverageOnHoliday`: `NO_COVERAGE` · `COVER` · `ONLY_IF_CONVOKED`. Sin default: obligatorios con `FIXED_MINUTES` + `EVERY_DAY`/`SELECTED_WEEKDAYS`, y `null` en cualquier otro caso.
+- `realWorkCompatibility`: `COMPATIBLE` (default) · `INCOMPATIBLE`. `coverageAppliesSpecialHours`, `coverageCountsTowardTotal` y `requiresObservation` default `false`.
+- Configuración incoherente → `400 NOVELTY_TYPE_COVERAGE_CONFIG_INVALID` con el motivo en lenguaje de negocio. En `PATCH` se valida la fila resultante (actual + patch); un `PATCH` sin campos de cobertura conserva la configuración actual.
+- En la etapa 1 esta configuración todavía no produce cobertura ni cambia ningún total.
+
 ### Puestos
 
 ```txt
@@ -1227,9 +1252,10 @@ Body:
 
 Reglas:
 
-- Si quien crea es RRHH, la novedad nace `APROBADO` directo; cualquier otro rol la deja `PENDIENTE` (el campo `NoveltyType.requiresApproval` se persiste pero no controla este flujo — es decorativo).
+- Si quien crea es RRHH, la novedad nace `APROBADO` directo. Para cualquier otro rol decide `NoveltyType.requiresApproval` (Etapa 15L.2A): `false` la crea `APROBADO`; `true` la deja `PENDIENTE`.
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
+- **Cobertura horaria, etapa 1** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`): en un tipo `coverageMode=MANUAL_MINUTES` el backend deriva `quantityMinutes = round(quantityHours × 60)` (el cliente no lo envía) y rechaza más de 24 h en el día (`400 NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY`). En cualquier otro tipo `quantityMinutes` es `null`. Las lecturas de novedades devuelven `quantityMinutes`.
 - **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni `timeEntryBehavior` del tipo. El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
 - **Etapa 15G.3** (`docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md`): rechaza (409) crear una novedad del **mismo `noveltyTypeId`** para el **mismo empleado** cuando su rango de fechas (`fromDate`/`toDate`, `toDate` nulo tratado como igual a `fromDate`) coincide o se superpone con una novedad ya activa (cualquier `status` salvo `RECHAZADO`):
   - `NOVELTY_DUPLICATE` — el rango coincide exactamente con el existente.
@@ -1254,6 +1280,16 @@ Rechazo:
 ```
 
 **Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
+
+Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). Aprueba una por una con las mismas reglas que `approve`.
+
+### Eliminar
+
+```txt
+DELETE /api/novelties/:id
+```
+
+Sólo RRHH. Borrado físico con auditoría. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans.
 
 ### Fichador (`clock`, F7)
 

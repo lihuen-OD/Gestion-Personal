@@ -120,6 +120,8 @@ Use constraints for:
 - non-null required fields
 - referential integrity
 
+Hand-written `CHECK` constraints (added 2026-11-13, `20261113180000_add_novelty_coverage_engine`): PostgreSQL treats a CHECK that evaluates to `NULL` as satisfied. Any expression over nullable columns (`col BETWEEN 1 AND 1440`, `cardinality(arr)`, `arr <@ ARRAY[...]`) must be guarded with `IS NOT NULL`/`COALESCE`, or the whole expression wrapped in `COALESCE((...), false)`. Test each CHECK with the NULL case, not only with wrong values: the first version of that migration accepted a fixed-minutes novelty type with no minutes.
+
 ## Indexes
 
 Consider indexes for:

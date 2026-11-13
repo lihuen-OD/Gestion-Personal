@@ -261,6 +261,7 @@ function noveltyType(overrides: Partial<Record<string, unknown>> = {}) {
     finnegansRequiresValidity: false,
     timeEntryBehavior: "NO_BLOQUEA",
     allowedLoadRoles: [] as string[],
+    coverageMode: "NONE",
     ...overrides,
   };
 }
@@ -606,6 +607,74 @@ describe("noveltiesService.create", () => {
       );
 
       expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+    });
+  });
+
+  // Motor de cobertura — Etapa 1 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md):
+  // en un tipo de cantidad manual la cantidad canónica es quantityMinutes,
+  // derivada por el backend de quantityHours. Ningún otro modo la usa todavía
+  // y crear una novedad sigue sin escribir horas (15G.1 §2.1).
+  describe("Motor de cobertura — quantityMinutes en tipos de cantidad manual", () => {
+    const manualType = () => noveltyType({ allowsHours: true, allowsDateRange: false, coverageMode: "MANUAL_MINUTES" });
+
+    it.each([
+      [1, 60],
+      [1.5, 90],
+      [0.25, 15],
+      [1.33, 80],
+      [24, 1440],
+    ])("%s h → %s min, conservando quantityHours", async (hours, minutes) => {
+      repo.findNoveltyType.mockResolvedValue(manualType());
+
+      await noveltiesService.create(createInput({ quantityHours: hours, toDate: null }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({ quantityHours: hours, quantityMinutes: minutes, quantityDays: null }),
+        "APROBADO",
+        rrhhUser.id,
+      );
+    });
+
+    it("más de 24 h en un único día se rechaza sin persistir (nunca se recorta)", async () => {
+      repo.findNoveltyType.mockResolvedValue(manualType());
+
+      await expect(noveltiesService.create(createInput({ quantityHours: 24.5, toDate: null }), rrhhUser)).rejects.toMatchObject({
+        statusCode: 400,
+        code: "NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY",
+      });
+      expect(repo.createMany).not.toHaveBeenCalled();
+    });
+
+    it("sin cantidad cargada: quantityMinutes queda null (la obligatoriedad llega con el motor)", async () => {
+      repo.findNoveltyType.mockResolvedValue(manualType());
+
+      await noveltiesService.create(createInput({ quantityHours: null, toDate: null }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityMinutes: null }), "APROBADO", rrhhUser.id);
+    });
+
+    it("un tipo que permite horas pero no es de cantidad manual (legado con rango) no deriva minutos", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: true, allowsDateRange: true, coverageMode: "NONE" }));
+
+      await noveltiesService.create(createInput({ quantityHours: 30 }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 30, quantityMinutes: null }), "APROBADO", rrhhUser.id);
+    });
+
+    it("un tipo sin horas nunca deriva minutos", async () => {
+      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, coverageMode: "FIXED_MINUTES" }));
+
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: null }), rrhhUser);
+
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: null, quantityMinutes: null, quantityDays: 1 }), "APROBADO", rrhhUser.id);
+    });
+
+    it("createMany sigue recibiendo exactamente 3 argumentos: ningún efecto horario (15G.1)", async () => {
+      repo.findNoveltyType.mockResolvedValue(manualType());
+
+      await noveltiesService.create(createInput({ quantityHours: 1, toDate: null }), rrhhUser);
+
+      expect(repo.createMany.mock.calls[0]).toHaveLength(3);
     });
   });
 

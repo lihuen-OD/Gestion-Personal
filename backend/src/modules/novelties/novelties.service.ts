@@ -6,7 +6,7 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
 import { calendarDaysInclusive } from "../../shared/datetime/argentinaTime";
 import { noveltiesRepository } from "./novelties.repository";
-import type { CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
+import type { CreateNoveltyCommand, CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
 import { notifyRrhh } from "../workforce-management/workforce.service";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 
@@ -134,11 +134,29 @@ function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnTyp
 // `normalizeCreateInput` para que un tipo con `allowsDateRange=false`
 // calcule sobre `toDate=null` (1 día), nunca sobre un `toDate` extendido
 // que igual se iba a descartar.
-function resolveQuantities(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
+//
+// Motor de cobertura — Etapa 1 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md):
+// en un tipo de cantidad manual (`coverageMode = MANUAL_MINUTES`, siempre de
+// un único día) la cantidad canónica es `quantityMinutes`; mientras el
+// formulario siga enviando horas, el backend la deriva de `quantityHours`
+// (mismo redondeo que el backfill de la migración) y rechaza más de 24 h en
+// un día en vez de recortarlas. En cualquier otro modo queda `null`.
+const MAX_MINUTES_PER_DAY = 1440;
+
+function resolveQuantities(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyCommand {
   if (type?.allowsHours) {
-    return { ...input, quantityDays: null };
+    return { ...input, quantityDays: null, quantityMinutes: manualQuantityMinutes(input, type) };
   }
-  return { ...input, quantityHours: null, quantityDays: calendarDaysInclusive(input.fromDate, input.toDate) };
+  return { ...input, quantityHours: null, quantityDays: calendarDaysInclusive(input.fromDate, input.toDate), quantityMinutes: null };
+}
+
+function manualQuantityMinutes(input: CreateNoveltyInput, type: NonNullable<Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>>) {
+  if (type.coverageMode !== "MANUAL_MINUTES" || input.quantityHours == null) return null;
+  const minutes = Math.round(input.quantityHours * 60);
+  if (minutes > MAX_MINUTES_PER_DAY) {
+    throw new AppError("La cantidad de una novedad de un único día no puede superar 24 h.", 400, "NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY");
+  }
+  return minutes;
 }
 
 function rangeBounds(fromDate: Date, toDate: Date | null | undefined) {

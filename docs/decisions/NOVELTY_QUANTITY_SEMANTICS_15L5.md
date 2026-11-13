@@ -1,5 +1,7 @@
 # Etapa 15L.5 — Normalización de cantidades en Novedades (`quantityDays` / `quantityHours`)
 
+> **Reemplazado parcialmente (2026-11-13) por [`NOVELTY_COVERAGE_ENGINE.md`](NOVELTY_COVERAGE_ENGINE.md).** §5 ("`quantityHours` es 100% manual y nunca se relaciona con horas"): en un tipo de cantidad manual (`coverageMode = MANUAL_MINUTES`) la cantidad canónica pasa a ser `Novelty.quantityMinutes`, derivada por el backend de `quantityHours`, y el motor de cobertura la usa. Sigue vigente todo lo demás, en particular `quantityDays` como días corridos calculados por el backend.
+
 ## 1. Motivo
 
 `Novelty.quantityDays` se calculaba en el frontend (`NoveltyModal.tsx::dateRange`,

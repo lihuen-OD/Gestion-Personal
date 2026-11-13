@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
-import type { CreateNoveltyInput, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
+import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 const noveltyListOrderBy: SortOrderByMap<(typeof noveltyListSortKeys)[number], Prisma.NoveltyOrderByWithRelationInput> = {
@@ -153,7 +153,7 @@ export const noveltiesRepository = {
   // TimeEntry desde acá. La transacción se mantiene sólo para la creación
   // atómica de varias filas `Novelty` (alta masiva por legajo) + su lectura
   // final, nada más.
-  createMany(input: CreateNoveltyInput, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
+  createMany(input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
     return prisma.$transaction(async (tx) => {
       const created = await Promise.all(
         input.employeeIds.map((employeeId) =>
@@ -166,6 +166,7 @@ export const noveltiesRepository = {
               toDate: input.toDate || null,
               quantityHours: input.quantityHours || null,
               quantityDays: input.quantityDays || null,
+              quantityMinutes: input.quantityMinutes ?? null,
               observation: input.observation || null,
               targetHourConceptId: input.targetHourConceptId || null,
               createdByUserId: createdByUserId || null,

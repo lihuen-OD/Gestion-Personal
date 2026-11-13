@@ -251,6 +251,16 @@ describe("noveltiesRepository.createMany — Etapa 15G.1 (ajuste: sin efecto hor
   it("acepta exactamente 3 argumentos (input, status, createdByUserId) — ya no existe un 4to parámetro de efecto horario", () => {
     expect(noveltiesRepository.createMany.length).toBe(3);
   });
+
+  // Motor de cobertura — Etapa 1: persiste la cantidad canónica en minutos
+  // que deriva el servicio, y null cuando no hay (nunca undefined).
+  it("persiste quantityMinutes derivado por el servicio, y null cuando no viene", async () => {
+    await noveltiesRepository.createMany({ ...(createInput as object), quantityHours: 1.5, quantityMinutes: 90 } as never, "APROBADO", "user-1");
+    await noveltiesRepository.createMany(createInput, "APROBADO", "user-1");
+
+    expect(mockedPrisma.__tx.novelty.create.mock.calls[0]![0].data).toMatchObject({ quantityHours: 1.5, quantityMinutes: 90 });
+    expect(mockedPrisma.__tx.novelty.create.mock.calls[1]![0].data).toMatchObject({ quantityMinutes: null });
+  });
 });
 
 // Etapa 15G.1 — ajuste final: approve() sólo cambia `status`/auditoría.
