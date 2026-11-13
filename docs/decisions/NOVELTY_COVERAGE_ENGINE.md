@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 1** (modelo y configuración, ver §9). Mientras no se completen las etapas 3 y 4, **ninguna novedad aporta minutos a ningún total**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 2** (modelo y configuración; jornada esperada, ver §9). Mientras no se completen las etapas 3 y 4, **ninguna novedad aporta minutos a ningún total**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -80,20 +80,76 @@ Por empleado y fecha: tipo `NONE` → `NO_COVERAGE`; elegibilidad por regla de d
 
 ## 7. Jornada esperada para Novedades (etapa 2)
 
-"Planificación vigente" = al menos una `ShiftAssignment` HABILITADA con template ACTIVO cuya vigencia incluye la fecha. Precedencia:
+Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `evaluateEmployeeWorkday(context, dateKey)`, cargador batch `loadEmployeeWorkdayContext(employeeIds, from, to, db)` y `resolveExpectedWorkdays` (ambos juntos). La duración de un turno sale de una única fórmula, `shifts/shiftTemplateTime.ts::computeExpectedMinutes`, movida sin cambios desde `workforce.service.ts`.
 
-| Situación | Resultado |
-|---|---|
-| Franco ACTIVO | 0 confirmado (`DAY_OFF`) |
-| Feriado sin convocatoria ACTIVA de la persona | 0 confirmado (`HOLIDAY_NOT_CONVOKED`) |
-| Feriado con convocatoria | obligación; minutos de la convocatoria o del turno, si no hay → revisión (`EXPECTED_MINUTES_UNKNOWN`) |
-| Régimen `SIN_TURNO` | revisión (`REGIME_WITHOUT_SCHEDULE`) |
-| Asignación aplicable ese día | obligación con minutos esperados |
-| `TURNO_FLEXIBLE` sin asignación aplicable | revisión (`FLEXIBLE_REGIME_NO_ASSIGNMENT`) |
-| Sin planificación vigente | revisión (`SCHEDULE_MISSING`) |
-| `TURNO_OBLIGATORIO` o sin régimen, planificación que excluye ese día | 0 confirmado (`NO_WORK_OBLIGATION`) |
+### 7.1 Auditoría (2026-11-13)
 
-Sólo para cobertura de Novedades: `resolveWorkObligationCandidates` y las alertas no cambian.
+- **Varias asignaciones el mismo día están permitidas sin control.** La única restricción es `@@unique([employeeId, shiftTemplateId])`: un legajo puede tener varios turnos **distintos** HABILITADOS, vigentes y aplicables el mismo día de semana, incluso con horarios superpuestos. `shiftAssignment.service.ts` no valida solapamiento de horarios, vigencias ni días.
+- **El motor de alertas las trata como alternativas, no como suma.** `matchShiftForEmployee` toma el turno propio más cercano a la fichada. `resolveWorkObligationCandidates` toma el de inicio más temprano. El schema documenta los "rotativos V1" como dos asignaciones con vigencias que se alternan a mano.
+- **Duración:** `ShiftTemplate.expectedMinutes` lo escribe sólo el alta/edición del turno con `computeExpectedMinutes(start, end, crossesMidnight)`. Esa fórmula no descuenta descansos. `crossesMidnight = endTime <= startTime`, así que un turno con la misma hora de inicio y fin dura 24 h. No había ningún lector en runtime.
+- **Convocatoria a feriado:** `HolidayWorkAssignment.shiftTemplateId` y `expectedStartTime/EndTime` son informativos. El motor de alertas los ignora, así que un convocado sin `ShiftAssignment` aplicable no tiene obligación para alertas. El schema valida los horarios con `^\d{2}:\d{2}$` sin rango (acepta `99:99`).
+- **Feriado:** las alertas usan `holidayDatesInRange`, que ignora el alcance de la regla FERIADO (P4). El motor de Horas Especiales sí lo respeta, usando la historia laboral vigente cada día.
+- **Régimen:** a lo sumo un `EmployeeWorkRegime` vigente por legajo (el servicio impide solapar vigencias). `SIN_TURNO` excluye de la obligación y `TURNO_FLEXIBLE` suprime alertas de turno faltante.
+- **Cruce de medianoche:** la obligación de la fecha D es el turno cuyo inicio programado cae en D (fecha operativa, `EMPLOYEE_DAY_OFF.md` §4). Un franco en D anula ese turno.
+
+### 7.2 Regla canónica P3: varios turnos el mismo día
+
+`expectedMinutesForTemplates`, con intervalos semicerrados `[inicio, inicio + duración)` en minutos desde la medianoche de la fecha operativa:
+
+- **Un turno:** sus minutos canónicos (`expectedMinutes` guardado o, si es `null`, `computeExpectedMinutes` con su horario).
+- **Varios turnos que no se superponen** (turno partido; tocarse en el borde no es superponerse): la suma de los minutos de cada uno. 08:00–12:00 + 14:00–18:00 = 480.
+- **Varios turnos que se superponen:** `UNRESOLVED (SHIFT_ASSIGNMENTS_OVERLAP)`. 08:00–16:00 + 12:00–20:00 nunca da 960, y tampoco una unión de 720: con el modelo actual no se puede distinguir un turno partido de dos alternativas mal configuradas.
+- **Algún horario inválido sin minutos guardados:** `UNRESOLVED (EXPECTED_MINUTES_UNKNOWN)`.
+- No se usa la unión de intervalos: con turnos disjuntos coincide con la suma, y con turnos superpuestos inventaría una jornada.
+
+### 7.3 Semántica final (precedencia)
+
+"Planificación vigente" = al menos una `ShiftAssignment` HABILITADA, con template ACTIVO, cuya vigencia incluye la fecha (cualquier día de semana).
+
+| # | Situación | Resultado | `expectedMinutes` |
+|---|---|---|---|
+| 1 | Franco ACTIVO (gana sobre convocatoria) | `DAY_OFF` | 0 confirmado |
+| 2 | Feriado por calendario + convocatoria ACTIVA de la persona | `WORKDAY`; minutos: turno de la convocatoria (ACTIVO) → asignaciones aplicables (regla P3) → horario explícito válido de la convocatoria. Si nada alcanza → `UNRESOLVED (EXPECTED_MINUTES_UNKNOWN)`; con asignaciones superpuestas → `UNRESOLVED (SHIFT_ASSIGNMENTS_OVERLAP)` | minutos o `null` |
+| 3 | Feriado que alcanza al legajo, sin convocatoria | `HOLIDAY_NOT_CONVOKED` | 0 confirmado |
+| 3b | Feriado con alcance que depende de historia sin registrar ese día, sin convocatoria | `UNRESOLVED (HOLIDAY_SCOPE_HISTORY_MISSING)` | `null` |
+| 4 | Régimen vigente `SIN_TURNO` (con o sin asignaciones) | `UNRESOLVED (REGIME_WITHOUT_SCHEDULE)` | `null` |
+| 5 | Asignación aplicable ese día | `WORKDAY` (regla P3) o `UNRESOLVED` | minutos o `null` |
+| 6 | `TURNO_FLEXIBLE` sin asignación aplicable | `UNRESOLVED (FLEXIBLE_REGIME_NO_ASSIGNMENT)` | `null` |
+| 7 | Sin planificación vigente (cualquier régimen o ninguno; legajo mínimo) | `UNRESOLVED (SCHEDULE_MISSING)` | `null` |
+| 8 | `TURNO_OBLIGATORIO` o sin régimen, planificación vigente que excluye el día | `NO_WORK_OBLIGATION` | 0 confirmado |
+
+- **Feriado para el legajo** (`resolveEmployeeHolidayStatus`): reglas FERIADO ACTIVAS vigentes cuyo calendario cae en la fecha (`ruleMatchesDate`), con la lista de legajos y `evaluateRuleScope` sobre la historia vigente ese día. Son las mismas piezas que el motor de Horas Especiales, sin la política de convocatoria, porque la convocatoria decide quién trabaja y no si la fecha es feriado.
+  - Si alguna regla alcanza al legajo, es `IN_SCOPE`.
+  - Si hay FERIADO por calendario pero ninguno lo alcanza, es `OUT_OF_SCOPE` y el día se evalúa como uno normal.
+  - Si ninguna lo alcanza con certeza y alguna depende de historia faltante, es `SCOPE_HISTORY_MISSING`.
+  - Un legajo mínimo (historia vigente vacía) queda fuera de reglas con alcance y dentro de las globales.
+- **Convocatoria:** cuenta sólo si la fecha es feriado por calendario (FERIADO vigente, alcance cualquiera, como en `WORKED_TIME_ACCOUNTING_MODEL.md` §16). Una convocatoria en una fecha sin regla FERIADO se ignora.
+- **Resultado:** `ExpectedWorkday = { dateKey, obligation, unresolvedReason, expectedMinutes, shiftTemplateIds, isHoliday, convoked, source, minutesSource }`. `source` es la evidencia: `EMPLOYEE_DAY_OFF` · `HOLIDAY_RULE` · `HOLIDAY_CONVOCATION` · `WORK_REGIME` · `SHIFT_PLAN` · `NONE`. `minutesSource` dice de dónde salieron los minutos: `CONVOCATION_SHIFT_TEMPLATE` · `SHIFT_ASSIGNMENT` · `CONVOCATION_TIMES`.
+- **Consultas:** fijas por llamada, nunca por legajo ni por día. Son 5: asignaciones + turnos, francos, convocatorias, regímenes y reglas FERIADO. La historia laboral (5 consultas más) se agrega una sola vez para todos, y sólo si alguna regla FERIADO del rango restringe empresa, sector, centro de costo o puesto. Rango máximo 400 días.
+
+### 7.4 Diferencias con el motor de alertas (deliberadas)
+
+`resolveWorkObligationCandidates`, falta de ingreso, inactividad y alertas de turno **no cambiaron**: sus tests siguen verdes sin tocar expectativas. El resolver de Novedades sólo comparte los bloques puros `isShiftAssignmentActiveOnDate` e `isShiftAssignmentApplicableOnWeekday`.
+
+| Caso | Alertas | Cobertura de Novedades |
+|---|---|---|
+| `SIN_TURNO` | sin obligación | `UNRESOLVED (REGIME_WITHOUT_SCHEDULE)` |
+| `TURNO_FLEXIBLE` sin asignación aplicable | sin obligación | `UNRESOLVED (FLEXIBLE_REGIME_NO_ASSIGNMENT)` |
+| Sin ninguna asignación | sin obligación | `UNRESOLVED (SCHEDULE_MISSING)` |
+| Varias asignaciones | una (la de inicio más temprano o la más cercana a la fichada) | suma si son disjuntas; `UNRESOLVED` si se superponen |
+| Feriado | `holidayDatesInRange`, sin alcance (P4) | alcance de la regla sobre la historia del legajo |
+| Convocado sin turno asignado | sin obligación | turno u horario de la convocatoria |
+
+### 7.5 Limitaciones conocidas
+
+- **Motivos detectados en la etapa 2 (decisión del usuario, 2026-11-13):**
+  - `SHIFT_ASSIGNMENTS_OVERLAP` es una jornada no resoluble legítima. Se persiste como revisión de cobertura: la etapa 3 agrega el valor a `NoveltyCoverageScheduleReviewReason` con una migración aditiva nueva, sin tocar la de la etapa 1.
+  - `HOLIDAY_SCOPE_HISTORY_MISSING` **no** es una revisión de cobertura: es un problema de integridad o de datos insuficientes. La etapa 3 responde un error explícito con el criterio del motor de Horas Especiales (`409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` o un código equivalente reutilizable). Nunca genera 0 h provisional ni permite que el encargado complete la respuesta.
+- **Estado actual, no histórico:** el estado de `ShiftTemplate` y de `ShiftAssignment` (HABILITADO/ACTIVO) es el actual, no el que tenían en la fecha. Lo mismo hace el motor de alertas. La vigencia de la asignación sí es por fecha.
+- **Relación laboral:** `expectedWorkday` no verifica si el legajo estaba de alta en la fecha (`Employee.status` es actual). **Decisión del usuario (2026-11-13):** la etapa 3 incorpora la relación laboral vigente en cada fecha antes de generar cobertura. No hay cobertura computable antes del inicio ni después del fin de la relación. Se audita primero la fuente canónica de altas y bajas (`LaborMovement` o equivalente) y se reutiliza, sin crear otra fuente de verdad; una situación histórica ambigua se informa, y nunca se asume que el legajo estaba activo en cualquier fecha por existir.
+- **Solapamiento entre fechas operativas distintas:** no se evalúa. Un turno 22:00–06:00 del domingo y uno 05:00–13:00 del lunes son de días operativos distintos.
+- **Duración del turno:** no descuenta descansos. Es la definición vigente del sistema y no se cambia acá.
+- **Turno de la convocatoria inactivo:** se ignora y se pasa a la siguiente fuente de minutos.
 
 ## 8. Revisión de días (D2, C1, D3)
 
@@ -106,7 +162,7 @@ Sólo para cobertura de Novedades: `resolveWorkObligationCandidates` y las alert
 | Etapa | Contenido | Estado |
 |---|---|---|
 | 1 | Modelo, migración, configuración y validación del tipo, `Novelty.quantityMinutes` | **Implementada y aprobada** (2026-11-13) |
-| 2 | `expectedWorkday` (núcleo puro + cargador batch) | Pendiente |
+| 2 | `expectedWorkday` (núcleo puro + cargador batch), regla P3 | **Implementada y aprobada** (2026-11-13) |
 | 3 | Motor, persistencia de días, preview, resolución, guard de cierres | Pendiente |
 | 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | Pendiente |
 | 5 | Recálculo por reglas, convocatorias, francos, turnos, regímenes y configuración del tipo | Pendiente |
@@ -128,8 +184,10 @@ Sólo para cobertura de Novedades: `resolveWorkObligationCandidates` y las alert
 
 - **P1 (abierta):** Maternidad en un feriado lunes a viernes: no cuenta / cuenta igual / sólo si estaba convocada. No bloquea el motor; impide configurar el tipo definitivo.
 - **P2:** Finnegans para tipos con cobertura: `HOURS` sin multiplicador (propuesto); Vacaciones en `DAYS`: días corridos (actual) o días cubiertos. Antes de la etapa 9.
-- **P3 (corregida por el usuario, 2026-11-13; se resuelve al empezar la etapa 2):** varias `ShiftAssignment` aplicables el mismo día **no se suman a ciegas**. `expectedWorkday` debe soportar turnos partidos reales sin contar dos veces los intervalos superpuestos: 08:00–12:00 + 14:00–18:00 → 8 h; 08:00–16:00 + 12:00–20:00 **nunca** 16 h. La etapa 2 empieza auditando cómo el sistema permite hoy varias asignaciones para un mismo empleado y fecha, y propone la regla canónica de minutos esperados. Se prefiere calcular sobre los intervalos efectivos del día (unión) o detectar configuraciones incompatibles (revisión) antes que sumar `expectedMinutes`.
-- **P4 (deuda documentada):** las alertas consideran feriado una regla FERIADO aunque tenga alcance acotado (`holidayDatesInRange`), mientras el motor de multiplicadores respeta el alcance. No se cambia en este rediseño.
+- **P3 (resuelta en la etapa 2):** varios turnos el mismo día suman sólo si sus horarios no se superponen; si se superponen, la jornada queda para revisión. Ver §7.2.
+- **P4 (deuda documentada):** las alertas consideran feriado una regla FERIADO aunque tenga alcance acotado (`holidayDatesInRange`), mientras el motor de multiplicadores y la jornada esperada de Novedades (§7.3) respetan el alcance. No se cambia en este rediseño.
+- **Deuda menor (etapa 2):** `holidayWorkAssignment.schemas.ts` acepta horarios fuera de rango (`99:99`). La jornada esperada los trata como desconocidos y no los convierte en minutos; validar el rango en el schema queda como mejora aparte.
+- **Para la etapa 3 (decidido, §7.5):** migración aditiva para `SHIFT_ASSIGNMENTS_OVERLAP`; error explícito para `HOLIDAY_SCOPE_HISTORY_MISSING`; cobertura acotada a la relación laboral vigente en cada fecha.
 - **Riesgo:** un tipo con `BLOQUEA_NUEVA_CARGA` aprobado rechaza la **salida** del fichador (`clockPhotoPunch` OUT → `ensureDayIsNotBlocked`, comportamiento existente). Revisar antes de configurar Vacaciones con bloqueo.
 - `allowsHours` se retira en una etapa de limpieza cuando ya no tenga consumidores (patrón 15L.6).
 

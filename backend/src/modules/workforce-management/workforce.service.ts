@@ -19,6 +19,7 @@ import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpret
 import { describeReinterpretation, reinterpretationMetadata } from "./specialHourReinterpretationSummary";
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
+import { computeExpectedMinutes } from "../shifts/shiftTemplateTime";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -72,17 +73,6 @@ export async function attendanceRecipients(employeeId: string) {
     }),
   ]);
   return [...rrhh.map((item) => item.id), ...responsible.flatMap((item) => item.userId ? [item.userId] : [])];
-}
-
-function minutesOfDay(time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  return (hours || 0) * 60 + (minutes || 0);
-}
-
-function computeExpectedMinutes(startTime: string, endTime: string, crossesMidnight: boolean) {
-  const start = minutesOfDay(startTime);
-  const end = minutesOfDay(endTime);
-  return crossesMidnight ? 24 * 60 - start + end : end - start;
 }
 
 // Etapa 8B: para recurrenceType FECHA, fromDate/toDate ya no son la
