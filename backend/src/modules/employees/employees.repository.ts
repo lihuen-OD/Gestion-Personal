@@ -1751,8 +1751,9 @@ export const employeesRepository = {
     return prisma.documentCategory.findUnique({
       where: { id: categoryId },
       // uploadRoles (Etapa 15D.4): necesario para autorizar el upload por
-      // categoría antes de subir el archivo al storage.
-      select: { id: true, code: true, name: true, uploadRoles: true },
+      // categoría antes de subir el archivo al storage. kind: carpeta del
+      // documento en Drive (storagePathBuilder.documentDriveFolder).
+      select: { id: true, code: true, name: true, kind: true, uploadRoles: true },
     });
   },
 

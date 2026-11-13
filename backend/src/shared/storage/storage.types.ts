@@ -9,12 +9,28 @@ export type { PersistedStorageProvider };
 
 export type StorageProviderName = "local" | "cloudinary" | "google_drive" | "neon_object_storage";
 
+/**
+ * Carpeta visible de Google Drive. Con `appProperties`, la carpeta se
+ * identifica por esas propiedades (p. ej. `employeeId`) y no por su nombre:
+ * si el nombre cambió se reutiliza y se renombra, sin duplicarla.
+ */
+export interface DriveFolderSpec {
+  name: string;
+  appProperties?: Record<string, string>;
+}
+
 export interface StorageObjectInput {
   buffer?: Buffer;
   fileName: string;
   mimeType: string;
   folder?: string;
+  /** Ubicación técnica (key en Neon/local). */
   folderSegments?: string[];
+  /**
+   * Ubicación humana: sólo la usa Google Drive y, si viene, reemplaza a
+   * `folderSegments` en Drive. Los demás providers la ignoran.
+   */
+  driveFolders?: DriveFolderSpec[];
   metadata?: Record<string, string>;
 }
 
@@ -48,6 +64,12 @@ export interface StorageObjectResult {
 export interface ManagedStorageObjectInput extends StorageObjectInput {
   /** Correlation only; never persisted or sent to the provider. */
   telemetryRequestId?: string;
+  /**
+   * Nombre con el que se guarda el archivo (provider y StorageFile.fileName).
+   * `fileName` sigue siendo el nombre original del usuario: se valida y se
+   * persiste en StorageFile.originalFileName.
+   */
+  storedFileName?: string;
   module: StorageModule;
   entityType: StorageEntityType;
   entityId: string;

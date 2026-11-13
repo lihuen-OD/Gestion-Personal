@@ -26,8 +26,44 @@ export function safeFileName(fileName: string) {
     .slice(0, 180) || "archivo";
 }
 
+/**
+ * Nombre visible de una carpeta de Google Drive: a diferencia de
+ * `safeFileName`, conserva espacios, acentos y Ñ (`0007 - José Peña`). Sólo
+ * quita caracteres de control y los reservados por Windows/Drive para
+ * escritorio (`\ / : * ? " < > |`), colapsa espacios y quita puntos iniciales
+ * (`.` y `..` quedan vacíos y los rechaza el provider). Idempotente: un
+ * segmento ya ASCII-seguro (`documentos-personales`, `2026`) no cambia.
+ */
+export function safeDriveFolderName(value: string) {
+  return value
+    .normalize("NFC")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "")
+    .slice(0, 120)
+    .trim();
+}
+
 export function fileExtension(fileName: string) {
   return path.extname(fileName).toLowerCase().replace(/^\./, "");
+}
+
+const extensionsByMimeType: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+};
+
+/** Extensión de respaldo cuando el nombre original no trae una (sólo MIME permitidos). */
+export function extensionFromMimeType(mimeType: string) {
+  return extensionsByMimeType[mimeType] || "";
 }
 
 export function checksum(buffer: Buffer) {

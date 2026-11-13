@@ -48,10 +48,47 @@ export const storageArchiveRepository = {
     });
   },
 
-  complete(id: string, attemptCount: number, targetStorageKey: string, now: Date) {
+  /**
+   * Datos para la ruta humana de la copia en Drive, leídos fuera de la
+   * transacción del claim. La fichada sale del FK real
+   * AttendancePunch.photoFileId; el empleado, de la fichada o (fallback) de
+   * StorageFile.employeeId. No usa ClockDevice ni estructura organizacional.
+   */
+  findArchiveContext(sourceStorageFileId: string) {
+    const employee = { select: { legajo: true, firstName: true, lastName: true } } as const;
+    return prisma.storageFile.findUnique({
+      where: { id: sourceStorageFileId },
+      select: {
+        id: true,
+        module: true,
+        extension: true,
+        uploadedAt: true,
+        metadata: true,
+        employee,
+        attendancePunchPhotoLinks: {
+          select: { type: true, timestamp: true, employee },
+          orderBy: { timestamp: "asc" },
+          take: 1,
+        },
+      },
+    });
+  },
+
+  /**
+   * `warning` (opcional) deja una marca consultable en un job completado que
+   * igual requirió revisión (p. ej. STORAGE_ARCHIVE_UNLINKED): la copia se
+   * hizo, pero con una inconsistencia de datos que no debe pasar en silencio.
+   */
+  complete(id: string, attemptCount: number, targetStorageKey: string, now: Date, warning?: { code: string; message: string }) {
     return prisma.storageArchiveJob.updateMany({
       where: { id, status: "PROCESSING", attemptCount },
-      data: { status: "COMPLETED", targetStorageKey, completedAt: now, leaseExpiresAt: null },
+      data: {
+        status: "COMPLETED",
+        targetStorageKey,
+        completedAt: now,
+        leaseExpiresAt: null,
+        ...(warning ? { lastErrorCode: warning.code, lastErrorMessage: warning.message.slice(0, 500) } : {}),
+      },
     });
   },
 
