@@ -435,6 +435,12 @@ POST /api/employees
 
 Uso actual: `NIVEL_1_RRHH`.
 
+Alta mínima (migración `20261113120000_make_employee_cuil_optional`):
+- Obligatorios: `legajo`, `dni`, `firstName`, `lastName`. Opcionales y nullable: `cuil`, `birthDate`, `gender`, `nationality`, además de puesto, centro de costo, empresas, domicilio y el resto de los datos. Si vienen informados conservan sus validaciones (CUIL 6–30 caracteres, fecha válida, longitudes).
+- Unicidad (`409 EMPLOYEE_ALREADY_EXISTS`): legajo, DNI, Legajo Finnegans si se informa y CUIL **sólo si se informa**. Varios legajos pueden no tener CUIL (`Employee.cuil` es `NULL`; el índice único se conserva). Lo mismo en `PATCH /api/employees/:id`.
+- `initialLaborMovement` es opcional; con él, el motivo (`reason`) es obligatorio. Sin él no se crea movimiento laboral y el legajo queda en el `status` enviado (por defecto `ACTIVO`).
+- Un `address` sin ningún dato no crea domicilio.
+
 A6 (`docs/decisions/ORG_LOCATION_REORGANIZATION.md` §15):
 - `positionId`, si se envía, debe ser un puesto `ACTIVO` con al menos un alcance organizacional (`PositionOrgScope`). Si no: `400 EMPLOYEE_POSITION_INVALID`, `409 EMPLOYEE_POSITION_INACTIVE` o `409 EMPLOYEE_POSITION_PENDING_SCOPE`.
 - El legajo no tiene sector propio (M2 retiró `Employee.sectorId`; un `sectorId` en el cuerpo se ignora). El alcance se lee del puesto; no se copia al legajo.

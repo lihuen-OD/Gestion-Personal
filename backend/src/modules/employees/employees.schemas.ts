@@ -69,17 +69,21 @@ const initialLaborMovementSchema = z.object({
   observation: z.string().trim().max(600).optional().nullable(),
 });
 
+// Alta mínima: sólo legajo, DNI, nombre y apellido son obligatorios. CUIL,
+// nacimiento, sexo y nacionalidad se completan después; si vienen informados
+// conservan sus validaciones. `.nullable()` va por fuera de `z.coerce.date()`
+// para que `null` quede null y no se convierta en 1970-01-01.
 export const createEmployeeSchema = z.object({
   legajo: z.string().trim().min(1).max(40),
   legajoFinnegans: z.string().trim().max(40).optional().nullable(),
-  cuil: z.string().trim().min(6).max(30),
+  cuil: z.string().trim().min(6).max(30).optional().nullable(),
   dni: z.string().trim().min(5).max(20),
   firstName: z.string().trim().min(2).max(100),
   lastName: z.string().trim().min(2).max(100),
-  birthDate: z.coerce.date(),
-  gender: z.string().trim().min(1).max(40),
+  birthDate: z.coerce.date().optional().nullable(),
+  gender: z.string().trim().min(1).max(40).optional().nullable(),
   civilStatus: z.string().trim().max(80).optional().nullable(),
-  nationality: z.string().trim().min(1).max(80),
+  nationality: z.string().trim().min(1).max(80).optional().nullable(),
   email: z.string().trim().email().max(160).optional().nullable(),
   phone: z.string().trim().max(80).optional().nullable(),
   mobile: z.string().trim().max(80).optional().nullable(),

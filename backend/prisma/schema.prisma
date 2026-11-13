@@ -876,7 +876,7 @@ model Employee {
   id                String         @id @default(uuid())
   legajo            String         @unique
   legajoFinnegans   String?
-  cuil              String         @unique
+  cuil              String?        @unique
   dni               String         @unique
   firstName         String
   lastName          String

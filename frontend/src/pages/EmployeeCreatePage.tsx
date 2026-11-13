@@ -45,20 +45,20 @@ const blankEmployee: Employee = {
   birthDate: "",
   gender: "",
   civilStatus: "",
-  nationality: "Argentina",
+  nationality: "",
   phone: "",
   mobile: "",
   email: "",
   address: "",
   addressStreet: "",
-  addressNumber: "S/N",
+  addressNumber: "",
   city: "",
   department: "",
   province: "",
   zip: "",
   domicilio: {
     calle: "",
-    numero: "S/N",
+    numero: "",
     provinciaId: "",
     provinciaNombre: "",
     departamentoId: "",
@@ -154,26 +154,17 @@ export function EmployeeCreatePage() {
     setError("");
 
     try {
-      if (
-        !value.legajoInterno ||
-        !value.dni ||
-        !value.cuil ||
-        !value.firstName ||
-        !value.lastName ||
-        !value.birthDate ||
-        !value.gender ||
-        !value.nationality ||
-        !value.company ||
-        !value.costCenter ||
-        !value.startDate
-      ) {
-        setError(
-          "Completá los campos obligatorios de Información General y Datos Laborales, incluida fecha de nacimiento, sexo, nacionalidad y fecha de alta.",
-        );
+      // Alta mínima: sólo Legajo, DNI, Nombre y Apellido. El resto se completa
+      // después desde el legajo.
+      if (!value.legajoInterno.trim() || !value.dni.trim() || !value.firstName.trim() || !value.lastName.trim()) {
+        setError("Completá Legajo, DNI, Nombre y Apellido.");
         return;
       }
-      if (!entryReason) {
-        setError("El motivo de alta es obligatorio.");
+      // La fecha de alta es opcional; si se informa, el movimiento ALTA
+      // necesita su motivo (no se inventa uno).
+      const startDate = value.startDate.trim();
+      if (startDate && !entryReason) {
+        setError("Si cargás la fecha de alta, elegí el motivo de alta.");
         return;
       }
       const duplicateCandidates = await findDuplicateCandidates(value);
@@ -192,33 +183,43 @@ export function EmployeeCreatePage() {
         setError("El DNI ya existe.");
         return;
       }
-      if (duplicateCandidates.some((employee) => employee.cuil === value.cuil)) {
+      // Sin CUIL cargado no hay nada que comparar: los legajos sin CUIL no son
+      // duplicados entre sí.
+      if (value.cuil.trim() && duplicateCandidates.some((employee) => employee.cuil === value.cuil.trim())) {
         setError("El CUIL ya existe.");
         return;
       }
 
-      const laborMovements = [
-        {
-          id: crypto.randomUUID(),
-          type: "ALTA" as const,
-          effectiveFrom: value.startDate,
-          reason: entryReason,
-          observation: entryObservation,
-          createdAt: new Date().toISOString(),
-          createdByUserId: user!.id,
-          createdByUserName: user!.name,
-        },
-      ];
+      // Sin fecha de alta no hay movimiento laboral inicial (ni fecha ni motivo
+      // inventados).
+      const laborMovements = startDate
+        ? [
+            {
+              id: crypto.randomUUID(),
+              type: "ALTA" as const,
+              effectiveFrom: startDate,
+              reason: entryReason,
+              observation: entryObservation,
+              createdAt: new Date().toISOString(),
+              createdByUserId: user!.id,
+              createdByUserName: user!.name,
+            },
+          ]
+        : [];
 
       const created: Employee = {
         ...value,
-        companies: value.companies?.length ? value.companies : [value.company],
+        startDate,
+        companies: value.companies?.length ? value.companies : [value.company].filter(Boolean),
         legajo: value.legajoInterno,
         address: value.addressStreet,
         endDate: "",
         exitReason: "",
         laborMovements,
-        status: calculateEmployeeStatus({ ...value, laborMovements }),
+        // Sin movimientos, el legajo nace ACTIVO (mismo criterio que el backend:
+        // default de Employee.status y resolveLaborStatus([])).
+        // calculateEmployeeStatus devolvería "Inactivo" sin fecha de alta.
+        status: laborMovements.length ? calculateEmployeeStatus({ ...value, startDate, laborMovements }) : "Activo",
         historyEvents: [
           {
             id: crypto.randomUUID(),
@@ -296,22 +297,22 @@ export function EmployeeCreatePage() {
               <Field label="Apellido *" value={value.lastName} set={(next) => upd("lastName", next)} />
               <Field label="Nombre *" value={value.firstName} set={(next) => upd("firstName", next)} />
               <Field label="DNI *" value={value.dni} set={(next) => upd("dni", next)} />
-              <Field label="CUIL *" value={value.cuil} set={(next) => upd("cuil", next)} />
+              <Field label="CUIL" value={value.cuil} set={(next) => upd("cuil", next)} />
               <Field
-                label="Fecha de nacimiento *"
+                label="Fecha de nacimiento"
                 type="date"
                 value={value.birthDate}
                 set={(next) => upd("birthDate", next)}
               />
               <Select
-                label="Sexo *"
+                label="Sexo"
                 value={value.gender}
                 set={(next) => upd("gender", next)}
                 options={["Femenino", "Masculino", "Otro"]}
               />
               <Field label="Estado civil" value={value.civilStatus} set={(next) => upd("civilStatus", next)} />
               <Field
-                label="Nacionalidad *"
+                label="Nacionalidad"
                 value={value.nationality}
                 set={(next) => upd("nationality", next)}
               />
@@ -340,7 +341,7 @@ export function EmployeeCreatePage() {
                   </p>
                 </div>
                 <Select
-                  label="Centro de costo *"
+                  label="Centro de costo"
                   value={value.costCenter}
                   set={(next) => upd("costCenter", next)}
                   options={structureOptions.costCenter}
@@ -365,13 +366,13 @@ export function EmployeeCreatePage() {
                   set={(next) => upd("healthInsurance", next)}
                 />
                 <Field
-                  label="Fecha desde / Fecha de alta *"
+                  label="Fecha desde / Fecha de alta"
                   type="date"
                   value={value.startDate}
                   set={(next) => upd("startDate", next)}
                 />
                 <Select
-                  label="Motivo de alta *"
+                  label="Motivo de alta"
                   value={entryReason}
                   set={setEntryReason}
                   options={entryReasons}

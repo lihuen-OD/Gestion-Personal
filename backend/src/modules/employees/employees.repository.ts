@@ -843,7 +843,7 @@ function createEmployeeData(input: CreateEmployeeInput) {
   return {
     legajo: input.legajo,
     legajoFinnegans: input.legajoFinnegans || null,
-    cuil: input.cuil,
+    cuil: input.cuil || null,
     dni: input.dni,
     firstName: input.firstName,
     lastName: input.lastName,
@@ -871,7 +871,7 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
   return {
     ...(input.legajo !== undefined ? { legajo: input.legajo } : {}),
     ...(input.legajoFinnegans !== undefined ? { legajoFinnegans: input.legajoFinnegans || null } : {}),
-    ...(input.cuil !== undefined ? { cuil: input.cuil } : {}),
+    ...(input.cuil !== undefined ? { cuil: input.cuil || null } : {}),
     ...(input.dni !== undefined ? { dni: input.dni } : {}),
     ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
     ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
@@ -893,6 +893,11 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
     ...(input.receiptCategory !== undefined ? { receiptCategory: input.receiptCategory || null } : {}),
     ...(input.internalCategory !== undefined ? { internalCategory: input.internalCategory || null } : {}),
   };
+}
+
+function hasAddressData(address: CreateEmployeeInput["address"]): address is NonNullable<CreateEmployeeInput["address"]> {
+  if (!address) return false;
+  return Object.values(address).some((value) => (typeof value === "string" ? value.trim() !== "" : value !== null && value !== undefined));
 }
 
 function companyLinks(companyIds: string[], primaryCompanyId?: string | null) {
@@ -1482,12 +1487,15 @@ export const employeesRepository = {
     return prisma.employee.findUniqueOrThrow({ where: { id }, select: employeeLaborAuditSelect });
   },
 
+  // El CUIL es opcional: sólo participa cuando viene informado. Un
+  // `{ cuil: undefined }` sería un filtro vacío (coincide con todos) y un
+  // `{ cuil: null }` trataría a todos los legajos sin CUIL como duplicados.
   findByUniqueFields(input: Pick<CreateEmployeeInput, "legajo" | "legajoFinnegans" | "cuil" | "dni">) {
     const uniqueFields: Prisma.EmployeeWhereInput[] = [
       { legajo: input.legajo },
-      { cuil: input.cuil },
       { dni: input.dni },
     ];
+    if (input.cuil) uniqueFields.push({ cuil: input.cuil });
     if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
     return prisma.employee.findFirst({
       where: { OR: uniqueFields },
@@ -1499,7 +1507,7 @@ export const employeesRepository = {
     const uniqueFields: Prisma.EmployeeWhereInput[] = [];
     if (input.legajo !== undefined) uniqueFields.push({ legajo: input.legajo });
     if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
-    if (input.cuil !== undefined) uniqueFields.push({ cuil: input.cuil });
+    if (input.cuil) uniqueFields.push({ cuil: input.cuil });
     if (input.dni !== undefined) uniqueFields.push({ dni: input.dni });
     if (!uniqueFields.length) return null;
     return prisma.employee.findFirst({
@@ -1554,7 +1562,9 @@ export const employeesRepository = {
         ...(initialMovements.length ? { status: resolveLaborStatus(initialMovements) } : {}),
         createdByUserId: createdByUserId || null,
         ...(companies.length ? { companies: { createMany: { data: companies } } } : {}),
-        ...(input.address ? { address: { create: input.address } } : {}),
+        // Un domicilio sin ningún dato no se crea: el alta mínima no deja una
+        // fila EmployeeAddress vacía.
+        ...(hasAddressData(input.address) ? { address: { create: input.address } } : {}),
         ...(hourConceptIds.length
           ? { hourConcepts: { createMany: { data: hourConceptIds.map((hourConceptId) => ({ hourConceptId })) } } }
           : {}),

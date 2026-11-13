@@ -1955,7 +1955,7 @@ export const timeEntriesService = {
         const employeeStatuses = statuses.get(employeeId) ?? new Set<string>();
         return [{
           identity: {
-            CUIL: employee.cuil,
+            CUIL: employee.cuil ?? "",
             Apellido: employee.lastName,
             Nombre: employee.firstName,
             Legajo: employee.legajo,
