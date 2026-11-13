@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { employeesRepository, resolveLaborStatus } from "./employees.repository";
 import { EmployeeStatus } from "@prisma/client";
+import { createEmployeeSchema, updateEmployeeSchema } from "./employees.schemas";
 
 /**
  * Regresion de la simplificacion de jerarquia organizacional (2026-08-14):
@@ -901,5 +902,92 @@ describe("employeesRepository.findArchivedCompanyNamesWithin — revalidación t
     const tx = { $queryRaw: vi.fn(), company: { findMany: vi.fn() } };
     expect(await employeesRepository.findArchivedCompanyNamesWithin(tx as never, [])).toEqual([]);
     expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// Alta mínima de legajo: el CUIL es opcional. Un `{ cuil: undefined }` en el OR
+// sería un filtro vacío (coincide con todos) y `{ cuil: null }` marcaría como
+// duplicados a todos los legajos sin CUIL.
+describe("employeesRepository — unicidad con CUIL opcional", () => {
+  const minimal = createEmployeeSchema.parse({ legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez" });
+  const orOf = () => (prisma.employee.findFirst as Mock).mock.calls.at(-1)?.[0].where.OR;
+
+  beforeEach(() => {
+    (prisma.employee.findFirst as Mock).mockReset().mockResolvedValue(null);
+  });
+
+  it("alta sin CUIL: busca duplicados sólo por legajo y DNI (sin cláusula de CUIL)", async () => {
+    await employeesRepository.findByUniqueFields(minimal);
+    expect(orOf()).toEqual([{ legajo: "0001" }, { dni: "12345678" }]);
+  });
+
+  it("alta con CUIL null o vacío: tampoco lo usa (varios legajos pueden no tener CUIL)", async () => {
+    await employeesRepository.findByUniqueFields({ ...minimal, cuil: null });
+    expect(orOf()).toEqual([{ legajo: "0001" }, { dni: "12345678" }]);
+    await employeesRepository.findByUniqueFields({ ...minimal, cuil: "" });
+    expect(orOf()).toEqual([{ legajo: "0001" }, { dni: "12345678" }]);
+  });
+
+  it("alta con CUIL real: lo sigue usando, junto con legajo, DNI y Legajo Finnegans", async () => {
+    await employeesRepository.findByUniqueFields({ ...minimal, cuil: "20-12345678-9", legajoFinnegans: "F-1" });
+    expect(orOf()).toEqual([{ legajo: "0001" }, { dni: "12345678" }, { cuil: "20-12345678-9" }, { legajoFinnegans: "F-1" }]);
+  });
+
+  it("edición con CUIL null: no busca conflictos por CUIL; con CUIL real, sí", async () => {
+    await employeesRepository.findConflictingUniqueFields("emp-1", updateEmployeeSchema.parse({ cuil: null, dni: "12345678" }));
+    expect(orOf()).toEqual([{ dni: "12345678" }]);
+    expect((prisma.employee.findFirst as Mock).mock.calls.at(-1)?.[0].where.id).toEqual({ not: "emp-1" });
+
+    await employeesRepository.findConflictingUniqueFields("emp-1", updateEmployeeSchema.parse({ cuil: "20-12345678-9" }));
+    expect(orOf()).toEqual([{ cuil: "20-12345678-9" }]);
+  });
+
+  it("edición que sólo vacía el CUIL: no consulta (no hay campo único que comparar)", async () => {
+    expect(await employeesRepository.findConflictingUniqueFields("emp-1", updateEmployeeSchema.parse({ cuil: null }))).toBeNull();
+    expect(prisma.employee.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("employeesRepository.create — alta mínima sin datos inventados", () => {
+  const db = { employee: { create: vi.fn() } };
+  const dataOf = () => db.employee.create.mock.calls.at(-1)?.[0].data;
+
+  beforeEach(() => {
+    db.employee.create.mockReset().mockResolvedValue({ id: "emp-new" });
+  });
+
+  it("sólo legajo, DNI, nombre y apellido: opcionales en null, ACTIVO, sin domicilio, empresas, conceptos ni movimiento laboral", async () => {
+    await employeesRepository.create(createEmployeeSchema.parse({ legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez" }), "u1", db as never);
+    const data = dataOf();
+    expect(data).toMatchObject({
+      legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez",
+      cuil: null, birthDate: null, gender: null, nationality: null, positionId: null, costCenterId: null, status: "ACTIVO",
+    });
+    expect(data.address).toBeUndefined();
+    expect(data.companies).toBeUndefined();
+    expect(data.hourConcepts).toBeUndefined();
+    expect(data.laborMovements).toBeUndefined();
+  });
+
+  it("un domicilio con todos los campos vacíos no crea EmployeeAddress; con algún dato real, sí", async () => {
+    const minimal = { legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez" };
+    await employeesRepository.create(createEmployeeSchema.parse({ ...minimal, address: { province: null, street: "", streetNumber: null, latitude: null } }), null, db as never);
+    expect(dataOf().address).toBeUndefined();
+
+    await employeesRepository.create(createEmployeeSchema.parse({ ...minimal, address: { city: "Luján", street: null } }), null, db as never);
+    expect(dataOf().address).toEqual({ create: { city: "Luján", street: null } });
+  });
+
+  it("con fecha de alta: mantiene el movimiento ALTA inicial y el estado que resulta de él", async () => {
+    await employeesRepository.create(
+      createEmployeeSchema.parse({ legajo: "0002", dni: "22345678", firstName: "Ana", lastName: "Gómez", initialLaborMovement: { type: "ALTA", effectiveFrom: "2026-01-05", reason: "Reingreso" } }),
+      "u1",
+      db as never,
+    );
+    const data = dataOf();
+    expect(data.status).toBe(EmployeeStatus.ACTIVO);
+    expect(data.laborMovements).toEqual({
+      createMany: { data: [{ type: "ALTA", effectiveFrom: new Date("2026-01-05"), reason: "Reingreso", observation: null, createdByUserId: "u1" }] },
+    });
   });
 });

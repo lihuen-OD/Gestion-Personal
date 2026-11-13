@@ -307,7 +307,9 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     birthDate: dateOnly(item.birthDate),
     gender: item.gender || "",
     civilStatus: item.civilStatus || "",
-    nationality: item.nationality || "Argentina",
+    // Sin nacionalidad informada queda vacía: un valor por defecto acá se
+    // persistiría en el próximo guardado del legajo.
+    nationality: item.nationality || "",
     phone: item.phone || "",
     mobile: item.mobile || "",
     email: item.email || "",
@@ -444,10 +446,17 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
   const relations = await resolveRelations(employee);
   const shouldSendAllRelations = mode === "create";
   const createHourConcepts = mode === "create" && employee.enabledHours?.length ? await hourConceptsPayload(employee) : { hourConceptIds: [] };
+  const address = addressPayload(employee);
+  // En el alta, un domicilio sin ningún dato no se envía (no se crea un
+  // EmployeeAddress vacío). En la edición se envía siempre, como antes.
+  const sendAddress = mode === "update" || Object.values(address).some((value) => value !== null);
+  // Sin fecha de alta no hay movimiento inicial; con fecha, el motivo es el
+  // elegido en el formulario (nunca uno por defecto).
+  const startDate = employee.startDate?.trim();
   return {
     legajo: employee.legajoInterno || employee.legajo,
     legajoFinnegans: employee.legajoFinnegans || null,
-    cuil: employee.cuil,
+    cuil: employee.cuil?.trim() || null,
     dni: employee.dni,
     firstName: employee.firstName,
     lastName: employee.lastName,
@@ -477,26 +486,16 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
           primaryCompanyId: relations.primaryCompanyId || null,
         }
       : {}),
-    address: {
-      province: employee.province || employee.domicilio?.provinciaNombre || null,
-      department: employee.department || employee.domicilio?.departamentoNombre || null,
-      city: employee.city || employee.domicilio?.localidadNombre || null,
-      street: employee.addressStreet || employee.domicilio?.calle || null,
-      streetNumber: employee.addressNumber || employee.domicilio?.numero || null,
-      postalCode: employee.zip || employee.domicilio?.codigoPostal || null,
-      latitude: employee.domicilio?.ubicacionMapa?.lat ?? employee.locationMap?.lat ?? null,
-      longitude: employee.domicilio?.ubicacionMapa?.lng ?? employee.locationMap?.lng ?? null,
-      mapLabel: employee.domicilio?.ubicacionMapa?.label || employee.locationMap?.label || employee.mapLocation || null,
-    },
+    ...(sendAddress ? { address } : {}),
     ...(mode === "create" && createHourConcepts.hourConceptIds.length
       ? { hourConceptIds: createHourConcepts.hourConceptIds }
       : {}),
-    ...(mode === "create" && employee.startDate
+    ...(mode === "create" && startDate
       ? {
           initialLaborMovement: {
             type: "ALTA",
-            effectiveFrom: employee.startDate,
-            reason: employee.laborMovements?.[0]?.reason || "Alta inicial",
+            effectiveFrom: startDate,
+            reason: employee.laborMovements?.[0]?.reason,
             observation: employee.laborMovements?.[0]?.observation || null,
           },
         }
@@ -619,7 +618,7 @@ async function syncEmployeeExtras(
         body: {
           type: "ALTA",
           effectiveFrom: employee.startDate,
-          reason: employee.laborMovements?.[0]?.reason || "Alta inicial",
+          reason: employee.laborMovements?.[0]?.reason,
           observation: employee.laborMovements?.[0]?.observation || null,
         },
       }),

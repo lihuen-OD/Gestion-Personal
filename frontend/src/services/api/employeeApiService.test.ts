@@ -3,6 +3,7 @@ import { apiRequest } from "./apiClient";
 import { employeeApiService, employeeListRequest, mapEmployeeFromApi, orgChartReachedLimit } from "./employeeApiService";
 import * as cache from "../cache";
 import { dayAccounting, periodAccounting } from "../../test/workedTimeAccountingFixtures";
+import type { Employee } from "../../types";
 
 vi.mock("./apiClient", () => ({ apiRequest: vi.fn() }));
 
@@ -479,5 +480,99 @@ describe("mapEmployeeFromApi — responsables asignados por usuario (A7)", () =>
 
   it("sin nombre ni usuario no inventa responsables", () => {
     expect(mapEmployeeFromApi({ ...base, assignments: [{ type: "TIME_RESPONSIBLE", personName: null, user: null }] }).timeResponsibles).toEqual([]);
+  });
+});
+
+// Alta mínima de legajo: lo que el mapper envía al backend. Los opcionales
+// vacíos viajan como null; sin fecha de alta no hay movimiento inicial; un
+// domicilio vacío no se envía en el alta; nada se completa con valores por
+// defecto (ni "Alta inicial", ni "Argentina", ni "S/N").
+describe("employeeApiService.create — alta mínima", () => {
+  const emptyMap = { lat: null, lng: null, source: "MOCK" as const, label: "" };
+  // Mismo estado vacío que el formulario de alta, con sólo los cuatro datos obligatorios.
+  const minimalForm = {
+    id: "tmp", legajo: "0001", legajoInterno: "0001", legajoFinnegans: "", firstName: "Juan", lastName: "Perez", dni: "12345678",
+    cuil: "", birthDate: "", gender: "", civilStatus: "", nationality: "", phone: "", mobile: "", email: "",
+    address: "", addressStreet: "", addressNumber: "", city: "", department: "", province: "", zip: "",
+    domicilio: { calle: "", numero: "", provinciaId: "", provinciaNombre: "", departamentoId: "", departamentoNombre: "", localidadId: "", localidadNombre: "", codigoPostal: "", ubicacionMapa: emptyMap },
+    emergencyContact: "", emergencyRelation: "", emergencyPhone: "", company: "", companies: [], costCenter: "", position: "", positionId: "", puestoId: "", puestoNombre: "",
+    receiptCategory: "", internalCategory: "", agreement: "", healthInsurance: "", directManager: "", timeResponsible: "",
+    startDate: "", endDate: "", exitReason: "", transport: false, transportLocality: "", transportRoute: "", transportNotes: "", mapLocation: "", locationMap: emptyMap,
+    enabledHours: [], status: "Activo", laborMovements: [],
+  } as unknown as Employee;
+
+  beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
+    vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
+    // Sólo responde el POST del alta; los catálogos fallan (sin empresas, centros de costo ni puestos).
+    vi.mocked(apiRequest).mockImplementation(async (path: string, init?: { method?: string }) => {
+      if (path === "/employees" && init?.method === "POST") {
+        return { data: { id: "emp-new", legajo: "0001", dni: "12345678", cuil: null, firstName: "Juan", lastName: "Perez", status: "ACTIVO", nationality: null } };
+      }
+      throw new Error(`sin respuesta para ${path}`);
+    });
+  });
+
+  const postedBody = () => {
+    const call = [...vi.mocked(apiRequest).mock.calls].reverse().find(([path, init]) => path === "/employees" && (init as { method?: string })?.method === "POST");
+    return (call?.[1] as { body: Record<string, unknown> }).body;
+  };
+
+  it("envía los opcionales vacíos como null y no envía movimiento inicial ni domicilio", async () => {
+    await employeeApiService.create(minimalForm);
+    const body = postedBody();
+
+    expect(body).toMatchObject({
+      legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez", status: "ACTIVO",
+      cuil: null, birthDate: null, gender: null, nationality: null, legajoFinnegans: null, civilStatus: null,
+      email: null, phone: null, mobile: null, emergencyContact: null, emergencyRelation: null, emergencyPhone: null,
+      healthInsurance: null, agreement: null, receiptCategory: null, internalCategory: null,
+      positionId: null, costCenterId: null, companyIds: [], primaryCompanyId: null,
+    });
+    expect(body).not.toHaveProperty("initialLaborMovement");
+    expect(body).not.toHaveProperty("address");
+    expect(body).not.toHaveProperty("hourConceptIds");
+    // Sólo el alta: ni transporte, ni responsables, ni movimiento laboral aparte.
+    expect(vi.mocked(apiRequest).mock.calls.filter(([, init]) => (init as { method?: string })?.method)).toHaveLength(1);
+  });
+
+  it("un CUIL con sólo espacios también viaja como null", async () => {
+    await employeeApiService.create({ ...minimalForm, cuil: "   " });
+    expect(postedBody().cuil).toBeNull();
+  });
+
+  it("con fecha de alta envía el movimiento ALTA con el motivo elegido, sin motivo por defecto", async () => {
+    await employeeApiService.create({
+      ...minimalForm,
+      startDate: "2026-11-01",
+      laborMovements: [{ id: "m1", type: "ALTA", effectiveFrom: "2026-11-01", reason: "Reingreso", observation: "", createdAt: "", createdByUserId: "u1", createdByUserName: "RRHH" }],
+    });
+    expect(postedBody().initialLaborMovement).toEqual({ type: "ALTA", effectiveFrom: "2026-11-01", reason: "Reingreso", observation: null });
+
+    await employeeApiService.create({ ...minimalForm, startDate: "2026-11-01", laborMovements: [] });
+    expect((postedBody().initialLaborMovement as { reason?: string }).reason).toBeUndefined();
+  });
+
+  it("con algún dato real de domicilio lo envía; en la edición el domicilio se sigue enviando siempre", async () => {
+    await employeeApiService.create({ ...minimalForm, city: "Luján" });
+    expect(postedBody().address).toEqual(expect.objectContaining({ city: "Luján", streetNumber: null, street: null }));
+
+    vi.mocked(apiRequest).mockResolvedValue({ data: {} });
+    await employeeApiService.update({ ...minimalForm, id: "emp-1" });
+    const patch = vi.mocked(apiRequest).mock.calls.find(([path]) => path === "/employees/emp-1");
+    expect((patch?.[1] as { body: Record<string, unknown> }).body).toHaveProperty("address");
+    expect((patch?.[1] as { body: Record<string, unknown> }).body.cuil).toBeNull();
+  });
+});
+
+describe("mapEmployeeFromApi — nacionalidad sin informar", () => {
+  it("si el backend no tiene nacionalidad queda vacía (no se convierte en Argentina)", () => {
+    const employee = mapEmployeeFromApi({ id: "e1", legajo: "0001", cuil: null, dni: "12345678", firstName: "Juan", lastName: "Perez", status: "ACTIVO", nationality: null } as never);
+    expect(employee.nationality).toBe("");
+    expect(employee.cuil).toBe("");
+  });
+
+  it("una nacionalidad cargada se conserva", () => {
+    expect(mapEmployeeFromApi({ id: "e1", legajo: "0001", dni: "1", firstName: "A", lastName: "B", status: "ACTIVO", nationality: "Argentina" } as never).nationality).toBe("Argentina");
   });
 });
