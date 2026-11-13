@@ -10,8 +10,8 @@ import { noveltiesListCache } from "./novelties.cache";
  * `novelties.service.test.ts`/`novelties.repository.test.ts`, que mockean la
  * capa de abajo). `noveltiesListCache` (15s, `userScopedCacheKey`) estaba
  * confirmada correcta por lectura de código en 14I.1 pero sin ningún test de
- * hit/miss/aislamiento real. `clearTimeEntriesReadCaches` se mockea sólo
- * para aislar esta prueba de esa cache (ya cubierta en su propio módulo) —
+ * hit/miss/aislamiento real. `clearWorkedTimeDerivedReadCaches` se mockea sólo
+ * para aislar esta prueba de esas caches (ya cubiertas en su propio módulo) —
  * `noveltiesListCache`, la pieza bajo prueba, nunca se mockea.
  */
 vi.mock("./novelties.service", () => ({
@@ -22,11 +22,12 @@ vi.mock("./novelties.service", () => ({
     approveMany: vi.fn(),
     reject: vi.fn(),
     remove: vi.fn(),
+    resolveCoverageDay: vi.fn(),
   },
 }));
 
-vi.mock("../time-entries/timeEntries.cache", () => ({
-  clearTimeEntriesReadCaches: vi.fn(),
+vi.mock("../time-entries/workedTimeReadCaches", () => ({
+  clearWorkedTimeDerivedReadCaches: vi.fn(),
 }));
 
 const mockedService = noveltiesService as unknown as {
@@ -152,5 +153,24 @@ describe("noveltiesController.list — noveltiesListCache (Etapa 14I.6)", () => 
     await noveltiesController.remove(fakeReq({ params: { id: "nov-1" } }), fakeRes());
     await noveltiesController.list(req, fakeRes());
     expect(mockedService.list).toHaveBeenCalledTimes(4);
+  });
+});
+
+// Etapa 4 (NOVELTY_COVERAGE_ENGINE.md §12): una novedad aprobada cambia
+// totales, así que toda mutación limpia las cachés derivadas de horas
+// (grillas, resumen, dashboard, cierres), no sólo las de time-entries.
+describe("noveltiesController — mutaciones limpian las cachés derivadas de horas", () => {
+  it.each([
+    ["create", () => noveltiesController.create(fakeReq({ body: {} }), fakeRes())],
+    ["approve", () => noveltiesController.approve(fakeReq({ params: { id: "n-1" } as never }), fakeRes())],
+    ["approveMany", () => noveltiesController.approveMany(fakeReq({ body: { ids: ["n-1"] } }), fakeRes())],
+    ["reject", () => noveltiesController.reject(fakeReq({ params: { id: "n-1" } as never, body: { reason: "x" } }), fakeRes())],
+    ["remove", () => noveltiesController.remove(fakeReq({ params: { id: "n-1" } as never }), fakeRes())],
+    ["resolveCoverageDay", () => noveltiesController.resolveCoverageDay(fakeReq({ params: { id: "n-1", date: "2026-11-16" } as never, body: {} }), fakeRes())],
+  ])("%s", async (_name, run) => {
+    const { clearWorkedTimeDerivedReadCaches } = await import("../time-entries/workedTimeReadCaches");
+    for (const fn of Object.values(noveltiesService)) (fn as Mock).mockResolvedValue({});
+    await run();
+    expect(clearWorkedTimeDerivedReadCaches).toHaveBeenCalledTimes(1);
   });
 });

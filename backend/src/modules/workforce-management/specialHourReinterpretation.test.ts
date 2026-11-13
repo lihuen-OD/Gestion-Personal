@@ -249,7 +249,7 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
       { hourConceptId: "colectivo", treatment: "ADDITIVE_TO_WORKED_TOTAL", realMinutes: 60, settlementMinutes: 120 },
     ]));
     expect(hours(day.totalWorkedMinutes)).toBe(9);
-    expect(day.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+    expect(day.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
     expect(result).toMatchObject({ timeEntries: 1, breakdowns: 2 });
   });
 
@@ -514,7 +514,7 @@ describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas"
 
     expect(hours(minutes(L31).normalResidualMinutes)).toBe(5);
     expect(hours(minutes(L31).totalWorkedMinutes)).toBe(9);
-    expect(minutes(L31).settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+    expect(minutes(L31).settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
   });
 
   it("CASO 8 — convocatoria sobre un período APROBADO: no modifica horas ni snapshot (D-5) y lo informa", async () => {
@@ -570,7 +570,7 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     const result = await deleteRule(feriados());
     const day = dayAccounting(JUAN, OCT_5);
 
-    expect(day.settlement).toMatchObject({ normalMinutes: 300, withinBaseMinutes: 180, additiveMinutes: 60, totalMinutes: 540 });
+    expect(day.settlement).toMatchObject({ normalMinutes: 300, withinBaseMinutes: 180, additiveMinutes: 60, noveltyMinutes: 0, totalMinutes: 540 });
     expect(day.concepts).toEqual(expect.arrayContaining([
       { hourConceptId: "prueba-02", treatment: "WITHIN_BASE", realMinutes: 180, settlementMinutes: 180 },
       { hourConceptId: "colectivo", treatment: "ADDITIVE_TO_WORKED_TOTAL", realMinutes: 60, settlementMinutes: 60 },

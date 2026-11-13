@@ -11,7 +11,7 @@ import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import { buildClosureSnapshots, confirmedClosureResult } from "./closureSnapshot";
+import { buildClosureSnapshots, confirmedClosureResult, pendingNoveltyReviewOf } from "./closureSnapshot";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
@@ -291,6 +291,21 @@ export const workforceService = {
       await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
       await assertClockPunchPostProcessSettled(tx, employeeIds, period);
       const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
+      // NOVELTY_COVERAGE_ENGINE.md §12: un período con cobertura de novedades
+      // en revisión no se consolida en silencio — se rechaza el envío completo.
+      const pendingReview = employeeIds
+        .map((employeeId) => ({ employeeId, ...pendingNoveltyReviewOf(snapshots.get(employeeId)) }))
+        .filter((item) => item.reviewDays > 0);
+      if (pendingReview.length) {
+        const reference = await loadEmployeeReferences(tx, pendingReview.map((item) => item.employeeId));
+        const detail = pendingReview.map((item) => `${reference(item.employeeId)}: ${item.reviewDays} día(s) (${item.reviewDates.map((date) => (date.length === 10 ? formatArgentinaDate(date) : date)).join(", ")})`).join("; ");
+        throw new AppError(
+          `No se puede enviar el cierre: hay novedades con días para revisar. ${detail}.`,
+          409,
+          "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+          { employees: pendingReview.map((item) => ({ employeeId: item.employeeId, reviewDays: item.reviewDays, reviewDates: item.reviewDates })) },
+        );
+      }
       const saved = [];
       for (const employeeId of employeeIds) {
         const snapshot = snapshots.get(employeeId)!;

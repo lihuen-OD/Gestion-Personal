@@ -169,7 +169,7 @@ describe("buildEmployeeTimeGrid", () => {
     ], [breakdown(sereno, 27, 180, 2), breakdown(colectivo, 27, 60, 2)]);
 
     expect(result.totalWorkedMinutes).toBe(540);
-    expect(result.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+    expect(result.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
     expect(result.specialHoursByDay["27"]).toEqual({ multiplier: 2, ruleNames: ["Domingos"], conflict: false });
   });
 

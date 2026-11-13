@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 import { periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
+import { noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -184,8 +185,8 @@ export const dashboardRepository = {
       where: {
         employee: accessWhere,
         noveltyType: { kind: { in: absenceKinds } },
-        fromDate: { lt: end },
-        OR: [{ toDate: null }, { toDate: { gte: start } }],
+        // toDate nulo es un único día (NOVELTY_COVERAGE_ENGINE.md §6.3).
+        ...noveltyOverlapsRangeWhere(start, end),
       },
       select: { fromDate: true, toDate: true },
     });

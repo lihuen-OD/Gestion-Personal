@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import { createHash } from "node:crypto";
 import { Prisma, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
@@ -170,6 +171,11 @@ type HoursExportPerson = {
 const exportHours = (minutes: number) => formatNumber(minutes / 60);
 
 export function buildHoursExportTable(people: HoursExportPerson[], concepts: HoursExportConcept[]) {
+  // Cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §12): columnas sólo si
+  // alguien del export tiene cobertura que cuenta, igual que las de concepto.
+  // "Total trabajado" sigue siendo trabajo real; la equivalencia suma la
+  // cobertura × su multiplicador.
+  const withNovelties = people.some(({ accounting }) => accounting.noveltyCoveredMinutes > 0 || accounting.settlement.noveltyMinutes > 0);
   const ordered = [...concepts].sort((a, b) =>
     (a.treatment === b.treatment ? 0 : a.treatment === "WITHIN_BASE" ? -1 : 1) || a.name.localeCompare(b.name, "es"));
   const repeatedNames = new Set(ordered.filter((concept, index) => ordered.findIndex((item) => item.name === concept.name) !== index).map((concept) => concept.name));
@@ -182,8 +188,10 @@ export function buildHoursExportTable(people: HoursExportPerson[], concepts: Hou
     hours("Horas normales"),
     ...ordered.map((concept) => hours(`${labels.get(concept.id)} (horas reales)`)),
     hours("Total trabajado"),
+    ...(withNovelties ? [hours("Cubierto por novedades"), hours("Total computable")] : []),
     hours("Horas normales (para liquidación)"),
     ...ordered.map((concept) => hours(`${labels.get(concept.id)} (para liquidación)`)),
+    ...(withNovelties ? [hours("Novedades (para liquidación)")] : []),
     hours("Equivalencia para liquidación"),
     text("Reglas de horas especiales aplicadas"),
     text("Conflicto de reglas"),
@@ -202,6 +210,11 @@ export function buildHoursExportTable(people: HoursExportPerson[], concepts: Hou
         "Conflicto de reglas": conflict ? "Sí" : "",
         Estado: status,
       };
+      if (withNovelties) {
+        row["Cubierto por novedades"] = exportHours(accounting.noveltyCoveredMinutes);
+        row["Total computable"] = exportHours(accounting.computableMinutes);
+        row["Novedades (para liquidación)"] = exportHours(accounting.settlement.noveltyMinutes);
+      }
       for (const concept of ordered) {
         const values = accounting.concepts.find((item) => item.hourConceptId === concept.id);
         row[`${labels.get(concept.id)} (horas reales)`] = exportHours(values?.realMinutes ?? 0);
@@ -1879,11 +1892,16 @@ export const timeEntriesService = {
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {
     const accessWhere = employeeAccessWhere(user);
-    const [entries, breakdowns] = await Promise.all([
+    const [entries, breakdowns, coverage] = await Promise.all([
       timeEntriesRepository.findForExport(query, accessWhere),
       timeEntriesRepository.findBreakdownsForExport(query, accessWhere),
+      // Cobertura de novedades del período (NOVELTY_COVERAGE_ENGINE.md §12): 1 consulta.
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeWhere: accessWhere, ...(query.employeeId ? { employeeIds: [query.employeeId] } : {}) }),
     ]);
-    const employeeIds = Array.from(new Set([...entries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId)]));
+    // Quien sólo tiene cobertura que puede contar (p. ej. vacaciones todo el
+    // mes) también se exporta, y también le aplica el gate de cierre.
+    const coverageEmployeeIds = coverage.coverages.filter((item) => item.status === "APROBADO" && item.countsTowardTotal).map((item) => item.employeeId);
+    const employeeIds = Array.from(new Set([...entries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId), ...coverageEmployeeIds]));
 
     // Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
     // exportación DEFINITIVA (includeInReview=false, el default) exige que
@@ -1918,7 +1936,7 @@ export const timeEntriesService = {
     const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE");
     const exportRange = periodCalendarBounds(query.period);
     const dayOffs = await loadDayOffAccounting({ employeeIds, from: exportRange.start, to: exportRange.end });
-    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
 
     const ruleNames = new Map<string, Set<string>>();
     const conflicts = new Set<string>();

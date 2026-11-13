@@ -24,6 +24,7 @@ import type {
 } from "./employees.schemas";
 import type { employeeListSortKeys } from "./employees.schemas";
 import { accountingBreakdownSelect, countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
+import { noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
 
 const employeeOptionSelect = {
   id: true,
@@ -1272,8 +1273,8 @@ export const employeesRepository = {
         ? prisma.novelty.findMany({
             where: {
               employeeId: id,
-              fromDate: { lt: end },
-              OR: [{ toDate: null }, { toDate: { gte: start } }],
+              // toDate nulo es un único día (NOVELTY_COVERAGE_ENGINE.md §6.3).
+              ...noveltyOverlapsRangeWhere(start, end),
             },
             include: timeGridNoveltyInclude,
             orderBy: [{ fromDate: "asc" }, { createdAt: "desc" }],

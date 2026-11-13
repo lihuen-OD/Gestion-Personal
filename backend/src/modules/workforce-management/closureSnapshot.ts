@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import {
   accountEmployeePeriods,
@@ -74,11 +75,24 @@ function periodRange(period: string) {
  * estado). `accounting` congela la composición real del período con el
  * modelo único — mismo criterio de estado que la grilla por legajo (base
  * APROBADO/EN_REVISION, conceptos sin RECHAZADO), así cierre y grilla nunca
- * calculan distinto. 3 consultas batch para todos los legajos del período.
+ * calculan distinto. Consultas batch para todos los legajos del período.
+ *
+ * Modelo WORKED_TIME_ACCOUNTING_V2 (NOVELTY_COVERAGE_ENGINE.md §12): agrega la
+ * cobertura de novedades (`noveltyCoveredMinutes`, `computableMinutes`,
+ * `settlement.noveltyMinutes`, `novelty` con estados y tipos). Los snapshots
+ * V1 ya guardados siguen siendo legibles: V2 sólo agrega campos y conserva los
+ * de V1 con el mismo significado.
  */
+export const CLOSURE_ACCOUNTING_MODEL = "WORKED_TIME_ACCOUNTING_V2";
+
+/** Días con cobertura de novedades en revisión según un snapshot (V2; un V1 no tiene). */
+export function pendingNoveltyReviewOf(snapshot: Prisma.JsonValue | Prisma.InputJsonObject | null | undefined): { reviewDays: number; reviewDates: string[] } {
+  const novelty = (snapshot as { accounting?: { novelty?: { reviewDays?: number; reviewDates?: string[] } } } | null)?.accounting?.novelty;
+  return { reviewDays: novelty?.reviewDays ?? 0, reviewDates: novelty?.reviewDates ?? [] };
+}
 export async function buildClosureSnapshots(db: Db, employeeIds: string[], period: string): Promise<Map<string, Prisma.InputJsonObject>> {
   const range = periodRange(period);
-  const [rows, baseEntries, breakdowns, dayOffs] = await Promise.all([
+  const [rows, baseEntries, breakdowns, dayOffs, coverage] = await Promise.all([
     db.timeEntry.groupBy({
       by: ["employeeId", "status"],
       where: { employeeId: { in: employeeIds }, period, hourConcept: { systemRole: "NORMAL_BASE" } },
@@ -95,8 +109,10 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
     }),
     // Francos: mismo criterio que la grilla (docs/decisions/EMPLOYEE_DAY_OFF.md §7).
     loadDayOffAccounting({ employeeIds, from: range.start, to: range.end }, db),
+    // Cobertura de novedades: mismo criterio que la grilla (1 consulta).
+    loadNoveltyCoverageForAccounting({ period, employeeIds }, db),
   ]);
-  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
   const dayOffDatesByEmployee = new Map<string, string[]>();
   for (const item of dayOffsWithin(dayOffs, range.start, range.end)) dayOffDatesByEmployee.set(item.employeeId, [...(dayOffDatesByEmployee.get(item.employeeId) ?? []), item.dateKey].sort());
   const conceptNames = new Map(breakdowns.map((breakdown) => [breakdown.hourConceptId, { code: breakdown.hourConcept.code, name: breakdown.hourConcept.name }]));
@@ -106,9 +122,16 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
       range,
       entries: rows.filter((row) => row.employeeId === employeeId).map((row) => ({ status: row.status, hours: Number(row._sum.hours || 0), records: row._count })),
       accounting: {
-        model: "WORKED_TIME_ACCOUNTING_V1",
+        model: CLOSURE_ACCOUNTING_MODEL,
         ...accounting,
         concepts: accounting.concepts.map((concept) => ({ ...concept, ...conceptNames.get(concept.hourConceptId) })),
+        novelty: {
+          ...accounting.novelty,
+          types: accounting.novelty.types.map((type) => {
+            const noveltyType = coverage.types.get(type.noveltyTypeId);
+            return { ...type, code: noveltyType?.code ?? "", name: noveltyType?.name ?? "" };
+          }),
+        },
       },
       // Fechas con franco activo al congelar: traza de "tenía franco" junto a
       // lo que efectivamente computó.

@@ -129,6 +129,24 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     expect(result).toEqual({ date: dateKey, detected: 0, notified: 0 });
   });
 
+  // Etapa 4 de cobertura (NOVELTY_COVERAGE_ENGINE.md §6.3): toDate nulo es un
+  // único día. Una novedad de un día anterior (aunque su tipo admita rango) ya
+  // no exime los días siguientes.
+  it("una novedad de un día anterior con toDate nulo no exime: el día sigue generando incidente", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1")] });
+    const dayBefore = new Date(operationalDate.getTime() - 86_400_000);
+    mockedPrisma.novelty.findMany.mockResolvedValue([{ employeeId: "employee-1", fromDate: dayBefore, toDate: null }]);
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow() }]);
+
+    await detectAttendanceInactivity(dateKey);
+
+    expect(mockedPrisma.novelty.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ OR: [{ toDate: { gte: operationalDate } }, { toDate: null, fromDate: operationalDate }] }) }),
+    );
+    expect(mockedPrisma.employee.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ["employee-1"] } }) }));
+  });
+
   // Etapa 15M.19D §17: "verificar comportamiento definido realmente por el
   // sistema, no inventar una política nueva" -- la política vigente (sin
   // cambios desde antes de 15M.18) es que sólo RECHAZADO no exime: se

@@ -83,6 +83,7 @@ vi.mock("../../shared/prisma/client", () => {
       // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos por default, la
       // contabilidad queda como hasta hoy.
       employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+      noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
       // Etapa 15E.2: findClosuresForExport consulta MonthlyTimeClosure vía
       // el cliente `prisma` global (mismo criterio que el resto de este
       // repositorio para queries de sólo lectura sin necesidad de $transaction).
@@ -141,6 +142,7 @@ const mockedPrisma = prisma as unknown as {
   hourConceptBreakdown: { findMany: Mock; aggregate: Mock };
   monthlyTimeClosure: { findMany: Mock };
   employeeDayOff: { findMany: Mock };
+  noveltyDayCoverage: { findMany: Mock };
   novelty: { findMany: Mock; count: Mock; findFirst: Mock };
   $transaction: Mock;
   __tx: TxMocks;
@@ -2455,7 +2457,7 @@ describe("findMany(view=byEmployee) — resumen por empleado suma sólo Horas no
         normalResidualMinutes: 300,
         additiveMinutes: 60,
         totalWorkedMinutes: 540,
-        settlement: { normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 },
+        settlement: { normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 },
       });
       expect(items[0]!.summary.accounting).not.toHaveProperty("days");
       expect(items[0]!.summary).toMatchObject({ specialHourRuleNames: ["Domingo"], specialHourConflict: false });
@@ -2683,9 +2685,20 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       const summary = result.items[0]!.summary;
 
       expect(summary.accounting.totalWorkedMinutes).toBe(540);
-      expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+      expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
       expect(summary.accounting.hasSpecialMultiplier).toBe(true);
-      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, dayOff: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
+      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({
+        day: 27,
+        novelty: null,
+        dayOff: null,
+        specialHourRuleNames: ["Feriado"],
+        specialHourConflict: false,
+        // Etapa 4 de cobertura (aditivo): sin novedades el computable es el trabajo real.
+        totalWorkedMinutes: 540,
+        noveltyCoveredMinutes: 0,
+        computableMinutes: 540,
+        novelties: [],
+      });
     });
 
     it("Colectivo de domingo sin Horas base ese día usa su propio multiplicador (ya no queda en x1 por falta de TimeEntry)", async () => {
@@ -2740,7 +2753,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
-      expect(mockedPrisma.novelty.findMany.mock.calls.at(0)?.[0].select.noveltyType).toEqual({ select: { id: true, name: true, uiColor: true, allowsDateRange: true } });
+      // Etapa 4 de cobertura: toDate nulo es siempre un día, ya no hace falta allowsDateRange.
+      expect(mockedPrisma.novelty.findMany.mock.calls.at(0)?.[0].select.noveltyType).toEqual({ select: { id: true, name: true, uiColor: true } });
       expect(dayOf(result, 10)?.novelty).toEqual({ label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" });
     });
 
@@ -2781,6 +2795,10 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
         dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 },
         specialHourRuleNames: [],
         specialHourConflict: false,
+        totalWorkedMinutes: 0,
+        noveltyCoveredMinutes: 0,
+        computableMinutes: 0,
+        novelties: [],
       });
     });
   });

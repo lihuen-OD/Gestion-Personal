@@ -383,3 +383,17 @@ El problema era sólo de presentación: las celdas y la columna TOTAL de cada co
 ## 18. Francos (2026-11-03)
 
 Ver `docs/decisions/EMPLOYEE_DAY_OFF.md` §7. En una jornada cuya fecha operativa tiene franco activo, las Horas base y los desgloses **automáticos** no computan; lo cargado o corregido por una persona sí (`TimeEntry.source` `null`/`ADMIN`, desgloses `MANUAL`). La regla vive sólo en `applyDayOffExclusions` (este mismo archivo) y todos los consumidores de §8 la reciben: los que leen filas pasan el índice de `loadDayOffAccounting` a `accountEmployeePeriods`; el resumen y el dashboard restan `periodDayOffUncountedMinutes`. `DayAccounting`/`PeriodAccounting` suman `dayOffUncountedMinutes` y el snapshot del cierre agrega `dayOffs` (fechas con franco). Ninguna fila se reescribe.
+
+## 19. Cobertura de novedades (2026-11-13)
+
+Ver `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12. La cobertura diaria de novedades (`NoveltyDayCoverage`) entra a esta misma contabilidad como un tercer componente, separado del trabajo real:
+
+```
+totalWorkedMinutes      = base + adicionales              (sin cambios: sólo trabajo real)
+noveltyCoveredMinutes   = Σ cobertura COUNTED
+computableMinutes       = totalWorkedMinutes + noveltyCoveredMinutes
+settlement.noveltyMinutes = Σ cobertura COUNTED × su multiplicador
+settlement.totalMinutes = normal + dentro de la jornada + adicionales + noveltyMinutes
+```
+
+`accountNoveltyDay` es la única implementación de los estados (`COUNTED`, `INFORMATIVE`, `PENDING_APPROVAL`, `REVIEW_REQUIRED`). Consumidores con cobertura: grilla por legajo, grilla de período, resumen (`coveredHours`/`computableHours`, aditivos), export y cierre (snapshot `WORKED_TIME_ACCOUNTING_V2`). "Por persona" y el dashboard siguen mostrando sólo trabajo real. "Total trabajado" nunca incluye cobertura.

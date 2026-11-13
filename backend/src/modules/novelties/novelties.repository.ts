@@ -3,6 +3,7 @@ import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
 import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+import { noveltyOverlapsRangeWhere } from "./novelties.dateRange";
 
 const noveltyListOrderBy: SortOrderByMap<(typeof noveltyListSortKeys)[number], Prisma.NoveltyOrderByWithRelationInput> = {
   legajo: (order) => [{ employee: { legajo: order } }],
@@ -37,17 +38,13 @@ const noveltyInclude = {
   documents: { select: { fileName: true }, orderBy: { createdAt: "desc" }, take: 1 },
 } satisfies Prisma.NoveltyInclude;
 
-// Etapa 15M.15: intersección real de [fromDate, effectiveToDate] contra el
-// mes completo del período, mismo criterio de negocio que
+// Etapa 15M.15: intersección real de [fromDate, toDate ?? fromDate] contra el
+// mes completo del período, mismo criterio que
 // `novelties.dateRange.ts::noveltyCoversDay` (generalizado de "cubre este
-// día" a "toca este mes") en vez de inventar uno nuevo:
-// - toDate cerrado: interseca si fromDate < fin de mes Y toDate >= inicio.
-// - toDate null Y el tipo permite rango (`allowsDateRange`): novedad
-//   vigente abierta -- sigue "activa" en cualquier mes posterior a que
-//   empezó, sin límite de fin.
-// - toDate null Y el tipo NO permite rango: no es una novedad abierta, es
-//   de un único día (mismo criterio que `noveltyCoversDay`) -- sólo
-//   interseca el mes de esa fecha exacta.
+// día" a "toca este mes"). Etapa 3 de cobertura
+// (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §6.3): `toDate` nulo es siempre
+// un único día, también en tipos que admiten rango — sólo toca el mes de
+// `fromDate`; nunca es una novedad "vigente abierta".
 // A propósito NO es la misma regla que `finnegansExport.repository.ts`
 // (Etapa 15L.3B.1: un período "dueño" único por `fromDate`, sin
 // intersección, para no exportar la misma fila dos veces). Son dos
@@ -55,13 +52,7 @@ const noveltyInclude = {
 // docs/PROJECT_UI_CONTEXT.md "Novedades por período".
 function periodIntersectionWhere(period: string): Prisma.NoveltyWhereInput {
   const { start, end } = periodCalendarBounds(period);
-  return {
-    OR: [
-      { fromDate: { lt: end }, toDate: { not: null, gte: start } },
-      { fromDate: { lt: end }, toDate: null, noveltyType: { allowsDateRange: true } },
-      { fromDate: { gte: start, lt: end }, toDate: null, noveltyType: { allowsDateRange: false } },
-    ],
-  };
+  return noveltyOverlapsRangeWhere(start, end);
 }
 
 function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.NoveltyWhereInput {

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { loadNoveltyCoverageForAccounting, noveltyCoverageRowsView, noveltyDayItemsView, type LoadedNoveltyCoverage, type NoveltyDayItemView } from "../novelties/noveltyCoverageAccounting";
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -165,6 +166,8 @@ export function buildEmployeeTimeGrid(
   breakdowns: TimeGridBreakdown[],
   dayOffs: DayOffAccounting = emptyDayOffAccounting(),
   period?: string,
+  // Cobertura de novedades del período (NOVELTY_COVERAGE_ENGINE.md §12).
+  coverage: LoadedNoveltyCoverage = { coverages: [], types: new Map() },
 ) {
   if (!normalConcept) {
     throw new AppError("Canonical normal hour concept not found", 500, "NORMAL_HOUR_CONCEPT_NOT_FOUND");
@@ -172,7 +175,7 @@ export function buildEmployeeTimeGrid(
 
   // Horas base = TimeEntry NORMAL_BASE APROBADO/EN_REVISION (criterio vigente).
   const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE" && ["APROBADO", "EN_REVISION"].includes(entry.status));
-  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
 
   const dayOffsByDay: Record<string, TimeGridDayOff> = {};
   if (period) {
@@ -237,10 +240,23 @@ export function buildEmployeeTimeGrid(
     .sort((a, b) => treatmentOrder(a.concept) - treatmentOrder(b.concept) || a.index - b.index)
     .map(({ concept }) => toRow(concept, "ADDITIONAL", minutesByConcept.get(concept.id) ?? {}, enabledIds.has(concept.id)));
 
+  // Novedades (aditivo): una fila por tipo con cobertura o información en el
+  // período, y cada novedad del día con su estado. Las cifras salen de la
+  // contabilidad (accounting.days[day].novelty), nunca de sumar acá.
+  const noveltiesByDay: Record<string, NoveltyDayItemView[]> = {};
+  for (const [day, dayAccounting] of Object.entries(accounting.days)) {
+    if (dayAccounting.novelty.items.length) noveltiesByDay[day] = noveltyDayItemsView(dayAccounting.novelty.items, coverage.types);
+  }
+
   return {
     rows: [toRow(normalConcept, "NORMAL_BASE", normalMinutesByDay, true), ...additionalRows],
     accounting,
+    // Trabajo real (sin cambios). La cobertura y el total computable van aparte.
     totalWorkedMinutes: accounting.totalWorkedMinutes,
+    noveltyCoveredMinutes: accounting.noveltyCoveredMinutes,
+    computableMinutes: accounting.computableMinutes,
+    noveltyCoverageRows: noveltyCoverageRowsView(accounting, coverage.types),
+    noveltiesByDay,
     specialHoursByDay,
     dayOffsByDay,
   };
@@ -702,9 +718,11 @@ export const employeesService = {
     const { start, end } = periodCalendarBounds(query.period);
     // El índice de francos no depende del alcance: si el legajo es ajeno,
     // findTimeGrid devuelve null y se descarta.
-    const [grid, dayOffs] = await Promise.all([
+    const [grid, dayOffs, coverage] = await Promise.all([
       employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user)),
       loadDayOffAccounting({ employeeIds: [id], from: start, to: end }),
+      // Cobertura de novedades: 1 consulta (NOVELTY_COVERAGE_ENGINE.md §12).
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeIds: [id] }),
     ]);
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     const timeGrid = buildEmployeeTimeGrid(
@@ -714,6 +732,7 @@ export const employeesService = {
       grid.breakdowns,
       dayOffs,
       query.period,
+      coverage,
     );
     return redactPiiForRole({ ...grid, ...timeGrid }, user);
   },

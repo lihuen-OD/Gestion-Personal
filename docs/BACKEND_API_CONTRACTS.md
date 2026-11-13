@@ -363,6 +363,12 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 - `totalWorkedMinutes`: total real = Horas base + conceptos `ADDITIVE_TO_WORKED_TOTAL` (nunca + `WITHIN_BASE`);
 - `specialHoursByDay[day]`: `{ multiplier, ruleNames, conflict }` sólo para días con multiplicador > 1 (indicador visual; las horas del día viven en `accounting.days`).
 - `dayOffsByDay[day]` (desde 2026-11-03, `docs/decisions/EMPLOYEE_DAY_OFF.md`): `{ status: "ACTIVO", notes, activityShifts, activityMinutes }` sólo para días con franco activo. `activity*` es lo que registró el fichador en las jornadas de esa fecha operativa (evidencia); lo que computa está en `accounting.days[day]`. `accounting` (días y período) suma `dayOffUncountedMinutes`: Horas base automáticas que no computan por pertenecer a una jornada en franco.
+- **Cobertura de novedades** (desde la etapa 4, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12, aditivo): `totalWorkedMinutes` sigue siendo sólo trabajo real.
+  - `noveltyCoveredMinutes` (cobertura que cuenta) y `computableMinutes` (trabajo real + cobertura).
+  - `accounting` agrega `noveltyCoveredMinutes`, `computableMinutes`, `settlement.noveltyMinutes` (ya incluido en `settlement.totalMinutes`) y `novelty`. Por día: `{ coveredMinutes, settlementMinutes, informativeMinutes, pendingApprovalMinutes, heldMinutes, reviewRequired, items[] }`; por período: lo mismo más `reviewDays`, `reviewDates` y `types[]`.
+  - `noveltiesByDay[day]`: `[{ noveltyId, noveltyTypeId, code, label, uiColor, minutes, settlementMinutes, state, countsTowardTotal, reviewRequired, reviewReasons }]`, con `state` `COUNTED`, `INFORMATIVE`, `PENDING_APPROVAL` o `REVIEW_REQUIRED`.
+  - `noveltyCoverageRows[]`: una fila por tipo de novedad del período, `{ noveltyType { id, code, name, uiColor }, countsTowardTotal, minutesByDay, settlementMinutesByDay, stateByDay, totals }`.
+  - `novelties` (con `includeDetails`): `toDate` nulo es un único día; una novedad de un mes anterior sin fecha hasta ya no aparece.
 
 Desde 2026-10-02 ya no existen `specialHourAdditionalMinutes`, `specialHourLiquidableTotalMinutes` ni `additionalMinutes`/`liquidableTotalMinutes` por día (duplicaban los conceptos dentro de la jornada). Los conceptos `AUTOMATIC` son de sólo lectura; los `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
@@ -1352,7 +1358,11 @@ Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcan
 ```
 
 - `resolution`: `CONFIRMED_ZERO` (sin `baseMinutes`) o `SET_BASE_MINUTES` (`baseMinutes` 1..1440). `note` es obligatoria (5 a 600).
-- Sólo días `SCHEDULE_UNRESOLVED`, incluida la corrección de una resolución anterior; otro día → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. Día fuera de la novedad → `404 NOVELTY_COVERAGE_DAY_NOT_FOUND`; novedad rechazada → `409 NOVELTY_COVERAGE_REJECTED`.
+- Días `SCHEDULE_UNRESOLVED`, incluida la corrección de una resolución anterior.
+- Desde la etapa 4, también un día `COVERED` en conflicto con el trabajo real (ADR §12.4):
+  - tipo incompatible: sólo `CONFIRMED_ZERO`; `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`;
+  - tipo compatible: `SET_BASE_MINUTES` con trabajo + minutos ≤ jornada esperada (`400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`).
+- Otro día → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. Día fuera de la novedad → `404 NOVELTY_COVERAGE_DAY_NOT_FOUND`; novedad rechazada → `409 NOVELTY_COVERAGE_REJECTED`.
 - Roles de carga del tipo (o RRHH). Aplica el multiplicador del motor de Horas Especiales sobre los minutos resueltos y guarda los minutos reales del día.
 - Mismo guard de cierres que la carga.
 
@@ -1635,6 +1645,8 @@ Response:
     "pendingEmployees": 28,
     "reviewEmployees": 12,
     "countableHours": 1540,
+    "coveredHours": 96,
+    "computableHours": 1636,
     "coverage": 75
   }
 }
@@ -1646,6 +1658,7 @@ Reglas:
 - Debe usarse para KPI cards del modulo Horas.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
 - `countableHours` ("Total trabajado" en la UI) = Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + horas de conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO). Nunca suma conceptos `WITHIN_BASE` (ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`).
+- Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo: `coveredHours` = cobertura de novedades que cuenta (APROBADA, suma, sin revisión) y `computableHours` = `countableHours` + `coveredHours`. `countableHours` no cambia: sigue siendo trabajo real.
 
 ### Personas del periodo para tabla
 
@@ -1697,6 +1710,10 @@ Reglas:
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
 - Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`. Desde 2026-11-03 `dailyBreakdown[]` también lleva `dayOff: { notes, activityShifts, activityMinutes } | null` e incluye los días con franco aunque no tengan horas; la contabilidad de la grilla, "Por persona", el export, el resumen y el dashboard excluyen las horas automáticas de jornadas en franco (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7). Desde 2026-11-04 `dailyBreakdown[].novelty = { label, uiColor, noveltyTypeId } | null`: `label` une los nombres de todas las novedades que cubren el día; `uiColor` y `noveltyTypeId` sólo vienen si los comparten todas (si no, `null`, y la grilla usa un estilo neutro propio; nunca se elige una por orden de consulta). `uiColor` es el valor guardado y puede ser un color histórico inválido: el cliente lo resuelve igual que el catálogo (fallback determinístico por id del tipo). Con franco y novedad el mismo día vienen ambos.
+- Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo:
+  - `accounting` incluye la cobertura de novedades (ver time-grid).
+  - Cada `dailyBreakdown[]` agrega `totalWorkedMinutes`, `noveltyCoveredMinutes`, `computableMinutes` y `novelties[]` (misma forma que `noveltiesByDay` del time-grid), e incluye los días que sólo tienen cobertura.
+  - `novelty` se conserva por compatibilidad. `toDate` nulo es un único día: la marca ya no se extiende a los días siguientes.
 
 ## Exportaciones
 
@@ -1837,10 +1854,13 @@ CUIL | Apellido | Nombre | Legajo | Empresa | Centro de costo
 Horas base
 Horas normales
 <Concepto> (horas reales)            -- una por concepto con horas en el período (dentro de la jornada primero)
-Total trabajado                      -- Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL
+Total trabajado                      -- Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL (sólo trabajo real)
+Cubierto por novedades               -- etapa 4: sólo si alguien tiene cobertura que cuenta
+Total computable                     -- etapa 4: Total trabajado + Cubierto por novedades
 Horas normales (para liquidación)
 <Concepto> (para liquidación)        -- una por concepto
-Equivalencia para liquidación        -- suma de los componentes anteriores
+Novedades (para liquidación)         -- etapa 4: cobertura × multiplicador
+Equivalencia para liquidación        -- suma de los componentes anteriores (incluye novedades)
 Reglas de horas especiales aplicadas
 Conflicto de reglas
 Estado
@@ -1979,7 +1999,7 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. |
+| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. |
 | POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |

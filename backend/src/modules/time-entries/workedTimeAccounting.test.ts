@@ -209,7 +209,7 @@ describe("workedTimeAccounting — fórmulas oficiales", () => {
 
   it("multiplicador x1.5 por concepto: base 8 + Sereno 3 + Colectivo 2 → normal 7.5, Sereno 4.5, Colectivo 3; real 10", () => {
     const day = accountDay(1, [base(8, 1.5)], [sereno(3, 1.5), colectivo(2, 1.5)]);
-    expect(day.settlement).toEqual({ normalMinutes: 7.5 * H, withinBaseMinutes: 4.5 * H, additiveMinutes: 3 * H, totalMinutes: 15 * H });
+    expect(day.settlement).toEqual({ normalMinutes: 7.5 * H, withinBaseMinutes: 4.5 * H, additiveMinutes: 3 * H, noveltyMinutes: 0, totalMinutes: 15 * H });
     expect(concept(day, "sereno")).toMatchObject({ realMinutes: 3 * H, settlementMinutes: 4.5 * H });
     expect(concept(day, "colectivo")).toMatchObject({ realMinutes: 2 * H, settlementMinutes: 3 * H });
     expect(day.totalWorkedMinutes).toBe(10 * H);

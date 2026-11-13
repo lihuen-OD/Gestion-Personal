@@ -122,9 +122,9 @@ export async function findEmployeeIdsWithMatchingEntryEvidence(candidates: WorkO
 /**
  * Etapa 15M.19B: qué empleados quedan exceptuados por una novedad vigente
  * — extraído del `where` de novedades que antes vivía inline en
- * `detectAttendanceInactivity` (Etapa 15L.2C: `allowsDateRange` decide si
- * una novedad open-ended cubre días posteriores a `fromDate`, mismo criterio
- * que `noveltyCoversDay`). Misma política de siempre, sin cambios: cualquier
+ * `detectAttendanceInactivity`. Fechas: `toDate` nulo es un único día
+ * (`fromDate`), nunca un rango abierto (NOVELTY_COVERAGE_ENGINE.md §6.3,
+ * `noveltyCoversDay`). Misma política de estado de siempre: cualquier
  * estado distinto de RECHAZADO exime presencia — usar exactamente este
  * criterio en cualquier llamador nuevo, nunca una política paralela (ver
  * docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md §Novedades).
@@ -136,11 +136,11 @@ export async function findEmployeeIdsExcludedByNovelty(employeeIds: string[], op
       employeeId: { in: employeeIds },
       status: { not: "RECHAZADO" },
       fromDate: { lte: operationalDate },
-      OR: [{ toDate: null }, { toDate: { gte: operationalDate } }],
+      OR: [{ toDate: { gte: operationalDate } }, { toDate: null, fromDate: operationalDate }],
     },
-    select: { employeeId: true, fromDate: true, toDate: true, noveltyType: { select: { allowsDateRange: true } } },
+    select: { employeeId: true, fromDate: true, toDate: true },
   });
-  return new Set(novelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, operationalDate)).map((novelty) => novelty.employeeId));
+  return new Set(novelties.filter((novelty) => noveltyCoversDay(novelty, operationalDate)).map((novelty) => novelty.employeeId));
 }
 
 export interface InactivityCandidate {

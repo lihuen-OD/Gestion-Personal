@@ -10,6 +10,7 @@ function db(overrides: { closures?: unknown[]; base?: unknown[]; breakdowns?: un
     timeEntry: { groupBy: vi.fn().mockResolvedValue(overrides.groups ?? []), findMany: vi.fn().mockResolvedValue(overrides.base ?? []) },
     hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue(overrides.breakdowns ?? []) },
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+    noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -81,7 +82,7 @@ describe("rebuildClosureSnapshots", () => {
     expect(update.data.snapshot).toMatchObject({
       entries: [{ status: "APROBADO", hours: 8, records: 1 }],
       accounting: {
-        model: "WORKED_TIME_ACCOUNTING_V1",
+        model: "WORKED_TIME_ACCOUNTING_V2",
         baseMinutes: 480,
         normalResidualMinutes: 360,
         withinBaseMinutes: 120,

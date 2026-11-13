@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 3** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria, ver §9). Hasta la etapa 4, **ninguna novedad aporta minutos a ningún total**: la cobertura ya se calcula y se persiste, pero la contabilidad todavía no la lee: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 4** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad, ver §9 y §12). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -115,7 +115,7 @@ Implementación:
 7. Multiplicador: si el tipo aplica Horas Especiales y los minutos efectivos son > 0, el del motor único (`evaluateSpecialHourRulesForEmployees`: domingo, feriado con su política de convocatoria, reglas globales y por alcance, prioridades). Historia faltante → error (C5), nunca ×1.
 8. Minutos computados = efectivos × multiplicador. No se persisten.
 
-El motor no recibe trabajo real: una fila de Trámite bancario representa 240 aunque ese día haya fichada. El conflicto con trabajo real (D2/C1) se evalúa al contabilizar, en la etapa 4.
+El motor no recibe trabajo real: una fila de Trámite bancario representa 240 aunque ese día haya fichada. El conflicto con trabajo real (D2/C1) se evalúa al contabilizar (§12).
 
 ### 6.2 Resoluciones manuales y recálculo
 
@@ -124,7 +124,7 @@ El motor no recibe trabajo real: una fila de Trámite bancario representa 240 au
 - Si los datos ya permiten calcular el día (se registró el ALTA o el turno), **manda la evidencia**: la resolución se descarta y el recálculo lo informa (`droppedResolutions`).
 - Si cambia el motivo de revisión, el día vuelve a `PENDING`.
 - El multiplicador se vuelve a aplicar sobre los minutos resueltos.
-- La invalidación por cambio de los minutos reales (D2) es de lectura, en la etapa 4.
+- La invalidación por cambio de los minutos reales (D2) es de lectura: la contabilidad la detecta como `RESOLUTION_OUTDATED` (§12).
 
 ### 6.3 Persistencia (`persistNoveltyCoverageWithin`)
 
@@ -149,7 +149,7 @@ El motor no recibe trabajo real: una fila de Trámite bancario representa 240 au
   - `REJECT` (un usuario sin corrección): `409 PERIOD_CLOSED`.
   - `ALLOW_CORRECTION` (RRHH con motivo): se escribe y se audita el motivo.
   - `SKIP` (recálculo automático y reconciliación): no se tocan esos días y se informan.
-  - Los snapshots de cierre no se reconstruyen: el snapshot V1 todavía no incluye cobertura (etapa 4).
+  - Snapshots de cierre: desde la etapa 4 el snapshot (V2) incluye la cobertura y se arma al enviar el cierre, que exige no tener días en revisión. Una mutación de cobertura sobre un período no protegido no reconstruye el snapshot ya guardado de un cierre devuelto: se rehace en el próximo envío. La reconstrucción automática llega con los disparadores de la etapa 5.
 
 ### 6.4 Operaciones de una novedad
 
@@ -270,7 +270,7 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 1 | Modelo, migración, configuración y validación del tipo, `Novelty.quantityMinutes` | **Implementada y aprobada** (2026-11-13) |
 | 2 | `expectedWorkday` (núcleo puro + cargador batch), regla P3 | **Implementada y aprobada** (2026-11-13) |
 | 3 | Motor, persistencia de días, preview, resolución, guard de cierres, relación laboral | **Implementada** (2026-11-13), pendiente de revisión |
-| 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | Pendiente |
+| 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | **Implementada** (2026-11-13), pendiente de revisión |
 | 5 | Recálculo por reglas, convocatorias, francos, turnos, regímenes y configuración del tipo | Pendiente |
 | 6–8 | Grilla frontend, Tipos de Novedad, carga reactiva con vista previa | Pendiente |
 | 9 | Finnegans (`value1` derivado de la cobertura) | Pendiente |
@@ -316,4 +316,113 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | `NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md` §8 | Novedades nunca crea, modifica ni pone en 0 un `TimeEntry` | Sigue vigente (la cobertura no es un `TimeEntry`); la parte "no tiene efecto horario" se reemplaza |
 | `NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md` §3 | `allowsHours` alcanza para "registrar horas no trabajadas" | Reemplazado parcialmente: lo representa `coverageMode = MANUAL_MINUTES` |
 | `docs/NOVEDADES_HORAS_FINNEGANS.md`, `docs/PROJECT_CONTEXT.md` (15G), `docs/BACKEND_API_CONTRACTS.md` | Resúmenes de 15G.1 | Nota de reemplazo parcial; contratos actualizados en cada etapa |
-| `WORKED_TIME_ACCOUNTING_MODEL.md` | La contabilidad no recibe novedades | Se amplía en la etapa 4 (nueva sección) |
+| `WORKED_TIME_ACCOUNTING_MODEL.md` | La contabilidad no recibe novedades | Ampliado en la etapa 4 (§19, remite a §12 de este documento) |
+
+## 12. Contabilidad con cobertura (etapa 4)
+
+Implementación única: `backend/src/modules/time-entries/workedTimeAccounting.ts` (`accountNoveltyDay`, `accountDay`, `accountEmployeePeriods`). Carga en lote: `backend/src/modules/novelties/noveltyCoverageAccounting.ts`.
+
+### 12.1 Modelo
+
+`TimeEntry`, fichadas, jornadas y segmentos siguen siendo la única fuente de `totalWorkedMinutes`. La cobertura es un tercer componente:
+
+```
+totalWorkedMinutes      = base + adicionales                  (trabajo real, sin cambios)
+noveltyCoveredMinutes   = Σ cobertura COUNTED (minutos base efectivos)
+computableMinutes       = totalWorkedMinutes + noveltyCoveredMinutes
+settlement.noveltyMinutes = Σ cobertura COUNTED × su multiplicador
+settlement.totalMinutes = normal + dentro de la jornada + adicionales + noveltyMinutes
+```
+
+- Minutos base efectivos = `resolvedBaseMinutes ?? baseMinutes` (`CONFIRMED_ZERO` deja 0). La fila persistida no se modifica para calcular.
+- El multiplicador afecta sólo la liquidación. Vacaciones de domingo ×2 son 8 h computables y 16 h para liquidación, nunca "16 h trabajadas".
+- `day.multiplier` sigue siendo el del trabajo real. `hasSpecialMultiplier` del período también se enciende si la cobertura tiene un multiplicador distinto de 1.
+- La salida agrega, por día, `novelty = { coveredMinutes, settlementMinutes, informativeMinutes, pendingApprovalMinutes, heldMinutes, reviewRequired, items[] }` y, por período, `novelty = { …, reviewDays, reviewDates, types[] }`. Cada ítem trae `state`, `reviewReasons`, `baseMinutes`, `multiplier` y `settlementMinutes`.
+
+### 12.2 Estados de una cobertura (al leer)
+
+| Estado | Cuándo | Efecto |
+|---|---|---|
+| `PENDING_APPROVAL` | Novedad no APROBADA | Visible con su cantidad; no suma ni bloquea |
+| `REVIEW_REQUIRED` | Ver motivos abajo | No suma (`heldMinutes`); bloquea el envío del cierre |
+| `INFORMATIVE` | `countsTowardTotal = false` (p. ej. Llegada tarde) | Visible; no suma |
+| `COUNTED` | APROBADA, suma y sin revisión | Suma al computable y, × multiplicador, a la liquidación |
+
+Una novedad RECHAZADA se ignora (no debería tener filas desde la etapa 3; defensa).
+
+Motivos de revisión (`reviewReasons`):
+- `SCHEDULE_UNRESOLVED`: jornada o relación laboral sin resolver (0 h provisional).
+- `RESOLUTION_OUTDATED`: la resolución manual se hizo contra otros minutos reales; el trabajo del día cambió.
+- `REAL_WORK_ON_INCOMPATIBLE`: tipo `INCOMPATIBLE` con trabajo real un día que la novedad cubre (minutos > 0, o una novedad sin tiempo como Falta sin aviso). No se suman: mientras no se resuelva, gana el trabajo real. Los días sin cobertura de la novedad (franco, fin de semana excluido, sin obligación, feriado, fuera de la relación laboral) no son conflicto.
+- `REAL_WORK_EXCEEDS_EXPECTED`: tipo `COMPATIBLE` que suma, con trabajo + cobertura mayor a la jornada esperada. No se trunca.
+- `REAL_WORK_WITHOUT_EXPECTED`: tipo `COMPATIBLE` que suma, con trabajo real y sin jornada esperada para validarlo.
+
+El trabajo real del día es `totalWorkedMinutes` después de excluir lo que no computa por franco, con el criterio de la grilla.
+
+### 12.3 Cómo se evita el doble conteo
+
+- La cobertura nunca entra a `baseMinutes`, `additiveMinutes` ni `totalWorkedMinutes`, y nunca escribe `TimeEntry`.
+- Un tipo incompatible con trabajo real retiene su cobertura: cuenta sólo el trabajo. Trámite de 4 h con 4 u 8 h reales da 4 u 8 h computables, nunca 8 o 12.
+- Un tipo compatible que excede la jornada (o sin jornada para validarlo) va a revisión, sin sumar.
+- Cada día se cuenta una sola vez por consumidor: la cobertura entra por la misma función pura que el trabajo real.
+
+### 12.4 Resolución de conflictos con trabajo real
+
+`POST /novelties/:id/coverage-days/:date/resolution` acepta, además de los días `SCHEDULE_UNRESOLVED`, un día `COVERED` en conflicto con el trabajo real (C1):
+- **Tipo incompatible:** sólo `CONFIRMED_ZERO` ("la novedad no cubre este día"). `SET_BASE_MINUTES` responde `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`.
+- **Tipo compatible:** `CONFIRMED_ZERO`, o `SET_BASE_MINUTES` con trabajo + minutos ≤ jornada esperada si se conoce (`400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`).
+- Las alternativas siguen vigentes: corregir el trabajo real por su flujo, o rechazar o eliminar la novedad.
+- **Tipo `NONE` + `INCOMPATIBLE` (Falta sin aviso + fichada real):** el día queda en `REVIEW_REQUIRED` (`REAL_WORK_ON_INCOMPATIBLE`) porque las dos evidencias se contradicen, pero la revisión es **administrativa**: no hay minutos de cobertura retenidos (`heldMinutes = 0`) ni que resolver, y cuenta sólo el trabajo real. La salida es corregir, rechazar o eliminar la novedad, o corregir el trabajo registrado, según lo que realmente ocurrió. El endpoint de resolución no aplica: cualquier resolución (`SET_BASE_MINUTES` o `CONFIRMED_ZERO`) responde `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`, porque la fila no es `COVERED`. La UI (etapas 6/8) no debe ofrecer "indicar horas de cobertura" para un tipo `coverageMode = NONE`. Cubierto por `workedTimeAccounting.novelties.test.ts` y `noveltyCoverage.integration.test.ts`.
+
+### 12.5 Consumidores (auditoría)
+
+| Consumidor | Pantalla | Cobertura | Criterio |
+|---|---|---|---|
+| Grilla por legajo (`employees.service.ts::getTimeGrid`) | `/horas/:id`, revisión de cierre | Sí | Base APROBADO/EN_REVISION, desgloses ≠ RECHAZADO, francos, cobertura del período |
+| Grilla de período (`findPeriodEmployees`) | `/horas` | Sí | Ídem, una consulta de cobertura por página |
+| Resumen (`timeEntries.repository.ts::summary`) | Tarjetas de Carga de horas | Sí (aditivo) | `countableHours` sigue siendo trabajo real; nuevos `coveredHours` y `computableHours` |
+| Export de horas (`exportByPerson`) | Descarga | Sí | Columnas `Cubierto por novedades`, `Total computable` y `Novedades (para liquidación)` sólo si alguien tiene cobertura que cuenta. La equivalencia suma la cobertura. Quien sólo tiene cobertura también se exporta y le aplica el gate de cierre |
+| Cierre (`closureSnapshot.ts`, `submitClosures`) | Cierres | Sí | Snapshot V2; envío bloqueado con días en revisión |
+| "Por persona" (`findManyByEmployeeGrouped`) | Bandeja | **No** | Es la bandeja de aprobación de horas: filtra por el estado a revisar y puede no tener período. La cobertura se revisa en las grillas y el cierre |
+| Dashboard (`loadedHours`) | KPI "Horas cargadas" | **No** | Sigue siendo trabajo real; sin cambio de semántica |
+
+### 12.6 Grilla (contrato para la etapa 6)
+
+- `GET /employees/:id/time-grid` agrega:
+  - `noveltyCoveredMinutes` y `computableMinutes` (`totalWorkedMinutes` sigue igual);
+  - `accounting.novelty`;
+  - `noveltiesByDay[día]`: cada novedad con `label`, `code`, `uiColor`, `minutes`, `settlementMinutes`, `state`, `countsTowardTotal`, `reviewRequired` y `reviewReasons`;
+  - `noveltyCoverageRows`: una fila por tipo con `minutesByDay`, `settlementMinutesByDay`, `stateByDay` (el más restrictivo del día) y `totals`.
+- `GET /time-entries/period-employees`, en cada `dailyBreakdown[]`, agrega `totalWorkedMinutes`, `noveltyCoveredMinutes`, `computableMinutes` y `novelties[]` (misma forma). Se conserva `novelty` (marca anterior) por compatibilidad.
+
+### 12.7 Cierre
+
+- Snapshot `accounting.model = "WORKED_TIME_ACCOUNTING_V2"`: V1 más `noveltyCoveredMinutes`, `computableMinutes`, `settlement.noveltyMinutes` y `novelty` (estados, días a revisar y tipos con código y nombre). Los snapshots V1 guardados no se tocan y siguen legibles: V2 sólo agrega campos.
+- `submitClosures` arma los snapshots dentro de su transacción (lock exclusivo). Si algún legajo tiene días `REVIEW_REQUIRED`, rechaza el envío completo con `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW`: mensaje con legajo, cantidad de días y fechas, y `details.employees[] = { employeeId, reviewDays, reviewDates }`.
+- Una novedad PENDIENTE no bloquea el envío: no suma.
+
+### 12.8 Cachés
+
+- Backend: las mutaciones de novedades (crear, aprobar, aprobación masiva, rechazar, eliminar, resolver un día) llaman a `clearWorkedTimeDerivedReadCaches()`: grilla por legajo, grilla de período, resumen, asistencia, dashboard y cierres. Antes sólo limpiaban time-entries.
+- Frontend: `noveltyApiService` invalida `WORKED_TIME_DERIVED_CACHE_FAMILIES` más `novelties`. Antes no invalidaba `pending`, `employees` ni `monthly-closures`.
+
+### 12.9 `toDate` nulo en otros lectores
+
+Un solo helper, `novelties/novelties.dateRange.ts` (`noveltyCoversDay` y `noveltyOverlapsRangeWhere`): `toDate` nulo es siempre un día. Lo usan:
+- la grilla por legajo (lista de novedades);
+- la grilla de período (marca del día);
+- el listado de novedades por período;
+- la exención de inactividad y falta de ingreso (una novedad de un día anterior ya no exime los días siguientes; cambia el comportamiento de esas alertas para datos con `toDate` nulo en tipos con rango);
+- el dashboard (`absenceDays`: una ausencia de un mes anterior ya no se cuenta en todos los meses siguientes).
+
+Finnegans ya usaba sólo `fromDate` y no se tocó.
+
+### 12.10 Rendimiento
+
+Una consulta de cobertura por consumidor y lote, nunca por legajo, día ni novedad. Usa los índices existentes `(employeeId, period)` y `(period, reviewStatus)`; no hace falta migración nueva.
+- **Grilla por legajo:** +1 consulta.
+- **Grilla de período:** +1 consulta por página.
+- **Export:** +1 consulta.
+- **Cierre:** +1 consulta por envío, en la transacción.
+- **Resumen:** +1 consulta. Si hay cobertura que cuenta, +3 más (trabajo y francos sólo de esos legajos), porque la cobertura depende del trabajo real de cada día y no se puede sumar en SQL.
+- **Dashboard:** sin cambios.

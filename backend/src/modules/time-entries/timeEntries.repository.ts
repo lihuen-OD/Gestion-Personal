@@ -6,7 +6,8 @@ import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptResponse } from "./clockAttemptErrorMeta";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
-import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import { noveltyCoversDay, noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
+import { loadNoveltyCoverageForAccounting, noveltyDayItemsView, periodNoveltyCoveredMinutes, type NoveltyDayItemView } from "../novelties/noveltyCoverageAccounting";
 import { dayOffsWithin, loadDayOffAccounting, periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
@@ -918,7 +919,7 @@ export const timeEntriesRepository = {
   // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted] = await Promise.all([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -977,6 +978,9 @@ export const timeEntriesRepository = {
       }),
       // Horas automáticas de jornadas en franco (EMPLOYEE_DAY_OFF.md §7).
       periodDayOffUncountedMinutes(period, employeeAccessWhere),
+      // Cobertura de novedades que cuenta (NOVELTY_COVERAGE_ENGINE.md §12):
+      // 1 consulta si no hay ninguna.
+      periodNoveltyCoveredMinutes(period, employeeAccessWhere),
     ]);
 
     // Total trabajado = base + adicionales (nunca + conceptos dentro de la
@@ -992,7 +996,11 @@ export const timeEntriesRepository = {
       employeesWithEntries,
       pendingEmployees,
       reviewEmployees: reviewEmployeeGroups.length,
+      // "Total trabajado": sólo trabajo real (sin cambios). La cobertura de
+      // novedades va aparte y el total computable la suma (aditivo).
       countableHours,
+      coveredHours: noveltyCoveredMinutes / 60,
+      computableHours: countableHours + noveltyCoveredMinutes / 60,
       coverage: activeEmployees ? Math.round((employeesWithEntries / activeEmployees) * 100) : 0,
     };
   },
@@ -1097,7 +1105,7 @@ export const timeEntriesRepository = {
     ]);
 
     const employeeIds = employees.map((employee) => employee.id);
-    const [entries, breakdowns, novelties, dayOffs] = await Promise.all([
+    const [entries, breakdowns, novelties, dayOffs, coverage] = await Promise.all([
       employeeIds.length
         ? prisma.timeEntry.findMany({
             where: {
@@ -1143,21 +1151,22 @@ export const timeEntriesRepository = {
             where: {
               employeeId: { in: employeeIds },
               status: { not: "RECHAZADO" },
-              fromDate: { lt: end },
-              OR: [{ toDate: null }, { toDate: { gte: start } }],
+              // toDate nulo es un único día (NOVELTY_COVERAGE_ENGINE.md §6.3).
+              ...noveltyOverlapsRangeWhere(start, end),
             },
             select: {
               employeeId: true,
               fromDate: true,
               toDate: true,
-              // Etapa 15L.2C: allowsDateRange reemplaza allowsDateTo como
-              // fuente productiva -- ver noveltyCoversDay.
-              noveltyType: { select: { id: true, name: true, uiColor: true, allowsDateRange: true } },
+              noveltyType: { select: { id: true, name: true, uiColor: true } },
             },
           })
         : Promise.resolve([]),
       // Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7): 1 consulta si no hay ninguno.
       loadDayOffAccounting({ employeeIds, from: start, to: end }),
+      // Cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §12): 1 consulta
+      // para toda la página, por (employeeId, period).
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeIds }),
     ]);
 
     // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: Horas base = TimeEntry
@@ -1168,7 +1177,7 @@ export const timeEntriesRepository = {
       entry.hourConcept.systemRole === "NORMAL_BASE"
       && (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION);
     const countedBaseEntries = entries.filter(isCountedBase);
-    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
     const dayOffsByEmployeeDay = new Map(dayOffsWithin(dayOffs, start, end).map((item) => [`${item.employeeId}:${Number(item.dateKey.slice(8, 10))}`, item]));
 
     const metaByEmployee = new Map<string, { incidents: number; statuses: string[] }>();
@@ -1216,18 +1225,30 @@ export const timeEntriesRepository = {
           dayOff: { notes: string | null; activityShifts: number; activityMinutes: number } | null;
           specialHourRuleNames: string[];
           specialHourConflict: boolean;
+          // NOVELTY_COVERAGE_ENGINE.md §12 (aditivo): trabajo real, cobertura
+          // que cuenta, total computable y cada novedad del día con su estado.
+          // Las cifras salen de accounting.days[day].
+          totalWorkedMinutes: number;
+          noveltyCoveredMinutes: number;
+          computableMinutes: number;
+          novelties: NoveltyDayItemView[];
         }> = [];
         for (let day = 1; day <= dayCount; day++) {
           const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
-          const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, dayDate));
+          const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, dayDate));
           const dayOff = dayOffsByEmployeeDay.get(`${employee.id}:${day}`);
-          if (!accounting.days[String(day)] && !coveringNovelties.length && !dayOff) continue;
+          const dayAccounting = accounting.days[String(day)];
+          if (!dayAccounting && !coveringNovelties.length && !dayOff) continue;
           dailyBreakdown.push({
             day,
             novelty: coveringNovelties.length ? dayNoveltyMark(coveringNovelties) : null,
             dayOff: dayOff ? { notes: dayOff.notes, activityShifts: dayOff.activityShifts, activityMinutes: dayOff.activityMinutes } : null,
             specialHourRuleNames: dayRules?.get(day)?.names ?? [],
             specialHourConflict: dayRules?.get(day)?.conflict ?? false,
+            totalWorkedMinutes: dayAccounting?.totalWorkedMinutes ?? 0,
+            noveltyCoveredMinutes: dayAccounting?.noveltyCoveredMinutes ?? 0,
+            computableMinutes: dayAccounting?.computableMinutes ?? 0,
+            novelties: noveltyDayItemsView(dayAccounting?.novelty.items ?? [], coverage.types),
           });
         }
         return {

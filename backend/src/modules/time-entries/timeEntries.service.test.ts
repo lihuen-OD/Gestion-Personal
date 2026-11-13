@@ -104,6 +104,7 @@ vi.mock("../../shared/prisma/client", () => ({
     monthlyTimeClosure: { findUnique: vi.fn().mockResolvedValue(null) },
     // Francos del export (EMPLOYEE_DAY_OFF.md §7): sin francos por default.
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+    noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { accountNoveltyDay, toAccountingNoveltyCoverage } from "../time-entries/workedTimeAccounting";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
@@ -609,11 +610,34 @@ export const noveltiesService = {
         const date = argentinaCalendarDate(dateKey);
         const row = await tx.noveltyDayCoverage.findUnique({ where: { noveltyId_date: { noveltyId: id, date } } });
         if (!row) throw new AppError("Ese día no pertenece a la cobertura de la novedad.", 404, "NOVELTY_COVERAGE_DAY_NOT_FOUND");
-        // Sólo los días con jornada o relación laboral sin resolver se
-        // resuelven a mano (también para corregir una resolución anterior).
+        // Se resuelven a mano (también para corregir una resolución anterior):
+        // - días con jornada o relación laboral sin resolver;
+        // - etapa 4: días cubiertos en conflicto con el trabajo real del día
+        //   (NOVELTY_COVERAGE_ENGINE.md §8, C1). En un tipo incompatible sólo
+        //   "no cubre este día" (0 h): nunca se suman trabajo real y cobertura.
+        //   En uno compatible, 0 h o minutos que entren en la jornada esperada.
         // La falta de historia para un feriado nunca llega acá: es un error.
+        const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
         if (row.outcome !== "SCHEDULE_UNRESOLVED") {
-          throw new AppError("Este día no está en revisión.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+          const [item] = accountNoveltyDay([{ ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }), status: "APROBADO" }], workedMinutes).items;
+          const realWorkConflict = item?.reviewReasons.some((reason) => reason === "REAL_WORK_ON_INCOMPATIBLE" || reason === "REAL_WORK_EXCEEDS_EXPECTED" || reason === "REAL_WORK_WITHOUT_EXPECTED" || reason === "RESOLUTION_OUTDATED");
+          if (row.outcome !== "COVERED" || !realWorkConflict) {
+            throw new AppError("Este día no está en revisión.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+          }
+          if (row.realWorkCompatibility === "INCOMPATIBLE" && input.resolution !== "CONFIRMED_ZERO") {
+            throw new AppError(
+              "Esta novedad no puede coexistir con trabajo registrado: indicá que no cubre este día, corregí el trabajo registrado o quitá la novedad.",
+              400,
+              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
+            );
+          }
+          if (input.resolution === "SET_BASE_MINUTES" && row.expectedMinutes !== null && workedMinutes + input.baseMinutes! > row.expectedMinutes) {
+            throw new AppError(
+              `El trabajo registrado más la cobertura superaría la jornada esperada (${formatMinutes(row.expectedMinutes)}).`,
+              400,
+              "NOVELTY_COVERAGE_EXCEEDS_EXPECTED",
+            );
+          }
         }
         const baseMinutes = input.resolution === "CONFIRMED_ZERO" ? 0 : input.baseMinutes!;
         let multiplier = 1;
@@ -622,7 +646,6 @@ export const noveltiesService = {
           if (evaluation?.missingHistory) throw new SpecialHourScopeHistoryMissingError(evaluation.missingHistory);
           multiplier = evaluation?.resolution.multiplier ?? 1;
         }
-        const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
         const updated = await tx.noveltyDayCoverage.update({
           where: { id: row.id },
           data: {

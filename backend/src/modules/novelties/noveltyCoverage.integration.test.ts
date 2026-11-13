@@ -16,6 +16,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const url = process.env.NOVELTY_COVERAGE_IT_DATABASE_URL;
 
 type Modules = {
+  employees: typeof import("../employees/employees.service").employeesService;
+  timeEntriesRepository: typeof import("../time-entries/timeEntries.repository").timeEntriesRepository;
+  timeEntries: typeof import("../time-entries/timeEntries.service").timeEntriesService;
+  workforce: typeof import("../workforce-management/workforce.service").workforceService;
   prisma: typeof import("../../shared/prisma/client").prisma;
   novelties: typeof import("./novelties.service").noveltiesService;
   noveltySchemas: typeof import("./novelties.schemas");
@@ -31,6 +35,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   let holder: PrismaClient;
   const users = { rrhh: "", sup: "", carga: "" };
   const employees = { a: "", b: "", minimal: "", late: "" };
+  let normalConceptId = "";
   const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "" };
 
   const as = (role: "rrhh" | "sup" | "carga") =>
@@ -47,15 +52,19 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     }
     process.env.DATABASE_URL = url;
     delete (globalThis as { prisma?: unknown }).prisma;
-    const [{ prisma }, { noveltiesService }, noveltySchemas, { noveltyTypesService }, typeSchemas, coverage] = await Promise.all([
+    const [{ prisma }, { noveltiesService }, noveltySchemas, { noveltyTypesService }, typeSchemas, coverage, { employeesService }, { timeEntriesRepository }, { timeEntriesService }, { workforceService }] = await Promise.all([
       import("../../shared/prisma/client"),
       import("./novelties.service"),
       import("./novelties.schemas"),
       import("../novelty-types/noveltyTypes.service"),
       import("../novelty-types/noveltyTypes.schemas"),
       import("./noveltyCoverage.service"),
+      import("../employees/employees.service"),
+      import("../time-entries/timeEntries.repository"),
+      import("../time-entries/timeEntries.service"),
+      import("../workforce-management/workforce.service"),
     ]);
-    m = { prisma, novelties: noveltiesService, noveltySchemas, types: noveltyTypesService, typeSchemas, coverage };
+    m = { prisma, novelties: noveltiesService, noveltySchemas, types: noveltyTypesService, typeSchemas, coverage, employees: employeesService, timeEntriesRepository, timeEntries: timeEntriesService, workforce: workforceService };
     const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
     if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
     holder = new PrismaClient({ datasourceUrl: url });
@@ -94,6 +103,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     await holder.specialHourRuleDate.create({ data: { ruleId: scoped.id, date: day("2026-11-25") } });
 
     await holder.employeeDayOff.create({ data: { employeeId: employees.a, date: day("2026-11-17") } });
+    normalConceptId = (await holder.hourConcept.create({ data: { code: "HC-NORMAL", name: "Hora normal", kind: "NORMAL", systemRole: "NORMAL_BASE" } })).id;
     // La supervisión sólo alcanza al legajo A.
     await holder.employeeAssignment.create({ data: { employeeId: employees.a, userId: users.sup, type: "TIME_RESPONSIBLE" } });
 
@@ -315,5 +325,143 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-01-01", toDate: "2027-02-01" })).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RANGE_TOO_LONG" });
     expect(await holder.novelty.count()).toBe(count);
     expect(Prisma).toBeDefined();
+  });
+
+  // ── Etapa 4: contabilidad con cobertura (febrero de 2027, aislado) ───────
+  describe("etapa 4 — contabilidad, grillas, resumen, export y cierre con cobertura", () => {
+    const worked = (employeeId: string, dateKey: string, hours: number) =>
+      holder.timeEntry.create({
+        data: {
+          employeeId,
+          hourConceptId: normalConceptId,
+          date: day(dateKey),
+          period: dateKey.slice(0, 7),
+          day: Number(dateKey.slice(8, 10)),
+          hours,
+          totalMinutes: hours * 60,
+          status: "APROBADO",
+        },
+      });
+    const gridOf = (employeeId: string, includeDetails = false) =>
+      m.employees.getTimeGrid(employeeId, { period: "2027-02", includeDetails } as never, as("rrhh")) as Promise<Record<string, unknown> & {
+        accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting;
+        noveltyCoverageRows: Array<{ noveltyType: { name: string }; minutesByDay: Record<string, number>; stateByDay: Record<string, string> }>;
+        noveltiesByDay: Record<string, Array<{ label: string; state: string; minutes: number }>>;
+        novelties: Array<{ id: string }>;
+      }>;
+    let tramiteConflictId = "";
+
+    beforeAll(async () => {
+      // A (turno L–V): lunes 8 trabajó 8 h + Trámite (conflicto); martes 9
+      // trabajó 7 h + Llegada tarde 1 h; miércoles 10 Trámite sin trabajo +
+      // Llegada tarde 1 h; jueves 11 Trámite PENDIENTE; viernes 12 Falta sin
+      // aviso sin trabajo. B (turno todos los días): Vacaciones 1–7 (domingo ×2).
+      await worked(employees.a, "2027-02-08", 8);
+      await worked(employees.a, "2027-02-09", 7);
+      tramiteConflictId = (await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2027-02-08" }))[0]!.id;
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.llegadaTarde, fromDate: "2027-02-09", quantityHours: 1 });
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2027-02-10" });
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.llegadaTarde, fromDate: "2027-02-10", quantityHours: 1 });
+      await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2027-02-11" });
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2027-02-12" });
+      await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.vacaciones, fromDate: "2027-02-01", toDate: "2027-02-07" });
+      // Un tipo sin tiempo que admite rango, cargado en enero sin fecha hasta: es un día de enero.
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.licenciaAbierta, fromDate: "2027-01-20" });
+    });
+
+    it("grilla por legajo: trabajado real, cobertura que cuenta, computable, estados y filas por tipo", async () => {
+      const grid = await gridOf(employees.a, true);
+      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
+      expect(grid).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
+      expect(grid.accounting.novelty).toMatchObject({ heldMinutes: 240, pendingApprovalMinutes: 240, informativeMinutes: 120, reviewDays: 1, reviewDates: ["2027-02-08"] });
+      expect(grid.accounting.days["8"]).toMatchObject({ totalWorkedMinutes: 480, computableMinutes: 480 });
+      expect(grid.noveltiesByDay["8"]).toEqual([expect.objectContaining({ label: "Trámite bancario", state: "REVIEW_REQUIRED", minutes: 240 })]);
+      // Dos tipos el mismo día: Trámite cuenta y Llegada tarde informa.
+      expect(grid.noveltiesByDay["10"]).toEqual(
+        expect.arrayContaining([expect.objectContaining({ label: "Trámite bancario", state: "COUNTED" }), expect.objectContaining({ label: "Llegada tarde", state: "INFORMATIVE", minutes: 60 })]),
+      );
+      const tramiteRow = grid.noveltyCoverageRows.find((row) => row.noveltyType.name === "Trámite bancario")!;
+      expect(tramiteRow.minutesByDay).toEqual({ "8": 240, "10": 240, "11": 240 });
+      expect(tramiteRow.stateByDay).toEqual({ "8": "REVIEW_REQUIRED", "10": "COUNTED", "11": "PENDING_APPROVAL" });
+      expect(grid.noveltyCoverageRows.map((row) => row.noveltyType.name)).toEqual(["Falta sin aviso", "Llegada tarde", "Trámite bancario"]);
+      // toDate nulo es un día: la novedad del 20/01 no aparece en febrero.
+      expect(grid.novelties.map((novelty) => novelty.id)).not.toContain((await holder.novelty.findFirstOrThrow({ where: { employeeId: employees.a, fromDate: day("2027-01-20") } })).id);
+    });
+
+    it("vacaciones: el domingo ×2 suma 8 h computables y 16 h para liquidación (nunca 16 h trabajadas)", async () => {
+      const grid = await gridOf(employees.b);
+      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 3360, computableMinutes: 3360, hasSpecialMultiplier: true });
+      expect(grid.accounting.settlement).toMatchObject({ noveltyMinutes: 3840, totalMinutes: 3840 });
+      expect(grid.accounting.days["7"]).toMatchObject({ totalWorkedMinutes: 0, computableMinutes: 480, settlement: expect.objectContaining({ noveltyMinutes: 960 }) });
+    });
+
+    it("grilla de período: cada día trae trabajado, cubierto, computable y las novedades con estado", async () => {
+      const result = await m.timeEntriesRepository.findPeriodEmployees({ period: "2027-02", page: 1, take: 50 } as never, {});
+      const rowA = result.items.find((item) => item.employee.id === employees.a)!;
+      const dayOf = (day: number) => rowA.summary.dailyBreakdown.find((item) => item.day === day);
+      expect(dayOf(10)).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 240, computableMinutes: 240 });
+      expect(dayOf(8)).toMatchObject({ totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480, novelties: [expect.objectContaining({ reviewRequired: true })] });
+      expect(dayOf(12)!.novelties).toEqual([expect.objectContaining({ label: "Falta sin aviso", minutes: 0, state: "INFORMATIVE" })]);
+      expect(rowA.summary.accounting).toMatchObject({ computableMinutes: 1140 });
+      // La novedad de enero sin fecha hasta no marca ningún día de febrero.
+      expect(rowA.summary.dailyBreakdown.some((item) => item.novelty?.label === "Licencia abierta")).toBe(false);
+    });
+
+    it("resumen: \"Total trabajado\" sigue siendo trabajo real; cubierto y computable van aparte", async () => {
+      const summary = await m.timeEntriesRepository.summary("2027-02", {});
+      expect(summary).toMatchObject({ countableHours: 15, coveredHours: 60, computableHours: 75 });
+    });
+
+    it("export de horas: columnas de cobertura y quien sólo tiene vacaciones también se exporta", async () => {
+      const result = await m.timeEntries.exportByPerson({ period: "2027-02", includeInReview: true } as never, as("rrhh"));
+      const keys = result.columns.map((column) => column.key);
+      expect(keys).toEqual(expect.arrayContaining(["Total trabajado", "Cubierto por novedades", "Total computable", "Novedades (para liquidación)", "Equivalencia para liquidación"]));
+      expect(keys.indexOf("Cubierto por novedades")).toBe(keys.indexOf("Total trabajado") + 1);
+      const rowB = result.rows.find((row) => row.Legajo === "102")!;
+      expect(rowB).toBeDefined();
+      expect(Number(rowB["Total trabajado"]!.replace(",", "."))).toBe(0);
+      expect(Number(rowB["Cubierto por novedades"]!.replace(",", "."))).toBe(56);
+      expect(Number(rowB["Equivalencia para liquidación"]!.replace(",", "."))).toBe(64);
+    });
+
+    it("Falta sin aviso (NONE + INCOMPATIBLE) con trabajo real: revisión administrativa sin minutos que resolver", async () => {
+      // Marzo, legajo B: aislado de los totales de febrero.
+      await worked(employees.b, "2027-03-03", 8);
+      const [falta] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2027-03-03" });
+      const marchGrid = () => m.employees.getTimeGrid(employees.b, { period: "2027-03" } as never, as("rrhh")) as Promise<{ accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting }>;
+      const { accounting } = await marchGrid();
+      expect(accounting.days["3"]).toMatchObject({ totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480 });
+      expect(accounting.days["3"]!.settlement).toMatchObject({ noveltyMinutes: 0 });
+      expect(accounting.days["3"]!.novelty.items).toEqual([expect.objectContaining({ state: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"], baseMinutes: 0 })]);
+      expect(accounting.novelty).toMatchObject({ heldMinutes: 0, reviewDays: 1, reviewDates: ["2027-03-03"] });
+      // No hay cobertura que indicar ni que confirmar en 0: la salida es corregir el trabajo o quitar la novedad.
+      for (const body of [
+        { resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "Indicar horas" },
+        { resolution: "CONFIRMED_ZERO", note: "Confirmar 0" },
+      ]) {
+        await expect(m.novelties.resolveCoverageDay(falta!.id, "2027-03-03", m.noveltySchemas.noveltyCoverageResolutionSchema.parse(body), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
+      }
+      await m.novelties.remove(falta!.id, as("rrhh"));
+      expect((await marchGrid()).accounting.novelty).toMatchObject({ reviewDays: 0 });
+    });
+
+    it("cierre: rechaza el envío con días en revisión; resolver el conflicto (\"no cubre este día\") lo permite y congela el snapshot V2", async () => {
+      await expect(m.workforce.submitClosures("2027-02", [employees.a], as("sup"))).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+        details: { employees: [expect.objectContaining({ employeeId: employees.a, reviewDays: 1, reviewDates: ["2027-02-08"] })] },
+      });
+      // En un tipo incompatible no se puede "sumar ambas": sólo "no cubre este día".
+      const setBase = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 240, note: "Sumar ambas" });
+      await expect(m.novelties.resolveCoverageDay(tramiteConflictId, "2027-02-08", setBase, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+      const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "Trabajó: el trámite no corresponde" });
+      await m.novelties.resolveCoverageDay(tramiteConflictId, "2027-02-08", zero, as("rrhh"));
+
+      const [closure] = await m.workforce.submitClosures("2027-02", [employees.a], as("sup"));
+      const snapshot = closure!.snapshot as { accounting: { model: string; totalWorkedMinutes: number; noveltyCoveredMinutes: number; computableMinutes: number; novelty: { reviewDays: number; types: Array<{ name: string }> } } };
+      expect(closure).toMatchObject({ status: "ENVIADO" });
+      expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140, novelty: expect.objectContaining({ reviewDays: 0 }) });
+      expect(snapshot.accounting.novelty.types.map((type) => type.name)).toEqual(expect.arrayContaining(["Trámite bancario", "Llegada tarde"]));
+    });
   });
 });
