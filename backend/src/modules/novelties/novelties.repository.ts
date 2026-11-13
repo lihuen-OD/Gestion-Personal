@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
 import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
@@ -27,6 +27,10 @@ const noveltyInclude = {
       finnegansCode: true,
       finnegansName: true,
       approvalRoles: true,
+      // Motor de cobertura (etapa 3): el guard de cierres necesita saber si
+      // el tipo registra tiempo.
+      coverageMode: true,
+      coverageCountsTowardTotal: true,
     },
   },
   targetHourConcept: { select: { id: true, name: true } },
@@ -107,6 +111,37 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
   return { AND: conditions };
 }
 
+async function createManyWithin(tx: PrismaTransactionClient, input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
+  const created = await Promise.all(
+    input.employeeIds.map((employeeId) =>
+      tx.novelty.create({
+        data: {
+          employeeId,
+          noveltyTypeId: input.noveltyTypeId,
+          status,
+          fromDate: input.fromDate,
+          toDate: input.toDate || null,
+          quantityHours: input.quantityHours || null,
+          quantityDays: input.quantityDays || null,
+          quantityMinutes: input.quantityMinutes ?? null,
+          observation: input.observation || null,
+          targetHourConceptId: input.targetHourConceptId || null,
+          createdByUserId: createdByUserId || null,
+        },
+        select: { id: true },
+      }),
+    ),
+  );
+
+  return tx.novelty.findMany({
+    where: {
+      id: { in: created.map((item) => item.id) },
+    },
+    include: noveltyInclude,
+    orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }],
+  });
+}
+
 export const noveltiesRepository = {
   findMany(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
@@ -128,15 +163,16 @@ export const noveltiesRepository = {
     ]);
   },
 
-  findById(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput = {}) {
-    return prisma.novelty.findFirst({
+  // `db` permite leer dentro de la transacción de una mutación (etapa 3).
+  findById(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput = {}, db: PrismaTransactionClient = prisma) {
+    return db.novelty.findFirst({
       where: { id, employee: employeeAccessWhere },
       include: noveltyInclude,
     });
   },
 
-  findNoveltyType(id: string) {
-    return prisma.noveltyType.findUnique({ where: { id } });
+  findNoveltyType(id: string, db: PrismaTransactionClient = prisma) {
+    return db.noveltyType.findUnique({ where: { id } });
   },
 
   countEmployees(ids: string[], employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -153,43 +189,20 @@ export const noveltiesRepository = {
   // TimeEntry desde acá. La transacción se mantiene sólo para la creación
   // atómica de varias filas `Novelty` (alta masiva por legajo) + su lectura
   // final, nada más.
-  createMany(input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
-    return prisma.$transaction(async (tx) => {
-      const created = await Promise.all(
-        input.employeeIds.map((employeeId) =>
-          tx.novelty.create({
-            data: {
-              employeeId,
-              noveltyTypeId: input.noveltyTypeId,
-              status,
-              fromDate: input.fromDate,
-              toDate: input.toDate || null,
-              quantityHours: input.quantityHours || null,
-              quantityDays: input.quantityDays || null,
-              quantityMinutes: input.quantityMinutes ?? null,
-              observation: input.observation || null,
-              targetHourConceptId: input.targetHourConceptId || null,
-              createdByUserId: createdByUserId || null,
-            },
-            select: { id: true },
-          }),
-        ),
-      );
-
-      return tx.novelty.findMany({
-        where: {
-          id: { in: created.map((item) => item.id) },
-        },
-        include: noveltyInclude,
-        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }],
-      });
-    });
+  // Etapa 3 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md): con `db`, crea dentro
+  // de la transacción del servicio, que en la misma operación genera la
+  // cobertura diaria (NoveltyDayCoverage) — nunca TimeEntry. Sin `db`, abre su
+  // propia transacción como antes.
+  createMany(input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null, db: PrismaTransactionClient | null = null) {
+    if (!db) return prisma.$transaction((tx) => createManyWithin(tx, input, status, createdByUserId));
+    return createManyWithin(db, input, status, createdByUserId);
   },
+
 
   // Etapa 15G.1: aprobar sólo cambia `status`/auditoría — nunca crea ni
   // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
-  approve(id: string, approvedByUserId: string) {
-    return prisma.novelty.update({
+  approve(id: string, approvedByUserId: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.update({
       where: { id },
       data: {
         status: "APROBADO",
@@ -223,8 +236,8 @@ export const noveltiesRepository = {
     });
   },
 
-  reject(id: string) {
-    return prisma.novelty.update({
+  reject(id: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.update({
       where: { id },
       data: {
         status: "RECHAZADO",
@@ -236,7 +249,8 @@ export const noveltiesRepository = {
     });
   },
 
-  remove(id: string) {
-    return prisma.novelty.delete({ where: { id } });
+  // NoveltyDayCoverage cae por Cascade (dato derivado de la novedad).
+  remove(id: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.delete({ where: { id } });
   },
 };

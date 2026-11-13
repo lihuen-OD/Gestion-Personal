@@ -3092,6 +3092,20 @@ describe("findBlockingNovelty — sólo novedades APROBADAS bloquean (Etapa 15G.
     const call = mockedPrisma.novelty.findFirst.mock.calls[0]![0] as { where: { status: unknown } };
     expect(call.where.status).toBe("APROBADO");
   });
+
+  // Etapa 3 de cobertura: toDate nulo es siempre un único día (fromDate),
+  // para cualquier tipo — nunca un rango abierto.
+  it("toDate nulo bloquea sólo su fecha, aunque el tipo admita rango", async () => {
+    mockedPrisma.novelty.findFirst.mockResolvedValue(null);
+    const date = new Date("2026-08-10");
+
+    await timeEntriesRepository.findBlockingNovelty("employee-1", date);
+
+    const call = mockedPrisma.novelty.findFirst.mock.calls.at(-1)![0] as { where: { fromDate: unknown; OR: unknown[] } };
+    expect(call.where.fromDate).toEqual({ lte: date });
+    expect(call.where.OR).toEqual([{ toDate: { gte: date } }, { toDate: null, fromDate: date }]);
+    expect(call.where.OR).not.toContainEqual({ toDate: null });
+  });
 });
 
 // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):

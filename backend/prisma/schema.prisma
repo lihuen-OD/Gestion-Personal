@@ -115,6 +115,9 @@ enum NoveltyCoverageOutcome {
   HOLIDAY_EXCLUDED
   DAY_OFF
   SCHEDULE_UNRESOLVED
+  // Etapa 3: fuera de la relación laboral conocida (antes del ALTA o desde la
+  // BAJA, LaborMovement). 0 h confirmado; distinto de NO_WORK_OBLIGATION.
+  OUTSIDE_EMPLOYMENT
 }
 
 // Por qué no se pudo resolver la jornada de un día (0 h provisional, nunca
@@ -124,6 +127,11 @@ enum NoveltyCoverageScheduleReviewReason {
   FLEXIBLE_REGIME_NO_ASSIGNMENT
   REGIME_WITHOUT_SCHEDULE
   EXPECTED_MINUTES_UNKNOWN
+  // Etapa 3: varios turnos del mismo día con horarios superpuestos.
+  SHIFT_ASSIGNMENTS_OVERLAP
+  // Etapa 3: sin historia de altas/bajas suficiente para saber si había
+  // relación laboral ese día (p. ej. legajo sin ningún ALTA registrado).
+  EMPLOYMENT_HISTORY_UNRESOLVED
 }
 
 enum NoveltyCoverageReviewStatus {

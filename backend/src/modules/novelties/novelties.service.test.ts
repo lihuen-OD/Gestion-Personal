@@ -19,6 +19,25 @@ vi.mock("./novelties.repository", () => ({
   },
 }));
 
+// Etapa 3: las mutaciones abren una transacción de Prisma. El cliente se
+// mockea siempre: un test unitario nunca debe alcanzar una base real.
+const txStub = { noveltyDayCoverage: { deleteMany: vi.fn() } };
+vi.mock("../../shared/prisma/client", () => ({
+  prisma: {
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(txStub)),
+    employee: { findMany: vi.fn() },
+    noveltyDayCoverage: { findMany: vi.fn() },
+  },
+}));
+
+vi.mock("./noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./noveltyCoverage.service")>()),
+  persistNoveltyCoverageWithin: vi.fn().mockResolvedValue({ novelties: 1, days: 1, pendingReviewDays: 0, droppedResolutions: 0, protectedPeriods: [] }),
+  assertNoveltyCoverageWritableWithin: vi.fn().mockResolvedValue([]),
+  computeNoveltyCoverage: vi.fn(),
+  loadRealWorkedMinutesOnDate: vi.fn(),
+}));
+
 vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
@@ -89,7 +108,7 @@ describe("noveltiesService.approve", () => {
     const result = await noveltiesService.approve("novelty-1", rrhhUser);
 
     expect(result.status).toBe("APROBADO");
-    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id);
+    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id, expect.anything());
   });
 
   it("aprobar un tipo con timeEntryBehavior=BLOQUEA_NUEVA_CARGA tampoco dispara ningún efecto horario (llamada idéntica)", async () => {
@@ -100,7 +119,7 @@ describe("noveltiesService.approve", () => {
 
     await noveltiesService.approve("novelty-1", rrhhUser);
 
-    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id);
+    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id, expect.anything());
     expect(repo.approve).toHaveBeenCalledTimes(1);
   });
 
@@ -134,7 +153,7 @@ describe("noveltiesService.reject", () => {
 
     expect(result.status).toBe("RECHAZADO");
     // reject() sólo recibe el id: no hay ningún dato de horas para pasar.
-    expect(repo.reject).toHaveBeenCalledWith("novelty-1");
+    expect(repo.reject).toHaveBeenCalledWith("novelty-1", expect.anything());
   });
 
   it("impide rechazar dos veces la misma novedad (regresion)", async () => {
@@ -164,7 +183,7 @@ describe("noveltiesService.remove", () => {
     const result = await noveltiesService.remove("novelty-1", rrhhUser);
 
     expect(result).toEqual({ id: "novelty-1" });
-    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1", expect.anything());
   });
 
   it("Regla ajustada: un tipo con timeEntryBehavior=BLOQUEA_NUEVA_CARGA YA NO bloquea el borrado (ya no genera TimeEntry)", async () => {
@@ -180,7 +199,7 @@ describe("noveltiesService.remove", () => {
     const result = await noveltiesService.remove("novelty-1", rrhhUser);
 
     expect(result).toEqual({ id: "novelty-1" });
-    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1", expect.anything());
   });
 
   it("bloquea el borrado si tiene documentos relacionados (NOVELTY_DELETE_HAS_DOCUMENTS)", async () => {
@@ -222,7 +241,7 @@ describe("noveltiesService.remove", () => {
     const result = await noveltiesService.remove("novelty-1", rrhhUser);
 
     expect(result).toEqual({ id: "novelty-1" });
-    expect(repo.remove).toHaveBeenCalledWith("novelty-1");
+    expect(repo.remove).toHaveBeenCalledWith("novelty-1", expect.anything());
   });
 
   it("404 si la novedad no existe o esta fuera de alcance", async () => {
@@ -283,7 +302,7 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ employeeIds: ["emp-1"] }),
       "APROBADO",
-      rrhhUser.id,
+      rrhhUser.id, expect.anything(),
     );
   });
 
@@ -293,7 +312,7 @@ describe("noveltiesService.create", () => {
     const items = await noveltiesService.create(createInput(), supervisionUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
   });
 
   // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
@@ -308,13 +327,15 @@ describe("noveltiesService.create", () => {
     { label: "PENDIENTE + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
     { label: "APROBADO (RRHH) + timeEntryBehavior=NO_BLOQUEA", user: rrhhUser, status: "APROBADO", type: noveltyType() },
     { label: "APROBADO (RRHH) + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: rrhhUser, status: "APROBADO", type: noveltyType({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
-  ])("$label: createMany se llama sin ningún efecto horario (3 argumentos exactos)", async ({ user, status, type }) => {
+  ])("$label: createMany se llama sin ningún efecto horario (input, estado, autor y la transacción)", async ({ user, status, type }) => {
     repo.findNoveltyType.mockResolvedValue(type);
 
     await noveltiesService.create(createInput(), user);
 
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), status, user.id);
-    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), status, user.id, expect.anything());
+    // Etapa 3: el 4to argumento es sólo la transacción (no un efecto horario).
+    expect(repo.createMany.mock.calls[0]).toHaveLength(4);
+    expect(repo.createMany.mock.calls[0]![3]).toBe(txStub);
   });
 
   // Caso concreto del usuario: "Llegada tarde" (allowsHours=true,
@@ -328,8 +349,10 @@ describe("noveltiesService.create", () => {
 
     await noveltiesService.create(createInput({ quantityHours: 1 }), rrhhUser);
 
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
-    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id, expect.anything());
+    // Etapa 3: el 4to argumento es sólo la transacción (no un efecto horario).
+    expect(repo.createMany.mock.calls[0]).toHaveLength(4);
+    expect(repo.createMany.mock.calls[0]![3]).toBe(txStub);
   });
 
   it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA tampoco dispara ningún efecto horario al crear", async () => {
@@ -337,8 +360,10 @@ describe("noveltiesService.create", () => {
 
     await noveltiesService.create(createInput(), rrhhUser);
 
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
-    expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id, expect.anything());
+    // Etapa 3: el 4to argumento es sólo la transacción (no un efecto horario).
+    expect(repo.createMany.mock.calls[0]).toHaveLength(4);
+    expect(repo.createMany.mock.calls[0]![3]).toBe(txStub);
   });
 
   it("rechaza si algun empleado esta fuera del alcance de quien crea (EMPLOYEE_SCOPE_FORBIDDEN)", async () => {
@@ -414,7 +439,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), supervisionUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
       const { notifyRrhh } = await import("../workforce-management/workforce.service");
       expect(notifyRrhh).toHaveBeenCalled();
     });
@@ -424,7 +449,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), supervisionUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", supervisionUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", supervisionUser.id, expect.anything());
       const { notifyRrhh } = await import("../workforce-management/workforce.service");
       expect(notifyRrhh).not.toHaveBeenCalled();
     });
@@ -434,7 +459,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), cargaUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", cargaUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", cargaUser.id, expect.anything());
     });
 
     it("Nivel 3 con requiresApproval=true crea PENDIENTE", async () => {
@@ -442,7 +467,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), cargaUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", cargaUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", cargaUser.id, expect.anything());
     });
 
     it("requiresApproval ausente (undefined) sigue tratandose como true — sin cambio de comportamiento", async () => {
@@ -450,7 +475,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), supervisionUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
     });
 
     it("RRHH crea APROBADO sin importar requiresApproval, incluso si el tipo tiene requiresApproval=false", async () => {
@@ -458,7 +483,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput(), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id, expect.anything());
     });
   });
 
@@ -535,7 +560,7 @@ describe("noveltiesService.create", () => {
       expect(repo.createMany).toHaveBeenCalledWith(
         expect.objectContaining({ quantityHours: 3, quantityDays: null }),
         "APROBADO",
-        rrhhUser.id,
+        rrhhUser.id, expect.anything(),
       );
     });
 
@@ -547,7 +572,7 @@ describe("noveltiesService.create", () => {
       expect(repo.createMany).toHaveBeenCalledWith(
         expect.objectContaining({ quantityDays: 1, quantityHours: null }),
         "APROBADO",
-        rrhhUser.id,
+        rrhhUser.id, expect.anything(),
       );
     });
 
@@ -556,7 +581,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: new Date("2026-07-15") }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1 }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
     it("cross-month 30/07 → 02/08: quantityDays=4 (rango real completo, sin recortar al mes de fromDate)", async () => {
@@ -564,7 +589,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-02") }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
     it("cross-year 31/12 → 02/01: quantityDays=3", async () => {
@@ -572,7 +597,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput({ fromDate: new Date("2026-12-31"), toDate: new Date("2027-01-02") }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 3 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 3 }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
     it("el cliente manda un quantityDays incorrecto: el backend lo ignora y persiste el valor canónico", async () => {
@@ -583,7 +608,7 @@ describe("noveltiesService.create", () => {
         rrhhUser,
       );
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
     it("allowsDateRange=false: quantityDays=1 -- un toDate distinto de fromDate ya se rechaza antes (NOVELTY_TO_DATE_NOT_ALLOWED), nunca llega a calcularse sobre un rango extendido", async () => {
@@ -591,7 +616,7 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: null }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1, toDate: null }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 1, toDate: null }), "APROBADO", rrhhUser.id, expect.anything());
 
       await expect(
         noveltiesService.create(createInput({ fromDate: new Date("2026-07-30"), toDate: new Date("2026-08-05") }), rrhhUser),
@@ -606,7 +631,7 @@ describe("noveltiesService.create", () => {
         rrhhUser,
       );
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityDays: 4 }), "APROBADO", rrhhUser.id, expect.anything());
     });
   });
 
@@ -631,7 +656,7 @@ describe("noveltiesService.create", () => {
       expect(repo.createMany).toHaveBeenCalledWith(
         expect.objectContaining({ quantityHours: hours, quantityMinutes: minutes, quantityDays: null }),
         "APROBADO",
-        rrhhUser.id,
+        rrhhUser.id, expect.anything(),
       );
     });
 
@@ -645,12 +670,14 @@ describe("noveltiesService.create", () => {
       expect(repo.createMany).not.toHaveBeenCalled();
     });
 
-    it("sin cantidad cargada: quantityMinutes queda null (la obligatoriedad llega con el motor)", async () => {
+    it("sin cantidad cargada se rechaza (etapa 3: el motor necesita la cantidad del día)", async () => {
       repo.findNoveltyType.mockResolvedValue(manualType());
 
-      await noveltiesService.create(createInput({ quantityHours: null, toDate: null }), rrhhUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityMinutes: null }), "APROBADO", rrhhUser.id);
+      await expect(noveltiesService.create(createInput({ quantityHours: null, toDate: null }), rrhhUser)).rejects.toMatchObject({
+        statusCode: 400,
+        code: "NOVELTY_MANUAL_QUANTITY_REQUIRED",
+      });
+      expect(repo.createMany).not.toHaveBeenCalled();
     });
 
     it("un tipo que permite horas pero no es de cantidad manual (legado con rango) no deriva minutos", async () => {
@@ -658,23 +685,25 @@ describe("noveltiesService.create", () => {
 
       await noveltiesService.create(createInput({ quantityHours: 30 }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 30, quantityMinutes: null }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 30, quantityMinutes: null }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
     it("un tipo sin horas nunca deriva minutos", async () => {
       repo.findNoveltyType.mockResolvedValue(noveltyType({ allowsHours: false, coverageMode: "FIXED_MINUTES" }));
 
-      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: null }), rrhhUser);
+      await noveltiesService.create(createInput({ fromDate: new Date("2026-07-15"), toDate: new Date("2026-07-15") }), rrhhUser);
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: null, quantityMinutes: null, quantityDays: 1 }), "APROBADO", rrhhUser.id);
+      expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: null, quantityMinutes: null, quantityDays: 1 }), "APROBADO", rrhhUser.id, expect.anything());
     });
 
-    it("createMany sigue recibiendo exactamente 3 argumentos: ningún efecto horario (15G.1)", async () => {
+    it("createMany no recibe ningún efecto horario: sólo input, estado, autor y la transacción (15G.1)", async () => {
       repo.findNoveltyType.mockResolvedValue(manualType());
 
       await noveltiesService.create(createInput({ quantityHours: 1, toDate: null }), rrhhUser);
 
-      expect(repo.createMany.mock.calls[0]).toHaveLength(3);
+      // Etapa 3: el 4to argumento es sólo la transacción (no un efecto horario).
+    expect(repo.createMany.mock.calls[0]).toHaveLength(4);
+    expect(repo.createMany.mock.calls[0]![3]).toBe(txStub);
     });
   });
 

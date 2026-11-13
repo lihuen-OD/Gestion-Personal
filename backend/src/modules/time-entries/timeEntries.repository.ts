@@ -2076,13 +2076,17 @@ export const timeEntriesRepository = {
   // (los 3 campos legacy, siempre sincronizados en conjunto por
   // noveltyTypes.sync.ts desde la Etapa 15L.2A). timeEntryBehavior es ahora
   // la única fuente de verdad productiva de este bloqueo.
+  // Etapa 3 de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §6.3): un
+  // `toDate` nulo es siempre un único día (`fromDate`), para cualquier tipo —
+  // nunca un rango abierto. Antes bloqueaba todos los días posteriores a
+  // `fromDate`.
   findBlockingNovelty(employeeId: string, date: Date) {
     return prisma.novelty.findFirst({
       where: {
         employeeId,
         status: "APROBADO",
         fromDate: { lte: date },
-        OR: [{ toDate: null }, { toDate: { gte: date } }],
+        OR: [{ toDate: { gte: date } }, { toDate: null, fromDate: date }],
         noveltyType: { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" },
       },
       include: { noveltyType: { select: { code: true, name: true } } },

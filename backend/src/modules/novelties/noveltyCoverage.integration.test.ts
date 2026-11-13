@@ -1,0 +1,319 @@
+/**
+ * Cobertura diaria de novedades contra PostgreSQL REAL — etapa 3
+ * (docs/decisions/NOVELTY_COVERAGE_ENGINE.md): migraciones
+ * 20261113180000_add_novelty_coverage_engine y
+ * 20261114120000_add_novelty_coverage_employment_and_overlap, motor puro,
+ * persistencia idempotente, vista previa, resolución manual, relación laboral,
+ * guard de cierres, alcance, rechazo, borrado en cascada y constraints.
+ *
+ * Opt-in: sólo corre con `NOVELTY_COVERAGE_IT_DATABASE_URL` → `localhost`,
+ * base `clock_it*` PROPIA con el schema de este commit. VACÍA la base al
+ * empezar. Nunca usa el DATABASE_URL del .env y verifica `current_database()`.
+ */
+import { Prisma, PrismaClient } from "@prisma/client";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+const url = process.env.NOVELTY_COVERAGE_IT_DATABASE_URL;
+
+type Modules = {
+  prisma: typeof import("../../shared/prisma/client").prisma;
+  novelties: typeof import("./novelties.service").noveltiesService;
+  noveltySchemas: typeof import("./novelties.schemas");
+  types: typeof import("../novelty-types/noveltyTypes.service").noveltyTypesService;
+  typeSchemas: typeof import("../novelty-types/noveltyTypes.schemas");
+  coverage: typeof import("./noveltyCoverage.service");
+};
+
+const day = (key: string) => new Date(`${key}T00:00:00.000Z`);
+
+describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
+  let m: Modules;
+  let holder: PrismaClient;
+  const users = { rrhh: "", sup: "", carga: "" };
+  const employees = { a: "", b: "", minimal: "", late: "" };
+  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "" };
+
+  const as = (role: "rrhh" | "sup" | "carga") =>
+    ({ id: users[role], email: `${role}@example.com`, name: role, role: { rrhh: "NIVEL_1_RRHH", sup: "NIVEL_2_SUPERVISION", carga: "NIVEL_3_CARGA_HORARIA" }[role] }) as Express.AuthUser;
+  const create = (role: "rrhh" | "sup" | "carga", payload: Record<string, unknown>) => m.novelties.create(m.noveltySchemas.createNoveltySchema.parse(payload), as(role));
+  const coverageRows = (noveltyId: string) => holder.noveltyDayCoverage.findMany({ where: { noveltyId }, orderBy: { date: "asc" } });
+  const byDate = <T extends { date: Date }>(rows: T[]) => new Map(rows.map((row) => [row.date.toISOString().slice(0, 10), row]));
+  const createType = async (payload: Record<string, unknown>) => (await m.types.create(m.typeSchemas.createNoveltyTypeSchema.parse({ kind: "OTRO", ...payload }))).id;
+
+  beforeAll(async () => {
+    const parsed = new URL(url!);
+    if (!["localhost", "127.0.0.1"].includes(parsed.hostname) || !parsed.pathname.slice(1).startsWith("clock_it")) {
+      throw new Error("NOVELTY_COVERAGE_IT_DATABASE_URL debe ser localhost/clock_it*.");
+    }
+    process.env.DATABASE_URL = url;
+    delete (globalThis as { prisma?: unknown }).prisma;
+    const [{ prisma }, { noveltiesService }, noveltySchemas, { noveltyTypesService }, typeSchemas, coverage] = await Promise.all([
+      import("../../shared/prisma/client"),
+      import("./novelties.service"),
+      import("./novelties.schemas"),
+      import("../novelty-types/noveltyTypes.service"),
+      import("../novelty-types/noveltyTypes.schemas"),
+      import("./noveltyCoverage.service"),
+    ]);
+    m = { prisma, novelties: noveltiesService, noveltySchemas, types: noveltyTypesService, typeSchemas, coverage };
+    const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
+    if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
+    holder = new PrismaClient({ datasourceUrl: url });
+
+    const tables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`SELECT tablename AS name FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`);
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables.map((table) => `"${table.name}"`).join(", ")}`);
+
+    for (const role of ["rrhh", "sup", "carga"] as const) {
+      users[role] = (await holder.user.create({ data: { name: role, email: `${role}@example.com`, passwordHash: "x", role: as(role).role as never } })).id;
+    }
+    const employee = async (legajo: string, alta: string | null) => {
+      const created = await holder.employee.create({ data: { legajo, dni: `3000000${legajo}`, firstName: "Ana", lastName: `Prueba ${legajo}` } });
+      if (alta) await holder.laborMovement.create({ data: { employeeId: created.id, type: "ALTA", effectiveFrom: day(alta), reason: "Ingreso" } });
+      return created.id;
+    };
+    employees.a = await employee("101", "2026-01-01");
+    employees.b = await employee("102", "2026-01-01");
+    employees.minimal = await employee("103", null);
+    employees.late = await employee("104", "2026-11-18");
+
+    const template = async (code: string) => (await holder.shiftTemplate.create({ data: { code, name: code, startTime: "08:00", endTime: "16:00", expectedMinutes: 480 } })).id;
+    const weekdaysShift = await template("T-LV");
+    const everyDayShift = await template("T-ALL");
+    await holder.shiftAssignment.create({ data: { employeeId: employees.a, shiftTemplateId: weekdaysShift, effectiveFrom: day("2026-01-01"), weekdays: [1, 2, 3, 4, 5] } });
+    await holder.shiftAssignment.create({ data: { employeeId: employees.late, shiftTemplateId: weekdaysShift, effectiveFrom: day("2026-01-01"), weekdays: [1, 2, 3, 4, 5] } });
+    await holder.shiftAssignment.create({ data: { employeeId: employees.b, shiftTemplateId: everyDayShift, effectiveFrom: day("2026-01-01"), weekdays: [] } });
+
+    // Domingo ×2 global y feriado global del miércoles 18 con convocatoria de B.
+    await holder.doubleHourRule.create({ data: { name: "Domingos", recurrenceType: "SEMANAL", weekdays: [0], fromDate: day("2026-01-01"), multiplier: 2, kind: "DOMINGO", reason: "it" } });
+    const feriado = await holder.doubleHourRule.create({ data: { name: "Feriados", recurrenceType: "FECHA", fromDate: day("2026-11-18"), toDate: day("2026-11-25"), multiplier: 2, kind: "FERIADO", reason: "it" } });
+    await holder.specialHourRuleDate.create({ data: { ruleId: feriado.id, date: day("2026-11-18") } });
+    await holder.holidayWorkAssignment.create({ data: { date: day("2026-11-18"), employeeId: employees.b } });
+    // Feriado con alcance por empresa el 25: nadie tiene historia de empresa empleadora.
+    const company = await holder.company.create({ data: { name: "Empresa IT", code: "EIT" } });
+    const scoped = await holder.doubleHourRule.create({ data: { name: "Feriado planta", recurrenceType: "FECHA", fromDate: day("2026-11-25"), toDate: day("2026-11-25"), multiplier: 2, kind: "FERIADO", reason: "it", companyId: company.id } });
+    await holder.specialHourRuleDate.create({ data: { ruleId: scoped.id, date: day("2026-11-25") } });
+
+    await holder.employeeDayOff.create({ data: { employeeId: employees.a, date: day("2026-11-17") } });
+    // La supervisión sólo alcanza al legajo A.
+    await holder.employeeAssignment.create({ data: { employeeId: employees.a, userId: users.sup, type: "TIME_RESPONSIBLE" } });
+
+    types.tramite = await createType({ name: "Trámite bancario", allowsDateRange: false, coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 240, coverageOnDayOff: "NO_COVERAGE", coverageOnHoliday: "NO_COVERAGE", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
+    const maternidad = { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "SELECTED_WEEKDAYS", coverageWeekdays: [1, 2, 3, 4, 5], coverageOnDayOff: "COVER", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" };
+    types.maternidadCover = await createType({ name: "Maternidad (cubre feriados)", ...maternidad, coverageOnHoliday: "COVER" });
+    types.maternidadNoCoverage = await createType({ name: "Maternidad (sin feriados)", ...maternidad, coverageOnHoliday: "NO_COVERAGE" });
+    types.vacaciones = await createType({ name: "Vacaciones", kind: "VACACIONES", coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "WORK_OBLIGATION", coverageAppliesSpecialHours: true, coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
+    types.llegadaTarde = await createType({ name: "Llegada tarde", kind: "HORARIA", allowsHours: true, allowsDateRange: false, coverageMode: "MANUAL_MINUTES" });
+    types.faltaSinAviso = await createType({ name: "Falta sin aviso", kind: "AUSENCIA", allowsDateRange: false, realWorkCompatibility: "INCOMPATIBLE", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
+    types.licenciaAbierta = await createType({ name: "Licencia abierta", kind: "LICENCIA" });
+  });
+
+  afterAll(async () => {
+    await holder?.$disconnect();
+    await m?.prisma.$disconnect();
+  });
+
+  it("migraciones: los valores agregados son persistibles y los CHECKs siguen vigentes", async () => {
+    const [created] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-10" });
+    const id = created!.id;
+    const base = { noveltyId: id, employeeId: employees.a, noveltyTypeId: types.faltaSinAviso, period: "2026-11", baseMinutes: 0, countsTowardTotal: false, realWorkCompatibility: "INCOMPATIBLE" as const, calculatedAt: new Date() };
+    await expect(holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-11"), day: 11, outcome: "OUTSIDE_EMPLOYMENT" } })).resolves.toBeDefined();
+    await expect(holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-12"), day: 12, outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "SHIFT_ASSIGNMENTS_OVERLAP", reviewStatus: "PENDING" } })).resolves.toBeDefined();
+    await expect(holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-13"), day: 13, outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "EMPLOYMENT_HISTORY_UNRESOLVED", reviewStatus: "PENDING" } })).resolves.toBeDefined();
+    // OUTSIDE_EMPLOYMENT con minutos viola NoveltyDayCoverage_minutes_check.
+    await expect(holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-14"), day: 14, outcome: "OUTSIDE_EMPLOYMENT", baseMinutes: 60 } })).rejects.toThrow(/NoveltyDayCoverage_minutes_check/);
+    // Única por novedad + fecha.
+    await expect(holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-10"), day: 10, outcome: "NO_COVERAGE" } })).rejects.toMatchObject({ code: "P2002" });
+    // Resolución incompleta viola NoveltyDayCoverage_resolution_check.
+    await expect(
+      holder.noveltyDayCoverage.create({ data: { ...base, date: day("2026-11-15"), day: 15, outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "SCHEDULE_MISSING", reviewStatus: "RESOLVED", resolution: "SET_BASE_MINUTES" } }),
+    ).rejects.toThrow(/NoveltyDayCoverage_resolution_check/);
+    // El borrado de la novedad arrastra su cobertura (dato derivado).
+    await m.novelties.remove(id, as("rrhh"));
+    expect(await coverageRows(id)).toHaveLength(0);
+  });
+
+  it("Vacaciones (legajo A, turno L–V): obligación, franco, feriado no convocado y fin de semana", async () => {
+    const [novelty] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-11-16", toDate: "2026-11-22" });
+    const rows = byDate(await coverageRows(novelty!.id));
+    expect(rows.size).toBe(7);
+    expect(rows.get("2026-11-16")).toMatchObject({ outcome: "COVERED", baseMinutes: 480, reviewStatus: "NOT_REQUIRED", countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE", expectedMinutes: 480 });
+    expect(Number(rows.get("2026-11-16")!.appliedMultiplier)).toBe(1);
+    expect(rows.get("2026-11-17")).toMatchObject({ outcome: "DAY_OFF", baseMinutes: 0 });
+    expect(rows.get("2026-11-18")).toMatchObject({ outcome: "HOLIDAY_NOT_CONVOKED", baseMinutes: 0 });
+    expect(rows.get("2026-11-21")).toMatchObject({ outcome: "NO_WORK_OBLIGATION", baseMinutes: 0 });
+    expect(rows.get("2026-11-22")).toMatchObject({ outcome: "NO_WORK_OBLIGATION", baseMinutes: 0 });
+    // No se escribe ninguna hora.
+    expect(await holder.timeEntry.count()).toBe(0);
+  });
+
+  it("Vacaciones (legajo B, turno todos los días): domingo ×2 y feriado convocado ×2; la vista previa coincide con lo persistido", async () => {
+    const payload = { employeeIds: [employees.b], noveltyTypeId: types.vacaciones, fromDate: "2026-11-16", toDate: "2026-11-22" };
+    const preview = await m.novelties.previewCoverage(m.noveltySchemas.noveltyCoveragePreviewSchema.parse(payload), as("rrhh"));
+    const [novelty] = await create("rrhh", payload);
+    const persisted = await m.novelties.getCoverage(novelty!.id, as("rrhh"));
+
+    const sunday = persisted.days.find((item) => item.date === "2026-11-22")!;
+    const holiday = persisted.days.find((item) => item.date === "2026-11-18")!;
+    expect(sunday).toMatchObject({ outcome: "COVERED", baseMinutes: 480, multiplier: 2, computedMinutes: 960 });
+    expect(holiday).toMatchObject({ outcome: "COVERED", baseMinutes: 480, multiplier: 2, computedMinutes: 960 });
+    expect(persisted.totals).toMatchObject({ days: 7, coveredDays: 7, baseMinutes: 3360, computedMinutes: 3360 + 480 + 480 });
+
+    const shape = (days: Array<Record<string, unknown>>) => days.map(({ date, outcome, baseMinutes, multiplier, computedMinutes, reviewStatus, label }) => ({ date, outcome, baseMinutes, multiplier, computedMinutes, reviewStatus, label }));
+    expect(shape(preview.employees[0]!.days)).toEqual(shape(persisted.days));
+    expect(await holder.noveltyDayCoverage.count({ where: { employeeId: employees.b } })).toBe(7);
+  });
+
+  it("legajo mínimo sin ALTA: 0 h provisional en revisión; registrar el ALTA cambia el motivo; la resolución manual se conserva al recalcular", async () => {
+    const [novelty] = await create("rrhh", { employeeIds: [employees.minimal], noveltyTypeId: types.vacaciones, fromDate: "2026-11-16", toDate: "2026-11-22" });
+    const rows = await coverageRows(novelty!.id);
+    expect(rows.every((row) => row.outcome === "SCHEDULE_UNRESOLVED" && row.scheduleReviewReason === "EMPLOYMENT_HISTORY_UNRESOLVED" && row.reviewStatus === "PENDING" && row.baseMinutes === 0)).toBe(true);
+
+    // Con ALTA pero sin turno: el motivo pasa a ser la jornada.
+    await holder.laborMovement.create({ data: { employeeId: employees.minimal, type: "ALTA", effectiveFrom: day("2026-01-01"), reason: "Ingreso" } });
+    await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    const afterAlta = byDate(await coverageRows(novelty!.id));
+    // El miércoles 18 es feriado global y el legajo no fue convocado: 0 h confirmado.
+    expect(afterAlta.get("2026-11-18")).toMatchObject({ outcome: "HOLIDAY_NOT_CONVOKED", reviewStatus: "NOT_REQUIRED" });
+    expect([...afterAlta.entries()].filter(([key]) => key !== "2026-11-18").every(([, row]) => row.scheduleReviewReason === "SCHEDULE_MISSING" && row.reviewStatus === "PENDING")).toBe(true);
+
+    // Resolución del encargado: el domingo eran 8 h base → ×2 del motor de Horas Especiales.
+    const resolved = await m.novelties.resolveCoverageDay(novelty!.id, "2026-11-22", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "Trabajaba domingos de 8 h" }), as("rrhh"));
+    expect(resolved).toMatchObject({ reviewStatus: "RESOLVED", resolution: "SET_BASE_MINUTES", effectiveBaseMinutes: 480, multiplier: 2, computedMinutes: 960 });
+    await m.novelties.resolveCoverageDay(novelty!.id, "2026-11-21", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "No trabajaba sábados" }), as("rrhh"));
+
+    const sundayRow = byDate(await coverageRows(novelty!.id)).get("2026-11-22")!;
+    expect(sundayRow).toMatchObject({ resolvedBaseMinutes: 480, resolvedAgainstWorkedMinutes: 0, resolvedByUserId: users.rrhh, resolutionNote: "Trabajaba domingos de 8 h" });
+
+    // Recálculo idempotente: mismas filas, la resolución sigue.
+    await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    const again = byDate(await coverageRows(novelty!.id));
+    expect(again.size).toBe(7);
+    expect(again.get("2026-11-22")).toMatchObject({ reviewStatus: "RESOLVED", resolvedBaseMinutes: 480, resolutionNote: "Trabajaba domingos de 8 h" });
+    expect(again.get("2026-11-21")).toMatchObject({ reviewStatus: "RESOLVED", resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0 });
+    expect([...again.values()].filter((row) => row.reviewStatus === "PENDING")).toHaveLength(4);
+
+    // Con turno asignado, la evidencia manda y las resoluciones se descartan.
+    const shift = await holder.shiftTemplate.findFirstOrThrow({ where: { code: "T-ALL" } });
+    await holder.shiftAssignment.create({ data: { employeeId: employees.minimal, shiftTemplateId: shift.id, effectiveFrom: day("2026-01-01"), weekdays: [] } });
+    const summary = await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    expect(summary).toMatchObject({ droppedResolutions: 2, pendingReviewDays: 0 });
+    expect(byDate(await coverageRows(novelty!.id)).get("2026-11-22")).toMatchObject({ outcome: "COVERED", reviewStatus: "NOT_REQUIRED", baseMinutes: 480, resolution: null });
+  });
+
+  it("resolución: sólo días en revisión, nota obligatoria y alcance del legajo", async () => {
+    const [novelty] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadCover, fromDate: "2026-11-23", toDate: "2026-11-24" });
+    const body = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "No corresponde" });
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-11-23", body, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-12-01", body, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_FOUND" });
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-02-31", body, as("rrhh"))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(m.noveltySchemas.noveltyCoverageResolutionSchema.safeParse({ resolution: "CONFIRMED_ZERO", note: "" }).success).toBe(false);
+    // Carga horaria sin el legajo asignado no lo ve.
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-11-23", body, as("carga"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+    await expect(m.novelties.getCoverage(novelty!.id, as("carga"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+  });
+
+  it("relación laboral: antes del ALTA el día queda OUTSIDE_EMPLOYMENT (0 h confirmado)", async () => {
+    const [novelty] = await create("rrhh", { employeeIds: [employees.late], noveltyTypeId: types.tramite, fromDate: "2026-11-16" });
+    expect(await coverageRows(novelty!.id)).toEqual([expect.objectContaining({ outcome: "OUTSIDE_EMPLOYMENT", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" })]);
+  });
+
+  it("Trámite bancario, Llegada tarde y Falta sin aviso", async () => {
+    const [tramite] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-19" });
+    const [llegada] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.llegadaTarde, fromDate: "2026-11-19", quantityHours: 1 });
+    const [falta] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-20" });
+    expect(await coverageRows(tramite!.id)).toEqual([expect.objectContaining({ outcome: "COVERED", baseMinutes: 240, countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" })]);
+    expect(await coverageRows(llegada!.id)).toEqual([expect.objectContaining({ outcome: "COVERED", baseMinutes: 60, countsTowardTotal: false, realWorkCompatibility: "COMPATIBLE" })]);
+    expect(await coverageRows(falta!.id)).toEqual([expect.objectContaining({ outcome: "NO_COVERAGE", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" })]);
+  });
+
+  it("Maternidad: feriado entre semana según la política configurada", async () => {
+    const [cover] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.maternidadCover, fromDate: "2026-11-18", toDate: "2026-11-18" });
+    const [excluded] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-18", toDate: "2026-11-18" });
+    expect(await coverageRows(cover!.id)).toEqual([expect.objectContaining({ outcome: "COVERED", baseMinutes: 480 })]);
+    expect(await coverageRows(excluded!.id)).toEqual([expect.objectContaining({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 })]);
+  });
+
+  it("feriado con alcance sin historia laboral → 409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING y no se crea nada", async () => {
+    const before = await holder.novelty.count();
+    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-25", toDate: "2026-11-25" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
+    });
+    expect(await holder.novelty.count()).toBe(before);
+  });
+
+  it("toDate nulo es exactamente un día (fromDate) para cualquier tipo, aunque admita rango; nunca un rango abierto", async () => {
+    // Tipo sin tiempo que admite rango: una fila NO_COVERAGE, 0 minutos.
+    const [none] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.licenciaAbierta, fromDate: "2026-11-01" });
+    expect(await coverageRows(none!.id)).toEqual([expect.objectContaining({ date: day("2026-11-01"), outcome: "NO_COVERAGE", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" })]);
+    // Falta sin aviso (sin rango): una fila para su fecha.
+    const [falta] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-15" });
+    expect(await coverageRows(falta!.id)).toEqual([expect.objectContaining({ date: day("2026-11-15"), outcome: "NO_COVERAGE", baseMinutes: 0 })]);
+    // Vacaciones y Maternidad (admiten rango) sin fecha hasta: un único día.
+    const [vacation] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-11-30" });
+    expect(await coverageRows(vacation!.id)).toEqual([expect.objectContaining({ date: day("2026-11-30"), outcome: "COVERED", baseMinutes: 480 })]);
+    const [maternity] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.maternidadCover, fromDate: "2026-12-07" });
+    expect(await coverageRows(maternity!.id)).toEqual([expect.objectContaining({ date: day("2026-12-07"), outcome: "COVERED", baseMinutes: 480 })]);
+    // fromDate = toDate también es un único día.
+    const [same] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.maternidadCover, fromDate: "2026-12-08", toDate: "2026-12-08" });
+    expect(await coverageRows(same!.id)).toHaveLength(1);
+  });
+
+  it("rechazo elimina la cobertura derivada; la supervisión sólo aprueba dentro de su alcance", async () => {
+    const [pending] = await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-26" });
+    expect(pending!.status).toBe("PENDIENTE");
+    expect(await coverageRows(pending!.id)).toHaveLength(1);
+    await m.novelties.reject(pending!.id, { reason: "No corresponde" }, as("rrhh"));
+    expect(await coverageRows(pending!.id)).toHaveLength(0);
+    expect(await holder.novelty.findUniqueOrThrow({ where: { id: pending!.id } })).toMatchObject({ status: "RECHAZADO" });
+
+    const [outside] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-26" });
+    await holder.novelty.update({ where: { id: outside!.id }, data: { status: "PENDIENTE" } });
+    await expect(m.novelties.approve(outside!.id, as("sup"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+    await expect(m.novelties.reject(outside!.id, { reason: "Fuera de alcance" }, as("sup"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+  });
+
+  it("aprobación masiva atómica: si una falla, no se aprueba ninguna", async () => {
+    const [first] = await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-27" });
+    const [second] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-27" });
+    // second ya está APROBADO (lo cargó RRHH): el lote falla y first sigue pendiente.
+    await expect(m.novelties.approveMany([first!.id, second!.id], as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_STATUS_NOT_APPROVABLE" });
+    expect(await holder.novelty.findUniqueOrThrow({ where: { id: first!.id } })).toMatchObject({ status: "PENDIENTE" });
+  });
+
+  it("período ya enviado a cierre: supervisión → 409; RRHH sin motivo → 400; RRHH con motivo → corrige", async () => {
+    await holder.monthlyTimeClosure.create({ data: { employeeId: employees.a, period: "2026-12", status: "ENVIADO" } });
+    const payload = { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-12-01" };
+    await expect(create("sup", payload)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    await expect(create("rrhh", payload)).rejects.toMatchObject({ code: "NOVELTY_CORRECTION_REASON_REQUIRED" });
+    const [corrected] = await create("rrhh", { ...payload, correctionReason: "Trámite informado tarde" });
+    expect(await coverageRows(corrected!.id)).toHaveLength(1);
+
+    // Un tipo sin tiempo no tiene nada que proteger.
+    await expect(create("sup", { ...payload, noveltyTypeId: types.faltaSinAviso, fromDate: "2026-12-02" })).resolves.toHaveLength(1);
+    // Borrar la corrección también exige motivo; el recálculo automático no toca el período protegido.
+    await expect(m.novelties.remove(corrected!.id, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_CORRECTION_REASON_REQUIRED" });
+    const summary = await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [corrected!.id], { protectedPeriods: "SKIP" }));
+    expect(summary.protectedPeriods).toEqual([{ employeeId: employees.a, period: "2026-12" }]);
+    expect(summary.days).toBe(0);
+    expect(await coverageRows(corrected!.id)).toHaveLength(1);
+  });
+
+  it("vista previa: mismos permisos que la carga y no escribe nada", async () => {
+    const before = await holder.noveltyDayCoverage.count();
+    await expect(
+      m.novelties.previewCoverage(m.noveltySchemas.noveltyCoveragePreviewSchema.parse({ employeeIds: [employees.b], noveltyTypeId: types.tramite, fromDate: "2026-11-16" }), as("carga")),
+    ).rejects.toMatchObject({ code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+    await m.novelties.previewCoverage(m.noveltySchemas.noveltyCoveragePreviewSchema.parse({ employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-11-16", toDate: "2026-11-22" }), as("sup"));
+    expect(await holder.noveltyDayCoverage.count()).toBe(before);
+  });
+
+  it("los datos de entrada inválidos se rechazan sin persistir", async () => {
+    const count = await holder.novelty.count();
+    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.llegadaTarde, fromDate: "2026-11-16" })).rejects.toMatchObject({ code: "NOVELTY_MANUAL_QUANTITY_REQUIRED" });
+    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-01-01", toDate: "2027-02-01" })).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RANGE_TOO_LONG" });
+    expect(await holder.novelty.count()).toBe(count);
+    expect(Prisma).toBeDefined();
+  });
+});

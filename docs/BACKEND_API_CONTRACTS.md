@@ -1256,6 +1256,18 @@ Reglas:
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
 - **Cobertura horaria, etapa 1** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`): en un tipo `coverageMode=MANUAL_MINUTES` el backend deriva `quantityMinutes = round(quantityHours × 60)` (el cliente no lo envía) y rechaza más de 24 h en el día (`400 NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY`). En cualquier otro tipo `quantityMinutes` es `null`. Las lecturas de novedades devuelven `quantityMinutes`.
+- **Cobertura horaria, etapa 3** (ADR §6). Crear una novedad genera, en la misma transacción, su cobertura diaria (`NoveltyDayCoverage`): una fila por día de toda novedad no rechazada, nunca un `TimeEntry`. Todavía no suma a ningún total.
+  - Validaciones nuevas:
+    - `400 NOVELTY_MANUAL_QUANTITY_REQUIRED`: tipo de cantidad manual sin `quantityHours`.
+    - `400 NOVELTY_COVERAGE_RANGE_TOO_LONG`: más de 366 días.
+    - `400 NOVELTY_COVERAGE_TOO_LARGE`: más de 20 000 días-legajo.
+    - `400 NOVELTY_OBSERVATION_REQUIRED`: el tipo exige observación.
+  - Fechas: `toDate` nulo es siempre un único día (`fromDate`), también en tipos que admiten rango; nunca un rango abierto. Lo mismo vale para el bloqueo de nueva carga en `/api/time-entries`.
+  - Historia laboral faltante para una regla con alcance → `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING`, y no se crea nada.
+  - Período ya enviado a cierre, en un tipo que registra tiempo:
+    - otro rol → `409 PERIOD_CLOSED`;
+    - RRHH sin motivo → `400 NOVELTY_CORRECTION_REASON_REQUIRED`;
+    - RRHH con `correctionReason` (5 a 600 caracteres, campo opcional del body) → corrige y lo audita.
 - **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni `timeEntryBehavior` del tipo. El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
 - **Etapa 15G.3** (`docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md`): rechaza (409) crear una novedad del **mismo `noveltyTypeId`** para el **mismo empleado** cuando su rango de fechas (`fromDate`/`toDate`, `toDate` nulo tratado como igual a `fromDate`) coincide o se superpone con una novedad ya activa (cualquier `status` salvo `RECHAZADO`):
   - `NOVELTY_DUPLICATE` — el rango coincide exactamente con el existente.
@@ -1281,7 +1293,9 @@ Rechazo:
 
 **Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
-Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). Aprueba una por una con las mismas reglas que `approve`.
+**Etapa 3:** `approve` y `reject` respetan el alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y el guard de cierres de un tipo que registra tiempo. `approve` acepta un body opcional `{ "correctionReason": "..." }` para la corrección de RRHH; en `reject`, el motivo del rechazo vale como motivo de corrección. Rechazar elimina la cobertura diaria derivada.
+
+Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). **Etapa 3:** es atómica (una transacción): si una novedad del lote no se puede aprobar, no se aprueba ninguna. Un período protegido rechaza el lote, porque no lleva motivo de corrección.
 
 ### Eliminar
 
@@ -1289,7 +1303,58 @@ Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids"
 DELETE /api/novelties/:id
 ```
 
-Sólo RRHH. Borrado físico con auditoría. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans.
+Sólo RRHH. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
+
+### Cobertura diaria (etapa 3, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §6)
+
+```txt
+POST /api/novelties/coverage-preview
+GET  /api/novelties/:id/coverage
+POST /api/novelties/:id/coverage-days/:date/resolution
+```
+
+Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcance del legajo.
+
+**Vista previa:** el mismo motor que la persistencia, sin escribir. Mismos permisos que la carga (roles de carga del tipo, alcance). Body:
+
+```json
+{ "employeeIds": ["uuid"], "noveltyTypeId": "uuid", "fromDate": "2026-11-16", "toDate": "2026-11-22", "quantityHours": null }
+```
+
+`employeeIds`: 1 a 50. `quantityHours` sólo para cantidad manual (≤ 24). Respuesta:
+
+```json
+{
+  "noveltyType": { "id": "uuid", "code": "VAC", "name": "Vacaciones" },
+  "employees": [{
+    "employee": { "id": "uuid", "legajo": "101", "firstName": "Ana", "lastName": "Pérez" },
+    "days": [{
+      "date": "2026-11-22", "outcome": "COVERED", "scheduleReviewReason": null, "reviewStatus": "NOT_REQUIRED",
+      "label": "Cubre", "expectedMinutes": 480, "baseMinutes": 480, "resolution": null, "resolvedBaseMinutes": null,
+      "effectiveBaseMinutes": 480, "multiplier": 2, "computedMinutes": 960, "countsTowardTotal": true
+    }],
+    "totals": { "days": 7, "coveredDays": 5, "pendingReviewDays": 0, "baseMinutes": 2400, "computedMinutes": 2880 }
+  }]
+}
+```
+
+- `outcome`: `COVERED`, `NO_COVERAGE`, `WEEKDAY_NOT_INCLUDED`, `NO_WORK_OBLIGATION`, `HOLIDAY_NOT_CONVOKED`, `HOLIDAY_EXCLUDED`, `DAY_OFF`, `OUTSIDE_EMPLOYMENT` o `SCHEDULE_UNRESOLVED` (0 h provisional, a revisar; `scheduleReviewReason` dice por qué).
+- `label` es el texto legible para mostrar.
+- `computedMinutes` = minutos base efectivos (los resueltos, si hay resolución) × `multiplier`.
+- Errores: los mismos `400`/`409` de validación que la carga.
+
+**Consulta:** las filas persistidas con la misma forma por día, más `shiftTemplate { code, name }`, `resolvedBy` (nombre), `resolvedAt` y `resolutionNote`, y `totals`.
+
+**Resolución** de un día en revisión (`:date` = `AAAA-MM-DD`). Body:
+
+```json
+{ "resolution": "SET_BASE_MINUTES", "baseMinutes": 480, "note": "Trabajaba domingos de 8 h", "correctionReason": null }
+```
+
+- `resolution`: `CONFIRMED_ZERO` (sin `baseMinutes`) o `SET_BASE_MINUTES` (`baseMinutes` 1..1440). `note` es obligatoria (5 a 600).
+- Sólo días `SCHEDULE_UNRESOLVED`, incluida la corrección de una resolución anterior; otro día → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. Día fuera de la novedad → `404 NOVELTY_COVERAGE_DAY_NOT_FOUND`; novedad rechazada → `409 NOVELTY_COVERAGE_REJECTED`.
+- Roles de carga del tipo (o RRHH). Aplica el multiplicador del motor de Horas Especiales sobre los minutos resueltos y guarda los minutos reales del día.
+- Mismo guard de cierres que la carga.
 
 ### Fichador (`clock`, F7)
 
