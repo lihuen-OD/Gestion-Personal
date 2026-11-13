@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -5,6 +6,7 @@ import { AppError } from "../../shared/errors/AppError";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
+import { extensionFromMimeType, fileExtension } from "../../shared/storage/storageValidation";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -1153,11 +1155,25 @@ export const employeesService = {
 
     const before = await employeesService.getById(id, user);
     const documentType = category.code || category.name;
+    // Ruta humana en Drive (Legajos/<legajo - Nombre Apellido>/<categoría>/)
+    // con datos básicos del legajo — nunca puesto ni estructura
+    // organizacional. El nombre original se conserva en originalFileName y en
+    // EmployeeDocument.fileName.
+    const location = storagePathBuilder.employeeDocument({
+      employeeId: id,
+      employee: before,
+      category,
+      uploadedAt: new Date(),
+      extension: fileExtension(input.fileName) || extensionFromMimeType(input.fileMimeType),
+      uniqueSuffix: randomBytes(3).toString("hex"),
+    });
     const storageFile = await storageService.uploadManaged({
       buffer: bufferFromBase64(input.fileBase64),
       fileName: input.fileName,
+      storedFileName: location.fileName,
       mimeType: input.fileMimeType,
-      folderSegments: storagePathBuilder.employeeDocument(before.legajo, documentType),
+      folderSegments: location.folderSegments,
+      driveFolders: location.driveFolders,
       module: "LEGAJOS",
       entityType: "EMPLOYEE_DOCUMENT",
       entityId: id,

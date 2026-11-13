@@ -246,6 +246,33 @@ describe("storageService.uploadManaged — política de upload por módulo/prop�
     expect(local.upload).not.toHaveBeenCalled();
   });
 
+  it("storedFileName: el provider y StorageFile.fileName usan el nombre humano; originalFileName conserva el del usuario", async () => {
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = "google_drive";
+    drive.upload.mockResolvedValue({ provider: "google_drive", storageKey: "drive-doc-1", driveFileId: "drive-doc-1", driveFolderId: "folder-1" });
+    filesRepo.create.mockResolvedValue({ id: "sf-4", storageProvider: "GOOGLE_DRIVE", storageKey: "drive-doc-1" });
+    const driveFolders = [{ name: "Legajos" }, { name: "0001 - Juan Perez", appProperties: { employeeId: "employee-1" } }, { name: "Documentos personales" }];
+
+    await storageService.uploadManaged({ ...documentInput, fileName: "IMG_3728.pdf", storedFileName: "2026-11-13_DNI_Juan-Perez_a1b2c3.pdf", driveFolders });
+
+    expect(drive.upload).toHaveBeenCalledWith(expect.objectContaining({ fileName: "2026-11-13_DNI_Juan-Perez_a1b2c3.pdf", driveFolders }));
+    expect(drive.upload.mock.calls[0]![0]).not.toHaveProperty("storedFileName");
+    expect(filesRepo.create).toHaveBeenCalledWith(expect.objectContaining({
+      fileName: "2026-11-13_DNI_Juan-Perez_a1b2c3.pdf",
+      originalFileName: "IMG_3728.pdf",
+      extension: "pdf",
+    }), undefined);
+  });
+
+  it("sin storedFileName el nombre guardado sigue siendo el original saneado (sin cambios)", async () => {
+    (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = "cloudinary";
+    cloudinary.upload.mockResolvedValue({ provider: "cloudinary", storageKey: "cloud-doc-9" });
+    filesRepo.create.mockResolvedValue({ id: "sf-5", storageProvider: "CLOUDINARY", storageKey: "cloud-doc-9" });
+
+    await storageService.uploadManaged({ ...documentInput, fileName: "Contrato firmado.pdf" });
+
+    expect(filesRepo.create).toHaveBeenCalledWith(expect.objectContaining({ fileName: "Contrato-firmado.pdf", originalFileName: "Contrato firmado.pdf" }), undefined);
+  });
+
   it("module=DOCUMENTACION_GENERAL también resuelve por DOCUMENT_STORAGE_PROVIDER", async () => {
     (env as MutableEnv).STORAGE_PROVIDER = "local";
     (env as MutableEnv).DOCUMENT_STORAGE_PROVIDER = "cloudinary";

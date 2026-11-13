@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { env } from "../../config/env";
 import { AppError } from "../errors/AppError";
-import { safeFileName } from "./storageValidation";
-import type { StorageObjectInput, StorageObjectResult, StorageProvider } from "./storage.types";
+import { safeDriveFolderName, safeFileName } from "./storageValidation";
+import type { DriveFolderSpec, StorageObjectInput, StorageObjectResult, StorageProvider } from "./storage.types";
 
 type DriveFile = {
   id: string;
@@ -15,8 +15,11 @@ type DriveFile = {
 };
 
 let cachedToken: { token: string; expiresAt: number } | undefined;
-const folderCache = new Map<string, string>();
-const folderInflight = new Map<string, Promise<string>>();
+type FolderEntry = { id: string; name: string };
+// Caché de carpetas por proceso. Si se mandan carpetas a la papelera con el
+// backend corriendo, hay que reiniciarlo (si no, se sube a carpetas borradas).
+const folderCache = new Map<string, FolderEntry>();
+const folderInflight = new Map<string, Promise<FolderEntry>>();
 
 function configured() {
   return Boolean(
@@ -91,40 +94,69 @@ async function driveRequest<T>(url: string, init: RequestInit = {}) {
   return response as Response & { json(): Promise<T> };
 }
 
-function folderSegments(input: StorageObjectInput) {
-  if (input.folderSegments?.length) return input.folderSegments;
-  return (input.folder || "temporales").split(/[\\/]+/).filter(Boolean);
+/**
+ * Carpetas de Drive del upload: la ubicación humana (`driveFolders`) si viene;
+ * si no, la técnica (`folderSegments`/`folder`) como antes.
+ */
+function folderSpecs(input: StorageObjectInput): DriveFolderSpec[] {
+  if (input.driveFolders?.length) return input.driveFolders;
+  const segments = input.folderSegments?.length ? input.folderSegments : (input.folder || "temporales").split(/[\\/]+/).filter(Boolean);
+  return segments.map((name) => ({ name }));
 }
 
+// Conserva espacios, acentos y Ñ (`0007 - José Peña`); idempotente sobre los
+// segmentos ASCII que ya se usaban.
 function safeFolderSegment(value: string) {
-  const safe = safeFileName(value);
+  const safe = safeDriveFolderName(value);
   if (!safe || safe === "." || safe === "..") {
     throw new AppError("Ruta de storage inválida", 400, "STORAGE_INVALID_PATH");
   }
   return safe;
 }
 
+function appPropertiesQuery(properties: Record<string, string>) {
+  return Object.entries(properties)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `appProperties has { key = '${escapeQueryValue(key)}' and value = '${escapeQueryValue(value)}' }`);
+}
+
 function escapeQueryValue(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-async function findFolder(parentId: string, name: string) {
+/**
+ * Carpeta hija de `parentId` por nombre o, si se pasan `appProperties`, por
+ * esas propiedades (identidad estable aunque cambie el nombre visible). Ante
+ * duplicados (creación concurrente desde otro proceso) usa siempre la más
+ * antigua, para converger en la misma carpeta.
+ */
+async function findFolder(parentId: string, match: { name: string } | { appProperties: Record<string, string> }) {
   const query = [
     "mimeType = 'application/vnd.google-apps.folder'",
     "trashed = false",
     `'${escapeQueryValue(parentId)}' in parents`,
-    `name = '${escapeQueryValue(name)}'`,
+    ...("name" in match ? [`name = '${escapeQueryValue(match.name)}'`] : appPropertiesQuery(match.appProperties)),
   ].join(" and ");
   const params = new URLSearchParams({
     q: query,
     fields: "files(id,name)",
+    orderBy: "createdTime",
     pageSize: "1",
     supportsAllDrives: "true",
     includeItemsFromAllDrives: "true",
   });
   const response = await driveRequest<{ files: DriveFile[] }>(`https://www.googleapis.com/drive/v3/files?${params.toString()}`);
   const data = await response.json() as { files: DriveFile[] };
-  return data.files[0]?.id;
+  const found = data.files[0];
+  return found ? { id: found.id, name: found.name || "" } : undefined;
+}
+
+async function renameFolder(folderId: string, name: string) {
+  await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?supportsAllDrives=true&fields=id,name`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
 }
 
 export function isGoogleDriveConfigured() {
@@ -137,9 +169,11 @@ export function isGoogleDriveConfigured() {
  * reclamado de nuevo tras un lease vencido no duplique la copia en Drive.
  */
 export async function findGoogleDriveArchiveCopy(sourceStorageFileId: string) {
+  // Acotada a la raíz configurada (archiveRootId): una copia de otro entorno
+  // con la misma service account, o de una raíz anterior, nunca se reutiliza.
   const query = [
     "trashed = false",
-    `appProperties has { key = 'sourceStorageFileId' and value = '${escapeQueryValue(sourceStorageFileId)}' }`,
+    ...appPropertiesQuery({ sourceStorageFileId, archiveRootId: archiveRootId() }),
   ].join(" and ");
   const params = new URLSearchParams({
     q: query,
@@ -153,7 +187,21 @@ export async function findGoogleDriveArchiveCopy(sourceStorageFileId: string) {
   return data.files[0] || null;
 }
 
-async function createFolder(parentId: string, name: string) {
+function archiveRootId() {
+  assertConfigured();
+  return env.GOOGLE_DRIVE_ROOT_FOLDER_ID!;
+}
+
+/**
+ * appProperties de la copia de archivo de un StorageFile primario: la marca
+ * con su origen y con la raíz de Drive del entorno, que es lo que consulta
+ * findGoogleDriveArchiveCopy.
+ */
+export function googleDriveArchiveAppProperties(sourceStorageFileId: string, checksum: string | null | undefined) {
+  return { sourceStorageFileId, checksum: checksum || "", archiveRootId: archiveRootId() };
+}
+
+async function createFolder(parentId: string, name: string, appProperties?: Record<string, string>) {
   const response = await driveRequest<DriveFile>("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id,name", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -161,38 +209,63 @@ async function createFolder(parentId: string, name: string) {
       name,
       mimeType: "application/vnd.google-apps.folder",
       parents: [parentId],
+      ...(appProperties ? { appProperties } : {}),
     }),
   });
   const data = await response.json() as DriveFile;
   return data.id;
 }
 
-async function findOrCreatePath(segments: string[]) {
+async function resolveFolder(parentId: string, spec: DriveFolderSpec, name: string): Promise<FolderEntry> {
+  const identity = spec.appProperties && Object.keys(spec.appProperties).length ? spec.appProperties : undefined;
+  if (!identity) {
+    const found = await findFolder(parentId, { name });
+    return found || { id: await createFolder(parentId, name), name };
+  }
+  // Carpeta con identidad (p. ej. employeeId): se reutiliza aunque haya
+  // cambiado el nombre visible, y se renombra para reflejar el actual.
+  const found = await findFolder(parentId, { appProperties: identity });
+  if (!found) return { id: await createFolder(parentId, name, identity), name };
+  if (found.name !== name) await renameFolder(found.id, name);
+  return { id: found.id, name };
+}
+
+async function findOrCreatePath(specs: DriveFolderSpec[]) {
   assertConfigured();
   let parentId = env.GOOGLE_DRIVE_ROOT_FOLDER_ID!;
-  const normalized = segments.map(safeFolderSegment);
-  for (const segment of normalized) {
-    const cacheKey = `${parentId}/${segment}`;
+  for (const spec of specs) {
+    const name = safeFolderSegment(spec.name);
+    const identity = spec.appProperties && Object.keys(spec.appProperties).length
+      ? Object.entries(spec.appProperties).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("&")
+      : undefined;
+    const cacheKey = identity ? `${parentId}#${identity}` : `${parentId}/${name}`;
     const cached = folderCache.get(cacheKey);
-    if (cached) {
-      parentId = cached;
+    if (cached && cached.name === name) {
+      parentId = cached.id;
       continue;
     }
     let pending = folderInflight.get(cacheKey);
     if (!pending) {
-      pending = (async () => (await findFolder(parentId, segment)) || createFolder(parentId, segment))();
+      pending = resolveFolder(parentId, spec, name);
       folderInflight.set(cacheKey, pending);
     }
-    let folderId: string;
+    let folder: FolderEntry;
     try {
-      folderId = await pending;
+      folder = await pending;
     } finally {
       folderInflight.delete(cacheKey);
     }
-    folderCache.set(cacheKey, folderId);
-    parentId = folderId;
+    folderCache.set(cacheKey, folder);
+    parentId = folder.id;
   }
   return parentId;
+}
+
+/** Sólo tests: vacía la caché de carpetas del proceso. */
+export function resetGoogleDriveFolderCacheForTests() {
+  folderCache.clear();
+  folderInflight.clear();
+  cachedToken = undefined;
 }
 
 export const googleDriveStorageProvider: StorageProvider = {
@@ -202,7 +275,7 @@ export const googleDriveStorageProvider: StorageProvider = {
       throw new AppError("File buffer is required for Google Drive upload", 400, "STORAGE_FILE_BUFFER_REQUIRED");
     }
 
-    const driveFolderId = await findOrCreatePath(folderSegments(input));
+    const driveFolderId = await findOrCreatePath(folderSpecs(input));
     const fileName = safeFileName(input.fileName);
     const metadata = {
       name: fileName,

@@ -4,7 +4,9 @@
  * nombre y apellido se crea ACTIVO, sin datos inventados, se completa después y
  * el fichador lo encuentra, lo consulta por employeeId y le registra una
  * fichada con las reglas normales. Sólo el object storage primario se
- * reemplaza por uno en memoria.
+ * reemplaza por uno en memoria y Google Drive por uno simulado: con eso se
+ * prueba también la organización humana del storage (copia de la foto en
+ * Fichadas/... y documentos en Legajos/...) sin estructura organizacional.
  *
  * Opt-in: sólo corre con `EMPLOYEE_MINIMAL_IT_DATABASE_URL` → `localhost`, base
  * `clock_it*` PROPIA con el schema de este commit. VACÍA la base al empezar.
@@ -22,6 +24,37 @@ vi.mock("../../shared/storage/neonObjectStorage.provider", async () => ({
   neonObjectStorageProvider: (await import("../../shared/testing/inMemoryObjectStorage")).inMemoryObjectStorage.provider,
 }));
 
+// Google Drive simulado: guarda lo subido (con su ubicación humana) y puede
+// "caerse" para probar que la fichada no depende de Drive.
+type FakeDriveFile = { id: string; buffer: Buffer; mimeType: string; fileName: string; driveFolders?: unknown; metadata?: Record<string, string> };
+const fakeDrive = vi.hoisted(() => ({ files: [] as FakeDriveFile[], down: false, nextId: 1 }));
+const ARCHIVE_ROOT = "root-it-dev";
+vi.mock("../../shared/storage/googleDriveStorage.provider", async () => {
+  const { AppError } = await import("../../shared/errors/AppError");
+  return {
+    isGoogleDriveConfigured: () => true,
+    googleDriveArchiveAppProperties: (sourceStorageFileId: string, checksum: string | null) => ({ sourceStorageFileId, checksum: checksum || "", archiveRootId: ARCHIVE_ROOT }),
+    findGoogleDriveArchiveCopy: async (sourceStorageFileId: string) =>
+      fakeDrive.files.find((file) => file.metadata?.sourceStorageFileId === sourceStorageFileId && file.metadata?.archiveRootId === ARCHIVE_ROOT) || null,
+    googleDriveStorageProvider: {
+      async upload(input: { buffer?: Buffer; mimeType: string; fileName: string; driveFolders?: unknown; metadata?: Record<string, string> }) {
+        if (fakeDrive.down) throw new AppError("Google Drive API error", 502, "STORAGE_GOOGLE_DRIVE_API_ERROR");
+        const id = `drive-${fakeDrive.nextId++}`;
+        fakeDrive.files.push({ id, buffer: input.buffer!, mimeType: input.mimeType, fileName: input.fileName, driveFolders: input.driveFolders, metadata: input.metadata });
+        return { provider: "google_drive", storageKey: id, driveFileId: id, driveFolderId: "folder-it", sizeBytes: input.buffer!.length };
+      },
+      async download(storageKey: string) {
+        const found = fakeDrive.files.find((file) => file.id === storageKey);
+        if (!found) throw new AppError("Google Drive API error", 404, "STORAGE_GOOGLE_DRIVE_API_ERROR");
+        return { buffer: found.buffer, mimeType: found.mimeType };
+      },
+      async delete() {},
+      getPublicUrl: () => undefined,
+      getFilePath: () => undefined,
+    },
+  };
+});
+
 const PHOTO = `data:image/jpeg;base64,${Buffer.alloc(6000, 1).toString("base64")}`;
 
 type Modules = {
@@ -30,6 +63,9 @@ type Modules = {
   worker: typeof import("../clock/clockPunchPostProcess.worker");
   employees: typeof import("./employees.service").employeesService;
   schemas: typeof import("./employees.schemas");
+  documents: typeof import("../documents/documents.service").documentsService;
+  archive: typeof import("../../shared/storage/storageArchive.worker");
+  objectStorage: typeof import("../../shared/testing/inMemoryObjectStorage").inMemoryObjectStorage;
 };
 
 describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
@@ -39,8 +75,11 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
   let baseUrl: string;
   let device: { id: string; secret: string };
   let originalPunchPhotoProvider: Modules["env"]["PUNCH_PHOTO_STORAGE_PROVIDER"];
+  let originalDocumentProvider: Modules["env"]["DOCUMENT_STORAGE_PROVIDER"];
   let rrhhUserId: string;
   let minimalId: string;
+  const punchRequestId = randomUUID();
+  const rrhhUser = () => ({ id: rrhhUserId, email: "rrhh-minimal@example.com", name: "RRHH IT", role: "NIVEL_1_RRHH" }) as Express.AuthUser;
 
   const create = (payload: Record<string, unknown>) => m.employees.create(m.schemas.createEmployeeSchema.parse(payload), { userId: rrhhUserId });
   const clock = (path: string, init: RequestInit = {}) =>
@@ -56,7 +95,7 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
     }
     process.env.DATABASE_URL = url;
     delete (globalThis as { prisma?: unknown }).prisma;
-    const [{ createApp }, { env }, { prisma }, worker, { employeesService }, schemas, credentials] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, worker, { employeesService }, schemas, credentials, { documentsService }, archive, { inMemoryObjectStorage }] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
@@ -64,8 +103,11 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
       import("./employees.service"),
       import("./employees.schemas"),
       import("../../shared/security/clockDeviceCredentials"),
+      import("../documents/documents.service"),
+      import("../../shared/storage/storageArchive.worker"),
+      import("../../shared/testing/inMemoryObjectStorage"),
     ]);
-    m = { env, prisma, worker, employees: employeesService, schemas };
+    m = { env, prisma, worker, employees: employeesService, schemas, documents: documentsService, archive, objectStorage: inMemoryObjectStorage };
     const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
     if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
     holder = new PrismaClient({ datasourceUrl: url });
@@ -82,14 +124,19 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
     device = { id: created.id, secret };
 
     originalPunchPhotoProvider = env.PUNCH_PHOTO_STORAGE_PROVIDER;
+    originalDocumentProvider = env.DOCUMENT_STORAGE_PROVIDER;
     env.PUNCH_PHOTO_STORAGE_PROVIDER = "neon_object_storage";
+    env.DOCUMENT_STORAGE_PROVIDER = "google_drive";
     server = createApp().listen(0);
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${env.API_PREFIX}`;
   }, 60_000);
 
   afterAll(async () => {
-    if (m) m.env.PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhotoProvider;
+    if (m) {
+      m.env.PUNCH_PHOTO_STORAGE_PROVIDER = originalPunchPhotoProvider;
+      m.env.DOCUMENT_STORAGE_PROVIDER = originalDocumentProvider;
+    }
     m?.worker.stopClockPunchPostProcessWorker();
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     await m?.prisma.$disconnect();
@@ -168,12 +215,111 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
 
     const punch = await clock("/photo-punch", {
       method: "POST",
-      body: JSON.stringify({ requestId: randomUUID(), employeeId: minimalId, punchType: "IN", photo: PHOTO, faceValidationStatus: "VALID", faceDetectionScore: 0.97 }),
+      body: JSON.stringify({ requestId: punchRequestId, employeeId: minimalId, punchType: "IN", photo: PHOTO, faceValidationStatus: "VALID", faceDetectionScore: 0.97 }),
     });
     expect(punch.status).toBe(201);
     await m.worker.drainClockPunchPostProcess({ employeeIds: [minimalId] });
     expect(await holder.attendancePunch.count({ where: { employeeId: minimalId } })).toBe(1);
     expect(await holder.workShift.count({ where: { employeeId: minimalId, status: "ABIERTO" } })).toBe(1);
+  });
+
+  it("storage: la foto queda en Neon con su key técnica; Drive caído no afecta la fichada; el archivo usa la ruta humana sin estructura organizacional", async () => {
+    const punch = await holder.attendancePunch.findFirstOrThrow({ where: { employeeId: minimalId }, include: { photoFile: { include: { archiveJobs: true } } } });
+    const file = punch.photoFile!;
+    // Neon: key técnica intacta (año/mes/dispositivo/requestId).
+    expect(file).toMatchObject({ storageProvider: "NEON_OBJECT_STORAGE", status: "ACTIVE" });
+    expect(file.storageKey).toMatch(new RegExp(`^attendance/\\d{4}/\\d{2}/${device.id}/${punchRequestId}\\.jpg$`));
+    expect(file.archiveJobs).toEqual([expect.objectContaining({ status: "PENDING", targetProvider: "GOOGLE_DRIVE" })]);
+    const jobId = file.archiveJobs[0]!.id;
+
+    // Drive caído: el job vuelve a PENDING; la fichada, su StorageFile y el objeto en Neon siguen intactos.
+    fakeDrive.down = true;
+    try {
+      expect(await m.archive.processOneStorageArchiveJob()).toMatchObject({ processed: true, completed: false, retry: true });
+    } finally {
+      fakeDrive.down = false;
+    }
+    expect(await holder.storageArchiveJob.findUniqueOrThrow({ where: { id: jobId } })).toMatchObject({ status: "PENDING", attemptCount: 1, lastErrorCode: "STORAGE_GOOGLE_DRIVE_API_ERROR" });
+    expect(await holder.attendancePunch.count({ where: { employeeId: minimalId } })).toBe(1);
+    expect((await holder.storageFile.findUniqueOrThrow({ where: { id: file.id } })).status).toBe("ACTIVE");
+    expect(m.objectStorage.objects.has(file.storageKey)).toBe(true);
+    expect(fakeDrive.files).toHaveLength(0);
+
+    // Drive vuelve: la copia sale con la ruta humana, en hora argentina.
+    await holder.storageArchiveJob.update({ where: { id: jobId }, data: { nextAttemptAt: new Date() } });
+    expect(await m.archive.processOneStorageArchiveJob()).toMatchObject({ processed: true, completed: true });
+    const { argentinaDateParts } = await import("../../shared/datetime/argentinaTime");
+    const at = argentinaDateParts(punch.timestamp);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    expect(fakeDrive.files).toHaveLength(1);
+    expect(fakeDrive.files[0]).toMatchObject({
+      driveFolders: [{ name: "Fichadas" }, { name: String(at.year) }, { name: `${pad(at.month)} - ${months[at.month - 1]}` }, { name: "0001 - Juan Perez" }],
+      fileName: `${at.key}_${pad(at.hour)}-${pad(at.minute)}_INGRESO_${punchRequestId.replace(/-/g, "").slice(0, 6)}.jpg`,
+      metadata: { sourceStorageFileId: file.id, checksum: file.checksum, archiveRootId: ARCHIVE_ROOT },
+    });
+    expect(fakeDrive.files[0]!.buffer.equals(m.objectStorage.objects.get(file.storageKey)!.buffer)).toBe(true);
+    expect(await holder.storageArchiveJob.findUniqueOrThrow({ where: { id: jobId } })).toMatchObject({ status: "COMPLETED", targetStorageKey: fakeDrive.files[0]!.id, lastErrorCode: null });
+
+    // Reproceso del mismo job (p. ej. lease vencido tras subir): reutiliza la copia, no duplica.
+    await holder.storageArchiveJob.update({ where: { id: jobId }, data: { status: "PENDING", nextAttemptAt: new Date(), completedAt: null } });
+    expect(await m.archive.processOneStorageArchiveJob()).toMatchObject({ processed: true, completed: true });
+    expect(fakeDrive.files).toHaveLength(1);
+    expect((await holder.storageArchiveJob.findUniqueOrThrow({ where: { id: jobId } })).targetStorageKey).toBe(fakeDrive.files[0]!.id);
+    // El primary sigue en Neon y la foto se sirve desde ahí.
+    expect((await holder.storageFile.findUniqueOrThrow({ where: { id: file.id } })).storageProvider).toBe("NEON_OBJECT_STORAGE");
+  });
+
+  it("storage: un legajo de alta mínima sube documentos a Legajos/<legajo - Nombre Apellido>/<categoría> con nombre humano y conserva el original", async () => {
+    const category = await holder.documentCategory.create({ data: { code: "DOC-IT-005", name: "Licencia de conducir", kind: "TRANSPORTE" } });
+    const parsed = m.schemas.createEmployeeDocumentSchema.parse({
+      categoryId: category.id, fileName: "IMG_3728.pdf", fileMimeType: "application/pdf", fileSizeBytes: 9, fileBase64: Buffer.from("%PDF-1.4\n").toString("base64"),
+    });
+    const before = fakeDrive.files.length;
+    await m.employees.createDocument(minimalId, parsed, rrhhUser(), { userId: rrhhUserId });
+    await m.employees.createDocument(minimalId, parsed, rrhhUser(), { userId: rrhhUserId });
+
+    const uploads = fakeDrive.files.slice(before);
+    expect(uploads).toHaveLength(2);
+    for (const upload of uploads) {
+      expect(upload.driveFolders).toEqual([{ name: "Legajos" }, { name: "0001 - Juan Perez", appProperties: { employeeId: minimalId } }, { name: "Transporte" }]);
+      expect(upload.fileName).toMatch(/^\d{4}-\d{2}-\d{2}_Licencia-de-conducir_Juan-Perez_[0-9a-f]{6}\.pdf$/);
+    }
+    expect(uploads[0]!.fileName).not.toBe(uploads[1]!.fileName);
+
+    const documents = await holder.employeeDocument.findMany({ where: { employeeId: minimalId }, include: { storageFile: true } });
+    expect(documents).toHaveLength(2);
+    for (const document of documents) {
+      expect(document.fileName).toBe("IMG_3728.pdf");
+      expect(document.storageFile).toMatchObject({ storageProvider: "GOOGLE_DRIVE", originalFileName: "IMG_3728.pdf", employeeId: minimalId, module: "LEGAJOS" });
+      expect(document.storageFile!.fileName).toMatch(/^\d{4}-\d{2}-\d{2}_Licencia-de-conducir_Juan-Perez_[0-9a-f]{6}\.pdf$/);
+      expect(document.storageKey).toBe(document.storageFile!.storageKey);
+    }
+
+    // La descarga sale por provider/key persistidos y con el nombre original.
+    const downloaded = await m.documents.download(documents[0]!.id, rrhhUser());
+    expect(downloaded).toMatchObject({ kind: "buffer", fileName: "IMG_3728.pdf" });
+  });
+
+  it("storage: un archivo histórico (layout anterior) se sigue descargando por su provider/key aunque cambie el nombre del legajo", async () => {
+    fakeDrive.files.push({ id: "legacy-drive-file", buffer: Buffer.from("%PDF-legacy"), mimeType: "application/pdf", fileName: "dni.pdf" });
+    const category = await holder.documentCategory.findFirstOrThrow({ where: { code: "DOC-IT-005" } });
+    const legacyFile = await holder.storageFile.create({ data: {
+      storageProvider: "GOOGLE_DRIVE", storageKey: "legacy-drive-file", driveFileId: "legacy-drive-file", fileName: "dni.pdf", originalFileName: "dni.pdf",
+      mimeType: "application/pdf", extension: "pdf", sizeBytes: 11, module: "LEGAJOS", entityType: "EMPLOYEE_DOCUMENT", entityId: minimalId, employeeId: minimalId,
+      metadata: { legacyPath: "storage-sistema/legajos/0001/documentos-personales" },
+    } });
+    const legacyDocument = await holder.employeeDocument.create({ data: {
+      employeeId: minimalId, categoryId: category.id, fileName: "dni.pdf", fileMimeType: "application/pdf", fileSizeBytes: 11, storageKey: "legacy-drive-file", storageFileId: legacyFile.id,
+    } });
+    await holder.employee.update({ where: { id: minimalId }, data: { firstName: "Juan Carlos" } });
+    try {
+      const downloaded = await m.documents.download(legacyDocument.id, rrhhUser());
+      expect(downloaded).toMatchObject({ kind: "buffer", fileName: "dni.pdf" });
+      expect((downloaded as { buffer: Buffer }).buffer.toString()).toBe("%PDF-legacy");
+    } finally {
+      await holder.employee.update({ where: { id: minimalId }, data: { firstName: "Juan" } });
+    }
   });
 
   it("los datos faltantes se completan después sin inconsistencias, y se pueden volver a vaciar sin chocar con otros legajos sin CUIL", async () => {

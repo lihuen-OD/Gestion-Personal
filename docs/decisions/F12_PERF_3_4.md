@@ -42,13 +42,34 @@ Ya no se guarda. Antes se subía con un `setTimeout` posterior al commit (no dur
 - **Política:** sólo un primary `NEON_OBJECT_STORAGE` genera job, siempre hacia `GOOGLE_DRIVE`. Un primary Drive, Local o Cloudinary no se re-archiva.
 - **Claim:** `findFirst` + `updateMany` condicional (PENDING vencido o PROCESSING con lease vencido). Bajo concurrencia sólo un worker gana. El lease dura 2 min y cada claim suma un intento.
 - **Fencing:** `complete`/`retry`/`fail` exigen el `attemptCount` del claim. Un worker cuyo lease venció y fue reclamado ya no puede cerrar el job.
-- **Idempotencia en Drive:** la copia lleva `appProperties.sourceStorageFileId` y `checksum`. Antes de descargar, el worker busca una copia existente (`findGoogleDriveArchiveCopy`), de modo que un reclaim tras un upload sin cerrar no duplica la copia.
+- **Idempotencia en Drive:** la copia lleva `appProperties.sourceStorageFileId`, `checksum` y `archiveRootId` (la raíz de Drive del entorno). Antes de descargar, el worker busca una copia existente (`findGoogleDriveArchiveCopy`) con el mismo origen **y la misma raíz**, de modo que un reclaim tras un upload sin cerrar no duplica la copia, y una copia de otro entorno (misma service account) o de una raíz anterior nunca se reutiliza.
 - **Integridad:** antes de subir, verifica el SHA-256 del objeto descargado contra `StorageFile.checksum`.
 - **Reintentos:** backoff `5 s·2^(n-1)` con techo de 1 h y 20 % de jitter. Con 12 intentos cubre unas 2,5 h de caída de Drive. Luego queda `FAILED`.
 - **Errores terminales**, sin reintento: target no soportado, origen ilegible, origen `DELETED` y checksum distinto. Un error desconocido se reintenta, y su mensaje no se persiste.
 - **Drive no configurado:** el worker no reclama nada. Los jobs quedan `PENDING` y se archivan cuando Drive vuelva, en vez de agotar sus intentos.
-- **Layout en Drive:** replica la key bajo `attendance-archive/<año>/<mes>/<deviceId>/<requestId>.<ext>`. Las fichadas históricas siguen en `storage-sistema/fichadas/<año>/<mes>/<día>/`, de modo que quien navegue Drive ve dos árboles; unificarlos es una decisión de producto pendiente.
+- **Layout en Drive:** humano, ver "Layout humano en Drive" más abajo. Hasta esa etapa replicaba la key bajo `attendance-archive/<año>/<mes>/<deviceId>/<requestId>.<ext>`; las copias ya hechas con ese layout y las fichadas históricas con primary Drive (`storage-sistema/fichadas/...`) no se mueven.
 - **FK:** `sourceStorageFileId` es `ON DELETE RESTRICT`. El sistema nunca borra físicamente un `StorageFile` (borrado lógico `DELETED`).
+
+## Layout humano en Drive (2026-11-13, `feat/storage-human-organization`)
+
+Principio: **Neon técnico, Drive humano**. La key primaria en Neon no cambia (`attendance/<año>/<mes>/<deviceId>/<requestId>.<ext>`: unicidad, idempotencia y trazabilidad). Sólo cambia dónde y con qué nombre queda la copia/archivo en Google Drive. La separación de entornos es por `GOOGLE_DRIVE_ROOT_FOLDER_ID` (DEV `Gestion Personal - DEV`, PROD `Gestion Personal - PRODUCCION`); la misma service account puede servir a ambos porque la idempotencia está acotada por `archiveRootId`.
+
+```
+<GOOGLE_DRIVE_ROOT_FOLDER_ID>/
+├── Legajos/<legajo> - <Nombre> <Apellido>/<carpeta por categoría>/AAAA-MM-DD_<Tipo>_<Nombre-Apellido>_<6 hex>.<ext>
+└── Fichadas/<AAAA>/<MM> - <Mes>/<legajo> - <Nombre> <Apellido>/AAAA-MM-DD_HH-mm_<INGRESO|SALIDA>_<requestId 6>.<ext>
+```
+
+- **Sólo datos básicos del legajo** (legajo, nombre, apellido) más fecha/tipo de la fichada o la categoría del documento. Nunca puesto, empresa, establecimiento, sector, centro de costo ni dispositivo: funciona con un legajo de alta mínima.
+- **Hora argentina** (`argentinaDateParts`) para año, mes, día y hora: una fichada de las 23:30 del último día del mes queda en ese mes. El nombre del mes sale de una tabla fija, no de la configuración regional de Node.
+- **Carpetas**: conservan espacios, acentos y Ñ (`safeDriveFolderName`: quita control y `\ / : * ? " < > |`). **Archivos**: ASCII portable (`José Peña` → `Jose-Pena`).
+- **Fichadas**: la copia la arma `storageArchive.worker` desde relaciones reales: `StorageArchiveJob → StorageFile → AttendancePunch` (FK `photoFileId`) `→ Employee`; tipo `AttendancePunch.type` (`INGRESO`/`SALIDA`), instante `AttendancePunch.timestamp`, sufijo de `StorageFile.metadata.requestId`. Fotografía histórica por mes: la carpeta del empleado lleva el nombre vigente al archivar. Si la evidencia no tiene fichada (dato legacy/inconsistente), la copia va a `Fichadas/_Sin vincular/<AAAA>/<MM - Mes>/[<empleado>/]`, se loguea `STORAGE_ARCHIVE_UNLINKED` (sin datos personales) y el job queda `COMPLETED` con `lastErrorCode = STORAGE_ARCHIVE_UNLINKED`, consultable. Una fichada normal nunca termina ahí.
+- **Documentos de legajo** (primary Drive, dentro del request como antes): `createDocument` arma la ubicación con `storagePathBuilder.employeeDocument`. La carpeta del empleado en `Legajos/` se identifica por `appProperties.employeeId`: si cambian nombre o legajo se reutiliza y se renombra, sin duplicarla. El nombre guardado (`StorageFile.fileName`) es el humano; el original del usuario queda en `StorageFile.originalFileName` y en `EmployeeDocument.fileName`, que es el que usan las descargas. El sufijo aleatorio evita colisiones sin consultar Drive. Si los documentos fueran a Neon/local, la key técnica sería `legajos/<employeeId>/<categoría>/<nombre>` (sin `storage-sistema`).
+- **Carpeta por categoría** (`DocumentCategory.kind`, salvo dos reglas por nombre que se evalúan antes): nombre con "domicilio" → Domicilio; nombre con "conducir"/"carnet" → Transporte; PERSONAL → Documentos personales; LABORAL y LEGAL → Contratos; MEDICA → Certificados; NOVEDAD → Licencias; TRANSPORTE → Transporte; CAPACITACION → Estudios; LIQUIDACION → Liquidaciones; OTRO o desconocido → Otros. Antes se clasificaba por `DocumentCategory.code` (`DOC-001`…), por lo que casi todo caía en `otros`.
+- **Compatibilidad**: ninguna lectura reconstruye rutas; todo archivo existente se resuelve por `StorageFile.storageProvider` + `storageKey` (en Drive, el id del archivo). Cambiar el layout o el nombre de un empleado no rompe nada guardado.
+- **Sin migración Prisma**: todos los datos ya existían.
+- **Operación**: `GOOGLE_DRIVE_ROOT_FOLDER_ID` y la caché de carpetas son por proceso; tras cambiar la raíz o mandar carpetas a la papelera hay que reiniciar el backend.
+- **Limpieza de DEV** (inventario, reencolado de jobs Neon → raíz nueva, borrado coherente de documentos de prueba, papelera de la raíz vieja): etapa separada, con autorización explícita, respaldo y script con guardas. No forma parte de este cambio.
 
 ## Validación
 
