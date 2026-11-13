@@ -4,8 +4,8 @@ import { requireParam } from "../../shared/http/params";
 // Etapa 4 (NOVELTY_COVERAGE_ENGINE.md §12): una novedad aprobada ya cambia
 // totales (cobertura), así que sus mutaciones limpian todas las cachés que
 // exponen la contabilidad de horas (grillas, resumen, dashboard, cierres).
-import { clearWorkedTimeDerivedReadCaches } from "../time-entries/workedTimeReadCaches";
-import { clearNoveltiesReadCaches, noveltiesListCache } from "./novelties.cache";
+import { noveltiesListCache } from "./novelties.cache";
+import { clearNoveltyCoverageReadCaches } from "./noveltyCoverageReadCaches";
 import type { ListNoveltiesQuery } from "./novelties.schemas";
 import { noveltiesService } from "./novelties.service";
 
@@ -25,34 +25,30 @@ export const noveltiesController = {
 
   create: (async (req, res) => {
     const items = await noveltiesService.create(req.body, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.status(201).json({ data: items });
   }) satisfies RequestHandler,
 
   approve: (async (req, res) => {
     const item = await noveltiesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
-    clearNoveltiesReadCaches();
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   approveMany: (async (req, res) => {
     const items = await noveltiesService.approveMany(req.body.ids, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches(); clearWorkedTimeDerivedReadCaches(); res.json({ data: items });
+    clearNoveltyCoverageReadCaches(); res.json({ data: items });
   }) satisfies RequestHandler,
 
   reject: (async (req, res) => {
     const item = await noveltiesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   remove: (async (req, res) => {
     const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
-    clearNoveltiesReadCaches();
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,
 
@@ -69,8 +65,7 @@ export const noveltiesController = {
 
   resolveCoverageDay: (async (req, res) => {
     const day = await noveltiesService.resolveCoverageDay(requireParam(req, "id"), requireParam(req, "date"), req.body, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: day });
   }) satisfies RequestHandler,
 };

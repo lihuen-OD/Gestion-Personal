@@ -54,3 +54,19 @@ export async function loadLaborMovementsByEmployee(db: Pick<PrismaTransactionCli
   for (const row of rows) result.get(row.employeeId)!.push({ type: row.type, effectiveFrom: row.effectiveFrom });
   return result;
 }
+
+/**
+ * Fechas cuya relación laboral puede cambiar al agregar un movimiento
+ * (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.2): desde la fecha del
+ * movimiento hasta el día anterior al siguiente movimiento ya registrado. Si
+ * pasa a ser el primero, también cambian las fechas anteriores (antes del
+ * primer ALTA = sin relación): ventana abierta hacia atrás. `null` = sin límite.
+ */
+export function laborMovementAffectedWindow(previous: LaborMovementRef[], added: LaborMovementRef): { from: Date | null; to: Date | null } {
+  const addedKey = calendarDateKey(added.effectiveFrom);
+  const keys = previous.map((movement) => calendarDateKey(movement.effectiveFrom));
+  const hasEarlier = keys.some((key) => key < addedKey);
+  const later = keys.filter((key) => key > addedKey).sort()[0];
+  const to = later ? new Date(Date.parse(`${later}T00:00:00.000Z`) - 86_400_000) : null;
+  return { from: hasEarlier ? added.effectiveFrom : null, to };
+}

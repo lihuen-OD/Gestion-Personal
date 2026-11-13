@@ -1,4 +1,7 @@
 import { Prisma } from "@prisma/client";
+import { prisma } from "../../shared/prisma/client";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
@@ -156,6 +159,21 @@ export function assertCoverageConfigCoherent(config: CoverageConfig) {
   if (config.coverageOnHoliday == null) coverageConfigError("Indicá qué pasa si ese día es feriado.");
 }
 
+/** Campos que cambian lo que una novedad cubre (y lo que se snapshotea en cada día). */
+const COVERAGE_FIELDS = [
+  "coverageMode",
+  "coverageFixedMinutes",
+  "coverageDayRule",
+  "coverageWeekdays",
+  "coverageOnDayOff",
+  "coverageOnHoliday",
+  "coverageAppliesSpecialHours",
+  "coverageCountsTowardTotal",
+  "realWorkCompatibility",
+] as const;
+
+const NOVELTY_TYPE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
 function pick<T>(patch: T | undefined, current: T): T {
   return patch !== undefined ? patch : current;
 }
@@ -228,9 +246,21 @@ export const noveltyTypesService = {
       allowsHours: pick(data.allowsHours, current.allowsHours),
       allowsDateRange: pick(data.allowsDateRange, current.allowsDateRange),
     });
-    const item = await execute(() => noveltyTypesRepository.update(id, data));
+    // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): un cambio en lo que la
+    // novedad cubre recalcula, en la misma transacción, todas las novedades de
+    // ese tipo en períodos abiertos (los protegidos no se tocan y se informan).
+    const coverageChanged = COVERAGE_FIELDS.some((field) => data[field] !== undefined && JSON.stringify(data[field]) !== JSON.stringify(current[field]));
+    const { item, coverage } = coverageChanged
+      ? await execute(() => prisma.$transaction(async (tx) => {
+          await lockNoveltyCoverageGlobally(tx);
+          const updated = await noveltyTypesRepository.update(id, data, tx);
+          const recalculated = await recalculateNoveltyCoverage(tx, { noveltyTypeIds: [id], includeNoneTypes: true }, { source: "NOVELTY_TYPE_CHANGED", label: `cambio de la configuración del tipo ${updated.code} - ${updated.name}` });
+          return { item: updated, coverage: recalculated };
+        }, NOVELTY_TYPE_TRANSACTION_OPTIONS))
+      : { item: await execute(() => noveltyTypesRepository.update(id, data)), coverage: null };
     invalidateNoveltyTypesCache();
     await auditChange("UPDATE", item, audit);
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return item;
   },
 };

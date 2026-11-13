@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 4** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad, ver §9 y §12). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 5** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos, ver §9, §12 y §13). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -120,7 +120,7 @@ El motor no recibe trabajo real: una fila de Trámite bancario representa 240 au
 ### 6.2 Resoluciones manuales y recálculo
 
 - Una resolución (`CONFIRMED_ZERO` / `SET_BASE_MINUTES`) guarda autor, fecha, nota obligatoria, minutos base resueltos y los minutos reales del día al resolver (`loadRealWorkedMinutesOnDate`, mismo criterio que la grilla).
-- El recálculo **conserva** la resolución mientras la pregunta siga abierta: mismo outcome `SCHEDULE_UNRESOLVED` con el mismo motivo, o un día que sigue `COVERED` (resoluciones de conflicto con trabajo real, etapa 4).
+- El recálculo **conserva** la resolución mientras responda a la misma incertidumbre: mismo outcome `SCHEDULE_UNRESOLVED` con el mismo motivo, o un día que sigue `COVERED` (resoluciones de conflicto con trabajo real, etapa 4); en ese caso, unas horas base indicadas (`SET_BASE_MINUTES`) sólo siguen valiendo si no cambió la jornada esperada contra la que se validaron (etapa 5, §13.4).
 - Si los datos ya permiten calcular el día (se registró el ALTA o el turno), **manda la evidencia**: la resolución se descarta y el recálculo lo informa (`droppedResolutions`).
 - Si cambia el motivo de revisión, el día vuelve a `PENDING`.
 - El multiplicador se vuelve a aplicar sobre los minutos resueltos.
@@ -128,8 +128,9 @@ El motor no recibe trabajo real: una fila de Trámite bancario representa 240 au
 
 ### 6.3 Persistencia (`persistNoveltyCoverageWithin`)
 
-- Idempotente, dentro de la transacción del llamador:
-  - borra las filas de las novedades indicadas y las vuelve a crear con el motor, conservando las resoluciones válidas;
+- Idempotente y **por diferencia** (etapa 5), dentro de la transacción del llamador:
+  - calcula con el motor, conservando las resoluciones válidas, y sólo borra/crea las filas que cambiaron (una fila idéntica no se reescribe y conserva su `calculatedAt`);
+  - `window` opcional: acota el cálculo y la escritura a esas fechas; las filas de afuera no se leen ni se tocan;
   - una novedad RECHAZADA queda sin filas;
   - toda otra novedad, de cualquier modo (también `NONE`), tiene una fila por día.
 - **Fechas (decisión del usuario, 2026-11-13):** `toDate` nulo es **exactamente un día** (`fromDate`), para cualquier tipo. `allowsDateRange = true` significa que el tipo **puede** abarcar varias fechas, no que deba. `fromDate = toDate` también es un único día; `toDate > fromDate` es un rango. Nunca un rango abierto infinito. El mismo criterio aplica al bloqueo de nueva carga (`findBlockingNovelty`).
@@ -144,12 +145,12 @@ El motor no recibe trabajo real: una fila de Trámite bancario representa 240 au
   - 366 días por novedad que registra tiempo (`toDate` obligatorio si el tipo admite rango);
   - 3660 días para un tipo sin tiempo;
   - 20 000 días-legajo por operación.
-- **Concurrencia:** lock transaccional por legajo (`novelty-coverage:<employeeId>`) más el lock compartido de cierre por legajo y período (`findProtectedClosurePeriods`). Los escritores de francos y convocatorias toman hoy el lock por día; la etapa 5 los hará recalcular la cobertura dentro de su transacción.
+- **Concurrencia:** lock global de cobertura compartido, lock transaccional por legajo (`novelty-coverage:<employeeId>`) y lock compartido de cierre por legajo y período (`findProtectedClosurePeriods`), en ese orden (§13.6).
 - **Períodos protegidos** (ENVIADO, APROBADO, CORRECCION_PENDIENTE). Sólo cuentan para tipos que registran tiempo:
   - `REJECT` (un usuario sin corrección): `409 PERIOD_CLOSED`.
   - `ALLOW_CORRECTION` (RRHH con motivo): se escribe y se audita el motivo.
-  - `SKIP` (recálculo automático y reconciliación): no se tocan esos días y se informan.
-  - Snapshots de cierre: desde la etapa 4 el snapshot (V2) incluye la cobertura y se arma al enviar el cierre, que exige no tener días en revisión. Una mutación de cobertura sobre un período no protegido no reconstruye el snapshot ya guardado de un cierre devuelto: se rehace en el próximo envío. La reconstrucción automática llega con los disparadores de la etapa 5.
+  - `SKIP` (recálculo automático y reconciliación): esos días no se calculan (la falta de historia de un período cerrado no bloquea el cambio) ni se tocan, y se informan.
+  - Snapshots de cierre: desde la etapa 4 el snapshot (V2) incluye la cobertura y se arma al enviar el cierre, que exige no tener días en revisión. Desde la etapa 5, el recálculo automático reconstruye los snapshots de los cierres no protegidos afectados (§13.5). Una mutación directa de una novedad (alta, aprobación, rechazo, resolución) todavía no reconstruye el snapshot de un cierre devuelto: se rehace en el próximo envío (deuda, §13.9).
 
 ### 6.4 Operaciones de una novedad
 
@@ -269,9 +270,9 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 |---|---|---|
 | 1 | Modelo, migración, configuración y validación del tipo, `Novelty.quantityMinutes` | **Implementada y aprobada** (2026-11-13) |
 | 2 | `expectedWorkday` (núcleo puro + cargador batch), regla P3 | **Implementada y aprobada** (2026-11-13) |
-| 3 | Motor, persistencia de días, preview, resolución, guard de cierres, relación laboral | **Implementada** (2026-11-13), pendiente de revisión |
-| 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | **Implementada** (2026-11-13), pendiente de revisión |
-| 5 | Recálculo por reglas, convocatorias, francos, turnos, regímenes y configuración del tipo | Pendiente |
+| 3 | Motor, persistencia de días, preview, resolución, guard de cierres, relación laboral | **Implementada y aprobada** (2026-11-13) |
+| 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | **Implementada y aprobada** (2026-11-13) |
+| 5 | Recálculo automático por eventos: relación e historia laboral, turnos, plantillas, regímenes, francos, convocatorias, reglas y configuración del tipo (§13) | **Implementada** (2026-11-13), pendiente de revisión |
 | 6–8 | Grilla frontend, Tipos de Novedad, carga reactiva con vista previa | Pendiente |
 | 9 | Finnegans (`value1` derivado de la cobertura) | Pendiente |
 | 10 | QA y cierre | Pendiente |
@@ -294,7 +295,7 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 - **P4 (deuda documentada):** las alertas consideran feriado una regla FERIADO aunque tenga alcance acotado (`holidayDatesInRange`), mientras el motor de multiplicadores y la jornada esperada de Novedades (§7.3) respetan el alcance. No se cambia en este rediseño.
 - **Deuda menor (etapa 2):** `holidayWorkAssignment.schemas.ts` acepta horarios fuera de rango (`99:99`). La jornada esperada los trata como desconocidos y no los convierte en minutos; validar el rango en el schema queda como mejora aparte.
 - **Etapa 3 (resuelto, §5.1 y §6):** migración aditiva para `SHIFT_ASSIGNMENTS_OVERLAP`, `OUTSIDE_EMPLOYMENT` y `EMPLOYMENT_HISTORY_UNRESOLVED`; error explícito para la historia faltante; cobertura acotada a la relación laboral.
-- **Etapa 5 (pendiente):** recálculo automático al cambiar francos, convocatorias, reglas especiales, turnos, regímenes, movimientos de alta y baja y la configuración del tipo. Hasta entonces, un cambio en esos datos no actualiza la cobertura ya persistida (se corrige con la reconciliación o recreando la novedad). Los escritores de francos y convocatorias tienen que tomar también el lock de cobertura del legajo.
+- **Etapa 5 (resuelto, §13):** recálculo automático en la transacción de cada evento que cambia una fuente del motor. Deudas que quedan: §13.9.
 - **Otros lectores con rango abierto (fuera del alcance de la etapa 3):** la grilla (`noveltyCoversDay`), el listado por período, la exención de inactividad y falta de ingreso, y el dashboard todavía tratan `toDate` nulo de un tipo con rango como vigente abierto. Hay que alinearlos con la regla de un solo día en la etapa que toque cada uno (grilla: etapa 6). Finnegans ya usa sólo `fromDate`.
 - **Incidente (etapa 3, 2026-11-13): conexión accidental de tests unitarios a Neon, sin escrituras confirmadas.**
   - **Qué pasó:** al pasar las mutaciones de novedades a transacciones, `novelties.service.test.ts` abrió Prisma sin mockear el cliente y usó la `DATABASE_URL` del `backend/.env`. El usuario la confirmó como **NEON** (endpoint pooler de desarrollo, base `neondb`). No se documentan host completo, usuario, contraseña ni parámetros de conexión.
@@ -426,3 +427,100 @@ Una consulta de cobertura por consumidor y lote, nunca por legajo, día ni noved
 - **Cierre:** +1 consulta por envío, en la transacción.
 - **Resumen:** +1 consulta. Si hay cobertura que cuenta, +3 más (trabajo y francos sólo de esos legajos), porque la cobertura depende del trabajo real de cada día y no se puede sumar en SQL.
 - **Dashboard:** sin cambios.
+
+## 13. Recálculo automático por eventos (etapa 5)
+
+La cobertura persistida se mantiene consistente sola: todo cambio de una fuente que lee el motor recalcula, **en su misma transacción**, sólo las novedades y fechas que puede alterar. La reconciliación (§6.5) queda para datos históricos.
+
+### 13.1 Auditoría de eventos (2026-11-13)
+
+Fuentes que leen `expectedWorkday` y el motor: asignaciones de turno (+ plantilla), francos, convocatorias, régimen vigente (+ su tipo), reglas FERIADO (con historia laboral si tienen alcance), movimientos de alta y baja, reglas de Horas Especiales (multiplicador) y configuración del tipo de novedad.
+
+| Fuente | Escritor (único) | Antes de la etapa 5 |
+|---|---|---|
+| `LaborMovement` (ALTA/BAJA) | `employeesService.createLaborMovement` → `employeesRepository.createLaborMovement` | Transacción propia; no hay edición ni borrado de movimientos. El alta del legajo crea los iniciales (sin novedades todavía: no hay nada que recalcular). |
+| Historia laboral (puesto, centro de costo, empresas) y alcance de puesto | `laborHistoryService.recordEmployeeChangesWithin` / `recordPositionScopeChangeWithin` (edición del legajo y del puesto, eliminaciones controladas) | Transaccional, con guard de cierres. Nunca reinterpretó el multiplicador de horas ya cargadas (deuda previa, §13.9). |
+| `ShiftAssignment` | `shiftAssignmentService.assign/update/remove` | **Sin transacción.** |
+| `ShiftTemplate` (horario, minutos, nocturno, estado) | `workforceService.updateShiftTemplate` / `removeShiftTemplate` (inactivación) | Update sin transacción; la inactivación, Serializable. Crear una plantilla no afecta a nadie. |
+| `EmployeeWorkRegime` y `WorkRegime.kind` | `workRegimesService.assign/updateAssignment/closeAssignment` y `update` | **Sin transacción.** El estado del régimen no lo lee el motor. |
+| `EmployeeDayOff` | `employeeDayOffService.save` | Transacción con lock por día, guard y snapshot. |
+| `HolidayWorkAssignment` | `holidayWorkAssignmentService.save` | Transacción con lock por día y reinterpretación de horas de la fecha. |
+| `DoubleHourRule` (+ fechas y personas) | `workforceService.createDoubleRule/updateDoubleRule`, eliminación (`planDoubleRuleDeletionWithin`) | Transacción con `reinterpretSpecialHours`. |
+| `NoveltyType` (cobertura) | `noveltyTypesService.update` | Sin transacción. |
+
+### 13.2 Matriz evento → alcance
+
+| Evento | Legajos | Fechas | Novedades | Lock |
+|---|---|---|---|---|
+| ALTA/BAJA | el legajo | desde el movimiento hasta el día anterior al siguiente movimiento; abierta hacia atrás si pasa a ser el primero (`laborMovementAffectedWindow`) | con tiempo | legajo, antes de escribir |
+| Cambio de historia laboral | el legajo | desde `effectiveFrom` | con tiempo | legajo, antes que los de cierre |
+| Cambio de alcance de un puesto | ocupantes desde `effectiveFrom` | desde `effectiveFrom` | con tiempo | ocupantes, antes que los de cierre |
+| Asignar / editar / habilitar / quitar un turno | el legajo (o los del lote) | vigencia anterior ∪ nueva (`coverageWindowOf`) | con tiempo | legajos |
+| Cambio de plantilla | quienes la tienen asignada (cualquier estado) o convocada | unión de esas vigencias / fechas | con tiempo | global exclusivo |
+| Asignar / editar / cerrar un régimen | el legajo | vigencia anterior ∪ nueva | con tiempo | legajo |
+| Cambio del tipo de un régimen | quienes lo tienen asignado | unión de sus vigencias | con tiempo | global exclusivo |
+| Franco | quienes cambiaron | ese día | con tiempo | día → legajos |
+| Convocatoria a feriado | **todos** (el primer convocado restringe el FERIADO) | ese día | con tiempo | día → global exclusivo |
+| Regla de Horas Especiales (alta, edición, inactivación, eliminación) | todos (el motor decide el alcance) | ventana antes ∪ después y sólo novedades con alguna fecha que la regla toca | FERIADO: con tiempo; otra regla: sólo tipos que aplican multiplicadores | global exclusivo |
+| Configuración de cobertura del tipo | todos | todo el rango de cada novedad | todas las del tipo (también `NONE`) | global exclusivo |
+
+Sólo la observación de una asignación de turno, o campos del tipo que no son de cobertura (`timeEntryBehavior`, Finnegans, roles), no recalculan.
+
+### 13.3 Función central
+
+`recalculateNoveltyCoverage(tx, scope, reason, options)` en `backend/src/modules/novelties/noveltyCoverageRecalculation.ts`, la única para todos los módulos:
+
+1. toma los locks (§13.6) y busca las novedades no rechazadas del alcance (`employeeIds`, `noveltyIds`, `noveltyTypeIds`, `from`/`to`, `onlySpecialHourTypes`, `includeNoneTypes`, `touchesDate`);
+2. las recalcula en tandas de hasta 10 000 días-legajo con `persistNoveltyCoverageWithin` (modo `SKIP`, ventana `from`/`to`), por diferencia;
+3. el motor conserva o descarta las resoluciones manuales (§13.4);
+4. reconstruye los snapshots de los cierres no protegidos con días cambiados (`NOVELTY_COVERAGE_CHANGED`), salvo `rebuildSnapshots: false` cuando el mismo evento los reconstruye después (francos, convocatorias, reglas);
+5. devuelve un resumen auditable: novedades y legajos alcanzados y cambiados, días cambiados, días en revisión, resoluciones descartadas (con su detalle), pares protegidos no reinterpretados y snapshots reconstruidos.
+
+`auditNoveltyCoverageRecalculation` (después del commit) o `auditNoveltyCoverageRecalculationWithin` (flujos que auditan dentro de la transacción) registran **un** resumen por evento ("Se recalculó la cobertura de 12 novedades de 8 empleados por cambio de la regla Domingos (40 días)."), uno por resolución descartada y uno por snapshot reconstruido. Nunca un registro por día ni ids técnicos en el texto.
+
+### 13.4 Resoluciones manuales
+
+- **Se conserva** (con autor, fecha y nota) mientras responda a la misma incertidumbre: `SCHEDULE_UNRESOLVED` con el mismo motivo; o el día sigue `COVERED` y, si se indicaron horas base, la jornada esperada no cambió. Un `CONFIRMED_ZERO` sobre un día cubierto ("la novedad no cubre este día") no depende de la cantidad del tipo y se conserva. El multiplicador se vuelve a aplicar sobre los minutos resueltos.
+- **Se descarta** cuando la evidencia ya responde la pregunta (se registró el ALTA o el turno) o cambió la pregunta (otro motivo, otra jornada esperada, el día dejó de estar cubierto). Queda auditada con la resolución anterior completa. No resucita si después la evidencia vuelve a faltar: el día vuelve a `PENDING`.
+- **Cambio del trabajo real:** no se persiste nada; la contabilidad lo detecta al leer (`RESOLUTION_OUTDATED`, §12.2).
+
+### 13.5 Períodos protegidos y snapshots
+
+- Fuente canónica: `findProtectedClosurePeriods` (ENVIADO, APROBADO, CORRECCION_PENDIENTE). El recálculo automático nunca modifica la cobertura de esos pares: no la calcula, no la escribe y los informa en el resumen y la auditoría.
+- El evento no falla por un período protegido (se guarda el cambio, igual que la reinterpretación de Horas Especiales y los francos). Las reglas de bloqueo propias de cada evento siguen vigentes (p. ej. un franco en un período cerrado exige RRHH con motivo; un cambio de historia laboral que alcanza un cierre protegido se rechaza).
+- Snapshots: se reconstruyen sólo los de cierres no protegidos con algún día cambiado; los protegidos nunca. Cuando el evento ya reconstruye un cierre (francos, convocatoria, regla), la cobertura se recalcula antes y ese snapshot no se reconstruye dos veces.
+- Falta de historia laboral para evaluar una regla con alcance en un día de un período abierto: `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` y el cambio completo se revierte (mismo criterio que la reinterpretación de horas). Nunca cae en silencio a ×1.
+
+### 13.6 Locks y concurrencia
+
+Orden único, dentro de la transacción (evita deadlocks):
+
+1. día del legajo (`employeeDayLock`, francos y convocatorias);
+2. **cobertura global**: `novelty-coverage:global`, compartido para todo escritor de cobertura (alta, aprobación, rechazo, borrado y resolución de novedades, y eventos de un legajo); **exclusivo** al empezar un evento que alcanza a cualquier legajo (regla, plantilla, tipo de régimen, configuración del tipo, convocatoria);
+3. cobertura por legajo (`novelty-coverage:<employeeId>`, orden estable), tomado **antes de escribir la fuente**;
+4. cierres (`findProtectedClosurePeriods`, compartido).
+
+Así un alta de novedad y un cambio de turno del mismo legajo nunca se intercalan: el segundo espera al commit del primero y lee su resultado. La persistencia toma el lock global compartido antes de leer la configuración del tipo.
+
+Residual documentado: una eliminación controlada que retira datos laborales de varios legajos en la misma transacción toma el lock de cobertura de cada legajo después de los cierres del anterior. Un interbloqueo con un envío de cierre concurrente lo detecta PostgreSQL y aborta una de las dos (sin escrituras parciales).
+
+Transacciones nuevas (timeout 30 s): asignación de turno, régimen (asignación, edición, cierre y cambio de tipo), plantilla, configuración del tipo y movimiento laboral. Todas son atómicas: si el recálculo falla, la fuente no cambia.
+
+### 13.7 Cachés
+
+- Backend: `clearNoveltyCoverageReadCaches()` (`novelties/noveltyCoverageReadCaches.ts`) = cachés derivadas de horas + Novedades. La llaman, después del commit, los controllers de novedades, francos, convocatorias, asignaciones de turno, regímenes, plantillas, reglas, tipos de novedad, legajo (edición y movimientos), puestos y eliminaciones controladas.
+- Frontend: `NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES` (`services/cache/cachePolicy.ts`) = familias de horas + `novelties`; la usan novedades, francos, convocatorias, reglas, plantillas, asignaciones de turno, regímenes, tipos de novedad y legajo (edición y movimientos).
+
+### 13.8 Rendimiento
+
+- Nunca una consulta por legajo ni por día: cada tanda hace consultas fijas (novedades del alcance, contexto de jornada por ventana, movimientos, motor de Horas Especiales en lote, filas existentes de la ventana, protegidos, escritura en lotes). Verificado en la integración: el mismo recálculo hace la misma cantidad de consultas para 2 que para 8 legajos.
+- Ventana por evento: un franco recalcula un día; un turno, su vigencia; una regla, sólo novedades con alguna fecha alcanzada.
+- Escritura por diferencia: sólo filas que cambian.
+- Un evento global (regla sin fin, cambio de tipo muy usado) recalcula todas las novedades alcanzadas en tandas dentro de la transacción de 30 s. Si el volumen real lo excede, la salida es un job (como la reconciliación), no implementado: no hay evidencia de que haga falta.
+
+### 13.9 Fuera de alcance y deudas
+
+- Un cambio de historia laboral no reinterpreta el multiplicador de las horas **ya cargadas** (deuda previa, no introducida acá). La cobertura de novedades sí se recalcula.
+- Cambios de estructura organizacional que no pasan por la historia laboral (p. ej. mover un sector) no disparan recálculo; tampoco reinterpretan horas hoy.
+- Una mutación directa de una novedad no reconstruye el snapshot de un cierre devuelto (§6.3); se rehace en el próximo envío.
+- Grilla frontend, UX de tipos, UX de carga y Finnegans: etapas 6 a 9.

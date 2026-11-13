@@ -37,7 +37,10 @@ export type ClosureSnapshotRecalculation =
   // fichadas (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   | { reason: "MANUAL_HOURS_CONFLICT_RESOLVED"; date: string }
   // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
-  | { reason: "SPECIAL_HOUR_RECONCILIATION" };
+  | { reason: "SPECIAL_HOUR_RECONCILIATION" }
+  // Cambió una fuente de la cobertura de novedades (turno, franco, regla,
+  // relación laboral, configuración del tipo...): docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.
+  | { reason: "NOVELTY_COVERAGE_CHANGED"; source: string; label: string };
 
 export type ClosureSnapshotTarget = { id: string; employeeId: string; period: string; snapshot: Prisma.JsonValue | null };
 

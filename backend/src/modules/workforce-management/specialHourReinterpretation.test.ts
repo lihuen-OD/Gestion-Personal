@@ -7,6 +7,27 @@ import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHo
 import { rebuildClosureSnapshots } from "./closureSnapshot";
 import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates, type RuleCalendar } from "./specialHourReinterpretation";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage, emptyNoveltyCoverageRecalculation } from "../novelties/noveltyCoverageRecalculation";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 /**
  * docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15: una regla de Hora
  * Especial reinterpreta las horas ya cargadas. El resultado depende sólo del
@@ -696,5 +717,41 @@ describe("D-5 — historia laboral insuficiente (ORG_LOCATION_REORGANIZATION.md 
     expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
     expect(world.entries[0]!.appliedMultiplier).toBe(1);
     expect(world.closures[0]!.status).toBe("APROBADO");
+  });
+});
+
+describe("etapa 5 — cobertura de novedades en la misma reinterpretación (NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+  beforeEach(() => {
+    world = emptyWorld();
+    db = fakeDb();
+  });
+
+  it("un FERIADO recalcula la cobertura de todo tipo con tiempo en sus fechas, antes de reinterpretar las horas; sólo se rehacen los snapshots que faltan", async () => {
+    const rule = feriado();
+    world.rules.push(rule);
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "ABIERTO", snapshot: {} });
+    loadHours(JUAN, OCT_3, 8);
+    const order: string[] = [];
+    vi.mocked(recalculateNoveltyCoverage).mockImplementationOnce(async (_db, _scope, reason) => (order.push("coverage"), { ...emptyNoveltyCoverageRecalculation(reason), changedPairs: [{ employeeId: ANA, period: "2026-10" }] }));
+    db.timeEntry.findMany.mockImplementationOnce(async () => (order.push("hours"), world.entries.map((row) => ({ ...row }))));
+
+    const result = await reinterpret(null, { ...rule, kind: "FERIADO" } as never);
+
+    expect(order).toEqual(["coverage", "hours"]);
+    const [, scope, reason, options] = vi.mocked(recalculateNoveltyCoverage).mock.calls[0]!;
+    expect(scope).toMatchObject({ from: OCT_3, to: OCT_3, onlySpecialHourTypes: false });
+    expect(scope.touchesDate!("2026-10-03")).toBe(true);
+    expect(scope.touchesDate!("2026-10-04")).toBe(false);
+    expect(reason).toEqual({ source: "SPECIAL_HOUR_RULE_CHANGED", label: "cambio de la regla Feriado 3 de octubre" });
+    expect(options).toEqual({ rebuildSnapshots: false });
+    expect(rebuildNoveltyCoverageSnapshots).toHaveBeenCalledWith(db, [{ employeeId: ANA, period: "2026-10" }], reason, result.rebuiltClosures);
+    expect(result.noveltyCoverage).toBeDefined();
+  });
+
+  it("una regla que no es FERIADO (domingo ×2 → ×1,5) sólo alcanza a los tipos que aplican multiplicadores", async () => {
+    const domingo = feriado({ id: "rule-domingo", name: "Domingo", kind: "DOMINGO" as Rule["kind"], recurrenceType: "SEMANAL" as Rule["recurrenceType"], fromDate: OCT_4, toDate: null, weekdays: [0], dates: [] });
+    world.rules.push(domingo);
+    await reinterpret({ ...domingo, multiplier: 2 } as never, { ...domingo, multiplier: 1.5 } as never);
+    expect(vi.mocked(recalculateNoveltyCoverage).mock.calls[0]![1]).toMatchObject({ from: OCT_4, to: null, onlySpecialHourTypes: true });
   });
 });

@@ -23,6 +23,8 @@ import type { EngineScopeHistory, ScopeNodeSnapshot } from "./laborHistory.scope
 
 type Tx = PrismaTransactionClient;
 
+const dateFromKey = (key: DateKey) => new Date(`${key}T00:00:00.000Z`);
+
 export type EmployeeLaborDimension = "POSITION" | "COST_CENTER" | "EMPLOYER";
 
 export const employeeLaborDimensionLabels: Record<EmployeeLaborDimension, string> = {
@@ -161,6 +163,10 @@ export const laborHistoryService = {
     }
     const effective = [...scalarPlans.filter((item) => item.plan.kind !== "NONE"), ...(employerPlan && employerPlan.plan.kind !== "NONE" ? [employerPlan] : [])];
     if (!effective.length) return [];
+    // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): la historia decide el
+    // alcance de reglas y feriados. Lock de cobertura antes que los de cierre.
+    const coverage = await import("../novelties/noveltyCoverageRecalculation");
+    await coverage.lockNoveltyCoverageForEmployees(tx, [employeeId]);
     await assertAffectedClosuresWritable(tx, [{ employeeId, fromKey: effectiveFrom, toKey: null }], effectiveFrom, todayKey);
 
     const result: RecordedHistoryChange[] = [];
@@ -173,6 +179,12 @@ export const laborHistoryService = {
       await applyEmployerPlan(tx, employeeId, employerPlan.value, employerPlan.plan, input.reason, input.createdByUserId);
       result.push(recorded("EMPLOYER", employerPlan.plan, employerPlan.value));
     }
+    const recalculation = await coverage.recalculateNoveltyCoverage(
+      tx,
+      { employeeIds: [employeeId], from: dateFromKey(effectiveFrom) },
+      { source: "LABOR_HISTORY_CHANGED", label: `cambio de datos laborales desde el ${formatArgentinaDate(effectiveFrom)}` },
+    );
+    await coverage.auditNoveltyCoverageRecalculationWithin(tx, recalculation, input.createdByUserId ? { userId: input.createdByUserId } : undefined);
     return result;
   },
 
@@ -197,6 +209,10 @@ export const laborHistoryService = {
     if (plan.kind === "NONE") return null;
     const assignments = await repository.findPositionAssignmentsFrom(tx, input.positionId, input.effectiveFrom);
     const affected = assignments.map((item) => ({ employeeId: item.employeeId, fromKey: item.effectiveFrom > input.effectiveFrom ? item.effectiveFrom : input.effectiveFrom, toKey: item.effectiveTo }));
+    // Etapa 5: cobertura de los ocupantes (lock antes que los de cierre).
+    const coverage = await import("../novelties/noveltyCoverageRecalculation");
+    const occupants = [...new Set(affected.filter((item) => !item.toKey || item.toKey >= item.fromKey).map((item) => item.employeeId))];
+    await coverage.lockNoveltyCoverageForEmployees(tx, occupants);
     await assertAffectedClosuresWritable(tx, affected, input.effectiveFrom, todayKey);
     const period = { reason: input.reason, createdByUserId: input.createdByUserId };
     if (plan.kind === "OPEN") await repository.createScopePeriod(tx, input.positionId, input.nodes, { ...period, effectiveFrom: plan.effectiveFrom, effectiveTo: plan.effectiveTo });
@@ -205,6 +221,12 @@ export const laborHistoryService = {
       await repository.createScopePeriod(tx, input.positionId, input.nodes, { ...period, effectiveFrom: plan.effectiveFrom, effectiveTo: plan.effectiveTo });
     }
     if (plan.kind === "REPLACE") await repository.replaceScopePeriodNodes(tx, plan.periodId, input.nodes, input.reason);
+    const recalculation = await coverage.recalculateNoveltyCoverage(
+      tx,
+      { employeeIds: occupants, from: dateFromKey(input.effectiveFrom) },
+      { source: "LABOR_HISTORY_CHANGED", label: `cambio del alcance de un puesto desde el ${formatArgentinaDate(input.effectiveFrom)}` },
+    );
+    await coverage.auditNoveltyCoverageRecalculationWithin(tx, recalculation, input.createdByUserId ? { userId: input.createdByUserId } : undefined);
     return recorded("POSITION_SCOPE", plan, input.nodes);
   },
 

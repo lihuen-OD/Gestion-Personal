@@ -1366,6 +1366,21 @@ Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcan
 - Roles de carga del tipo (o RRHH). Aplica el multiplicador del motor de Horas Especiales sobre los minutos resueltos y guarda los minutos reales del día.
 - Mismo guard de cierres que la carga.
 
+### Recálculo automático de la cobertura (etapa 5, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §13)
+
+Sin endpoints nuevos ni cambios de forma en las respuestas. Estos endpoints recalculan la cobertura de novedades alcanzada **en su misma transacción** (si el recálculo falla, el cambio no se guarda) y limpian las cachés derivadas:
+
+- `POST /api/employees/:id/labor-movements` (ALTA/BAJA) y `PATCH /api/employees/:id` con cambio de datos laborales;
+- `PATCH /api/positions/:id` con cambio de alcance y las eliminaciones controladas que retiran datos laborales;
+- `POST/PATCH/DELETE /api/shifts/assignments` (asignaciones de turno; ahora transaccionales);
+- `PATCH /api/workforce/shift-templates/:id` (horario, minutos o estado) y `DELETE` cuando la plantilla se inactiva;
+- `POST/PATCH /api/employees/:employeeId/work-regimes` (asignación, edición y cierre de vigencia) y `PATCH /api/work-regimes/:id` cuando cambia el tipo (ahora transaccionales);
+- `PUT /api/employee-day-offs` (francos) y `PUT /api/shifts/holiday-work/assignments` (convocatorias a feriado);
+- alta, edición, inactivación y eliminación de reglas de Horas Especiales (`/api/workforce/double-hour-rules`);
+- `PATCH /api/novelty-types/:id` cuando cambia un campo de cobertura.
+
+Errores nuevos posibles en esos endpoints: `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` si una regla con alcance necesita historia laboral que falta para un día de un período abierto con cobertura que aplica multiplicadores (mismo código y criterio que la reinterpretación de horas). Los períodos enviados o aprobados nunca se reinterpretan: el cambio se guarda y la auditoría informa los períodos no tocados. Los snapshots de cierres no protegidos se reconstruyen con `recalculation.reason = "NOVELTY_COVERAGE_CHANGED"`.
+
 ### Fichador (`clock`, F7)
 
 Módulo `backend/src/modules/clock/` (F7 de `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`, §26): capa de transporte del kiosco sobre el núcleo de fichada de `time-entries` (no tiene servicio propio). Monta el namespace del dispositivo `/api/clock/*`: el enrolamiento de `clock-devices` (`/device/*`, ver "Dispositivos de fichada"), el heartbeat (F9) y las cuatro rutas operativas.

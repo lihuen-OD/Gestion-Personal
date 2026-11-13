@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
 import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
@@ -119,7 +119,7 @@ export const noveltyTypesRepository = {
     throw new Error("noveltyTypesRepository.create: unreachable");
   },
 
-  update(id: string, input: UpdateNoveltyTypeInput) {
-    return prisma.noveltyType.update({ where: { id }, data: input });
+  update(id: string, input: UpdateNoveltyTypeInput, db: PrismaTransactionClient = prisma) {
+    return db.noveltyType.update({ where: { id }, data: input });
   },
 };

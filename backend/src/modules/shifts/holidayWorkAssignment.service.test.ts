@@ -11,6 +11,28 @@ import { holidayWorkAssignmentService } from "./holidayWorkAssignment.service";
 import { reinterpretSpecialHoursOnDates } from "../workforce-management/specialHourReinterpretation";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, emptyNoveltyCoverageRecalculation, rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 vi.mock("./holidayWorkAssignment.repository", () => ({
   holidayWorkAssignmentRepository: {
     findCandidates: vi.fn(),
@@ -278,5 +300,29 @@ describe("holidayWorkAssignmentService.candidates/listByDate — permisos y scop
     await holidayWorkAssignmentService.listByDate(date, rrhh);
 
     expect(repo.findByDate).toHaveBeenCalledWith(date, {});
+  });
+});
+
+describe("holidayWorkAssignmentService.save — cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+  const holiday = new Date("2026-10-12T00:00:00.000Z");
+
+  it("convocar cambia el feriado de toda la fecha: lock global tras el de día, cobertura de esa fecha antes de reinterpretar, y sólo se reconstruyen los snapshots que la reinterpretación no rehízo", async () => {
+    const order: string[] = [];
+    // El lock por empleado + fecha es el único $executeRaw de este servicio.
+    TX.$executeRaw.mockImplementationOnce(async () => (order.push("dayLock"), 0));
+    vi.mocked(lockNoveltyCoverageGlobally).mockImplementationOnce(async () => void order.push("globalCoverageLock"));
+    vi.mocked(recalculateNoveltyCoverage).mockImplementationOnce(async (_db, _scope, reason) => (order.push("coverage"), { ...emptyNoveltyCoverageRecalculation(reason), changedPairs: [{ employeeId: "employee-1", period: "2026-10" }] }));
+    const rebuiltByReinterpretation = [{ id: "closure-1", employeeId: "employee-1", period: "2026-10", before: {}, after: {} }];
+    vi.mocked(reinterpretSpecialHoursOnDates).mockImplementationOnce(async () => (order.push("reinterpret"), { ...noChanges, rebuiltClosures: rebuiltByReinterpretation }) as never);
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    repo.findExisting.mockResolvedValue(null);
+    repo.create.mockResolvedValue({ id: "hwa-1", status: "ACTIVA", employee: { legajo: "100" } });
+
+    await holidayWorkAssignmentService.save({ date: holiday, assignments: [{ employeeId: "employee-1", status: "ACTIVA" } as never] }, rrhh);
+
+    expect(order).toEqual(["dayLock", "globalCoverageLock", "coverage", "reinterpret"]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(TX, { from: holiday, to: holiday }, { source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", label: "cambio de la convocatoria del feriado del 12/10/2026" }, { rebuildSnapshots: false });
+    expect(rebuildNoveltyCoverageSnapshots).toHaveBeenCalledWith(TX, [{ employeeId: "employee-1", period: "2026-10" }], expect.objectContaining({ source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED" }), rebuiltByReinterpretation);
+    expect(auditNoveltyCoverageRecalculation).toHaveBeenCalledTimes(1);
   });
 });

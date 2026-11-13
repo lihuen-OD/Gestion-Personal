@@ -1,6 +1,9 @@
 import { Prisma } from "@prisma/client";
 import type { OpenShiftOverflowAction, WorkRegimeKind } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
+import { prisma } from "../../shared/prisma/client";
+import { lockEmployeeCoverage, lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, coverageWindowOf, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { argentinaCalendarDate, argentinaDateKey, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
@@ -29,6 +32,9 @@ export interface ActiveWorkRegime {
 // turno válido constituye un hallazgo. `alertOnOutOfShift` queda como opción
 // histórica para TURNO_OBLIGATORIO, pero nunca puede contradecir un régimen
 // cuyo propio kind declara que no requiere turno.
+// El cambio de régimen y el recálculo de la cobertura de novedades van juntos (etapa 5).
+const WORK_REGIME_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
 export function shouldSuppressMissingShiftAlert(regime: Pick<ActiveWorkRegime, "kind" | "alertOnOutOfShift"> | null): boolean {
   if (!regime) return false;
   if (regime.kind === "SIN_TURNO" || regime.kind === "TURNO_FLEXIBLE") return true;
@@ -159,7 +165,23 @@ export const workRegimesService = {
   async update(id: string, data: UpdateWorkRegimeInput, audit?: AuditContext) {
     const before = await execute(() => workRegimesRepository.findById(id));
     const normalizedData = normalizeShiftAlertPolicy(data, before.kind);
-    const item = await execute(() => workRegimesRepository.update(id, normalizedData, audit?.userId));
+    // El tipo (obligatorio/flexible/sin turno) decide la jornada esperada de
+    // todos los legajos con ese régimen: misma transacción que el recálculo
+    // de su cobertura (NOVELTY_COVERAGE_ENGINE.md §13.2). Otros campos no la cambian.
+    const kindChanged = normalizedData.kind !== undefined && normalizedData.kind !== before.kind;
+    const { item, coverage } = kindChanged
+      ? await execute(() => prisma.$transaction(async (tx) => {
+          await lockNoveltyCoverageGlobally(tx);
+          const updated = await workRegimesRepository.update(id, normalizedData, audit?.userId, tx);
+          const assignments = await tx.employeeWorkRegime.findMany({ where: { workRegimeId: id }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } });
+          const window = coverageWindowOf(assignments.map((row) => ({ from: row.effectiveFrom, to: row.effectiveTo })));
+          const recalculated = window
+            ? await recalculateNoveltyCoverage(tx, { employeeIds: [...new Set(assignments.map((row) => row.employeeId))], ...window }, { source: "WORK_REGIME_CHANGED", label: `cambio del tipo del régimen ${updated.code} - ${updated.name}` })
+            : null;
+          return { item: updated, coverage: recalculated };
+        }, WORK_REGIME_TRANSACTION_OPTIONS))
+      : { item: await execute(() => workRegimesRepository.update(id, normalizedData, audit?.userId)), coverage: null };
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     const action = data.status && data.status !== before.status ? (data.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE") : "UPDATE";
     await auditWorkRegimeChange(action, item, audit, before);
     return item;
@@ -185,13 +207,22 @@ export const workRegimesService = {
     await execute(() => workRegimesRepository.findById(data.workRegimeId));
     await assertNoOverlap(employeeId, data.effectiveFrom, data.effectiveTo);
 
-    const item = await workRegimesRepository.createAssignment({
-      employeeId,
-      workRegimeId: data.workRegimeId,
-      effectiveFrom: data.effectiveFrom,
-      effectiveTo: data.effectiveTo,
-      assignedByUserId: audit?.userId,
-    });
+    const { item, coverage } = await prisma.$transaction(async (tx) => {
+      await lockEmployeeCoverage(tx, [employeeId]);
+      const created = await workRegimesRepository.createAssignment({
+        employeeId,
+        workRegimeId: data.workRegimeId,
+        effectiveFrom: data.effectiveFrom,
+        effectiveTo: data.effectiveTo,
+        assignedByUserId: audit?.userId,
+      }, tx);
+      const recalculated = await recalculateNoveltyCoverage(
+        tx,
+        { employeeIds: [employeeId], from: data.effectiveFrom, to: data.effectiveTo ?? null },
+        { source: "WORK_REGIME_CHANGED", label: `asignación del régimen ${created.workRegime.code} - ${created.workRegime.name}` },
+      );
+      return { item: created, coverage: recalculated };
+    }, WORK_REGIME_TRANSACTION_OPTIONS);
     // Etapa 10B: entityId debe ser employeeId (no item.id, el id de la
     // asignación) — mismo criterio ya usado en todo employees.service.ts
     // (entity nombra qué cambió, entityId siempre ancla al legajo) — es lo
@@ -206,6 +237,7 @@ export const workRegimesService = {
       description: `Se asignó el régimen laboral ${item.workRegime.code} - ${item.workRegime.name} al empleado desde ${formatArgentinaDate(data.effectiveFrom)}.`,
       after: item as Prisma.InputJsonValue,
     });
+    await auditNoveltyCoverageRecalculation(coverage, audit);
     return item;
   },
 
@@ -221,11 +253,17 @@ export const workRegimesService = {
     const effectiveTo = data.effectiveTo !== undefined ? data.effectiveTo : before.effectiveTo;
     await assertNoOverlap(employeeId, effectiveFrom, effectiveTo, assignmentId);
 
-    const item = await workRegimesRepository.updateAssignment(assignmentId, {
-      ...(data.workRegimeId ? { workRegimeId: data.workRegimeId } : {}),
-      ...(data.effectiveFrom ? { effectiveFrom: data.effectiveFrom } : {}),
-      ...(data.effectiveTo !== undefined ? { effectiveTo: data.effectiveTo } : {}),
-    });
+    const { item, coverage } = await prisma.$transaction(async (tx) => {
+      await lockEmployeeCoverage(tx, [employeeId]);
+      const updated = await workRegimesRepository.updateAssignment(assignmentId, {
+        ...(data.workRegimeId ? { workRegimeId: data.workRegimeId } : {}),
+        ...(data.effectiveFrom ? { effectiveFrom: data.effectiveFrom } : {}),
+        ...(data.effectiveTo !== undefined ? { effectiveTo: data.effectiveTo } : {}),
+      }, tx);
+      const window = coverageWindowOf([{ from: before.effectiveFrom, to: before.effectiveTo }, { from: updated.effectiveFrom, to: updated.effectiveTo }])!;
+      const recalculated = await recalculateNoveltyCoverage(tx, { employeeIds: [employeeId], ...window }, { source: "WORK_REGIME_CHANGED", label: `cambio de la asignación del régimen ${updated.workRegime.code} - ${updated.workRegime.name}` });
+      return { item: updated, coverage: recalculated };
+    }, WORK_REGIME_TRANSACTION_OPTIONS);
     // Etapa 10B: entityId=employeeId, mismo criterio que assign() arriba.
     await auditService.register({
       ...audit,
@@ -236,6 +274,7 @@ export const workRegimesService = {
       before: before as unknown as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
+    await auditNoveltyCoverageRecalculation(coverage, audit);
     return item;
   },
 
@@ -246,7 +285,13 @@ export const workRegimesService = {
       throw new AppError("effectiveTo no puede ser anterior a effectiveFrom", 400, "WORK_REGIME_ASSIGNMENT_INVALID_RANGE");
     }
 
-    const item = await workRegimesRepository.updateAssignment(assignmentId, { effectiveTo });
+    const { item, coverage } = await prisma.$transaction(async (tx) => {
+      await lockEmployeeCoverage(tx, [employeeId]);
+      const updated = await workRegimesRepository.updateAssignment(assignmentId, { effectiveTo }, tx);
+      const window = coverageWindowOf([{ from: before.effectiveFrom, to: before.effectiveTo }, { from: updated.effectiveFrom, to: updated.effectiveTo }])!;
+      const recalculated = await recalculateNoveltyCoverage(tx, { employeeIds: [employeeId], ...window }, { source: "WORK_REGIME_CHANGED", label: `cierre de la asignación del régimen ${updated.workRegime.code} - ${updated.workRegime.name}` });
+      return { item: updated, coverage: recalculated };
+    }, WORK_REGIME_TRANSACTION_OPTIONS);
     // Etapa 10B: entityId=employeeId, mismo criterio que assign()/updateAssignment() arriba.
     await auditService.register({
       ...audit,
@@ -257,6 +302,7 @@ export const workRegimesService = {
       before: before as unknown as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
+    await auditNoveltyCoverageRecalculation(coverage, audit);
     return item;
   },
 

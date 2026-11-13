@@ -112,6 +112,7 @@ describe("holidayWorkAssignmentApiService.saveAssignments — invalida las panta
     await holidayWorkAssignmentApiService.saveAssignments("2026-10-05", []);
 
     const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
-    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "pending", "time-entries"]);
+    // Etapa 5: también Novedades (la convocatoria reinterpreta su cobertura).
+    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "pending", "time-entries"]);
   });
 });

@@ -258,6 +258,7 @@ describe("Resolución manual previa", () => {
   const resolvedSchedule = (overrides: Partial<PreviousCoverageResolution> = {}): PreviousCoverageResolution => ({
     outcome: "SCHEDULE_UNRESOLVED",
     scheduleReviewReason: "SCHEDULE_MISSING",
+    expectedMinutes: null,
     resolution: "SET_BASE_MINUTES",
     resolvedBaseMinutes: 480,
     resolvedAgainstWorkedMinutes: 0,
@@ -304,5 +305,17 @@ describe("Resolución manual previa", () => {
     const previous = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0, resolvedAgainstWorkedMinutes: 480 });
     expect(evaluate({ type: TRAMITE, previous })).toMatchObject({ outcome: "COVERED", reviewStatus: "RESOLVED", effectiveBaseMinutes: 0, resolvedAgainstWorkedMinutes: 480 });
     expect(evaluate({ type: TRAMITE, previous, dayOff: true })).toMatchObject({ outcome: "DAY_OFF", reviewStatus: "NOT_REQUIRED", resolutionDropped: true });
+  });
+
+  it("etapa 5: CONFIRMED_ZERO en un día cubierto se conserva aunque cambie la cantidad del tipo (la decisión no dependía de ella)", () => {
+    const previous = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0, resolvedAgainstWorkedMinutes: 480 });
+    expect(evaluate({ type: { ...TRAMITE, coverageFixedMinutes: 180 }, previous })).toMatchObject({ baseMinutes: 180, reviewStatus: "RESOLVED", effectiveBaseMinutes: 0, resolutionDropped: false });
+  });
+
+  it("etapa 5: horas base indicadas contra una jornada esperada se descartan si esa jornada cambia (otra incertidumbre)", () => {
+    const compatible = { ...TRAMITE, realWorkCompatibility: "COMPATIBLE" as const };
+    const previous = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 120, resolvedAgainstWorkedMinutes: 360 });
+    expect(evaluate({ type: compatible, previous, workday: workday({ expectedMinutes: 480 }) })).toMatchObject({ reviewStatus: "RESOLVED", effectiveBaseMinutes: 120, resolutionDropped: false });
+    expect(evaluate({ type: compatible, previous, workday: workday({ expectedMinutes: 540 }) })).toMatchObject({ reviewStatus: "NOT_REQUIRED", resolution: null, effectiveBaseMinutes: 240, resolutionDropped: true });
   });
 });

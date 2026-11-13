@@ -5,6 +5,27 @@ import { findProtectedClosurePeriods } from "../../shared/monthlyClosure/closure
 import { laborHistoryRepository } from "./laborHistory.repository";
 import { laborHistoryService, mapLaborHistoryPersistenceError } from "./laborHistory.service";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { lockNoveltyCoverageForEmployees, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 /**
  * D-5 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §19): historia temporal
  * de puesto, centro de costo, empresas empleadoras y alcance de puestos. Se
@@ -182,5 +203,37 @@ describe("mapLaborHistoryPersistenceError — concurrencia", () => {
     expect(() => mapLaborHistoryPersistenceError(new Error('conflicting key value violates exclusion constraint "EmployeePositionPeriod_no_overlap"')))
       .toThrow(expect.objectContaining({ statusCode: 409, code: "LABOR_HISTORY_OVERLAP" }));
     expect(() => mapLaborHistoryPersistenceError(new Error("otro"))).not.toThrow();
+  });
+});
+
+describe("cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+  it("un cambio de datos laborales recalcula la cobertura del legajo desde D, con el lock de cobertura antes que los de cierre", async () => {
+    const order: string[] = [];
+    vi.mocked(lockNoveltyCoverageForEmployees).mockImplementationOnce(async () => void order.push("coverageLock"));
+    findProtected.mockImplementationOnce(async () => (order.push("closureLock"), new Map()));
+
+    await record({ positionId: "pos-b" });
+
+    expect(order).toEqual(["coverageLock", "closureLock"]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(tx, { employeeIds: ["emp-1"], from: new Date("2026-10-01T00:00:00.000Z") }, expect.objectContaining({ source: "LABOR_HISTORY_CHANGED" }));
+  });
+
+  it("sin cambios efectivos no recalcula nada", async () => {
+    repo.findScalarPeriods.mockResolvedValue([period("p1", "2026-01-01", null, "pos-b")]);
+    await record({ positionId: "pos-b" });
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
+  });
+
+  it("un cambio del alcance de un puesto recalcula sólo a quienes lo ocupan desde D", async () => {
+    repo.findScopePeriods.mockResolvedValue(new Map([["pos-shared", [period("s1", "2026-01-01", null, [{ level: "SECTOR", nodeId: "agro", areaSectorId: null }])]]]));
+    repo.findPositionAssignmentsFrom.mockResolvedValue([
+      { employeeId: "ana", effectiveFrom: "2026-01-01", effectiveTo: null },
+      { employeeId: "juan", effectiveFrom: "2026-03-01", effectiveTo: "2026-09-30" },
+    ]);
+
+    await laborHistoryService.recordPositionScopeChangeWithin(tx, { positionId: "pos-shared", effectiveFrom: "2026-10-01", nodes: [{ level: "SECTOR", nodeId: "ganaderia", areaSectorId: null }], reason: "Reorganización", createdByUserId: "u1", todayKey: TODAY });
+
+    expect(lockNoveltyCoverageForEmployees).toHaveBeenCalledWith(tx, ["ana"]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(tx, { employeeIds: ["ana"], from: new Date("2026-10-01T00:00:00.000Z") }, expect.objectContaining({ source: "LABOR_HISTORY_CHANGED" }));
   });
 });

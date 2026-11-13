@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { holidayWorkAssignmentService } from "./holidayWorkAssignment.service";
-import { clearWorkedTimeDerivedReadCaches } from "../time-entries/workedTimeReadCaches";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import type { HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
 
 export const holidayWorkAssignmentController = {
@@ -26,7 +26,7 @@ export const holidayWorkAssignmentController = {
   save: (async (req, res) => {
     const data = await holidayWorkAssignmentService.save(req.body, req.user!, requestAuditContext(req));
     // La convocatoria define quién cobra el FERIADO (§16): reinterpreta horas.
-    clearWorkedTimeDerivedReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data });
   }) satisfies RequestHandler,
 };

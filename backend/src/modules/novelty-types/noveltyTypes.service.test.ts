@@ -4,6 +4,32 @@ import { noveltyTypesRepository, invalidateNoveltyTypesCache } from "./noveltyTy
 import { noveltyTypesService } from "./noveltyTypes.service";
 import type { CreateNoveltyTypeInput, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+vi.mock("../../shared/prisma/client", () => ({
+  // Etapa 5: cambio de régimen + recálculo de cobertura en una transacción.
+  prisma: { $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback({ employeeWorkRegime: { findMany: vi.fn().mockResolvedValue([]) } })) },
+}));
+import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 vi.mock("./noveltyTypes.repository", () => ({
   noveltyTypesRepository: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), findById: vi.fn() },
   invalidateNoveltyTypesCache: vi.fn(),
@@ -223,6 +249,8 @@ describe("noveltyTypesService.update — Etapa 15L.6 (sin sincronización legacy
     await noveltyTypesService.update("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } as UpdateNoveltyTypeInput);
 
     expect(repo.update).toHaveBeenCalledWith("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
+    // Un campo que no cambia la cobertura no recalcula nada.
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 
   it("un PATCH que manda allowsDateRange lo persiste tal cual", async () => {
@@ -394,7 +422,10 @@ describe("noveltyTypesService — configuración de cobertura horaria", () => {
 
     await noveltyTypesService.update("nt-1", { coverageFixedMinutes: 300 } as UpdateNoveltyTypeInput);
 
-    expect(repo.update).toHaveBeenCalledWith("nt-1", { coverageFixedMinutes: 300 });
+    // Etapa 5: cambia lo que cubre → misma transacción con lock global y recálculo de todas las novedades del tipo.
+    expect(repo.update).toHaveBeenCalledWith("nt-1", { coverageFixedMinutes: 300 }, expect.anything());
+    expect(lockNoveltyCoverageGlobally).toHaveBeenCalled();
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(expect.anything(), { noveltyTypeIds: ["nt-1"], includeNoneTypes: true }, expect.objectContaining({ source: "NOVELTY_TYPE_CHANGED" }));
   });
 
   it("un PATCH que pasa a no registrar tiempo sin limpiar la cantidad fija se rechaza (no se corrige en silencio)", async () => {

@@ -1,7 +1,7 @@
 import { apiRequest } from "./apiClient";
 import { appendSortParams, collectAllPages } from "./listQuery";
 import type { SortState } from "../../utils/sort";
-import { invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES, type CacheFamily } from "../cache";
+import { NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES, type CacheFamily, invalidateCacheFamily } from "../cache";
 import type { Novelty, Role, User } from "../../types";
 
 type ApiNoveltyStatus = "BORRADOR" | "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO" | "DEVUELTO" | "CERRADO";
@@ -51,7 +51,7 @@ type ApiItemResponse = { data: ApiNovelty };
 // novedad aprobada cambia totales (cobertura), así que sus mutaciones
 // invalidan todas las familias con contabilidad de horas (grilla por legajo,
 // Carga de horas, Bandeja, dashboard, cierres) además de las novedades.
-export const NOVELTY_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [...WORKED_TIME_DERIVED_CACHE_FAMILIES, "novelties"];
+export const NOVELTY_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES;
 
 async function invalidateNoveltyDependentCaches(reason: string) {
   await Promise.all(NOVELTY_DEPENDENT_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));

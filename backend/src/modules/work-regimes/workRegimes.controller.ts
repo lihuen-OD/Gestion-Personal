@@ -3,6 +3,7 @@ import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import type { ListWorkRegimeEmployeesQuery, ListWorkRegimesQuery, CurrentWorkRegimeQuery } from "./workRegimes.schemas";
 import { workRegimesService } from "./workRegimes.service";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 
 export const workRegimesController = {
   list: (async (req, res) => {
@@ -27,11 +28,13 @@ export const workRegimesController = {
 
   update: (async (req, res) => {
     const item = await workRegimesService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   updateStatus: (async (req, res) => {
     const item = await workRegimesService.updateStatus(requireParam(req, "id"), req.body.status, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
@@ -48,6 +51,7 @@ export const workRegimesController = {
 
   assign: (async (req, res) => {
     const item = await workRegimesService.assign(requireParam(req, "employeeId"), req.body, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
     res.status(201).json({ data: item });
   }) satisfies RequestHandler,
 
@@ -58,6 +62,7 @@ export const workRegimesController = {
       req.body,
       requestAuditContext(req),
     );
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
@@ -68,6 +73,7 @@ export const workRegimesController = {
       req.body.effectiveTo,
       requestAuditContext(req),
     );
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 };

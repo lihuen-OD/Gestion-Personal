@@ -16,7 +16,7 @@ import type { NoveltyCoverageOutcome, NoveltyCoverageScheduleReviewReason, Prism
 import { AppError } from "../../shared/errors/AppError";
 import { formatArgentinaDate, argentinaCalendarDate, calendarDateKey, nextCalendarDateKey, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
-import { employeePeriodKey, findProtectedClosurePeriods, ProtectedClosurePeriodError, type EmployeePeriod } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { employeePeriodKey, findProtectedClosurePeriods, ProtectedClosurePeriodError, uniqueEmployeePeriods, type EmployeePeriod } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { laborRelationOnDate, loadLaborMovementsByEmployee } from "../employees/laborRelation";
 import { evaluateEmployeeWorkday, loadEmployeeWorkdayContext, type EmployeeWorkdayContext, type ExpectedWorkday } from "../shifts/expectedWorkday";
@@ -218,8 +218,23 @@ export function coverageDayLabel(day: { outcome: NoveltyCoverageOutcome; schedul
 
 // ── Persistencia ────────────────────────────────────────────────────────────
 
+const GLOBAL_COVERAGE_LOCK = "novelty-coverage:global";
+
+/**
+ * Orden de locks de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.6),
+ * siempre dentro de la transacción y antes de los locks de cierre:
+ *   día del legajo (employeeDayLock) → cobertura global → cobertura por legajo → cierres.
+ * Todo escritor de cobertura toma el global COMPARTIDO; un cambio que alcanza a
+ * cualquier legajo (regla, turno, régimen, tipo, convocatoria) lo toma
+ * EXCLUSIVO al empezar, así nunca se intercala con un alta o recálculo.
+ */
+export async function lockNoveltyCoverageGlobally(db: Pick<Db, "$executeRaw">) {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${GLOBAL_COVERAGE_LOCK}::text, 0))`;
+}
+
 /** Serializa los recálculos de cobertura de un mismo legajo dentro de la transacción. */
 export async function lockEmployeeCoverage(db: Pick<Db, "$executeRaw">, employeeIds: string[]) {
+  await db.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${GLOBAL_COVERAGE_LOCK}::text, 0))`;
   const keys = [...new Set(employeeIds.map((id) => `novelty-coverage:${id}`))].sort();
   if (!keys.length) return;
   await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(k, 0)) FROM unnest(${keys}::text[]) AS k`;
@@ -230,19 +245,45 @@ export async function lockEmployeeCoverage(db: Pick<Db, "$executeRaw">, employee
  * CORRECCION_PENDIENTE):
  *   REJECT: 409 PERIOD_CLOSED (mutación de un usuario sin corrección).
  *   ALLOW_CORRECTION: corrección explícita de RRHH con motivo; se escribe.
- *   SKIP: recálculo automático; no se tocan esos días y se informan.
+ *   SKIP: recálculo automático; esos días no se calculan ni se tocan y se informan.
  */
 export type ProtectedPeriodPolicy = "REJECT" | "ALLOW_CORRECTION" | "SKIP";
 
 const PROTECTED_MESSAGE = "El período ya fue enviado a cierre. Pedile a RRHH que corrija la novedad si hace falta.";
 
+/** Una resolución manual que el recálculo descartó porque la evidencia ya responde la pregunta. */
+export type DroppedCoverageResolution = {
+  noveltyId: string;
+  employeeId: string;
+  date: string;
+  previousOutcome: NoveltyCoverageOutcome;
+  previousReason: NoveltyCoverageScheduleReviewReason | null;
+  resolution: PreviousCoverageResolution["resolution"];
+  resolvedBaseMinutes: number;
+  resolvedByUserId: string | null;
+  resolvedAt: string;
+  resolutionNote: string | null;
+  newOutcome: NoveltyCoverageOutcome;
+  newReason: NoveltyCoverageScheduleReviewReason | null;
+};
+
 export type CoveragePersistSummary = {
   novelties: number;
+  /** Días calculados (fuera de períodos protegidos en modo SKIP). */
   days: number;
   pendingReviewDays: number;
   droppedResolutions: number;
   protectedPeriods: EmployeePeriod[];
+  /** Días cuya fila se creó, cambió o desapareció (los idénticos no se reescriben). */
+  changedDays: number;
+  changedNoveltyIds: string[];
+  /** Legajo + período con algún día cambiado: los snapshots abiertos a reconstruir. */
+  changedPairs: EmployeePeriod[];
+  droppedResolutionDetails: DroppedCoverageResolution[];
 };
+
+/** Ventana de fechas calendario (inclusive) a recalcular; `null` = sin límite de ese lado. */
+export type CoverageWindow = { from: Date | null; to: Date | null };
 
 const persistNoveltySelect = {
   id: true,
@@ -256,6 +297,32 @@ const persistNoveltySelect = {
 } as const satisfies Prisma.NoveltySelect;
 
 type PersistNovelty = Prisma.NoveltyGetPayload<{ select: typeof persistNoveltySelect }>;
+
+const existingRowSelect = {
+  id: true,
+  noveltyId: true,
+  employeeId: true,
+  noveltyTypeId: true,
+  date: true,
+  period: true,
+  outcome: true,
+  scheduleReviewReason: true,
+  expectedMinutes: true,
+  baseMinutes: true,
+  appliedMultiplier: true,
+  countsTowardTotal: true,
+  realWorkCompatibility: true,
+  shiftTemplateId: true,
+  reviewStatus: true,
+  resolution: true,
+  resolvedBaseMinutes: true,
+  resolvedAgainstWorkedMinutes: true,
+  resolvedByUserId: true,
+  resolvedAt: true,
+  resolutionNote: true,
+} as const satisfies Prisma.NoveltyDayCoverageSelect;
+
+type ExistingRow = Prisma.NoveltyDayCoverageGetPayload<{ select: typeof existingRowSelect }>;
 
 /**
  * Fin inclusive de la novedad. `toDate` nulo es SIEMPRE un único día
@@ -279,46 +346,156 @@ function protectedList(map: Map<string, unknown>): EmployeePeriod[] {
   });
 }
 
+/** Intersección del rango de la novedad con la ventana; null si no se tocan. */
+function clipToWindow(from: Date, to: Date, window: CoverageWindow | undefined): { from: Date; to: Date } | null {
+  const start = window?.from && window.from > from ? window.from : from;
+  const end = window?.to && window.to < to ? window.to : to;
+  return start <= end ? { from: start, to: end } : null;
+}
+
+/** Tramos contiguos del rango que no caen en un período excluido (meses protegidos). */
+function rangesOutsidePeriods(from: Date, to: Date, excluded: (period: string) => boolean): Array<{ from: Date; to: Date }> {
+  const ranges: Array<{ from: Date; to: Date }> = [];
+  let current: { from: string; to: string } | null = null;
+  for (const key of coverageDateKeys(from, to)) {
+    if (excluded(key.slice(0, 7))) {
+      if (current) ranges.push({ from: argentinaCalendarDate(current.from), to: argentinaCalendarDate(current.to) });
+      current = null;
+      continue;
+    }
+    current = current ? { from: current.from, to: key } : { from: key, to: key };
+  }
+  if (current) ranges.push({ from: argentinaCalendarDate(current.from), to: argentinaCalendarDate(current.to) });
+  return ranges;
+}
+
+/** Firma de una fila: dos filas con la misma firma no se reescriben. */
+function rowSignature(row: {
+  noveltyTypeId: string;
+  outcome: NoveltyCoverageOutcome;
+  scheduleReviewReason: NoveltyCoverageScheduleReviewReason | null;
+  expectedMinutes: number | null;
+  baseMinutes: number;
+  appliedMultiplier: Prisma.Decimal | number | string;
+  countsTowardTotal: boolean;
+  realWorkCompatibility: string;
+  shiftTemplateId: string | null;
+  reviewStatus: string;
+  resolution: string | null;
+  resolvedBaseMinutes: number | null;
+  resolvedAgainstWorkedMinutes: number | null;
+  resolvedByUserId: string | null;
+  resolvedAt: Date | string | null;
+  resolutionNote: string | null;
+}) {
+  return JSON.stringify([
+    row.noveltyTypeId,
+    row.outcome,
+    row.scheduleReviewReason,
+    row.expectedMinutes,
+    row.baseMinutes,
+    Number(row.appliedMultiplier).toFixed(2),
+    row.countsTowardTotal,
+    row.realWorkCompatibility,
+    row.shiftTemplateId,
+    row.reviewStatus,
+    row.resolution,
+    row.resolvedBaseMinutes,
+    row.resolvedAgainstWorkedMinutes,
+    row.resolvedByUserId,
+    row.resolvedAt ? new Date(row.resolvedAt).getTime() : null,
+    row.resolutionNote,
+  ]);
+}
+
+const rowKey = (noveltyId: string, dateKey: string) => `${noveltyId}|${dateKey}`;
+
 /**
  * Recalcula y persiste la cobertura de las novedades indicadas dentro de la
- * transacción del llamador. Idempotente: borra las filas de esas novedades
- * (salvo las de períodos protegidos en modo SKIP) y las vuelve a crear con el
- * motor, conservando las resoluciones manuales que siguen valiendo. Una novedad
- * RECHAZADA queda sin filas; cualquier otra, de cualquier modo (también NONE),
- * tiene una fila por día: `toDate` nulo es exactamente un día, `fromDate`.
+ * transacción del llamador (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §6.3 y
+ * §13). Idempotente y por diferencia: calcula con el motor, conserva las
+ * resoluciones manuales que siguen valiendo y sólo borra/crea las filas que
+ * cambiaron (las idénticas no se reescriben). Una novedad RECHAZADA queda sin
+ * filas; cualquier otra, de cualquier modo (también NONE), tiene una fila por
+ * día: `toDate` nulo es exactamente un día, `fromDate`.
+ *
+ * `window` acota el recálculo a esas fechas: las filas de afuera no se leen ni
+ * se tocan. En modo SKIP los días de períodos protegidos no se calculan (no
+ * pueden bloquear el cambio por falta de historia) ni se tocan, y se informan.
  */
-export async function persistNoveltyCoverageWithin(db: Db, noveltyIds: string[], options: { protectedPeriods: ProtectedPeriodPolicy; protectedMessage?: string }): Promise<CoveragePersistSummary> {
-  const summary: CoveragePersistSummary = { novelties: 0, days: 0, pendingReviewDays: 0, droppedResolutions: 0, protectedPeriods: [] };
+export async function persistNoveltyCoverageWithin(
+  db: Db,
+  noveltyIds: string[],
+  options: { protectedPeriods: ProtectedPeriodPolicy; protectedMessage?: string; window?: CoverageWindow },
+): Promise<CoveragePersistSummary> {
+  const summary: CoveragePersistSummary = {
+    novelties: 0,
+    days: 0,
+    pendingReviewDays: 0,
+    droppedResolutions: 0,
+    protectedPeriods: [],
+    changedDays: 0,
+    changedNoveltyIds: [],
+    changedPairs: [],
+    droppedResolutionDetails: [],
+  };
   const ids = [...new Set(noveltyIds)];
   if (!ids.length) return summary;
 
+  // Lock global compartido ANTES de leer la configuración del tipo: un cambio
+  // global (exclusivo) nunca queda a medio leer.
+  await db.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${GLOBAL_COVERAGE_LOCK}::text, 0))`;
   const novelties: PersistNovelty[] = await db.novelty.findMany({ where: { id: { in: ids } }, select: persistNoveltySelect });
   await lockEmployeeCoverage(db, novelties.map((novelty) => novelty.employeeId));
 
-  const closed = novelties.filter((novelty) => novelty.status !== "RECHAZADO");
+  const window = options.window;
+  const active = novelties.filter((novelty) => novelty.status !== "RECHAZADO");
+  const isTimed = (novelty: PersistNovelty) => novelty.noveltyType.coverageMode !== "NONE";
+  const ranges = new Map<string, { from: Date; to: Date }>();
+  for (const novelty of active) {
+    const range = clipToWindow(novelty.fromDate, noveltyCoverageEnd(novelty), window);
+    if (range) ranges.set(novelty.id, range);
+  }
+  for (const novelty of active) {
+    const days = coverageRangeDays(novelty.fromDate, noveltyCoverageEnd(novelty));
+    const limit = isTimed(novelty) ? MAX_COVERAGE_RANGE_DAYS : MAX_NONE_RANGE_DAYS;
+    if (days > limit) throw new AppError(`Una novedad no puede abarcar más de ${limit} días.`, 400, "NOVELTY_RANGE_TOO_LONG");
+  }
 
-  const previousRows = await db.noveltyDayCoverage.findMany({
-    where: { noveltyId: { in: closed.map((novelty) => novelty.id) }, reviewStatus: "RESOLVED" },
-    select: {
-      noveltyId: true,
-      date: true,
-      outcome: true,
-      scheduleReviewReason: true,
-      resolution: true,
-      resolvedBaseMinutes: true,
-      resolvedAgainstWorkedMinutes: true,
-      resolvedByUserId: true,
-      resolvedAt: true,
-      resolutionNote: true,
-    },
+  // En una mutación explícita sólo los tipos que registran tiempo afectan un
+  // cierre. En un recálculo automático (SKIP), en cambio, ninguna fila del
+  // período protegido puede reinterpretarse, aunque el tipo hoy sea NONE o
+  // justo haya cambiado de/hacia NONE (NOVELTY_COVERAGE_ENGINE.md §13.5).
+  const protectedNovelties = options.protectedPeriods === "SKIP" ? active : active.filter(isTimed);
+  const protectedPairs = protectedNovelties.flatMap((novelty) => {
+    const range = ranges.get(novelty.id);
+    return range ? periodPairs(novelty.employeeId, range.from, range.to) : [];
   });
+  const protectedMap = await findProtectedClosurePeriods(db, protectedPairs);
+  if (protectedMap.size && options.protectedPeriods === "REJECT") {
+    throw new ProtectedClosurePeriodError(
+      [...protectedMap.entries()].map(([key, status]) => ({ ...protectedList(new Map([[key, status]]))[0]!, status })),
+      options.protectedMessage ?? PROTECTED_MESSAGE,
+    );
+  }
+  const skipProtected = options.protectedPeriods === "SKIP" && protectedMap.size > 0;
+  summary.protectedPeriods = protectedList(protectedMap);
+  const protectedNoveltyIds = new Set(protectedNovelties.map((novelty) => novelty.id));
+  const isSkipped = (noveltyId: string, employeeId: string, period: string) =>
+    skipProtected && protectedNoveltyIds.has(noveltyId) && protectedMap.has(employeePeriodKey({ employeeId, period }));
+
+  // Filas actuales de la ventana: base de la diferencia y de las resoluciones previas.
+  const dateFilter = window && (window.from || window.to) ? { date: { ...(window.from ? { gte: window.from } : {}), ...(window.to ? { lte: window.to } : {}) } } : {};
+  const existingRows: ExistingRow[] = await db.noveltyDayCoverage.findMany({ where: { noveltyId: { in: ids }, ...dateFilter }, select: existingRowSelect });
+  const existingByKey = new Map(existingRows.map((row) => [rowKey(row.noveltyId, calendarDateKey(row.date)), row]));
   const previousByNovelty = new Map<string, Map<string, PreviousCoverageResolution>>();
-  for (const row of previousRows) {
-    if (!row.resolution || row.resolvedBaseMinutes === null || row.resolvedAgainstWorkedMinutes === null || !row.resolvedAt) continue;
+  for (const row of existingRows) {
+    if (row.reviewStatus !== "RESOLVED" || !row.resolution || row.resolvedBaseMinutes === null || row.resolvedAgainstWorkedMinutes === null || !row.resolvedAt) continue;
     const map = previousByNovelty.get(row.noveltyId) ?? new Map<string, PreviousCoverageResolution>();
     map.set(calendarDateKey(row.date), {
       outcome: row.outcome,
       scheduleReviewReason: row.scheduleReviewReason,
+      expectedMinutes: row.expectedMinutes,
       resolution: row.resolution,
       resolvedBaseMinutes: row.resolvedBaseMinutes,
       resolvedAgainstWorkedMinutes: row.resolvedAgainstWorkedMinutes,
@@ -329,19 +506,28 @@ export async function persistNoveltyCoverageWithin(db: Db, noveltyIds: string[],
     previousByNovelty.set(row.noveltyId, map);
   }
 
-  const specs: NoveltyCoverageSpec[] = closed.map((novelty) => ({
-    key: novelty.id,
-    employeeId: novelty.employeeId,
-    type: novelty.noveltyType,
-    fromDate: novelty.fromDate,
-    toDate: noveltyCoverageEnd(novelty),
-    quantityMinutes: novelty.quantityMinutes,
-    previous: previousByNovelty.get(novelty.id),
-  }));
-  for (const spec of specs) {
-    const days = coverageRangeDays(spec.fromDate, spec.toDate);
-    const limit = spec.type.coverageMode === "NONE" ? MAX_NONE_RANGE_DAYS : MAX_COVERAGE_RANGE_DAYS;
-    if (days > limit) throw new AppError(`Una novedad no puede abarcar más de ${limit} días.`, 400, "NOVELTY_RANGE_TOO_LONG");
+  // Una especificación por tramo calculable (sin meses protegidos en SKIP).
+  const specs: NoveltyCoverageSpec[] = [];
+  const noveltyOfSpec = new Map<string, PersistNovelty>();
+  for (const novelty of active) {
+    const range = ranges.get(novelty.id);
+    if (!range) continue;
+    const pieces = skipProtected && protectedNoveltyIds.has(novelty.id)
+      ? rangesOutsidePeriods(range.from, range.to, (period) => protectedMap.has(employeePeriodKey({ employeeId: novelty.employeeId, period })))
+      : [range];
+    pieces.forEach((piece, index) => {
+      const key = `${novelty.id}#${index}`;
+      noveltyOfSpec.set(key, novelty);
+      specs.push({
+        key,
+        employeeId: novelty.employeeId,
+        type: novelty.noveltyType,
+        fromDate: piece.from,
+        toDate: piece.to,
+        quantityMinutes: novelty.quantityMinutes,
+        previous: previousByNovelty.get(novelty.id),
+      });
+    });
   }
 
   let computed: Map<string, CoverageDayResult[]>;
@@ -352,32 +538,33 @@ export async function persistNoveltyCoverageWithin(db: Db, noveltyIds: string[],
     throw toCoverageAppError(error, novelty?.employee);
   }
 
-  // Períodos protegidos: sólo importan los tipos que registran tiempo (una
-  // fila sin tiempo no cambia ningún total).
-  const timedPairs = closed
-    .filter((novelty) => novelty.noveltyType.coverageMode !== "NONE")
-    .flatMap((novelty) => periodPairs(novelty.employeeId, novelty.fromDate, noveltyCoverageEnd(novelty)));
-  const protectedMap = await findProtectedClosurePeriods(db, timedPairs);
-  if (protectedMap.size && options.protectedPeriods === "REJECT") {
-    throw new ProtectedClosurePeriodError(
-      [...protectedMap.entries()].map(([key, status]) => ({ ...protectedList(new Map([[key, status]]))[0]!, status })),
-      options.protectedMessage ?? PROTECTED_MESSAGE,
-    );
-  }
-  const skipProtected = options.protectedPeriods === "SKIP" && protectedMap.size > 0;
-  summary.protectedPeriods = protectedList(protectedMap);
-  const timedNoveltyIds = new Set(closed.filter((novelty) => novelty.noveltyType.coverageMode !== "NONE").map((novelty) => novelty.id));
-  const isSkipped = (noveltyId: string, employeeId: string, dateKey: string) =>
-    skipProtected && timedNoveltyIds.has(noveltyId) && protectedMap.has(employeePeriodKey({ employeeId, period: dateKey.slice(0, 7) }));
-
   const rows: Prisma.NoveltyDayCoverageCreateManyInput[] = [];
   const calculatedAt = new Date();
-  for (const novelty of closed) {
-    for (const day of computed.get(novelty.id) ?? []) {
-      if (isSkipped(novelty.id, novelty.employeeId, day.dateKey)) continue;
+  for (const spec of specs) {
+    const novelty = noveltyOfSpec.get(spec.key)!;
+    for (const day of computed.get(spec.key) ?? []) {
       const date = argentinaCalendarDate(day.dateKey);
       if (day.reviewStatus === "PENDING") summary.pendingReviewDays += 1;
-      if (day.resolutionDropped) summary.droppedResolutions += 1;
+      if (day.resolutionDropped) {
+        summary.droppedResolutions += 1;
+        const previous = spec.previous?.get(day.dateKey);
+        if (previous) {
+          summary.droppedResolutionDetails.push({
+            noveltyId: novelty.id,
+            employeeId: novelty.employeeId,
+            date: day.dateKey,
+            previousOutcome: previous.outcome,
+            previousReason: previous.scheduleReviewReason,
+            resolution: previous.resolution,
+            resolvedBaseMinutes: previous.resolvedBaseMinutes,
+            resolvedByUserId: previous.resolvedByUserId,
+            resolvedAt: previous.resolvedAt.toISOString(),
+            resolutionNote: previous.resolutionNote,
+            newOutcome: day.outcome,
+            newReason: day.scheduleReviewReason,
+          });
+        }
+      }
       rows.push({
         noveltyId: novelty.id,
         employeeId: novelty.employeeId,
@@ -408,26 +595,39 @@ export async function persistNoveltyCoverageWithin(db: Db, noveltyIds: string[],
     throw new AppError(`La operación generaría ${rows.length} días de cobertura (máximo ${MAX_COVERAGE_ROWS_PER_OPERATION}). Cargala en partes más chicas.`, 400, "NOVELTY_COVERAGE_TOO_LARGE");
   }
 
-  // Borrado idempotente: todas las filas de estas novedades, salvo los días de
-  // períodos protegidos que no se tocan (SKIP).
-  const keepProtected = skipProtected
-    ? [...protectedMap.keys()].map((key) => {
-        const [employeeId, period] = key.split(":");
-        return { employeeId: employeeId!, period: period! };
-      })
-    : [];
-  await db.noveltyDayCoverage.deleteMany({
-    where: {
-      noveltyId: { in: ids },
-      ...(keepProtected.length ? { NOT: { noveltyId: { in: [...timedNoveltyIds] }, OR: keepProtected } } : {}),
-    },
-  });
-  for (let index = 0; index < rows.length; index += CREATE_CHUNK_SIZE) {
-    await db.noveltyDayCoverage.createMany({ data: rows.slice(index, index + CREATE_CHUNK_SIZE) });
+  // Diferencia: se crean las filas nuevas o distintas; se borran las que
+  // cambiaron o ya no corresponden. Los días de períodos protegidos (SKIP) no
+  // se tocan.
+  const toCreate: Prisma.NoveltyDayCoverageCreateManyInput[] = [];
+  const toDelete: string[] = [];
+  const changed = new Map<string, { noveltyId: string; employeeId: string; period: string }>();
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = rowKey(row.noveltyId, calendarDateKey(row.date as Date));
+    seen.add(key);
+    const existing = existingByKey.get(key);
+    if (existing && rowSignature(existing) === rowSignature(row as Parameters<typeof rowSignature>[0])) continue;
+    if (existing) toDelete.push(existing.id);
+    toCreate.push(row);
+    changed.set(key, { noveltyId: row.noveltyId, employeeId: row.employeeId, period: row.period });
+  }
+  for (const [key, row] of existingByKey) {
+    if (seen.has(key) || isSkipped(row.noveltyId, row.employeeId, row.period)) continue;
+    toDelete.push(row.id);
+    changed.set(key, { noveltyId: row.noveltyId, employeeId: row.employeeId, period: row.period });
+  }
+  for (let index = 0; index < toDelete.length; index += CREATE_CHUNK_SIZE) {
+    await db.noveltyDayCoverage.deleteMany({ where: { id: { in: toDelete.slice(index, index + CREATE_CHUNK_SIZE) } } });
+  }
+  for (let index = 0; index < toCreate.length; index += CREATE_CHUNK_SIZE) {
+    await db.noveltyDayCoverage.createMany({ data: toCreate.slice(index, index + CREATE_CHUNK_SIZE) });
   }
 
-  summary.novelties = closed.length;
+  summary.novelties = active.length;
   summary.days = rows.length;
+  summary.changedDays = changed.size;
+  summary.changedNoveltyIds = [...new Set([...changed.values()].map((item) => item.noveltyId))];
+  summary.changedPairs = uniqueEmployeePeriods(changed.values());
   return summary;
 }
 

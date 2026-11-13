@@ -1,6 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type {
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
@@ -12,6 +12,11 @@ import type {
 } from "../../types/noveltyType.types";
 import type { Role } from "../../types";
 import { resolveNoveltyUiColor } from "../../utils/noveltyColor";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 type ApiNoveltyType = {
   id: string;
@@ -173,7 +178,7 @@ export const noveltyTypeApiService = {
       method: "PATCH",
       body: mapToApi(item),
     });
-    await invalidateCacheFamily("novelty-types", "novelty type updated");
+    await Promise.all([invalidateCacheFamily("novelty-types", "novelty type updated"), invalidateNoveltyCoverageDerivedCaches("novelty type updated")]);
     return mapNoveltyTypeFromApi(response.data);
   },
 

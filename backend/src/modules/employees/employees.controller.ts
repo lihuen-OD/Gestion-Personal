@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
@@ -189,6 +190,7 @@ export const employeesController = {
   update: (async (req, res) => {
     const employee = await employeesService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: employee });
   }) satisfies RequestHandler,
 
@@ -225,6 +227,7 @@ export const employeesController = {
   createLaborMovement: (async (req, res) => {
     const employee = await employeesService.createLaborMovement(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.status(201).json({ data: employee });
   }) satisfies RequestHandler,
 

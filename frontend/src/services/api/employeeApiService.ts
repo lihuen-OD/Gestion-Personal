@@ -9,7 +9,7 @@ import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type { TimeGridDayOff } from "./employeeDayOffApiService";
 import type { PeriodAccounting } from "../../types/workedTimeAccounting.types";
 import { currentCacheScope } from "../cache/cacheKey";
@@ -17,6 +17,11 @@ import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStat
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 type ApiEmployeeStatus = "ACTIVO" | "INACTIVO";
 type ApiNamedNode = { id: string; name: string };
@@ -902,7 +907,8 @@ export const employeeApiService = {
       method: "PATCH",
       body: { ...(await mapEmployeeToApi(employee, "update")), ...(options.laborChange ? { laborChange: options.laborChange } : {}) },
     });
-    await invalidateEmployeeDependentCaches("employee updated");
+    // Un cambio de datos laborales desde una fecha puede reinterpretar la cobertura de novedades (alcance de reglas).
+    await Promise.all([invalidateEmployeeDependentCaches("employee updated"), invalidateNoveltyCoverageDerivedCaches("employee updated")]);
     // El PATCH confirma y audita los campos modificables. La pantalla ya tiene
     // el overview completo; conservarlo evita pedir o reconstruir relaciones
     // que este guardado general no modifica.
@@ -948,7 +954,7 @@ export const employeeApiService = {
       method: "POST",
       body: input,
     });
-    await invalidateEmployeeDependentCaches("employee labor movement created");
+    await Promise.all([invalidateEmployeeDependentCaches("employee labor movement created"), invalidateNoveltyCoverageDerivedCaches("employee labor movement created")]);
     return mapEmployeeFromApi(response.data);
   },
   async syncLaborStatuses() {

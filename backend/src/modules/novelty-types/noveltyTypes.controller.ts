@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
@@ -37,6 +38,7 @@ export const noveltyTypesController = {
     const item = await noveltyTypesService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
     noveltyTypesListCache.clear();
     noveltyTypesDetailCache.clear();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 };

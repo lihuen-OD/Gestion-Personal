@@ -1,6 +1,11 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 // Etapa 12D: fechas de feriado — vienen siempre de Horas Especiales
 // (DoubleHourRule.kind=FERIADO, Etapa 12B), nunca se calculan ni se
@@ -94,7 +99,7 @@ export const holidayWorkAssignmentApiService = {
   // muestran contabilidad de horas (no las fechas de feriado, que no cambian).
   async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[]) {
     const result = await apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body: { date, assignments } }).then((response) => response.data);
-    await Promise.all(WORKED_TIME_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, "holiday work assignments saved")));
+    await invalidateNoveltyCoverageDerivedCaches("holiday work assignments saved");
     return result;
   },
 };

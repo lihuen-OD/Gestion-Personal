@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EmployeeStatus } from "@prisma/client";
-import { laborRelationOnDate, type LaborMovementRef } from "./laborRelation";
+import { laborMovementAffectedWindow, laborRelationOnDate, type LaborMovementRef } from "./laborRelation";
 import { resolveLaborStatus } from "./employees.repository";
 
 // Relación laboral por fecha para la cobertura de Novedades
@@ -55,5 +55,27 @@ describe("laborRelationOnDate", () => {
     const relation = laborRelationOnDate(movements, dateKey);
     const reference = new Date(`${dateKey}T15:00:00.000Z`); // mediodía en Argentina
     expect(relation.kind === "EMPLOYED" ? EmployeeStatus.ACTIVO : EmployeeStatus.INACTIVO).toBe(resolveLaborStatus(movements, reference));
+  });
+});
+
+describe("laborMovementAffectedWindow (etapa 5)", () => {
+  const at = (key: string) => new Date(`${key}T00:00:00.000Z`);
+  const alta = (key: string) => ({ type: "ALTA" as const, effectiveFrom: at(key) });
+  const baja = (key: string) => ({ type: "BAJA" as const, effectiveFrom: at(key) });
+
+  it("primer movimiento del legajo: cambia todo (ventana abierta a ambos lados)", () => {
+    expect(laborMovementAffectedWindow([], alta("2026-11-01"))).toEqual({ from: null, to: null });
+  });
+
+  it("BAJA después del ALTA: desde la BAJA en adelante", () => {
+    expect(laborMovementAffectedWindow([alta("2026-01-01")], baja("2026-11-15"))).toEqual({ from: at("2026-11-15"), to: null });
+  });
+
+  it("movimiento intermedio: hasta el día anterior al siguiente movimiento ya registrado", () => {
+    expect(laborMovementAffectedWindow([alta("2026-01-01"), alta("2026-12-01")], baja("2026-06-30"))).toEqual({ from: at("2026-06-30"), to: at("2026-11-30") });
+  });
+
+  it("si pasa a ser el primero, también cambian las fechas anteriores", () => {
+    expect(laborMovementAffectedWindow([baja("2026-12-31")], alta("2026-03-01"))).toEqual({ from: null, to: at("2026-12-30") });
   });
 });

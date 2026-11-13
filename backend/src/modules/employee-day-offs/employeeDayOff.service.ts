@@ -12,6 +12,8 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
 import { findClosuresForEmployeePeriods, rebuildClosureSnapshots } from "../workforce-management/closureSnapshot";
 import { lockEmployeeDays } from "./employeeDayLock";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, emptyNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { ensureDayOffActivityAlert, findClockWorkShiftsForOperationalDate, resolveDayOffActivityAlerts } from "./employeeDayOffActivity";
 import { employeeDayOffRepository, type EmployeeDayOffRow } from "./employeeDayOff.repository";
 import type { EmployeeDayOffsByDateQuery, ListEmployeeDayOffsQuery, SaveEmployeeDayOffsInput } from "./employeeDayOff.schemas";
@@ -98,9 +100,12 @@ export const employeeDayOffService = {
     const period = periodFromCalendarDate(date);
     const dateLabel = formatArgentinaDate(input.date);
     const correctionReason = input.correctionReason?.trim() || null;
+    const coverageReason = { source: "EMPLOYEE_DAY_OFF_CHANGED" as const, label: `cambio de francos del ${dateLabel}` };
 
     const outcome = await prisma.$transaction(async (tx) => {
       await lockEmployeeDays(tx, employeeIds.map((employeeId) => ({ employeeId, dateKey: input.date })));
+      // Orden de locks (NOVELTY_COVERAGE_ENGINE.md §13.6): día → cobertura → cierres.
+      await lockEmployeeCoverage(tx, employeeIds);
       const existingByEmployee = new Map((await employeeDayOffRepository.findOnDate(tx, date, employeeIds)).map((row) => [row.employeeId, row]));
 
       const changes: Array<{ kind: ChangeKind; employeeId: string; notes: string | null; existing: EmployeeDayOffRow | null }> = [];
@@ -115,7 +120,7 @@ export const employeeDayOffService = {
         if (existing.status !== item.status) changes.push({ kind: item.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE", employeeId: item.employeeId, notes, existing });
         else if ((existing.notes ?? null) !== notes) changes.push({ kind: "UPDATE", employeeId: item.employeeId, notes, existing });
       }
-      if (!changes.length) return { saved: [] as EmployeeDayOffRow[], audits: [] as RegisterAuditInput[], rebuilt: [], alerts: 0, resolvedAlerts: 0, resolvedIncidents: 0 };
+      if (!changes.length) return { saved: [] as EmployeeDayOffRow[], audits: [] as RegisterAuditInput[], rebuilt: [], alerts: 0, resolvedAlerts: 0, resolvedIncidents: 0, coverage: emptyNoveltyCoverageRecalculation(coverageReason) };
 
       // Un franco reinterpreta horas: en un período enviado/aprobado sólo RRHH,
       // con motivo (mismo criterio que la corrección de una hora, §12).
@@ -173,18 +178,25 @@ export const employeeDayOffService = {
       const resolvedAlerts = await resolveDayOffActivityAlerts(tx, shifts.filter((item) => !activatedSet.has(item.employeeId)).map((item) => item.id));
       const resolvedIncidents = (await employeeDayOffRepository.resolvePendingInactivity(tx, date, activated)).count;
 
+      // Cobertura de novedades de ese día (vacaciones → 0 por franco, o se
+      // restaura al cancelarlo). Sus snapshots son los mismos pares que se
+      // reconstruyen abajo, que ya incluyen la cobertura nueva.
+      const changedEmployeeIds = [...new Set(changes.map((change) => change.employeeId))];
+      const coverage = await recalculateNoveltyCoverage(tx, { employeeIds: changedEmployeeIds, from: date, to: date }, coverageReason, { rebuildSnapshots: false });
+
       // Snapshots: sólo cierres no protegidos (un protegido no se reconstruye
       // automáticamente, ni siquiera en la corrección de RRHH — §12).
-      const pairs = [...new Set(changes.map((change) => change.employeeId))].map((employeeId) => ({ employeeId, period }));
+      const pairs = changedEmployeeIds.map((employeeId) => ({ employeeId, period }));
       const closures = (await findClosuresForEmployeePeriods(tx, pairs)).filter((closure) => !protectedPeriods.has(employeePeriodKey(closure)));
       const rebuilt = await rebuildClosureSnapshots(tx, closures, { reason: "EMPLOYEE_DAY_OFF_CHANGED", date: input.date });
 
-      return { saved, audits, rebuilt, alerts, resolvedAlerts, resolvedIncidents };
+      return { saved, audits, rebuilt, alerts, resolvedAlerts, resolvedIncidents, coverage };
     }, DAY_OFF_TRANSACTION_OPTIONS).catch(mapPrismaError);
 
     // La auditoría se registra recién cuando la transacción confirmó.
     for (const entry of outcome.audits) await auditService.register({ ...audit, ...entry });
     await auditClosureRecalculations(outcome.rebuilt, `cambio de francos del ${dateLabel}`, audit, (ids) => loadEmployeeReferences(prisma, ids));
+    await auditNoveltyCoverageRecalculation(outcome.coverage, audit);
 
     return {
       date: input.date,

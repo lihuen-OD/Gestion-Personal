@@ -6,6 +6,30 @@ import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRep
 import { auditService } from "../audit/audit.service";
 import { roles } from "../../shared/security/roles";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+vi.mock("../../shared/prisma/client", () => ({
+  // Etapa 5: cambio de régimen + recálculo de cobertura en una transacción.
+  prisma: { $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback({ employeeWorkRegime: { findMany: vi.fn().mockResolvedValue([]) } })) },
+}));
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 vi.mock("./workRegimes.repository", () => ({
   findActiveEmployeeWorkRegime: vi.fn(),
   classifyWorkRegimeVigency: vi.fn(() => "current"),
@@ -174,7 +198,7 @@ describe("WorkRegime CRUD", () => {
 
     await workRegimesService.update("regime-1", { kind: "SIN_TURNO", alertOnOutOfShift: true } as never);
 
-    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "SIN_TURNO", alertOnOutOfShift: false }), undefined);
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "SIN_TURNO", alertOnOutOfShift: false }), undefined, expect.anything());
   });
 
   it("al cambiar SIN_TURNO a TURNO_OBLIGATORIO reactiva por defecto el control de turno", async () => {
@@ -183,7 +207,7 @@ describe("WorkRegime CRUD", () => {
 
     await workRegimesService.update("regime-1", { kind: "TURNO_OBLIGATORIO" } as never);
 
-    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true }), undefined);
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: true }), undefined, expect.anything());
   });
 
   it("TURNO_OBLIGATORIO respeta un opt-out explícito al cambiar de kind", async () => {
@@ -192,7 +216,7 @@ describe("WorkRegime CRUD", () => {
 
     await workRegimesService.update("regime-1", { kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false } as never);
 
-    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false }), undefined);
+    expect(repo.update).toHaveBeenCalledWith("regime-1", expect.objectContaining({ kind: "TURNO_OBLIGATORIO", alertOnOutOfShift: false }), undefined, expect.anything());
   });
 
   it("inactiva un régimen (status ACTIVO -> INACTIVO) audita DEACTIVATE", async () => {

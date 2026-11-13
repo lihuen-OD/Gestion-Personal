@@ -11,6 +11,8 @@ import { formatEmployeeReference, loadEmployeeReferences } from "../../shared/au
 import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
 import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
 import { reinterpretSpecialHoursOnDates } from "../workforce-management/specialHourReinterpretation";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { describeReinterpretation, reinterpretationMetadata } from "../workforce-management/specialHourReinterpretationSummary";
 
 // Mismo presupuesto que el cambio de una regla de Hora Especial: la
@@ -86,11 +88,15 @@ export const holidayWorkAssignmentService = {
     if (existingEmployees !== uniqueEmployeeIds.size) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
 
     const dateLabel = formatArgentinaDate(input.date);
-    const { results, audits, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+    const { results, audits, reinterpretation, coverage } = await execute(() => prisma.$transaction(async (tx) => {
       // docs/decisions/EMPLOYEE_DAY_OFF.md §5: convocatoria + franco el mismo
       // día es contradictorio y se bloquea en la escritura. Mismo lock por
       // empleado + fecha que el guardado de francos: nunca quedan los dos activos.
       await lockEmployeeDays(tx, employeeIds.map((employeeId) => ({ employeeId, dateKey: dateKey(input.date) })));
+      // La convocatoria cambia el feriado de todos los legajos de la fecha
+      // (el primer convocado restringe el FERIADO): lock global exclusivo de
+      // cobertura después del de día (NOVELTY_COVERAGE_ENGINE.md §13.6).
+      await lockNoveltyCoverageGlobally(tx);
       const convoked = input.assignments.filter((item) => item.status === "ACTIVA").map((item) => item.employeeId);
       const dayOffConflicts = convoked.length
         ? await tx.employeeDayOff.findMany({ where: { date: input.date, status: "ACTIVO", employeeId: { in: convoked } }, select: { employee: { select: { legajo: true, firstName: true, lastName: true } } } })
@@ -138,8 +144,13 @@ export const holidayWorkAssignmentService = {
         });
         saved.push(updated);
       }
+      // Cobertura de la fecha (todos los legajos) antes de reinterpretar las
+      // horas: los snapshots que reconstruye la reinterpretación ya la incluyen.
+      const coverageReason = { source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED" as const, label: `cambio de la convocatoria del feriado del ${dateLabel}` };
+      const coverage = await recalculateNoveltyCoverage(tx, { from: input.date, to: input.date }, coverageReason, { rebuildSnapshots: false });
       const result = await reinterpretSpecialHoursOnDates(tx, [input.date], { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: dateKey(input.date) });
-      return { results: saved, audits: pendingAudits, reinterpretation: result };
+      coverage.rebuiltClosures = await rebuildNoveltyCoverageSnapshots(tx, coverage.changedPairs, coverageReason, result.rebuiltClosures);
+      return { results: saved, audits: pendingAudits, reinterpretation: result, coverage };
     }, HOLIDAY_WORK_TRANSACTION_OPTIONS));
 
     // La auditoría se registra recién cuando la transacción confirmó.
@@ -159,6 +170,7 @@ export const holidayWorkAssignmentService = {
         (ids) => loadEmployeeReferences(prisma, ids),
       );
     }
+    await auditNoveltyCoverageRecalculation(coverage, audit);
     return results;
   },
 };

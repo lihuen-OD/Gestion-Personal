@@ -12,6 +12,28 @@ import { ensureDayOffActivityAlert, findClockWorkShiftsForOperationalDate, resol
 import { employeeDayOffRepository } from "./employeeDayOff.repository";
 import { employeeDayOffService } from "./employeeDayOff.service";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, emptyNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 vi.mock("./employeeDayOff.repository", () => ({
   employeeDayOffRepository: {
     findForPeriod: vi.fn(),
@@ -255,5 +277,31 @@ describe("employeeDayOffService.byDate", () => {
       { employee: people[EMP_2], dayOff: null, holidayWork: true, periodLocked: false },
     ]);
     expect(result.meta).toEqual({ total: 2, page: 1, pageSize: 50, hasMore: false });
+  });
+});
+
+describe("employeeDayOffService.save — cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+  it("recalcula la cobertura del día de quienes cambiaron, en la misma transacción y antes de reconstruir sus snapshots", async () => {
+    const order: string[] = [];
+    vi.mocked(lockEmployeeDays).mockImplementationOnce(async () => void order.push("dayLock"));
+    vi.mocked(lockEmployeeCoverage).mockImplementationOnce(async () => void order.push("coverageLock"));
+    vi.mocked(findProtectedClosurePeriods).mockImplementationOnce(async () => (order.push("closureLock"), new Map()));
+    vi.mocked(recalculateNoveltyCoverage).mockImplementationOnce(async (_db, _scope, reason) => (order.push("coverage"), emptyNoveltyCoverageRecalculation(reason)));
+    vi.mocked(rebuildClosureSnapshots).mockImplementationOnce(async () => (order.push("snapshots"), []));
+
+    await save([{ employeeId: EMP_1, status: "ACTIVO" }, { employeeId: EMP_2, status: "ACTIVO" }]);
+
+    const date = new Date(`${DATE}T00:00:00.000Z`);
+    expect(lockEmployeeCoverage).toHaveBeenCalledWith(TX, [EMP_1, EMP_2]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(TX, { employeeIds: [EMP_1, EMP_2], from: date, to: date }, { source: "EMPLOYEE_DAY_OFF_CHANGED", label: "cambio de francos del 05/11/2026" }, { rebuildSnapshots: false });
+    // Orden de locks sin deadlocks: día → cobertura → cierres; la cobertura antes de rehacer el snapshot.
+    expect(order).toEqual(["dayLock", "coverageLock", "closureLock", "coverage", "snapshots"]);
+    expect(auditNoveltyCoverageRecalculation).toHaveBeenCalledTimes(1);
+  });
+
+  it("un guardado sin cambios no recalcula cobertura", async () => {
+    repo.findOnDate.mockResolvedValue([row(EMP_1, "ACTIVO")]);
+    await save([{ employeeId: EMP_1, status: "ACTIVO" }]);
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 });

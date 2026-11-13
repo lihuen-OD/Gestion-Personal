@@ -46,6 +46,8 @@ export type CoverageEmployment = "EMPLOYED" | "NOT_EMPLOYED" | "UNKNOWN";
 export type PreviousCoverageResolution = {
   outcome: NoveltyCoverageOutcome;
   scheduleReviewReason: NoveltyCoverageScheduleReviewReason | null;
+  /** Jornada esperada contra la que se resolvió (null = desconocida). */
+  expectedMinutes: number | null;
   resolution: NoveltyCoverageResolution;
   resolvedBaseMinutes: number;
   resolvedAgainstWorkedMinutes: number;
@@ -186,17 +188,23 @@ function draftDay(input: CoverageDayInput): Draft {
 }
 
 /**
- * Una resolución manual sigue valiendo mientras la pregunta que respondió siga
- * abierta: el mismo motivo de revisión, o un día que sigue cubierto (conflicto
- * con trabajo real, etapa 4). Si los datos ya permiten calcular el día (p. ej.
- * se registró el ALTA o el turno), manda la evidencia y la resolución se
- * descarta (queda en la auditoría del recálculo).
+ * Una resolución manual sigue valiendo mientras responda a la MISMA
+ * incertidumbre (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.4):
+ * - jornada sin resolver: mismo motivo de revisión;
+ * - conflicto con trabajo real (etapa 4): el día sigue cubierto y, si la
+ *   resolución indicó horas base, la jornada esperada contra la que se
+ *   validaron no cambió.
+ * Si los datos ya permiten calcular el día (p. ej. se registró el ALTA o el
+ * turno) o la pregunta cambió, manda la evidencia y la resolución se descarta
+ * (queda en la auditoría del recálculo). Un cambio del trabajo real no se
+ * mira acá: lo detecta la contabilidad al leer (RESOLUTION_OUTDATED).
  */
-function keepsResolution(previous: PreviousCoverageResolution, draft: Draft) {
+function keepsResolution(previous: PreviousCoverageResolution, draft: Draft, expectedMinutes: number | null) {
   if (previous.outcome === "SCHEDULE_UNRESOLVED") {
     return draft.outcome === "SCHEDULE_UNRESOLVED" && draft.scheduleReviewReason === previous.scheduleReviewReason;
   }
-  return previous.outcome === "COVERED" && draft.outcome === "COVERED";
+  if (previous.outcome !== "COVERED" || draft.outcome !== "COVERED") return false;
+  return previous.resolution === "CONFIRMED_ZERO" || previous.expectedMinutes === expectedMinutes;
 }
 
 function expectedMinutesOf(input: CoverageDayInput) {
@@ -207,7 +215,7 @@ function expectedMinutesOf(input: CoverageDayInput) {
 
 export function evaluateNoveltyCoverageDay(input: CoverageDayInput): CoverageDayResult {
   const draft = draftDay(input);
-  const kept = input.previous && keepsResolution(input.previous, draft) ? input.previous : null;
+  const kept = input.previous && keepsResolution(input.previous, draft, expectedMinutesOf(input)) ? input.previous : null;
   const effectiveBaseMinutes = kept ? kept.resolvedBaseMinutes : draft.baseMinutes;
 
   let multiplier = 1;

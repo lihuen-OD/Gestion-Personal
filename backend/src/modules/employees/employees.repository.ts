@@ -1,4 +1,4 @@
-import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
+import { ApprovalStatus, EmployeeStatus, Prisma, type LaborMovementType } from "@prisma/client";
 import { employeeStructureWhere, workLocationNotEndedWhere, workLocationOnDateWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
@@ -1718,8 +1718,18 @@ export const employeesRepository = {
   // findEmployeeDetailByIdOrThrow) es sólo lectura para dar forma a la
   // respuesta y se hace después de que la transacción cerró, para no
   // arriesgar el timeout de 5s de Prisma bajo latencia alta de Neon.
-  async createLaborMovement(employeeId: string, input: CreateLaborMovementInput, createdByUserId?: string | null) {
-    const movement = await prisma.$transaction(async (tx) => {
+  // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): `hooks.beforeWrite` toma los
+  // locks de cobertura antes de escribir y `hooks.afterWrite` recalcula la
+  // cobertura del legajo en la misma transacción, con los movimientos previos.
+  async createLaborMovement<R = undefined>(
+    employeeId: string,
+    input: CreateLaborMovementInput,
+    createdByUserId?: string | null,
+    hooks: { beforeWrite?: (tx: PrismaTransactionClient) => Promise<void>; afterWrite?: (tx: PrismaTransactionClient, previous: Array<{ type: LaborMovementType; effectiveFrom: Date }>) => Promise<R> } = {},
+  ) {
+    const { movement, after } = await prisma.$transaction(async (tx) => {
+      await hooks.beforeWrite?.(tx);
+      const previous = hooks.afterWrite ? await tx.laborMovement.findMany({ where: { employeeId }, select: { type: true, effectiveFrom: true } }) : [];
       const created = await tx.laborMovement.create({
         data: {
           employeeId,
@@ -1741,11 +1751,12 @@ export const employeesRepository = {
         data: { status: resolveLaborStatus(movements) },
       });
 
-      return created;
-    });
+      const after = hooks.afterWrite ? await hooks.afterWrite(tx, previous) : undefined;
+      return { movement: created, after };
+    }, { timeout: 30_000 });
 
     const employee = await findEmployeeDetailByIdOrThrow(employeeId);
-    return { employee, movement };
+    return { employee, movement, after };
   },
 
   findDocumentCategory(categoryId: string) {

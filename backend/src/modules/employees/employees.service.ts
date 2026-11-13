@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { laborMovementAffectedWindow } from "./laborRelation";
 import { loadNoveltyCoverageForAccounting, noveltyCoverageRowsView, noveltyDayItemsView, type LoadedNoveltyCoverage, type NoveltyDayItemView } from "../novelties/noveltyCoverageAccounting";
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
@@ -1146,7 +1149,17 @@ export const employeesService = {
 
   async createLaborMovement(id: string, input: CreateLaborMovementInput, audit?: AuditContext) {
     const before = await employeesRepository.findLaborAuditSnapshot(id);
-    const { employee, movement } = await execute(() => employeesRepository.createLaborMovement(id, input, audit?.userId));
+    // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): un ALTA o una BAJA cambia
+    // la relación laboral de un rango de fechas; la cobertura de novedades del
+    // legajo en ese rango se recalcula en la misma transacción.
+    const { employee, movement, after: coverage } = await execute(() => employeesRepository.createLaborMovement(id, input, audit?.userId, {
+      beforeWrite: (tx) => lockEmployeeCoverage(tx, [id]),
+      afterWrite: (tx, previous) => recalculateNoveltyCoverage(
+        tx,
+        { employeeIds: [id], ...laborMovementAffectedWindow(previous, { type: input.type, effectiveFrom: input.effectiveFrom }) },
+        { source: "LABOR_MOVEMENT_CHANGED", label: `${input.type === "ALTA" ? "alta" : "baja"} del legajo ${before.legajo} desde el ${formatArgentinaDate(input.effectiveFrom)}` },
+      ),
+    }));
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -1156,6 +1169,7 @@ export const employeesService = {
       before: { status: before.status, laborMovements: before.laborMovements } as Prisma.InputJsonValue,
       after: { status: employee.status, movement } as Prisma.InputJsonValue,
     });
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return employee;
   },
 
