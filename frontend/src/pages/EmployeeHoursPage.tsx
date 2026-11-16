@@ -123,6 +123,9 @@ export function EmployeeHoursPage() {
   const [manualObservation, setManualObservation] = useState("");
   const [manualError, setManualError] = useState("");
   const [hours, setHours] = useState("8");
+  // true mientras `hours` sea la sugerencia automática de una carga nueva
+  // (openCell sin carga persistida) y el usuario no la haya editado.
+  const [hoursFromSuggestion, setHoursFromSuggestion] = useState(false);
   const [notes, setNotes] = useState("");
   const [correctionReason, setCorrectionReason] = useState("");
   const [refresh, setRefresh] = useState(0);
@@ -298,6 +301,7 @@ export function EmployeeHoursPage() {
               : 1),
       ),
     );
+    setHoursFromSuggestion(entry?.hours == null);
     setNotes(formatTimeEntryObservation(entry?.notes));
     setCorrectionReason("");
     setNoveltyTypeId("");
@@ -762,7 +766,10 @@ export function EmployeeHoursPage() {
                     step="0.5"
                     value={hours}
                     disabled={selectedLocked}
-                    onChange={(event) => setHours(event.target.value)}
+                    onChange={(event) => {
+                      setHours(event.target.value);
+                      setHoursFromSuggestion(false);
+                    }}
                     aria-describedby="time-entry-hours-help"
                   />
                 </label>
@@ -804,6 +811,18 @@ export function EmployeeHoursPage() {
                     disabled={selectedLocked}
                     onChange={(event) => {
                       const next = loadableTypes.find((item) => item.id === event.target.value);
+                      // Las horas manuales y la cobertura de la novedad son
+                      // cosas separadas: la cobertura sale sólo de la
+                      // configuración del Tipo. Al pasar de "Sin novedad" a una
+                      // novedad, sólo se descarta la sugerencia automática de
+                      // una carga nueva (el campo queda en 0). Nunca se pisan
+                      // horas de una carga persistida ni horas editadas por el
+                      // usuario. Cambiar de novedad o volver a "Sin novedad"
+                      // no toca el campo (no se restaura la sugerencia).
+                      if (!noveltyTypeId && next && hoursFromSuggestion) {
+                        setHours("0");
+                        setHoursFromSuggestion(false);
+                      }
                       setNoveltyTypeId(event.target.value);
                       if (next) setNoveltyValues((current) => adaptNoveltyLoadValues(current, next));
                       setShowNoveltyIssues(false);

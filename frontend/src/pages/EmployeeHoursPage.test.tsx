@@ -820,6 +820,92 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
   });
 });
 
+// Las horas manuales no heredan la sugerencia de carga normal al asociar una
+// novedad: la cobertura sale sólo de la configuración del Tipo.
+describe("EmployeeHoursPage — horas manuales al asociar una novedad", () => {
+  const bankType = () => buildHourlyNoveltyType({ id: "type-bank", code: "NOV-TRAMITE", name: "Trámite bancario", coverage: { ...defaultNoveltyTypeCoverage(), mode: "FIXED_MINUTES", fixedMinutes: 240 } });
+
+  async function openNormalDayOneWithTypes(grid = buildGrid()) {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(grid);
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([bankType(), buildHourlyNoveltyType()]);
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await screen.findByText(/Cargar Horas base/i);
+    const selector = await screen.findByLabelText("Tipo de novedad");
+    await screen.findByRole("option", { name: "Trámite bancario" });
+    return { user, selector, hoursInput: screen.getByLabelText("Cantidad de horas") };
+  }
+
+  it("una fila con 8 h sugeridas pasa a 0 h al seleccionar una novedad", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    expect(hoursInput).toHaveValue(8);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(0);
+  });
+
+  it("una carga existente con 8 h reales conserva sus horas al seleccionar una novedad", async () => {
+    const grid = buildGrid([], { entries: [{ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Borrador", conceptId: "normal", origin: "MANUAL" }] });
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes(grid);
+    expect(hoursInput).toHaveValue(8);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(8);
+  });
+
+  it("no pisa horas que el usuario editó antes de elegir la novedad, aunque coincidan con la sugerencia", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.clear(hoursInput);
+    await user.type(hoursInput, "8");
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(8);
+  });
+
+  it("respeta las horas que el usuario carga explícitamente después de elegir la novedad", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.clear(hoursInput);
+    await user.type(hoursInput, "3");
+    expect(hoursInput).toHaveValue(3);
+    // Cambiar de novedad no pisa un valor cargado por el usuario.
+    await user.selectOptions(selector, "type-late");
+    expect(hoursInput).toHaveValue(3);
+  });
+
+  it("cambiar entre novedades no reintroduce las 8 h sugeridas", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.selectOptions(selector, "type-late");
+    expect(hoursInput).toHaveValue(0);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(0);
+  });
+
+  it("quitar la novedad no restaura la sugerencia: el campo conserva su valor actual (comportamiento existente)", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.selectOptions(selector, "");
+    expect(hoursInput).toHaveValue(0);
+    // La sugerencia se recalcula sólo al reabrir la celda (openCell).
+    await user.click(screen.getByRole("button", { name: /Cancelar/i }));
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    expect(await screen.findByLabelText("Cantidad de horas")).toHaveValue(8);
+  });
+
+  it("guardar sin tocar las horas después de elegir la novedad no crea horas manuales accidentales", async () => {
+    vi.mocked(noveltyApiService.create).mockClear();
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 0, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "nov-1", employeeId: "employee-1" } as never]);
+    const { user, selector } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "normal", hours: 0 }), { knownExistingId: null });
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ noveltyTypeId: "type-bank" })));
+  });
+});
+
 // Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): la novedad de la grilla usa los
 // mismos campos, validación y payload que el alta de novedades.
 describe("EmployeeHoursPage — novedad asociada a una hora (Etapa 8)", () => {
