@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { createRepositoryListCache, pageFromCappedList, REPOSITORY_LIST_CACHE_MAX_ROWS } from "../../shared/cache/repositoryListCache";
+import { pickNoveltyUiColor } from "./noveltyTypeColors";
 import type { CreateNoveltyTypeInput, ListNoveltyTypesQuery, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
 // Cache en memoria para listados sin filtros. Etapa 14I.3: helper compartido
@@ -105,11 +106,13 @@ export const noveltyTypesRepository = {
   // comportamiento que antes de esta etapa).
   async create(input: CreateNoveltyTypeInput) {
     const MAX_ATTEMPTS = 3;
+    // Sin color elegido: uno no usado de la paleta (o el menos repetido).
+    const uiColor = input.uiColor ?? pickNoveltyUiColor(await noveltyTypesRepository.listUiColors());
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const code = input.code || (await generateNextCode());
       try {
         return await prisma.noveltyType.create({
-          data: { ...input, code },
+          data: { ...input, code, uiColor },
         });
       } catch (error) {
         const isRetriableCollision = !input.code && attempt < MAX_ATTEMPTS && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
@@ -117,6 +120,10 @@ export const noveltyTypesRepository = {
       }
     }
     throw new Error("noveltyTypesRepository.create: unreachable");
+  },
+
+  async listUiColors() {
+    return (await prisma.noveltyType.findMany({ select: { uiColor: true } })).map((row) => row.uiColor);
   },
 
   update(id: string, input: UpdateNoveltyTypeInput, db: PrismaTransactionClient = prisma) {

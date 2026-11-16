@@ -37,7 +37,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   const users = { rrhh: "", sup: "", carga: "" };
   const employees = { a: "", b: "", minimal: "", late: "" };
   let normalConceptId = "";
-  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "" };
+  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", vacacionesJornada: "", vacacionesFijas: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "" };
 
   const as = (role: "rrhh" | "sup" | "carga") =>
     ({ id: users[role], email: `${role}@example.com`, name: role, role: { rrhh: "NIVEL_1_RRHH", sup: "NIVEL_2_SUPERVISION", carga: "NIVEL_3_CARGA_HORARIA" }[role] }) as Express.AuthUser;
@@ -117,6 +117,9 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     types.maternidadCover = await createType({ name: "Maternidad (cubre feriados)", ...maternidad, coverageOnHoliday: "COVER" });
     types.maternidadNoCoverage = await createType({ name: "Maternidad (sin feriados)", ...maternidad, coverageOnHoliday: "NO_COVERAGE" });
     types.vacaciones = await createType({ name: "Vacaciones", kind: "VACACIONES", coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "WORK_OBLIGATION", coverageAppliesSpecialHours: true, coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
+    // §17: según jornada (necesita turno e historia laboral) y fija todos los días (no necesita ninguno).
+    types.vacacionesJornada = await createType({ name: "Vacaciones según jornada", kind: "VACACIONES", coverageMode: "EXPECTED_SCHEDULE", coverageDayRule: "WORK_OBLIGATION", coverageAppliesSpecialHours: true, coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
+    types.vacacionesFijas = await createType({ name: "Vacaciones fijas", kind: "VACACIONES", coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "EVERY_DAY", coverageOnDayOff: "COVER", coverageOnHoliday: "COVER", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
     types.llegadaTarde = await createType({ name: "Llegada tarde", kind: "HORARIA", allowsHours: true, allowsDateRange: false, coverageMode: "MANUAL_MINUTES" });
     types.faltaSinAviso = await createType({ name: "Falta sin aviso", kind: "AUSENCIA", allowsDateRange: false, realWorkCompatibility: "INCOMPATIBLE", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
     types.licenciaAbierta = await createType({ name: "Licencia abierta", kind: "LICENCIA" });
@@ -128,6 +131,13 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   afterAll(async () => {
     await holder?.$disconnect();
     await m?.prisma.$disconnect();
+  });
+
+  it("paleta: los tipos creados sin color reciben colores distintos de la paleta (sin depender del nombre)", async () => {
+    const colors = (await holder.noveltyType.findMany({ orderBy: { createdAt: "asc" }, select: { uiColor: true } })).map((row) => row.uiColor);
+    expect(colors.length).toBeGreaterThan(5);
+    expect(new Set(colors).size).toBe(colors.length);
+    expect(colors.slice(0, 3)).toEqual(["blue", "orange", "violet"]);
   });
 
   it("migraciones: los valores agregados son persistibles y los CHECKs siguen vigentes", async () => {
@@ -181,8 +191,30 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     expect(await holder.noveltyDayCoverage.count({ where: { employeeId: employees.b } })).toBe(7);
   });
 
-  it("legajo mínimo sin ALTA: 0 h provisional en revisión; registrar el ALTA cambia el motivo; la resolución manual se conserva al recalcular", async () => {
-    const [novelty] = await create("rrhh", { employeeIds: [employees.minimal], noveltyTypeId: types.vacaciones, fromDate: "2026-11-16", toDate: "2026-11-22" });
+  it("§17: legajo sin ALTA ni turno — Vacaciones fijas cubre 480 cada día; con cantidad fija y días con obligación, a lo sumo el valor del tipo", async () => {
+    const [fixed] = await create("rrhh", { employeeIds: [employees.minimal], noveltyTypeId: types.vacacionesFijas, fromDate: "2026-10-12", toDate: "2026-10-18" });
+    const fixedRows = await coverageRows(fixed!.id);
+    expect(fixedRows).toHaveLength(7);
+    expect(fixedRows.every((row) => row.outcome === "COVERED" && row.baseMinutes === 480 && row.reviewStatus === "NOT_REQUIRED")).toBe(true);
+    // Excepción administrativa: 0 h en un día, el resto sigue en 480; deshacerla vuelve al valor del tipo.
+    const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "Ese día se presentó a trabajar" });
+    await m.novelties.resolveCoverageDay(fixed!.id, "2026-10-14", zero, as("rrhh"));
+    const otherAmount = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 600, note: "Diez horas" });
+    await expect(m.novelties.resolveCoverageDay(fixed!.id, "2026-10-15", otherAmount, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect((await coverageRows(fixed!.id)).map((row) => row.resolvedBaseMinutes ?? row.baseMinutes)).toEqual([480, 480, 0, 480, 480, 480, 480]);
+    const restore = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "RESTORE_AUTOMATIC", note: "Se cargó por error" });
+    expect(await m.novelties.resolveCoverageDay(fixed!.id, "2026-10-14", restore, as("rrhh"))).toMatchObject({ reviewStatus: "NOT_REQUIRED", resolution: null, effectiveBaseMinutes: 480 });
+    await expect(m.novelties.resolveCoverageDay(fixed!.id, "2026-10-14", restore, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_RESOLVED" });
+
+    // Cantidad fija pero "días que debía trabajar": la regla del tipo sí necesita el turno para elegir los días.
+    const [byObligation] = await create("rrhh", { employeeIds: [employees.minimal], noveltyTypeId: types.vacaciones, fromDate: "2026-10-19" });
+    expect((await coverageRows(byObligation!.id))[0]).toMatchObject({ outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "SCHEDULE_MISSING", reviewStatus: "PENDING" });
+    await expect(m.novelties.resolveCoverageDay(byObligation!.id, "2026-10-19", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 540, note: "Eran 9 h" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect(await m.novelties.resolveCoverageDay(byObligation!.id, "2026-10-19", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "Tenía que trabajar" }), as("rrhh"))).toMatchObject({ reviewStatus: "RESOLVED", effectiveBaseMinutes: 480 });
+  });
+
+  it("legajo mínimo sin ALTA (según jornada): 0 h provisional en revisión; registrar el ALTA cambia el motivo; la resolución manual se conserva al recalcular", async () => {
+    const [novelty] = await create("rrhh", { employeeIds: [employees.minimal], noveltyTypeId: types.vacacionesJornada, fromDate: "2026-11-16", toDate: "2026-11-22" });
     const rows = await coverageRows(novelty!.id);
     expect(rows.every((row) => row.outcome === "SCHEDULE_UNRESOLVED" && row.scheduleReviewReason === "EMPLOYMENT_HISTORY_UNRESOLVED" && row.reviewStatus === "PENDING" && row.baseMinutes === 0)).toBe(true);
 
@@ -219,10 +251,16 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     expect(byDate(await coverageRows(novelty!.id)).get("2026-11-22")).toMatchObject({ outcome: "COVERED", reviewStatus: "NOT_REQUIRED", baseMinutes: 480, resolution: null });
   });
 
-  it("resolución: sólo días en revisión, nota obligatoria y alcance del legajo", async () => {
+  it("resolución: entre 0 h y el valor del tipo, también en días sin cobertura automática; nota obligatoria y alcance del legajo", async () => {
     const [novelty] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadCover, fromDate: "2026-11-23", toDate: "2026-11-24" });
     const body = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "No corresponde" });
-    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-11-23", body, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
+    // §19: un día cubierto admite un ajuste hasta el valor del tipo, nunca más.
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-11-24", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 540, note: "Nueve horas" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect(await m.novelties.resolveCoverageDay(novelty!.id, "2026-11-24", body, as("rrhh"))).toMatchObject({ reviewStatus: "RESOLVED", resolution: "CONFIRMED_ZERO", effectiveBaseMinutes: 0 });
+    // §18/§19: un día sin cobertura automática (sábado de una Maternidad L–V) admite hasta el valor del tipo, nunca más.
+    const [weekend] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadCover, fromDate: "2026-11-28" });
+    await expect(m.novelties.resolveCoverageDay(weekend!.id, "2026-11-28", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 540, note: "Nueve horas" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect(await m.novelties.resolveCoverageDay(weekend!.id, "2026-11-28", m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 240, note: "Medio sábado" }), as("rrhh"))).toMatchObject({ outcome: "WEEKDAY_NOT_INCLUDED", reviewStatus: "RESOLVED", effectiveBaseMinutes: 240 });
     await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-12-01", body, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_FOUND" });
     await expect(m.novelties.resolveCoverageDay(novelty!.id, "2026-02-31", body, as("rrhh"))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
     expect(m.noveltySchemas.noveltyCoverageResolutionSchema.safeParse({ resolution: "CONFIRMED_ZERO", note: "" }).success).toBe(false);
@@ -361,6 +399,68 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacaciones, fromDate: "2026-01-01", toDate: "2027-02-01" })).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RANGE_TOO_LONG" });
     expect(await holder.novelty.count()).toBe(count);
     expect(Prisma).toBeDefined();
+  });
+
+  // §18: ajuste excepcional de un día ya calculado. Septiembre de 2027,
+  // legajo 104 (turno L–V), feriado global el miércoles 15.
+  it("§18/§19: tipo fijo 480 con feriado que no cuenta → RRHH ajusta ese día entre 0 y 480 (más se rechaza), el resto no cambia; el recálculo conserva el ajuste; restaurar vuelve a 0", async () => {
+    const holiday = await holder.doubleHourRule.create({ data: { name: "Feriado septiembre", recurrenceType: "FECHA", fromDate: day("2027-09-15"), toDate: day("2027-09-15"), multiplier: 1, kind: "FERIADO", reason: "it" } });
+    await holder.specialHourRuleDate.create({ data: { ruleId: holiday.id, date: day("2027-09-15") } });
+    const fixedNoHoliday = await createType({ name: "Vacaciones 8 h sin feriados", kind: "VACACIONES", coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "EVERY_DAY", coverageOnDayOff: "COVER", coverageOnHoliday: "NO_COVERAGE", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" });
+    const [novelty] = await create("rrhh", { employeeIds: [employees.late], noveltyTypeId: fixedNoHoliday, fromDate: "2027-09-14", toDate: "2027-09-16" });
+    const effective = async () => (await coverageRows(novelty!.id)).map((row) => row.resolvedBaseMinutes ?? row.baseMinutes);
+    expect(byDate(await coverageRows(novelty!.id)).get("2027-09-15")).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" });
+    expect(await effective()).toEqual([480, 0, 480]);
+
+    const parse = (body: Record<string, unknown>) => m.noveltySchemas.noveltyCoverageResolutionSchema.parse(body);
+    // Entre 0 y el valor del tipo; más se rechaza; la nota es obligatoria.
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 600, note: "Diez horas" }), as("rrhh"))).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 481, note: "Un minuto de más" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    // Valor parcial: 5 h se guardan, se ven en la grilla y sobreviven al recálculo.
+    expect(await m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 300, note: "Medio feriado de vacaciones" }), as("rrhh"))).toMatchObject({ reviewStatus: "RESOLVED", effectiveBaseMinutes: 300 });
+    expect(await effective()).toEqual([480, 300, 480]);
+    await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    expect(await effective()).toEqual([480, 300, 480]);
+    expect(((await m.employees.getTimeGrid(employees.late, { period: "2027-09" } as never, as("rrhh"))) as { accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting }).accounting.days["15"]).toMatchObject({ noveltyCoveredMinutes: 300 });
+    expect(m.noveltySchemas.noveltyCoverageResolutionSchema.safeParse({ resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "" }).success).toBe(false);
+
+    // El valor completo también se admite.
+    const applied = await m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "Vacaciones acordadas incluyendo el feriado" }), as("rrhh"));
+    expect(applied).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", reviewStatus: "RESOLVED", resolution: "SET_BASE_MINUTES", effectiveBaseMinutes: 480 });
+    expect(await effective()).toEqual([480, 480, 480]);
+    const audit = await holder.auditLog.findFirst({ where: { entity: "Novelty", entityId: novelty!.id }, orderBy: { createdAt: "desc" } });
+    expect(audit?.description).toMatch(/15\/09\/2027: 8 h base\. Nota: Vacaciones acordadas incluyendo el feriado/);
+    const grid = (await m.employees.getTimeGrid(employees.late, { period: "2027-09" } as never, as("rrhh"))) as { accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting };
+    expect(grid.accounting.days["15"]).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
+    expect(grid.accounting.novelty.reviewDays).toBe(0);
+
+    // Un recálculo (por ejemplo, al cambiar la regla de feriados) conserva el ajuste.
+    await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [novelty!.id], { protectedPeriods: "SKIP" }));
+    expect(byDate(await coverageRows(novelty!.id)).get("2027-09-15")).toMatchObject({ reviewStatus: "RESOLVED", resolvedBaseMinutes: 480, resolutionNote: "Vacaciones acordadas incluyendo el feriado" });
+
+    // Restaurar vuelve a la regla del tipo (feriado: no cuenta).
+    expect(await m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "RESTORE_AUTOMATIC", note: "Se vuelve a la regla del tipo" }), as("rrhh"))).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", reviewStatus: "NOT_REQUIRED", resolution: null, effectiveBaseMinutes: 0 });
+    expect(await effective()).toEqual([480, 0, 480]);
+
+    // Con trabajo real ese día, una novedad incompatible no puede sumar horas.
+    await holder.timeEntry.create({ data: { employeeId: employees.late, hourConceptId: normalConceptId, date: day("2027-09-15"), period: "2027-09", day: 15, hours: 8, totalMinutes: 480, status: "APROBADO" } });
+    await expect(m.novelties.resolveCoverageDay(novelty!.id, "2027-09-15", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 480, note: "Vacaciones en feriado" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+  });
+
+  it("§19: el rango del ajuste sale del modo — manual hasta la cantidad cargada, según jornada hasta la jornada conocida, NONE sin cobertura", async () => {
+    const parse = (body: Record<string, unknown>) => m.noveltySchemas.noveltyCoverageResolutionSchema.parse(body);
+    // MANUAL_MINUTES: Llegada tarde de 1 h → 0..60.
+    const [late] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.llegadaTarde, fromDate: "2027-10-04", quantityHours: 1 });
+    await expect(m.novelties.resolveCoverageDay(late!.id, "2027-10-04", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 90, note: "Hora y media" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect(await m.novelties.resolveCoverageDay(late!.id, "2027-10-04", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 30, note: "Media hora" }), as("rrhh"))).toMatchObject({ effectiveBaseMinutes: 30 });
+    // EXPECTED_SCHEDULE con jornada conocida (turno L–V de 8 h) → 0..480.
+    const [byShift] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.vacacionesJornada, fromDate: "2027-10-05" });
+    await expect(m.novelties.resolveCoverageDay(byShift!.id, "2027-10-05", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 540, note: "Nueve horas" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+    expect(await m.novelties.resolveCoverageDay(byShift!.id, "2027-10-05", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 240, note: "Medio día" }), as("rrhh"))).toMatchObject({ effectiveBaseMinutes: 240 });
+    expect(await m.novelties.resolveCoverageDay(byShift!.id, "2027-10-05", parse({ resolution: "RESTORE_AUTOMATIC", note: "Vuelve a la jornada" }), as("rrhh"))).toMatchObject({ reviewStatus: "NOT_REQUIRED", effectiveBaseMinutes: 480 });
+    // NONE: Falta sin aviso no tiene cobertura que ajustar.
+    const [falta] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2027-10-06" });
+    await expect(m.novelties.resolveCoverageDay(falta!.id, "2027-10-06", parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 60, note: "Una hora" }), as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
   });
 
   // ── Etapa 4: contabilidad con cobertura (febrero de 2027, aislado) ───────
@@ -635,8 +735,6 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       await expect(m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", setBase, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
       const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "El trámite se hizo fuera del horario" });
       await m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", zero, as("rrhh"));
-      // Una vez válido, el día ya no está en revisión.
-      await expect(m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", zero, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
       // Quitar la novedad incorrecta (no exportable) resuelve el otro día.
       await m.novelties.remove(tramite3!.id, as("rrhh"));
 

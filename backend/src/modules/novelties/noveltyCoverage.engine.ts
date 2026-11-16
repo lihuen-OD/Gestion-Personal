@@ -146,11 +146,15 @@ function draftDay(input: CoverageDayInput): Draft {
   const { type, workday } = input;
   if (type.coverageMode === "NONE") return zero("NO_COVERAGE");
 
-  // Relación laboral: fuera de la conocida, 0 confirmado; sin historia
-  // suficiente, revisión si el tiempo puede sumar al total (para un tipo
-  // informativo no hay nada computable que proteger).
+  // Relación laboral (NOVELTY_COVERAGE_ENGINE.md §17): fuera de la relación
+  // conocida (antes del primer ALTA o después de una BAJA registrada) no hay
+  // cobertura. La FALTA de historia sólo importa cuando la cantidad sale de la
+  // jornada (EXPECTED_SCHEDULE): FIXED_MINUTES y MANUAL_MINUTES ya tienen su
+  // cantidad definida por el tipo o la carga y nunca van a revisión por eso.
   if (input.employment === "NOT_EMPLOYED") return zero("OUTSIDE_EMPLOYMENT");
-  if (input.employment === "UNKNOWN" && type.coverageCountsTowardTotal) return unresolved("EMPLOYMENT_HISTORY_UNRESOLVED");
+  if (input.employment === "UNKNOWN" && type.coverageMode === "EXPECTED_SCHEDULE" && type.coverageCountsTowardTotal) {
+    return unresolved("EMPLOYMENT_HISTORY_UNRESOLVED");
+  }
 
   // Cantidad manual: la indica quien carga para esa fecha; sin reglas de días.
   if (type.coverageMode === "MANUAL_MINUTES") {
@@ -188,23 +192,27 @@ function draftDay(input: CoverageDayInput): Draft {
 }
 
 /**
- * Una resolución manual sigue valiendo mientras responda a la MISMA
- * incertidumbre (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.4):
- * - jornada sin resolver: mismo motivo de revisión;
- * - conflicto con trabajo real (etapa 4): el día sigue cubierto y, si la
- *   resolución indicó horas base, la jornada esperada contra la que se
- *   validaron no cambió.
- * Si los datos ya permiten calcular el día (p. ej. se registró el ALTA o el
- * turno) o la pregunta cambió, manda la evidencia y la resolución se descarta
- * (queda en la auditoría del recálculo). Un cambio del trabajo real no se
- * mira acá: lo detecta la contabilidad al leer (RESOLUTION_OUTDATED).
+ * Una resolución manual previa (docs/decisions/NOVELTY_COVERAGE_ENGINE.md
+ * §13.4, §17 y §18):
+ * - con cantidad fija o manual, una resolución con horas sólo vale mientras
+ *   no supere el valor del tipo o de la carga (§19: se admite un valor parcial);
+ * - respuesta a una revisión (el día estaba SCHEDULE_UNRESOLVED): vale
+ *   mientras siga la MISMA incertidumbre; si los datos ya permiten calcular
+ *   el día (se registró el ALTA o el turno) o la pregunta cambió, manda la
+ *   evidencia y la resolución se descarta (queda en la auditoría);
+ * - ajuste excepcional sobre un día calculado (§18): prevalece sobre el
+ *   cálculo automático hasta que se restaure. "0 h" siempre; con horas,
+ *   mientras entre en el valor del tipo o, según jornada, la misma jornada.
+ * Un cambio del trabajo real no se mira acá: lo detecta la contabilidad al
+ * leer (RESOLUTION_OUTDATED).
  */
-function keepsResolution(previous: PreviousCoverageResolution, draft: Draft, expectedMinutes: number | null) {
+function keepsResolution(previous: PreviousCoverageResolution, draft: Draft, expectedMinutes: number | null, typeValueMinutes: number | null) {
+  if (previous.resolution === "SET_BASE_MINUTES" && typeValueMinutes !== null && previous.resolvedBaseMinutes > typeValueMinutes) return false;
   if (previous.outcome === "SCHEDULE_UNRESOLVED") {
     return draft.outcome === "SCHEDULE_UNRESOLVED" && draft.scheduleReviewReason === previous.scheduleReviewReason;
   }
-  if (previous.outcome !== "COVERED" || draft.outcome !== "COVERED") return false;
-  return previous.resolution === "CONFIRMED_ZERO" || previous.expectedMinutes === expectedMinutes;
+  if (previous.resolution === "CONFIRMED_ZERO" || typeValueMinutes !== null) return true;
+  return previous.expectedMinutes === expectedMinutes;
 }
 
 function expectedMinutesOf(input: CoverageDayInput) {
@@ -213,9 +221,19 @@ function expectedMinutesOf(input: CoverageDayInput) {
   return minutes !== null && minutes >= 0 && minutes <= MAX_COVERAGE_MINUTES_PER_DAY ? minutes : null;
 }
 
+/** Cantidad máxima que define el propio tipo o la carga (0 sin tiempo); null si sale de la jornada. */
+export function coverageTypeValueMinutes(type: Pick<CoverageTypeConfig, "coverageMode" | "coverageFixedMinutes">, quantityMinutes: number | null): number | null {
+  if (type.coverageMode === "FIXED_MINUTES") return type.coverageFixedMinutes ?? 0;
+  if (type.coverageMode === "MANUAL_MINUTES") return quantityMinutes ?? 0;
+  // NONE nunca tiene cobertura positiva (§19); según jornada no tiene valor propio.
+  if (type.coverageMode === "NONE") return 0;
+  return null;
+}
+
 export function evaluateNoveltyCoverageDay(input: CoverageDayInput): CoverageDayResult {
   const draft = draftDay(input);
-  const kept = input.previous && keepsResolution(input.previous, draft, expectedMinutesOf(input)) ? input.previous : null;
+  const typeValue = coverageTypeValueMinutes(input.type, input.quantityMinutes);
+  const kept = input.previous && keepsResolution(input.previous, draft, expectedMinutesOf(input), typeValue) ? input.previous : null;
   const effectiveBaseMinutes = kept ? kept.resolvedBaseMinutes : draft.baseMinutes;
 
   let multiplier = 1;

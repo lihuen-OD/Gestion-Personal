@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { emptyNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeForm } from "../components/novelty-types/NoveltyTypeForm";
@@ -7,6 +7,7 @@ import { getUserErrorMessage } from "../services/api/apiClient";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { MISSING_DATA_MESSAGE, noveltyTypeIssues } from "../utils/noveltyTypeCoverage";
+import { pickNoveltyUiColor } from "../utils/noveltyColor";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -19,6 +20,22 @@ export function NoveltyTypeCreatePage() {
   const [error, setError] = useState("");
   const [showIssues, setShowIssues] = useState(false);
   const [focusIssuesRequest, setFocusIssuesRequest] = useState(0);
+
+  // Color inicial: uno que ningún tipo use (o el menos repetido), nunca por
+  // nombre ni código. Sólo reemplaza el color por defecto: si quien carga ya
+  // eligió otro, se respeta. Si la lista no carga, queda el color por defecto.
+  useEffect(() => {
+    let cancelled = false;
+    const defaultColor = emptyNoveltyType().uiColor;
+    noveltyTypeApiService.getAll()
+      .then((types) => {
+        if (cancelled) return;
+        const picked = pickNoveltyUiColor(types.map((type) => type.uiColor));
+        setItem((current) => (current.uiColor === defaultColor ? { ...current, uiColor: picked } : current));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const issues = noveltyTypeIssues(item);
 

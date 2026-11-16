@@ -552,7 +552,7 @@ export function EmployeeHoursPage() {
               specialHoursByDay={specialHoursByDay}
               noveltyCoverageRows={noveltyCoverageRows}
               noveltiesByDay={noveltiesByDay}
-              onReviewNovelty={(item, day) => setCoverageReview({ item, date: monthDate(period, day), employeeId: id, period, workedMinutes: accounting.days[String(day)]?.totalWorkedMinutes ?? 0 })}
+              onReviewNovelty={(item, day) => setCoverageReview({ item, date: monthDate(period, day), employeeId: id, period, workedMinutes: accounting.days[String(day)]?.totalWorkedMinutes ?? 0, computableMinutes: accounting.days[String(day)]?.computableMinutes })}
               renderRow={(row) => {
                 const label = timeGridRowLabel(row);
                 return (
@@ -835,7 +835,7 @@ export function EmployeeHoursPage() {
               ) : selectedConceptNovelties.length ? (
                 <div className="hour-novelty-state suggested" role="status">
                   <span className="hour-novelty-eyebrow">Detección del sistema</span>
-                  <NoveltyCoverageChipList items={selectedConceptNovelties} compact onReview={(item) => setCoverageReview({ item, date: monthDate(period, selected!.day), employeeId: id, period, workedMinutes: selectedDayAccounting?.totalWorkedMinutes ?? 0 })} />
+                  <NoveltyCoverageChipList items={selectedConceptNovelties} compact onReview={(item) => setCoverageReview({ item, date: monthDate(period, selected!.day), employeeId: id, period, workedMinutes: selectedDayAccounting?.totalWorkedMinutes ?? 0, computableMinutes: selectedDayAccounting?.computableMinutes })} />
                   <p>El estado y las horas provienen de la cobertura diaria calculada por el sistema.</p>
                 </div>
               ) : (

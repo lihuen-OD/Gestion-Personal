@@ -244,7 +244,7 @@ function DayCell({
                   {day?.specialHourConflict ? (
                     <span className="day-cell-special-hour-conflict">Hay más de una Hora especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
                   ) : null}
-                  {noveltyItems.length ? <NoveltyCoverageChipList items={noveltyItems} compact onReview={(item) => { setOpen(false); setCoverageReview({ item, date: monthDate(period, accounting?.day ?? day?.day ?? 1), employeeId, period, workedMinutes }); }} /> : null}
+                  {noveltyItems.length ? <NoveltyCoverageChipList items={noveltyItems} compact onReview={(item) => { setOpen(false); setCoverageReview({ item, date: monthDate(period, accounting?.day ?? day?.day ?? 1), employeeId, period, workedMinutes, computableMinutes: accounting?.computableMinutes }); }} /> : null}
                 </>
               ) : (
                 <span>Sin carga ni novedades registradas.</span>

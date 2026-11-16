@@ -25,7 +25,7 @@ El negocio necesita que cada Tipo de Novedad defina su comportamiento horario: T
 - **D4 — Sólo una novedad APROBADA suma.** Una PENDIENTE se ve con su cantidad, sin sumar.
 - **C1 — Trámite bancario es incompatible con trabajo real.** Si aparece trabajo real ese día queda para revisión. **No existe una resolución que sume trabajo real y cobertura incompatibles**: hay que decidir qué evidencia vale (corregir el trabajo, o que la novedad no cubra ese día).
 - **C2 — Régimen y jornada para Novedades:** `TURNO_FLEXIBLE` sin asignación aplicable → revisión; `TURNO_OBLIGATORIO` sin planificación vigente → revisión (requiere configuración); `SIN_TURNO` **nunca** es 0 h confirmado por el nombre del régimen → revisión. Las alertas conservan su comportamiento actual.
-- **C4 — Relación laboral (2026-11-13):** fuera de una relación laboral conocida (antes del ALTA o desde la BAJA) el día es `OUTSIDE_EMPLOYMENT`, 0 h confirmado. Sin historia de altas y bajas suficiente para saberlo, 0 h provisional en revisión (`EMPLOYMENT_HISTORY_UNRESOLVED`). No se bloquea la carga por faltar el ALTA ni se asume que el legajo estaba activo por existir.
+- **C4 — Relación laboral (2026-11-13):** fuera de una relación laboral conocida (antes del ALTA o desde la BAJA) el día es `OUTSIDE_EMPLOYMENT`, 0 h confirmado. Sin historia de altas y bajas suficiente para saberlo, 0 h provisional en revisión (`EMPLOYMENT_HISTORY_UNRESOLVED`), **sólo en tipos `EXPECTED_SCHEDULE`** desde §17: con cantidad fija o manual la falta de historia no impide calcular. No se bloquea la carga por faltar el ALTA ni se asume que el legajo estaba activo por existir.
 - **C5 — Historia laboral faltante para una regla con alcance (2026-11-13):** es un problema de integridad, no una revisión: error explícito `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` y no se calcula ni persiste nada.
 - **C3 — Feriado en reglas por calendario** (por ejemplo, Maternidad un feriado lunes a viernes): sin default funcional. Políticas genéricas: no cuenta (0 h), cuenta igual, o cuenta sólo si la persona estaba convocada. Pendiente P1 para el tipo Maternidad definitivo.
 
@@ -87,7 +87,7 @@ Fuente única: `LaborMovement` (ALTA/BAJA con `effectiveFrom` `@db.Date`, reingr
   - ALTA y BAJA con la misma fecha (el orden no está registrado).
 - **En la cobertura:**
   - `NOT_EMPLOYED` → `OUTSIDE_EMPLOYMENT`, 0 h confirmado (distinto de `NO_WORK_OBLIGATION`).
-  - `UNKNOWN` → `SCHEDULE_UNRESOLVED / EMPLOYMENT_HISTORY_UNRESOLVED` (0 h provisional, revisión), sólo si el tipo suma al total. Un tipo informativo (no suma) no tiene nada computable que proteger y se calcula normal.
+  - `UNKNOWN` → `SCHEDULE_UNRESOLVED / EMPLOYMENT_HISTORY_UNRESOLVED` (0 h provisional, revisión), sólo si el tipo suma al total y es `EXPECTED_SCHEDULE` (§17). `FIXED_MINUTES` y `MANUAL_MINUTES` se calculan normal. Un tipo informativo (no suma) no tiene nada computable que proteger y se calcula normal.
   - Tipos `NONE`: siempre `NO_COVERAGE`.
 - El encargado confirma 0 h o indica las horas base; si después se registra el ALTA, el recálculo resuelve el día con la evidencia (§6.2).
 
@@ -104,7 +104,7 @@ Implementación:
 ### 6.1 Algoritmo por día (`evaluateNoveltyCoverageDay`)
 
 1. Tipo `NONE` → `NO_COVERAGE`, 0, sin revisión.
-2. Relación laboral (§5.1): `NOT_EMPLOYED` → `OUTSIDE_EMPLOYMENT`; `UNKNOWN` y el tipo suma → revisión `EMPLOYMENT_HISTORY_UNRESOLVED`.
+2. Relación laboral (§5.1): `NOT_EMPLOYED` → `OUTSIDE_EMPLOYMENT`; `UNKNOWN`, el tipo suma y es `EXPECTED_SCHEDULE` → revisión `EMPLOYMENT_HISTORY_UNRESOLVED` (§17).
 3. `MANUAL_MINUTES` → `Novelty.quantityMinutes`, sin reglas de días (sin cantidad: `NO_COVERAGE`).
 4. Regla de días:
    - `WORK_OBLIGATION`: resultado de `expectedWorkday` (§7). `DAY_OFF` / `HOLIDAY_NOT_CONVOKED` / `NO_WORK_OBLIGATION` → 0 confirmado; `UNRESOLVED` → revisión con su motivo; `HOLIDAY_SCOPE_HISTORY_MISSING` → error (C5).
@@ -277,7 +277,7 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada y aprobada** (`75b96f0`) |
 | 8 | Carga de Novedades guiada por el Tipo, con vista previa de cobertura (§15) | **Implementada y aprobada** (`ca187d8`) |
 | 9 | Finnegans: Valor 1 desde la cobertura diaria (§16) | **Implementada y aprobada** (`0c70f45`) |
-| 10 | QA y cierre | Auditoría integral hecha el 2026-11-16; P5 detectada y corregida (§12.3) |
+| 10 | QA y cierre | Auditoría integral hecha el 2026-11-16; P5 detectada y corregida (§12.3); separación de responsabilidades por modo (§17) |
 
 ### Etapa 1 — qué quedó implementado
 
@@ -373,6 +373,8 @@ El trabajo real del día es `totalWorkedMinutes` después de excluir lo que no c
 - Cada día se cuenta una sola vez por consumidor: la cobertura entra por la misma función pura que el trabajo real.
 
 ### 12.4 Resolución de conflictos con trabajo real
+
+> **Reemplazado en parte por §17 (2026-11-16):** un día `COVERED` admite sólo `CONFIRMED_ZERO` (o deshacer la resolución), sin importar si hay conflicto; `SET_BASE_MINUTES` ya no se acepta sobre un día cubierto, tampoco en tipos compatibles. Lo que sigue describe la etapa 4.
 
 `POST /novelties/:id/coverage-days/:date/resolution` acepta, además de los días `SCHEDULE_UNRESOLVED`, un día `COVERED` en conflicto con el trabajo real (C1):
 - **Tipo incompatible:** sólo `CONFIRMED_ZERO` ("la novedad no cubre este día"). `SET_BASE_MINUTES` responde `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`.
@@ -636,3 +638,82 @@ Deudas: la lista de "Aplica sobre hora" sigue atada a `allowsHours` (comportamie
 **Fuente al exportar (preview y definitiva, la misma función `withPeriodFinnegansConfig`):** para cada novedad, la configuración congelada en el cierre de su legajo y período; si el cierre no existe, no tiene la sección (snapshot anterior a §16.2) o no incluye ese tipo (p. ej. una corrección posterior de RRHH), el tipo vigente, que es el comportamiento anterior. La selección del repositorio ya no filtra por la configuración del tipo: si exporta, si está activo y si un rango del mes anterior entra (sólo con cobertura) se decide con esa configuración efectiva. Como la vista previa usa la misma fuente, un cambio del tipo vigente no aparece como "cambio desde la última exportación" de un período congelado.
 
 **Ejemplo probado (integración PostgreSQL):** junio con TBF en horas, cierre aprobado; el tipo pasa a NUEVO en días; la primera exportación de junio sale TBF, Valor 1 = 4; el cierre de julio congela NUEVO en días y julio sale NUEVO, Valor 1 = 1; sin la sección congelada, junio vuelve a leer el tipo vigente y la versión 1 ya generada no cambia.
+
+## 17. La cantidad la define el Tipo (QA manual de la etapa 10, decisión del usuario 2026-11-16)
+
+**Problema detectado:** en desarrollo ningún legajo tiene ALTA/BAJA registrada. El motor mandaba a revisión (`EMPLOYMENT_HISTORY_UNRESOLVED`) cualquier día de un tipo que suma, también con cantidad fija, así que Vacaciones "8 h fijas" quedaba en revisión día por día y había que indicar las horas a mano.
+
+**Regla canónica por `coverageMode`:**
+
+| Modo | Cantidad base del día | Necesita jornada | Falta de ALTA/BAJA |
+|---|---|---|---|
+| `FIXED_MINUTES` | `coverageFixedMinutes` | No (sólo si su regla de días es `WORK_OBLIGATION`, para elegir los días) | No influye |
+| `MANUAL_MINUTES` | `quantityMinutes` de la carga | No | No influye |
+| `NONE` | 0 | No | No influye |
+| `EXPECTED_SCHEDULE` | Jornada esperada del día | Sí | Revisión (`EMPLOYMENT_HISTORY_UNRESOLVED`) |
+
+- Después de la cantidad aplican sólo las reglas del propio tipo: días (`EVERY_DAY`, `SELECTED_WEEKDAYS`, `WORK_OBLIGATION`), franco, feriado, multiplicadores, si suma y compatibilidad con trabajo real. Nunca se reemplaza la cantidad fija por la del turno (Vacaciones 8 h fijas con turno de 8 h 30 m cubre 8 h). Si RRHH quiere que siga la jornada real, configura `EXPECTED_SCHEDULE`.
+- Una BAJA registrada sigue siendo evidencia: fuera de la relación laboral conocida el día es `OUTSIDE_EMPLOYMENT` (0 h) en cualquier modo. La regla global de relación laboral de otros módulos no cambia.
+- La jornada esperada sigue guardándose en cada fila cuando se conoce: es el límite de P5 (§12.3) y de `REAL_WORK_EXCEEDS_EXPECTED`, nunca el valor de un tipo fijo.
+
+**Resolución manual (`POST /novelties/:id/coverage-days/:date/resolution`):** (ampliada por §18: cualquier día calculado admite un ajuste, sólo a 0 h o al valor del tipo)
+
+| Día | Resoluciones admitidas |
+|---|---|
+| `COVERED` (computa, en revisión o no) | `CONFIRMED_ZERO` con nota: excepción administrativa "no cubre este día". `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. |
+| `SCHEDULE_UNRESOLVED`, tipo `EXPECTED_SCHEDULE` | `CONFIRMED_ZERO` o `SET_BASE_MINUTES` con las horas del día (como antes). |
+| `SCHEDULE_UNRESOLVED`, tipo `FIXED_MINUTES` (regla `WORK_OBLIGATION` sin turno) | `CONFIRMED_ZERO` o `SET_BASE_MINUTES` igual a `coverageFixedMinutes` ("aplicar el valor del tipo"); otro valor → 400. |
+| Resuelto a mano | `RESTORE_AUTOMATIC`: deshace la resolución y recalcula el día; sin resolución → `409 NOVELTY_COVERAGE_DAY_NOT_RESOLVED`. |
+| Otro outcome (franco, feriado excluido, sin cobertura) | `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. |
+
+- Con cantidad fija o manual, una resolución con horas se conserva en un recálculo sólo si sigue siendo el valor del tipo o de la carga; si no, manda el valor nuevo y se audita como resolución descartada.
+- `RESTORE_AUTOMATIC` no se persiste como resolución: es una acción de la API.
+
+**Pantalla:** cualquier día calculado se abre desde la grilla y desde los chips. El mismo modal tiene dos modos: DETAIL (día sin revisión: valor configurado, trabajo, jornada, cobertura, computable, liquidación, reglas aplicadas y la excepción "Confirmar 0 h") y REVIEW (además, el motivo y las resoluciones admitidas). Nunca ofrece una cantidad libre si el tipo la define.
+
+**Datos ya persistidos:** las filas calculadas antes de §17 (por ejemplo `EMPLOYMENT_HISTORY_UNRESOLVED` en tipos fijos) cambian cuando se recalculan. En una base compartida eso requiere correr `scripts/novelties-coverage-reconcile.ts` con autorización explícita, respaldo y en modo dry-run primero.
+
+## 18. Ajuste excepcional de un día calculado (decisión del usuario, 2026-11-16)
+
+> **Ampliado por §19:** el ajuste ya no se limita a 0 h o al valor exacto; admite cualquier valor entre 0 y ese máximo.
+
+La configuración del Tipo es la regla automática general; quien puede cargar el tipo (RRHH siempre, o los roles de carga del tipo, dentro de su alcance) puede corregir la cobertura de un día concreto. Caso que lo originó: Vacaciones fija de 8 h con "feriado: no cuenta" deja 0 h el feriado y RRHH necesita aplicar las 8 h ese día.
+
+**Valores admitidos por modo (validados en el backend; la pantalla ofrece sólo estos):**
+
+| Modo | Valores |
+|---|---|
+| `FIXED_MINUTES` | 0 h o `coverageFixedMinutes` (Vacaciones 8 h: 0 o 480; 300 o 600 → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`) |
+| `MANUAL_MINUTES` | 0 h o la cantidad cargada (`quantityMinutes`) |
+| `EXPECTED_SCHEDULE` | 0 h o la jornada conocida del día; horas libres sólo si la jornada no se pudo determinar (como antes) |
+| `NONE` | nada que ajustar (`409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`) |
+
+- Aplica a cualquier día con fila de cobertura: computa, cubierto en 0 por una regla del tipo (feriado, franco, día no incluido, sin obligación), fuera de la relación laboral o en revisión.
+- Un valor con horas nunca puede sumarse a trabajo real incompatible ese día, superar la jornada con trabajo real compatible (`400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`) ni dejar el día por encima de la jornada con otras coberturas (P5). En esos casos sólo cabe 0 h o corregir la evidencia.
+- La nota es obligatoria y queda auditada (autor, fecha, valor, nota y estado anterior).
+
+**Persistencia y semántica del ajuste:** se reutiliza la resolución manual de `NoveltyDayCoverage` (`reviewStatus = RESOLVED`, `resolution`, `resolvedBaseMinutes`, `resolvedAgainstWorkedMinutes`, autor, fecha y nota); no hay otra fuente de cobertura. La fila conserva el resultado automático (`outcome`, `baseMinutes`) y el ajuste se lee como base efectiva (`resolvedBaseMinutes ?? baseMinutes`). En un recálculo:
+- un ajuste sobre un día calculado prevalece hasta `RESTORE_AUTOMATIC`, aunque cambie el resultado automático (por ejemplo, el feriado deja de serlo);
+- con horas, sólo mientras siga siendo el valor del tipo o de la carga (o, según jornada, la misma jornada): si el tipo pasa de 8 h a 7 h, el ajuste de 8 h se descarta y queda auditado como resolución descartada;
+- la respuesta a una revisión (día que estaba `SCHEDULE_UNRESOLVED`) mantiene la regla de §13.4: vale mientras siga la misma incertidumbre.
+
+La contabilidad trata un ajuste con horas como cobertura aplicable aunque el resultado automático fuera 0 h, así que lo valida contra el trabajo real igual que un día cubierto. Un cambio posterior del trabajo real lo deja en revisión (`RESOLUTION_OUTDATED`).
+
+**Pantalla:** cualquier día calculado se abre. En modo detalle, la sección "Ajuste excepcional del día" ofrece según el modo "Usar 8 h de la novedad", "Confirmar 0 h" y, si hay un ajuste manual, "Restaurar cálculo automático". Nunca hay un input libre salvo jornada desconocida. La consulta de cobertura informa `canAdjust` (mismo criterio que la resolución) y, sin permiso, el modal muestra sólo el detalle. "Corregir horas del legajo" y "Gestionar la novedad" quedan como otras correcciones, separadas del ajuste del día.
+
+## 19. Ajuste parcial de un día (decisión del usuario, 2026-11-16)
+
+Reemplaza la restricción "sólo 0 h o el valor exacto" de §18: el ajuste manual de un día puede ser **cualquier valor entre 0 y el máximo automático permitido para ese día**, igual para todos los tipos (nunca se decide por el nombre).
+
+| Modo | Máximo del ajuste |
+|---|---|
+| `FIXED_MINUTES` | `coverageFixedMinutes` (Vacaciones 8 h: 0, 4, 6 u 8 h; más → 400) |
+| `MANUAL_MINUTES` | `quantityMinutes` de la carga |
+| `EXPECTED_SCHEDULE` | la jornada conocida del día; sin tope propio (24 h del schema) sólo si la jornada no se pudo determinar |
+| `NONE` | 0: no hay cobertura que ajustar (`409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`) |
+
+- Fuera de rango → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED` ("la cobertura de ese día puede ser entre 0 h y …"). El máximo lo calcula `coverageAdjustmentMaxMinutes` (backend) y el mismo criterio en el modal.
+- Siguen vigentes trabajo real (incompatible: sin horas; compatible: no superar la jornada), P5, períodos cerrados, permisos (`canAdjust`), nota obligatoria y auditoría.
+- Persistencia: la misma resolución manual (`SET_BASE_MINUTES` con `resolvedBaseMinutes`). En un recálculo, con cantidad fija o manual el ajuste se conserva mientras no supere el valor del tipo o de la carga (si el tipo baja de 8 h a 5 h, un ajuste de 6 h se descarta y queda auditado; uno de 4 h se conserva). Según jornada, mientras la jornada sea la misma. `RESTORE_AUTOMATIC` vuelve al cálculo del tipo.
+- Defensa en el motor: un tipo `NONE` nunca conserva una resolución con horas.
+- Pantalla: "Ajuste excepcional del día" ofrece "Indicar horas del día" (HH:mm, con el máximo permitido a la vista y validado antes de enviar), "Confirmar 0 h" y, si hay un ajuste, "Restaurar cálculo automático".

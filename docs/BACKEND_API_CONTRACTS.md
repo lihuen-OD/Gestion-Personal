@@ -1139,6 +1139,15 @@ NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED` / `NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUI
 NOVELTY_TYPE_HOURS_DAYS_CONFLICT`, Etapa 15L.5) — estructuralmente inviable,
 ese tipo nunca tendría `quantityDays` para exportar.
 
+**Color (`uiColor`, paleta fija de 22, 2026-11-16):** `blue`, `orange`,
+`violet`, `emerald`, `red`, `cyan`, `fuchsia`, `yellow`, `pine`, `pink`,
+`indigo`, `lime`, `brown`, `sky`, `tangerine`, `purple`, `green`, `rose`,
+`slate`, `amber`, `magenta`, `teal` (los 15 nombres anteriores siguen
+valiendo). En el alta es opcional: sin color, el backend elige el primero de la
+paleta que ningún tipo usa o, si están todos en uso, el menos repetido
+(`novelty-types/noveltyTypeColors.ts`). Nunca depende del nombre ni del código
+y no limita la cantidad de tipos: los colores pueden repetirse.
+
 **Cobertura horaria** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`, etapa 1,
 aditivo): `POST`/`PATCH` aceptan y todas las lecturas devuelven:
 
@@ -1380,7 +1389,7 @@ Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcan
 - `computedMinutes` = minutos base efectivos (los resueltos, si hay resolución) × `multiplier`.
 - Errores: los mismos `400`/`409` de validación que la carga.
 
-**Consulta:** las filas persistidas con la misma forma por día, más `shiftTemplate { code, name }`, `resolvedBy` (nombre), `resolvedAt` y `resolutionNote`, y `totals`.
+**Consulta:** las filas persistidas con la misma forma por día, más `shiftTemplate { code, name }`, `resolvedBy` (nombre), `resolvedAt` y `resolutionNote`, y `totals`. Desde §17 (aditivo), `novelty` incluye `quantityMinutes` y `noveltyType.coverageMode` / `noveltyType.coverageFixedMinutes`, para mostrar el valor configurado en el detalle del día. Desde §18 (aditivo), la respuesta incluye `canAdjust` (el usuario puede ajustar días: RRHH o un rol de carga del tipo) y `noveltyType.allowedLoadRoles` en las novedades.
 
 **Resolución** de un día en revisión (`:date` = `AAAA-MM-DD`). Body:
 
@@ -1388,7 +1397,10 @@ Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcan
 { "resolution": "SET_BASE_MINUTES", "baseMinutes": 480, "note": "Trabajaba domingos de 8 h", "correctionReason": null }
 ```
 
-- `resolution`: `CONFIRMED_ZERO` (sin `baseMinutes`) o `SET_BASE_MINUTES` (`baseMinutes` 1..1440). `note` es obligatoria (5 a 600).
+- `resolution`: `CONFIRMED_ZERO` (sin `baseMinutes`), `SET_BASE_MINUTES` (`baseMinutes` 1..1440) o `RESTORE_AUTOMATIC` (sin `baseMinutes`; deshace una resolución manual y recalcula el día; sin resolución previa → `409 NOVELTY_COVERAGE_DAY_NOT_RESOLVED`). `note` es obligatoria (5 a 600).
+- **Desde §19 del ADR:** el ajuste admite cualquier valor entre 0 y el máximo del día (`FIXED_MINUTES` → `coverageFixedMinutes`; `MANUAL_MINUTES` → la cantidad cargada; `EXPECTED_SCHEDULE` → la jornada conocida, sin tope propio si es desconocida; `NONE` → nada). Fuera de rango → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`.
+- **§18 (histórico, ampliado por §19):** cualquier día con fila de cobertura admite un ajuste, sólo a 0 h o al valor del tipo: `FIXED_MINUTES` → `coverageFixedMinutes`; `MANUAL_MINUTES` → la cantidad cargada; `EXPECTED_SCHEDULE` → la jornada conocida del día (horas libres sólo con la jornada sin resolver). Otro valor → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. Con trabajo real incompatible o si el valor deja el día por encima de la jornada con otras coberturas (P5) → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`; con trabajo compatible que supera la jornada → `400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`. Tipo `NONE` → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. El ajuste prevalece en los recálculos hasta `RESTORE_AUTOMATIC`.
+- **§17 (histórico):** un día `COVERED`, esté o no en revisión, admite sólo `CONFIRMED_ZERO` (excepción administrativa); `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. Un día `SCHEDULE_UNRESOLVED` admite `SET_BASE_MINUTES` libre sólo en tipos `EXPECTED_SCHEDULE`; en `FIXED_MINUTES` sólo igual a `coverageFixedMinutes`.
 - Días `SCHEDULE_UNRESOLVED`, incluida la corrección de una resolución anterior.
 - Desde la etapa 4, también un día `COVERED` en conflicto con el trabajo real (ADR §12.4):
   - tipo incompatible: sólo `CONFIRMED_ZERO`; `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`;

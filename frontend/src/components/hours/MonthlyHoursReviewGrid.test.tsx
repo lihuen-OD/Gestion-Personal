@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MonthlyHoursReviewGrid } from "./MonthlyHoursReviewGrid";
 import { dayAccounting, periodAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
@@ -176,6 +176,18 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(rowNamed("Trámite bancario")).toHaveTextContent("Revisar");
     expect(lastCell(rowNamed("Vacaciones"))).toHaveTextContent("a revisar");
     expect(lastCell(rowNamed("Total para liquidación"))).not.toHaveTextContent(/10h|7h|3h/);
+  });
+
+  it("§17: una celda de novedad que computa es clickeable para ver su detalle", async () => {
+    const coverageItem = { noveltyId: "novelty-1", noveltyTypeId: "type-vac", code: "VAC", label: "Vacaciones", uiColor: "teal", minutes: 480, settlementMinutes: 480, state: "COUNTED" as const, countsTowardTotal: true, reviewRequired: false, reviewReasons: [] };
+    const grid = timeGridFixture(undefined, {
+      noveltyCoverageRows: [{ noveltyType: { id: "type-vac", code: "VAC", name: "Vacaciones", uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": 480 }, settlementMinutesByDay: { "4": 480 }, stateByDay: { "4": "COUNTED" }, totals: { noveltyTypeId: "type-vac", coveredMinutes: 480, settlementMinutes: 480, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0 } }],
+      noveltiesByDay: { "4": [coverageItem] },
+    });
+    const onReviewNovelty = vi.fn();
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" onReviewNovelty={onReviewNovelty} />);
+    screen.getByRole("button", { name: "Vacaciones, día 4: ver detalle de la cobertura" }).click();
+    expect(onReviewNovelty).toHaveBeenCalledWith(coverageItem, 4);
   });
 
   it("es read-only: no expone ningún botón dentro de la grilla", () => {

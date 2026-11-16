@@ -80,13 +80,32 @@ function assertCanApprove(novelty: Awaited<ReturnType<typeof noveltiesRepository
   }
 }
 
-function assertCanLoad(type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>, user: Express.AuthUser) {
-  if (user.role === roles.rrhh) return;
+function canLoadType(type: { allowedLoadRoles?: unknown } | null | undefined, user: Express.AuthUser) {
+  if (user.role === roles.rrhh) return true;
   const allowedLoadRoles = asStringArray(type?.allowedLoadRoles);
   const roleLabel = roleLabels[user.role] || user.role;
-  if (!allowedLoadRoles.includes(roleLabel) && !allowedLoadRoles.includes(user.role)) {
-    throw new AppError("User cannot create this novelty type", 403, "NOVELTY_LOAD_FORBIDDEN");
-  }
+  return allowedLoadRoles.includes(roleLabel) || allowedLoadRoles.includes(user.role);
+}
+
+/**
+ * Máximo de cobertura de un día ajustado a mano (NOVELTY_COVERAGE_ENGINE.md
+ * §19): el valor fijo del tipo, la cantidad cargada o la jornada conocida.
+ * `null` = sin tope propio (tipo según jornada con la jornada sin resolver:
+ * rige el límite general de 24 h del schema).
+ */
+export function coverageAdjustmentMaxMinutes(
+  type: { coverageMode: string; coverageFixedMinutes: number | null },
+  quantityMinutes: number | null,
+  row: { outcome: string; expectedMinutes: number | null },
+): number | null {
+  if (type.coverageMode === "FIXED_MINUTES") return type.coverageFixedMinutes ?? 0;
+  if (type.coverageMode === "MANUAL_MINUTES") return quantityMinutes ?? 0;
+  if (type.coverageMode === "EXPECTED_SCHEDULE") return row.outcome === "SCHEDULE_UNRESOLVED" || row.expectedMinutes === null ? null : row.expectedMinutes;
+  return 0;
+}
+
+function assertCanLoad(type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>, user: Express.AuthUser) {
+  if (!canLoadType(type, user)) throw new AppError("User cannot create this novelty type", 403, "NOVELTY_LOAD_FORBIDDEN");
 }
 
 async function ensureEmployeesVisible(employeeIds: string[], user: Express.AuthUser) {
@@ -658,7 +677,16 @@ export const noveltiesService = {
       };
     });
     return {
-      novelty: { id: novelty.id, status: novelty.status, fromDate: novelty.fromDate, toDate: novelty.toDate, noveltyType: { code: novelty.noveltyType.code, name: novelty.noveltyType.name } },
+      // §18: quien puede cargar el tipo puede ajustar un día (mismo criterio que la resolución).
+      canAdjust: canLoadType(novelty.noveltyType, user),
+      novelty: {
+        id: novelty.id,
+        status: novelty.status,
+        fromDate: novelty.fromDate,
+        toDate: novelty.toDate,
+        quantityMinutes: novelty.quantityMinutes,
+        noveltyType: { code: novelty.noveltyType.code, name: novelty.noveltyType.name, coverageMode: novelty.noveltyType.coverageMode, coverageFixedMinutes: novelty.noveltyType.coverageFixedMinutes },
+      },
       days,
       totals: coverageTotals(days),
     };
@@ -686,49 +714,74 @@ export const noveltiesService = {
         const date = argentinaCalendarDate(dateKey);
         const row = await tx.noveltyDayCoverage.findUnique({ where: { noveltyId_date: { noveltyId: id, date } } });
         if (!row) throw new AppError("Ese día no pertenece a la cobertura de la novedad.", 404, "NOVELTY_COVERAGE_DAY_NOT_FOUND");
-        // Se resuelven a mano (también para corregir una resolución anterior):
-        // - días con jornada o relación laboral sin resolver;
-        // - etapa 4: días cubiertos en conflicto con el trabajo real del día
-        //   (NOVELTY_COVERAGE_ENGINE.md §8, C1). En un tipo incompatible sólo
-        //   "no cubre este día" (0 h): nunca se suman trabajo real y cobertura.
-        //   En uno compatible, 0 h o minutos que entren en la jornada esperada.
-        // - P5: coberturas del día que, sumadas, superan la jornada esperada.
-        //   Sólo "no cubre este día" (0 h): corrige la evidencia de una de
-        //   ellas; nunca se acepta un total mayor a la jornada.
+        // Ajuste manual de un día (NOVELTY_COVERAGE_ENGINE.md §17 a §19): la
+        // regla automática es la del tipo; RRHH (o quien puede cargar el
+        // tipo) puede corregir un día concreto entre 0 y el máximo que el
+        // tipo admite ese día, con nota y auditoría. Prevalece hasta
+        // RESTORE_AUTOMATIC.
+        // - CONFIRMED_ZERO: siempre ("no cubre este día").
+        // - SET_BASE_MINUTES: 1..máximo — el valor fijo del tipo, la
+        //   cantidad cargada (manual) o la jornada conocida (según jornada);
+        //   sin tope propio sólo si la jornada de un tipo según jornada no se
+        //   pudo determinar. Nunca contra trabajo real incompatible, ni
+        //   superando la jornada (con trabajo real o con otras coberturas, P5).
+        // - RESTORE_AUTOMATIC: deshace la resolución y recalcula el día.
         // La falta de historia para un feriado nunca llega acá: es un error.
-        const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
-        if (row.outcome !== "SCHEDULE_UNRESOLVED") {
-          // Mismo cálculo que la grilla: con todas las coberturas del día.
-          const dayRows = await tx.noveltyDayCoverage.findMany({
-            where: { employeeId: novelty.employeeId, date, noveltyId: { not: id }, novelty: { status: { not: "RECHAZADO" } } },
-            select: accountingNoveltyCoverageSelect,
+        if (type.coverageMode === "NONE") {
+          throw new AppError("Este tipo de novedad no registra tiempo: no hay cobertura para ajustar.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+        }
+        if (input.resolution === "RESTORE_AUTOMATIC") {
+          if (row.reviewStatus !== "RESOLVED") throw new AppError("Este día no tiene una resolución manual para deshacer.", 409, "NOVELTY_COVERAGE_DAY_NOT_RESOLVED");
+          await tx.noveltyDayCoverage.update({
+            where: { id: row.id },
+            data: { reviewStatus: "NOT_REQUIRED", resolution: null, resolvedBaseMinutes: null, resolvedAgainstWorkedMinutes: null, resolvedByUserId: null, resolvedAt: null, resolutionNote: null },
           });
-          const current = { ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }), status: "APROBADO" as const };
-          const item = accountNoveltyDay([current, ...dayRows.map(toAccountingNoveltyCoverage)], workedMinutes).items.find((candidate) => candidate.noveltyId === id);
-          const realWorkConflict = item?.reviewReasons.some((reason) => reason === "REAL_WORK_ON_INCOMPATIBLE" || reason === "REAL_WORK_EXCEEDS_EXPECTED" || reason === "REAL_WORK_WITHOUT_EXPECTED" || reason === "RESOLUTION_OUTDATED");
-          const coverageTotalConflict = item?.reviewReasons.includes("COVERAGE_TOTAL_EXCEEDS_EXPECTED") ?? false;
-          if (row.outcome !== "COVERED" || (!realWorkConflict && !coverageTotalConflict)) {
-            throw new AppError("Este día no está en revisión.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+          // Mismo cálculo que cualquier recálculo: el día vuelve a la regla del tipo.
+          await persistNoveltyCoverageWithin(tx, [id], { protectedPeriods: periods.length ? "ALLOW_CORRECTION" : "REJECT", window: { from: date, to: date } });
+          const updated = await tx.noveltyDayCoverage.findUniqueOrThrow({ where: { id: row.id } });
+          return { novelty, type, before: row, updated, periods };
+        }
+        const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
+        if (input.resolution === "SET_BASE_MINUTES") {
+          const requested = input.baseMinutes!;
+          const maximum = coverageAdjustmentMaxMinutes(type, novelty.quantityMinutes, row);
+          if (maximum !== null && requested > maximum) {
+            const range = maximum > 0 ? `entre 0 h y ${formatMinutes(maximum)}` : "0 h";
+            throw new AppError(`Para esta novedad, la cobertura de ese día puede ser ${range}.`, 400, "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED");
           }
-          if (!realWorkConflict && input.resolution !== "CONFIRMED_ZERO") {
+          if (workedMinutes > 0 && row.realWorkCompatibility === "INCOMPATIBLE") {
             throw new AppError(
-              "Las novedades de este día superan la jornada esperada: indicá cuál no cubre este día, o corregí la novedad o la jornada.",
+              "Esta novedad no puede coexistir con trabajo registrado ese día: corregí primero las horas del legajo o indicá que la novedad no cubre este día.",
               400,
               "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
             );
           }
-          if (row.realWorkCompatibility === "INCOMPATIBLE" && input.resolution !== "CONFIRMED_ZERO") {
-            throw new AppError(
-              "Esta novedad no puede coexistir con trabajo registrado: indicá que no cubre este día, corregí el trabajo registrado o quitá la novedad.",
-              400,
-              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
-            );
-          }
-          if (input.resolution === "SET_BASE_MINUTES" && row.expectedMinutes !== null && workedMinutes + input.baseMinutes! > row.expectedMinutes) {
+          if (row.expectedMinutes !== null && workedMinutes > 0 && workedMinutes + requested > row.expectedMinutes) {
             throw new AppError(
               `El trabajo registrado más la cobertura superaría la jornada esperada (${formatMinutes(row.expectedMinutes)}).`,
               400,
               "NOVELTY_COVERAGE_EXCEEDS_EXPECTED",
+            );
+          }
+          // P5: con el valor pedido, las coberturas del día no pueden superar la jornada.
+          const others = await tx.noveltyDayCoverage.findMany({
+            where: { employeeId: novelty.employeeId, date, noveltyId: { not: id }, novelty: { status: { not: "RECHAZADO" } } },
+            select: accountingNoveltyCoverageSelect,
+          });
+          const candidate = {
+            ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }),
+            status: "APROBADO" as const,
+            reviewStatus: "RESOLVED" as const,
+            resolution: "SET_BASE_MINUTES" as const,
+            resolvedBaseMinutes: requested,
+            resolvedAgainstWorkedMinutes: workedMinutes,
+          };
+          const item = accountNoveltyDay([candidate, ...others.map(toAccountingNoveltyCoverage)], workedMinutes).items.find((entry) => entry.noveltyId === id);
+          if (item?.reviewReasons.includes("COVERAGE_TOTAL_EXCEEDS_EXPECTED")) {
+            throw new AppError(
+              "Con ese valor, las novedades de este día superarían la jornada esperada: indicá cuál no cubre este día o corregí la novedad.",
+              400,
+              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
             );
           }
         }
@@ -756,7 +809,12 @@ export const noveltiesService = {
       }, NOVELTY_TRANSACTION_OPTIONS),
     );
     const { novelty, type, before, updated, periods } = outcome;
-    const result = input.resolution === "CONFIRMED_ZERO" ? "sin horas (0 h confirmadas)" : `${formatMinutes(input.baseMinutes!)} base${Number(updated.appliedMultiplier) !== 1 ? ` × ${Number(updated.appliedMultiplier)}` : ""}`;
+    const result =
+      input.resolution === "RESTORE_AUTOMATIC"
+        ? "se deshizo la resolución manual y el día vuelve al cálculo automático"
+        : input.resolution === "CONFIRMED_ZERO"
+          ? "sin horas (0 h confirmadas)"
+          : `${formatMinutes(input.baseMinutes!)} base${Number(updated.appliedMultiplier) !== 1 ? ` × ${Number(updated.appliedMultiplier)}` : ""}`;
     await auditService.register({
       ...audit,
       action: "UPDATE",

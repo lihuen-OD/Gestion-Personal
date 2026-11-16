@@ -82,7 +82,7 @@ export const noveltyCoverageDayParamsSchema = z.object({ date: dateKeySchema });
 // real": sólo confirmar 0 h o indicar las horas base que correspondían.
 export const noveltyCoverageResolutionSchema = z
   .object({
-    resolution: z.enum(["CONFIRMED_ZERO", "SET_BASE_MINUTES"]),
+    resolution: z.enum(["CONFIRMED_ZERO", "SET_BASE_MINUTES", "RESTORE_AUTOMATIC"]),
     baseMinutes: z.number().int().min(1).max(1440).optional().nullable(),
     note: z.string().trim().min(5).max(600),
     correctionReason: correctionReasonSchema.optional().nullable(),

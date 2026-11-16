@@ -50,6 +50,8 @@ type ApiCreateResponse = { data: ApiNovelty[] };
 type ApiItemResponse = { data: ApiNovelty };
 
 export type NoveltyCoverageResolution = "CONFIRMED_ZERO" | "SET_BASE_MINUTES";
+/** Al resolver, además: deshacer una resolución manual (§17). */
+export type NoveltyCoverageResolutionAction = NoveltyCoverageResolution | "RESTORE_AUTOMATIC";
 
 export type NoveltyCoverageDayDetail = {
   date: string;
@@ -72,12 +74,15 @@ export type NoveltyCoverageDayDetail = {
 };
 
 export type NoveltyCoverageDetail = {
+  /** §18: el usuario puede ajustar días de esta novedad (roles de carga del tipo). */
+  canAdjust?: boolean;
   novelty: {
     id: string;
     status: ApiNoveltyStatus;
     fromDate: string;
     toDate?: string | null;
-    noveltyType: { code: string; name: string };
+    quantityMinutes?: number | null;
+    noveltyType: { code: string; name: string; coverageMode?: "NONE" | "FIXED_MINUTES" | "MANUAL_MINUTES" | "EXPECTED_SCHEDULE"; coverageFixedMinutes?: number | null };
   };
   days: NoveltyCoverageDayDetail[];
   totals: { days: number; coveredDays: number; pendingReviewDays: number; baseMinutes: number; computedMinutes: number };
@@ -111,7 +116,7 @@ export type NoveltyCoveragePreviewInput = {
 };
 
 export type ResolveNoveltyCoverageDayInput = {
-  resolution: NoveltyCoverageResolution;
+  resolution: NoveltyCoverageResolutionAction;
   baseMinutes?: number | null;
   note: string;
   correctionReason?: string | null;

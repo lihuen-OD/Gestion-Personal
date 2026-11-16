@@ -36,23 +36,34 @@ export const roleSchema = z.enum([
 // aceptaba "purple" (el frontend lo mapeaba a "violet" antes de mandarlo).
 // Confirmado contra la base real: ningún NoveltyType existente usa
 // "indigo", así que quitarlo del enum no pierde ningún dato.
-export const noveltyColorSchema = z.enum([
+// Paleta fija de 22 colores (decisión del usuario, 2026-11-16), en el orden en
+// que se ofrecen y se asignan. Los 15 nombres anteriores siguen siendo válidos
+// (son 15 de estos 22), así que ningún color persistido cambia de nombre.
+export const NOVELTY_UI_COLORS = [
   "blue",
-  "sky",
-  "cyan",
-  "teal",
-  "emerald",
-  "green",
-  "lime",
-  "amber",
   "orange",
-  "red",
-  "rose",
-  "pink",
   "violet",
+  "emerald",
+  "red",
+  "cyan",
+  "fuchsia",
+  "yellow",
+  "pine",
+  "pink",
+  "indigo",
+  "lime",
+  "brown",
+  "sky",
+  "tangerine",
   "purple",
+  "green",
+  "rose",
   "slate",
-]);
+  "amber",
+  "magenta",
+  "teal",
+] as const;
+export const noveltyColorSchema = z.enum(NOVELTY_UI_COLORS);
 
 export const listNoveltyTypesQuerySchema = z.object({
   search: z.string().trim().optional(),
@@ -69,7 +80,8 @@ export const createNoveltyTypeSchema = z.object({
   // noveltyTypes.repository.ts::generateNextCode.
   code: z.string().trim().min(2).max(40).optional(),
   name: z.string().trim().min(2).max(160),
-  uiColor: noveltyColorSchema.default("blue"),
+  // Sin color, el alta elige uno no usado (noveltyTypeColors.ts).
+  uiColor: noveltyColorSchema.optional(),
   kind: noveltyTypeKindSchema,
   status: recordStatusSchema.default("ACTIVO"),
   description: z.string().trim().max(600).optional().nullable(),

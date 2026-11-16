@@ -97,7 +97,8 @@ function NoveltyRow({ row, monthDays, noveltiesByDay, onReview }: { row: Novelty
         if (!state && !minutes) return <td key={day}><span className="hour-cell derived">—</span></td>;
         const className = `hour-cell novelty-coverage-grid-cell is-${state.toLowerCase().replace("_", "-")} ${noveltyColorClass(row.noveltyType.uiColor, row.noveltyType.id)}`;
         const content = <><span>{formatCompactDurationMinutes(state === "COUNTED" ? (row.settlementMinutesByDay[key] ?? minutes) : minutes)}</span><small>{noveltyCoverageStateLabel(state)}</small></>;
-        return <td key={day}>{state === "REVIEW_REQUIRED" && item && onReview ? <button type="button" className={className} onClick={() => onReview(item, day)} aria-label={`${row.noveltyType.name}, día ${day}: revisar cobertura`}>{content}</button> : <span className={className} title={`${row.noveltyType.name}: ${noveltyCoverageStateLabel(state)}`}>{content}</span>}</td>;
+        // §17: cualquier día calculado se abre; en revisión, para resolverlo; si no, para ver su detalle.
+        return <td key={day}>{item && onReview ? <button type="button" className={className} onClick={() => onReview(item, day)} title={`${row.noveltyType.name}: ${noveltyCoverageStateLabel(state)}`} aria-label={`${row.noveltyType.name}, día ${day}: ${state === "REVIEW_REQUIRED" ? "revisar cobertura" : "ver detalle de la cobertura"}`}>{content}</button> : <span className={className} title={`${row.noveltyType.name}: ${noveltyCoverageStateLabel(state)}`}>{content}</span>}</td>;
       })}
       <td><b title={totalDetail}>{formatCompactDurationMinutes(totalMinutes)}</b><span className="table-sub">{totalDetail}</span></td>
     </tr>

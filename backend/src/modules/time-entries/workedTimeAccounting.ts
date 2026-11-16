@@ -290,7 +290,10 @@ export function accountNoveltyDay(coverages: AccountingNoveltyCoverage[], worked
     const reviewReasons: NoveltyCoverageReviewReason[] = [];
     if (coverage.reviewStatus === "PENDING") reviewReasons.push("SCHEDULE_UNRESOLVED");
     if (coverage.reviewStatus === "RESOLVED" && coverage.resolvedAgainstWorkedMinutes !== workedMinutes) reviewReasons.push("RESOLUTION_OUTDATED");
-    if (workedMinutes > 0 && NOVELTY_APPLIES_OUTCOMES.has(coverage.outcome)) {
+    // Un ajuste manual con horas (§18) aplica aunque el cálculo automático
+    // hubiera dejado el día sin cobertura (p. ej. un feriado que no cuenta).
+    const applies = NOVELTY_APPLIES_OUTCOMES.has(coverage.outcome) || (coverage.reviewStatus === "RESOLVED" && baseMinutes > 0);
+    if (workedMinutes > 0 && applies) {
       if (coverage.realWorkCompatibility === "INCOMPATIBLE") {
         // Un día que la novedad cubre (o una novedad sin tiempo, p. ej. Falta
         // sin aviso) no admite trabajo real. Sólo deja de serlo una

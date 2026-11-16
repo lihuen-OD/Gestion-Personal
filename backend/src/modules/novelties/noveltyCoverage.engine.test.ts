@@ -115,8 +115,10 @@ describe("Trámite bancario (FIXED 240, todos los días, suma, incompatible)", (
     expect(evaluate({ type: TRAMITE, employment: "NOT_EMPLOYED" })).toMatchObject({ outcome: "OUTSIDE_EMPLOYMENT", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" });
   });
 
-  it("sin historia de altas suficiente → 0 provisional en revisión (EMPLOYMENT_HISTORY_UNRESOLVED)", () => {
-    expect(evaluate({ type: TRAMITE, employment: "UNKNOWN" })).toMatchObject({ outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "EMPLOYMENT_HISTORY_UNRESOLVED", baseMinutes: 0, reviewStatus: "PENDING" });
+  it("§17: sin historia de altas cubre igual sus 240 (la cantidad la define el tipo, no la relación laboral)", () => {
+    expect(evaluate({ type: TRAMITE, employment: "UNKNOWN" })).toMatchObject({ outcome: "COVERED", baseMinutes: 240, reviewStatus: "NOT_REQUIRED" });
+    // Tampoco necesita turno para calcular.
+    expect(evaluate({ type: TRAMITE, employment: "UNKNOWN", workday: unresolvedWorkday("SCHEDULE_MISSING") })).toMatchObject({ outcome: "COVERED", baseMinutes: 240, reviewStatus: "NOT_REQUIRED" });
   });
 });
 
@@ -301,10 +303,18 @@ describe("Resolución manual previa", () => {
     expect(evaluate({ type: VACACIONES, workday: unresolvedWorkday("SCHEDULE_MISSING"), previous })).toMatchObject({ reviewStatus: "PENDING", scheduleReviewReason: "SCHEDULE_MISSING", resolutionDropped: true });
   });
 
-  it("una resolución sobre un día cubierto (conflicto con trabajo real, etapa 4) se conserva mientras siga cubierto", () => {
+  it("§18: un ajuste sobre un día calculado prevalece hasta restaurarlo, aunque cambie el cálculo automático", () => {
     const previous = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0, resolvedAgainstWorkedMinutes: 480 });
     expect(evaluate({ type: TRAMITE, previous })).toMatchObject({ outcome: "COVERED", reviewStatus: "RESOLVED", effectiveBaseMinutes: 0, resolvedAgainstWorkedMinutes: 480 });
-    expect(evaluate({ type: TRAMITE, previous, dayOff: true })).toMatchObject({ outcome: "DAY_OFF", reviewStatus: "NOT_REQUIRED", resolutionDropped: true });
+    expect(evaluate({ type: TRAMITE, previous, dayOff: true })).toMatchObject({ outcome: "DAY_OFF", reviewStatus: "RESOLVED", effectiveBaseMinutes: 0, resolutionDropped: false });
+  });
+
+  it("§18: aplicar el valor del tipo en un feriado que no cuenta deja 480 y se conserva al recalcular; si el tipo cambia su valor, manda el nuevo cálculo", () => {
+    const FIJA_SIN_FERIADO: CoverageTypeConfig = { ...TRAMITE, coverageFixedMinutes: 480 };
+    expect(evaluate({ type: FIJA_SIN_FERIADO, holiday: "IN_SCOPE" })).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0, effectiveBaseMinutes: 0 });
+    const override = resolvedSchedule({ outcome: "HOLIDAY_EXCLUDED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 480, resolvedAgainstWorkedMinutes: 0 });
+    expect(evaluate({ type: FIJA_SIN_FERIADO, holiday: "IN_SCOPE", previous: override })).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0, reviewStatus: "RESOLVED", effectiveBaseMinutes: 480, computedMinutes: 480, resolutionDropped: false });
+    expect(evaluate({ type: { ...FIJA_SIN_FERIADO, coverageFixedMinutes: 420 }, holiday: "IN_SCOPE", previous: override })).toMatchObject({ reviewStatus: "NOT_REQUIRED", effectiveBaseMinutes: 0, resolutionDropped: true });
   });
 
   it("etapa 5: CONFIRMED_ZERO en un día cubierto se conserva aunque cambie la cantidad del tipo (la decisión no dependía de ella)", () => {
@@ -313,9 +323,107 @@ describe("Resolución manual previa", () => {
   });
 
   it("etapa 5: horas base indicadas contra una jornada esperada se descartan si esa jornada cambia (otra incertidumbre)", () => {
-    const compatible = { ...TRAMITE, realWorkCompatibility: "COMPATIBLE" as const };
+    const compatible = { ...JORNADA, realWorkCompatibility: "COMPATIBLE" as const };
     const previous = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 120, resolvedAgainstWorkedMinutes: 360 });
     expect(evaluate({ type: compatible, previous, workday: workday({ expectedMinutes: 480 }) })).toMatchObject({ reviewStatus: "RESOLVED", effectiveBaseMinutes: 120, resolutionDropped: false });
-    expect(evaluate({ type: compatible, previous, workday: workday({ expectedMinutes: 540 }) })).toMatchObject({ reviewStatus: "NOT_REQUIRED", resolution: null, effectiveBaseMinutes: 240, resolutionDropped: true });
+    expect(evaluate({ type: compatible, previous, workday: workday({ expectedMinutes: 540 }) })).toMatchObject({ reviewStatus: "NOT_REQUIRED", resolution: null, effectiveBaseMinutes: 540, resolutionDropped: true });
+  });
+
+  it("§19: con cantidad fija, una resolución con horas se conserva mientras no supere el valor del tipo", () => {
+    // Un valor parcial (2 h de un Trámite de 4 h) sobrevive al recálculo; uno mayor que el tipo, no.
+    const partial = resolvedSchedule({ outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 120, resolvedAgainstWorkedMinutes: 0 });
+    expect(evaluate({ type: TRAMITE, previous: partial })).toMatchObject({ baseMinutes: 240, reviewStatus: "RESOLVED", effectiveBaseMinutes: 120, resolutionDropped: false });
+    expect(evaluate({ type: { ...TRAMITE, coverageFixedMinutes: 90 }, previous: partial })).toMatchObject({ reviewStatus: "NOT_REQUIRED", effectiveBaseMinutes: 90, resolutionDropped: true });
+    // "Aplicar el valor del tipo" sobre un día sin jornada (WORK_OBLIGATION) vale mientras el tipo no cambie su cantidad.
+    const applied = resolvedSchedule({ scheduleReviewReason: "SCHEDULE_MISSING", resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 480 });
+    expect(evaluate({ type: VACACIONES, workday: unresolvedWorkday("SCHEDULE_MISSING"), previous: applied })).toMatchObject({ reviewStatus: "RESOLVED", effectiveBaseMinutes: 480 });
+    expect(evaluate({ type: { ...VACACIONES, coverageFixedMinutes: 420 }, workday: unresolvedWorkday("SCHEDULE_MISSING"), previous: applied })).toMatchObject({ reviewStatus: "PENDING", effectiveBaseMinutes: 0, resolutionDropped: true });
+  });
+});
+
+// §17: la cantidad la define el Tipo. Sólo EXPECTED_SCHEDULE necesita jornada
+// (y relación laboral) para saber cuánto cubre.
+describe("§17 — la cantidad sale del modo del tipo", () => {
+  const RANGE = ["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21"];
+  const VACACIONES_FIJAS: CoverageTypeConfig = { ...VACACIONES, coverageDayRule: "EVERY_DAY", coverageOnDayOff: "COVER", coverageOnHoliday: "COVER", coverageAppliesSpecialHours: false };
+  // Legajo sin ALTA/BAJA, turno L–V de 8 h 30 m, feriado el lunes 16 y fin de semana sin obligación.
+  const day = (dateKey: string, overrides: Partial<CoverageDayInput> = {}) =>
+    evaluate({
+      type: VACACIONES_FIJAS,
+      dateKey,
+      employment: "UNKNOWN",
+      workday: [1, 2, 3, 4, 5].includes(new Date(`${dateKey}T00:00:00Z`).getUTCDay()) && dateKey !== "2026-11-16"
+        ? workday({ expectedMinutes: 510 })
+        : workday({ obligation: dateKey === "2026-11-16" ? "HOLIDAY_NOT_CONVOKED" : "NO_WORK_OBLIGATION", expectedMinutes: 0, shiftTemplateIds: [] }),
+      holiday: dateKey === "2026-11-16" ? "IN_SCOPE" : null,
+      ...overrides,
+    });
+
+  it("FIXED_MINUTES (Vacaciones 8 h, todos los días): sin movimientos laborales, cada día del rango cubre 480 sin revisión ni turno", () => {
+    for (const dateKey of RANGE) {
+      expect(day(dateKey)).toMatchObject({ outcome: "COVERED", baseMinutes: 480, reviewStatus: "NOT_REQUIRED", scheduleReviewReason: null });
+    }
+    // Nunca reemplaza 8 h por las 8 h 30 m del turno.
+    expect(day("2026-11-17").baseMinutes).toBe(480);
+  });
+
+  it("FIXED_MINUTES: confirmar 0 en un día deja ese día en 0 y el resto del rango sigue en 480", () => {
+    const zero: PreviousCoverageResolution = { outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 510, resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0, resolvedAgainstWorkedMinutes: 0, resolvedByUserId: "rrhh", resolvedAt: new Date(), resolutionNote: "Excepción" };
+    const results = RANGE.map((dateKey) => day(dateKey, dateKey === "2026-11-18" ? { previous: zero } : {}));
+    expect(results.map((result) => result.effectiveBaseMinutes)).toEqual([480, 480, 480, 480, 0, 480, 480, 480]);
+    expect(results[4]).toMatchObject({ reviewStatus: "RESOLVED", resolution: "CONFIRMED_ZERO" });
+  });
+
+  it("FIXED_MINUTES: las reglas del propio tipo siguen aplicando (franco y feriado según su política)", () => {
+    const conPoliticas = { ...VACACIONES_FIJAS, coverageOnDayOff: "NO_COVERAGE" as const, coverageOnHoliday: "NO_COVERAGE" as const };
+    expect(day("2026-11-16", { type: conPoliticas })).toMatchObject({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 });
+    expect(day("2026-11-17", { type: conPoliticas, dayOff: true })).toMatchObject({ outcome: "DAY_OFF", baseMinutes: 0 });
+    // Una BAJA registrada sí es evidencia: fuera de la relación laboral no cubre.
+    expect(day("2026-11-17", { employment: "NOT_EMPLOYED" })).toMatchObject({ outcome: "OUTSIDE_EMPLOYMENT", baseMinutes: 0 });
+  });
+
+  it("EXPECTED_SCHEDULE: usa la jornada real; sin jornada o sin historia laboral → revisión; franco y feriado no convocado → 0", () => {
+    expect(evaluate({ type: JORNADA, workday: workday({ expectedMinutes: 510 }) })).toMatchObject({ outcome: "COVERED", baseMinutes: 510 });
+    expect(evaluate({ type: JORNADA, workday: unresolvedWorkday("SCHEDULE_MISSING") })).toMatchObject({ outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "SCHEDULE_MISSING", reviewStatus: "PENDING" });
+    expect(evaluate({ type: JORNADA, employment: "UNKNOWN" })).toMatchObject({ outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "EMPLOYMENT_HISTORY_UNRESOLVED", reviewStatus: "PENDING" });
+    expect(evaluate({ type: JORNADA, workday: workday({ obligation: "DAY_OFF", expectedMinutes: 0, shiftTemplateIds: [] }) })).toMatchObject({ outcome: "DAY_OFF", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" });
+    expect(evaluate({ type: JORNADA, workday: workday({ obligation: "HOLIDAY_NOT_CONVOKED", expectedMinutes: 0, shiftTemplateIds: [] }) })).toMatchObject({ outcome: "HOLIDAY_NOT_CONVOKED", baseMinutes: 0 });
+  });
+
+  it("MANUAL_MINUTES conserva la cantidad cargada, sin jornada ni historia laboral", () => {
+    expect(evaluate({ type: { ...LLEGADA_TARDE, coverageCountsTowardTotal: true }, quantityMinutes: 90, employment: "UNKNOWN", workday: unresolvedWorkday("SCHEDULE_MISSING") })).toMatchObject({ outcome: "COVERED", baseMinutes: 90, reviewStatus: "NOT_REQUIRED" });
+  });
+
+  it("NONE → 0", () => {
+    expect(evaluate({ type: FALTA_SIN_AVISO, employment: "UNKNOWN" })).toMatchObject({ outcome: "NO_COVERAGE", baseMinutes: 0, reviewStatus: "NOT_REQUIRED" });
+  });
+});
+
+// §19: ajuste parcial de un día, entre 0 y el máximo del modo; se conserva al recalcular.
+describe("§19 — ajuste parcial por modo", () => {
+  const partial = (resolvedBaseMinutes: number, overrides: Partial<PreviousCoverageResolution> = {}): PreviousCoverageResolution => ({
+    outcome: "COVERED", scheduleReviewReason: null, expectedMinutes: 480, resolution: "SET_BASE_MINUTES", resolvedBaseMinutes, resolvedAgainstWorkedMinutes: 0,
+    resolvedByUserId: "rrhh", resolvedAt: new Date(), resolutionNote: "Ajuste parcial", ...overrides,
+  });
+
+  it("FIXED_MINUTES (Vacaciones 8 h): 6 h se conserva; más que el tipo se descarta", () => {
+    const fixed = { ...VACACIONES, coverageDayRule: "EVERY_DAY" as const, coverageOnDayOff: "COVER" as const, coverageOnHoliday: "COVER" as const, coverageAppliesSpecialHours: false };
+    expect(evaluate({ type: fixed, previous: partial(360) })).toMatchObject({ baseMinutes: 480, effectiveBaseMinutes: 360, reviewStatus: "RESOLVED" });
+    expect(evaluate({ type: { ...fixed, coverageFixedMinutes: 300 }, previous: partial(360) })).toMatchObject({ effectiveBaseMinutes: 300, resolutionDropped: true });
+  });
+
+  it("MANUAL_MINUTES: un valor menor que la cantidad cargada se conserva", () => {
+    const manual = { ...LLEGADA_TARDE, coverageCountsTowardTotal: true };
+    expect(evaluate({ type: manual, quantityMinutes: 180, previous: partial(60) })).toMatchObject({ baseMinutes: 180, effectiveBaseMinutes: 60, reviewStatus: "RESOLVED" });
+    expect(evaluate({ type: manual, quantityMinutes: 30, previous: partial(60) })).toMatchObject({ effectiveBaseMinutes: 30, resolutionDropped: true });
+  });
+
+  it("EXPECTED_SCHEDULE: un valor parcial vale mientras la jornada sea la misma", () => {
+    expect(evaluate({ type: JORNADA, workday: workday({ expectedMinutes: 480 }), previous: partial(240) })).toMatchObject({ baseMinutes: 480, effectiveBaseMinutes: 240, reviewStatus: "RESOLVED" });
+    expect(evaluate({ type: JORNADA, workday: workday({ expectedMinutes: 420 }), previous: partial(240) })).toMatchObject({ effectiveBaseMinutes: 420, resolutionDropped: true });
+  });
+
+  it("NONE: nunca hay cobertura positiva", () => {
+    expect(evaluate({ type: FALTA_SIN_AVISO, previous: partial(60, { outcome: "NO_COVERAGE" }) })).toMatchObject({ outcome: "NO_COVERAGE", baseMinutes: 0, effectiveBaseMinutes: 0 });
   });
 });

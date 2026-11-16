@@ -32,6 +32,10 @@ const noveltyInclude = {
       // el tipo registra tiempo.
       coverageMode: true,
       coverageCountsTowardTotal: true,
+      // §17: el detalle de un día muestra el valor configurado del tipo.
+      coverageFixedMinutes: true,
+      // §18: quién puede ajustar un día de cobertura.
+      allowedLoadRoles: true,
     },
   },
   targetHourConcept: { select: { id: true, name: true } },

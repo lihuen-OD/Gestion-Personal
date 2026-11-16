@@ -77,7 +77,7 @@ export function MonthlyClosureReviewPanel({ closure, period, close }: { closure:
             </div>
             <HoursAccountingSummary accounting={grid.accounting} concepts={grid.rows.map((row) => row.concept)} />
             {grid.accounting.novelty.reviewDays > 0 ? <div className="novelty-review-banner" role="status"><ShieldAlert size={18} /><div><b>{grid.accounting.novelty.reviewDays} día(s) bloquean el cierre</b><span>{grid.accounting.novelty.reviewDates.map(formatCalendarDate).join(" · ")}</span></div>{firstReview ? <button type="button" className="table-link" onClick={() => setCoverageReview({ item: firstReview.item, date: monthDate(period, firstReview.day), employeeId: closure.employeeId, period, workedMinutes: grid.accounting.days[String(firstReview.day)]?.totalWorkedMinutes ?? 0 })}>Revisar primer día</button> : null}</div> : null}
-            <MonthlyHoursReviewGrid grid={grid} period={period} onReviewNovelty={(item, day) => setCoverageReview({ item, date: monthDate(period, day), employeeId: closure.employeeId, period, workedMinutes: grid.accounting.days[String(day)]?.totalWorkedMinutes ?? 0 })} />
+            <MonthlyHoursReviewGrid grid={grid} period={period} onReviewNovelty={(item, day) => setCoverageReview({ item, date: monthDate(period, day), employeeId: closure.employeeId, period, workedMinutes: grid.accounting.days[String(day)]?.totalWorkedMinutes ?? 0, computableMinutes: grid.accounting.days[String(day)]?.computableMinutes })} />
           </>
         ) : null}
       </div>

@@ -348,6 +348,33 @@ describe("NoveltyTypeCreatePage — Etapa 7 (accesibilidad del envío)", () => {
     expect(screen.getByRole("checkbox", { name: "Lunes" })).toHaveFocus();
   });
 
+  it("el selector muestra los 22 colores de la paleta", async () => {
+    renderPage();
+    await screen.findByText("1. Datos generales");
+    const swatches = within(screen.getByRole("group", { name: "Color en carga horaria" })).getAllByRole("button");
+    expect(swatches).toHaveLength(22);
+    expect(swatches.slice(0, 3).map((swatch) => swatch.getAttribute("aria-label"))).toEqual(["Azul", "Naranja", "Violeta"]);
+  });
+
+  it("al crear, preselecciona el primer color que ningún tipo usa (sin mirar nombre ni código)", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([{ uiColor: "blue" }, { uiColor: "orange" }] as NoveltyType[]);
+    vi.mocked(noveltyTypeApiService.create).mockResolvedValue({ id: "nt-new" } as NoveltyType);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Violeta" })).toHaveAttribute("aria-pressed", "true"));
+    await fillRequired("Vacaciones");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));
+    await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledWith(expect.objectContaining({ uiColor: "violet" })));
+  });
+
+  it("con los 22 colores en uso permite repetir y elegir cualquiera a mano", async () => {
+    const allColors = ["blue", "orange", "violet", "emerald", "red", "cyan", "fuchsia", "yellow", "pine", "pink", "indigo", "lime", "brown", "sky", "tangerine", "purple", "green", "rose", "slate", "amber", "magenta", "teal"];
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([...allColors, "blue"].map((uiColor) => ({ uiColor })) as NoveltyType[]);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Naranja" })).toHaveAttribute("aria-pressed", "true"));
+    await userEvent.click(screen.getByRole("button", { name: "Azul" }));
+    expect(screen.getByRole("button", { name: "Azul" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("el color elegido también se informa por nombre, no sólo por color", async () => {
     renderPage();
     await screen.findByText("1. Datos generales");
@@ -376,6 +403,7 @@ describe("NoveltyTypeCreatePage — código interno", () => {
 
     await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/Código/, { selector: ".error, .field-error" })).not.toBeInTheDocument();
-    expect(noveltyTypeApiService.getAll).not.toHaveBeenCalled();
+    // Sin catálogo no se puede elegir un color no usado: queda el color por defecto.
+    expect(noveltyTypeApiService.create).toHaveBeenCalledWith(expect.objectContaining({ uiColor: "blue" }));
   });
 });

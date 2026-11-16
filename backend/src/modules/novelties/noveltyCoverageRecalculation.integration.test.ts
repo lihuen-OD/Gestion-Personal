@@ -243,7 +243,10 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
 
   it("relación laboral: el ALTA resuelve los días pendientes; la BAJA deja los posteriores en 0 confirmado sin tocar los anteriores", async () => {
     const emp = await employee({ alta: null, template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
-    const novelty = await createNovelty(emp, types.vacaciones, "2027-03-01", "2027-03-05");
+    // §17: con cantidad fija la falta de ALTA no importa; sólo la jornada esperada la necesita.
+    const fixed = await createNovelty(emp, types.vacaciones, "2027-03-08", "2027-03-09");
+    expect([...(await rows(fixed)).values()].every((row) => row.outcome === "COVERED" && row.baseMinutes === 480 && row.reviewStatus === "NOT_REQUIRED")).toBe(true);
+    const novelty = await createNovelty(emp, types.jornada, "2027-03-01", "2027-03-05");
     expect([...(await rows(novelty)).values()].every((row) => row.scheduleReviewReason === "EMPLOYMENT_HISTORY_UNRESOLVED" && row.reviewStatus === "PENDING")).toBe(true);
 
     await m.employees.createLaborMovement(emp, { type: "ALTA", effectiveFrom: day("2027-01-01"), reason: "Ingreso" } as never, audit());

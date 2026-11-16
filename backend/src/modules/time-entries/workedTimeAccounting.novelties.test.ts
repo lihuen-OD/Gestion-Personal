@@ -344,3 +344,21 @@ describe("P5: varias coberturas que suman frente a la jornada esperada", () => {
     expect(day).toMatchObject({ noveltyCoveredMinutes: 300, computableMinutes: 420 });
   });
 });
+
+// §18: un ajuste manual con horas sobre un día que el cálculo dejaba en 0
+// (p. ej. feriado que no cuenta) se valida contra el trabajo real igual que
+// un día cubierto: nunca suma encima de trabajo real incompatible.
+describe("§18: ajuste manual sobre un día sin cobertura automática", () => {
+  const override = (overrides: Partial<AccountingNoveltyCoverage> = {}) =>
+    coverage({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0, reviewStatus: "RESOLVED", resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 480, resolvedAgainstWorkedMinutes: 0, ...overrides });
+
+  it("sin trabajo real computa el valor ajustado", () => {
+    expect(accountDay(16, [], [], [override()])).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
+  });
+
+  it("con trabajo real y tipo incompatible va a revisión y computa sólo el trabajo", () => {
+    const day = accountDay(16, [base(16, 8)], [], [override({ resolvedAgainstWorkedMinutes: 480 })]);
+    expect(day).toMatchObject({ totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480 });
+    expect(day.novelty.items[0]).toMatchObject({ state: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] });
+  });
+});
