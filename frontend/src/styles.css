@@ -2662,3 +2662,101 @@ button.novelty-coverage-grid-cell{width:100%;cursor:pointer}button.novelty-cover
 @media(max-width:520px){.manual-hours-review-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.manual-hours-review-metrics>div{border-right:0;border-bottom:1px solid var(--color-border-light)}.manual-hours-review-metrics>div:nth-child(odd){border-right:1px solid var(--color-border-light)}.manual-hours-review-metrics>div:last-child{grid-column:1/-1;border-bottom:0}.modal-body .manual-hours-review-actions{display:grid;grid-template-columns:1fr}}
 /* Fecha, horas y acción nunca se parten (la regla general de .table-shell permite cortar en cualquier punto). */
 .table-shell>table.manual-hours-conflicts-table tbody td:not(:nth-child(2)):not(:nth-child(6)){white-space:nowrap!important;overflow-wrap:normal!important}
+
+/* Etapa 7 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §14): formulario de Tipo de
+   Novedad por secciones + resumen lateral. ChoiceGroup (components/ui) es
+   genérico; el resto queda acotado a .novelty-type-editor. */
+.field-hint{color:var(--color-text-muted);font-size:11px;font-weight:500;line-height:1.45}
+.field-error{color:var(--color-danger);font-size:12px;font-weight:600;line-height:1.4;margin:0}
+input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="true"]{border-color:var(--color-danger)}
+.choice-group{display:grid;gap:10px;min-width:0;margin:0;padding:0;border:0}
+.choice-group legend{padding:0;margin-bottom:2px;color:var(--color-text-primary,#0f172a);font-size:13px;font-weight:700}
+.choice-group-hint{margin:-4px 0 0;color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.choice-group-options{display:grid;gap:10px}
+.choice-group-options.columns-1{grid-template-columns:minmax(0,1fr)}
+.choice-group-options.columns-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.choice-group-options.columns-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.choice-group-options.columns-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.choice-card{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid var(--ds-slate-200,#e2e8f0);border-radius:var(--radius-lg);background:#fff;cursor:pointer;font-weight:400;transition:border-color .15s ease,background-color .15s ease}
+.choice-card:hover{border-color:var(--ds-slate-300,#cbd5e1)}
+.choice-card.selected{border-color:var(--color-primary);background:var(--color-primary-subtle);box-shadow:0 0 0 1px var(--color-primary) inset}
+.choice-card:has(input:focus-visible){outline:2px solid var(--color-primary);outline-offset:2px}
+.choice-card:has(input:disabled){cursor:not-allowed;opacity:.65}
+.choice-card input{width:auto;min-width:auto;margin:2px 0 0;accent-color:var(--color-primary)}
+.choice-card span{display:grid;gap:3px;min-width:0}
+.choice-card b{color:var(--color-text-primary,#0f172a);font-size:13px;line-height:1.35}
+.choice-card small{color:var(--color-text-secondary);font-size:12px;line-height:1.45}
+.choice-group.has-error .choice-card:not(.selected){border-color:#fca5a5}
+
+.novelty-type-editor{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+.novelty-type-editor-main{display:grid;gap:16px;min-width:0}
+.novelty-type-editor .panel{margin:0}
+.novelty-type-editor .form-grid{padding:0;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.novelty-type-editor .form-wide{grid-column:1/-1}
+.novelty-type-editor .catalog-rules,.novelty-type-editor .catalog-finnegans{padding:0}
+.novelty-type-editor .catalog-finnegans{display:grid;gap:14px}
+.novelty-type-editor .catalog-finnegans .form-grid{padding:0}
+.novelty-type-editor .catalog-check-block{margin:0}
+.novelty-type-editor .info-note.compact{margin:0;padding:10px 12px;font-size:12px;line-height:1.5}
+.novelty-type-editor label>small.field-hint,.novelty-type-editor label>small.field-error{display:block}
+.coverage-section-body{display:grid;gap:18px}
+.coverage-duration-field{max-width:240px}
+.coverage-duration-field input{font-variant-numeric:tabular-nums}
+.coverage-weekdays{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 14px;border:1px solid var(--ds-slate-200,#e2e8f0);border-radius:var(--radius-lg);background:var(--ds-slate-50,#f8fafc)}
+.coverage-weekday{position:relative;display:inline-grid;place-items:center;min-width:52px;height:36px;padding:0 10px;border:1px solid var(--ds-slate-300,#cbd5e1);border-radius:999px;background:#fff;color:var(--color-text-secondary);font-size:12px;font-weight:700;cursor:pointer}
+.coverage-weekday input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.coverage-weekday.selected{border-color:var(--color-primary);background:var(--color-primary);color:#fff}
+.coverage-weekday:has(input:focus-visible){outline:2px solid var(--color-primary);outline-offset:2px}
+.coverage-weekdays .field-error{flex-basis:100%}
+.coverage-fixed-answer{display:grid;gap:3px;padding:12px 14px;border:1px solid var(--ds-slate-200,#e2e8f0);border-radius:var(--radius-lg);background:var(--ds-slate-50,#f8fafc)}
+.coverage-fixed-answer span{color:var(--color-text-muted);font-size:12px;font-weight:700}
+.coverage-fixed-answer b{color:var(--color-text-primary,#0f172a);font-size:13px}
+.coverage-fixed-answer small{color:var(--color-text-secondary);font-size:12px;line-height:1.45}
+.coverage-rule-explanation{padding:12px 14px;border-left:3px solid var(--color-primary);border-radius:var(--radius-md);background:var(--color-primary-subtle);color:var(--color-text-secondary);font-size:12px;line-height:1.5}
+.coverage-rule-explanation b{color:var(--color-text-primary,#0f172a);font-size:13px}
+.coverage-rule-explanation ul{margin:6px 0 0;padding-left:18px}
+.coverage-multiplier-example{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;padding:12px 14px;border:1px dashed var(--ds-slate-300,#cbd5e1);border-radius:var(--radius-lg);background:var(--ds-slate-50,#f8fafc)}
+.coverage-multiplier-example>span{display:grid;gap:2px;min-width:96px;padding:6px 10px;border-radius:var(--radius-md);background:#fff;border:1px solid var(--ds-slate-200,#e2e8f0)}
+.coverage-multiplier-example small{color:var(--color-text-muted);font-size:11px;font-weight:600}
+.coverage-multiplier-example b{color:var(--color-text-primary,#0f172a);font-size:15px;font-variant-numeric:tabular-nums}
+.coverage-multiplier-example p{flex-basis:100%;margin:2px 0 0;color:var(--color-text-secondary);font-size:12px}
+.novelty-type-editor .catalog-rule-card.is-locked{background:var(--ds-slate-50,#f8fafc)}
+.novelty-type-editor .impact-rule-panel{margin:0}
+.novelty-type-editor .impact-rule-panel label{max-width:520px}
+.novelty-role-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.novelty-role-grid .check-grid.inline{grid-template-columns:minmax(0,1fr);margin:0}
+.novelty-internal-notes{padding-top:4px}
+.novelty-color-field{display:grid;gap:10px}
+.novelty-color-field-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;color:var(--color-text-secondary);font-size:12px;font-weight:700}
+.novelty-color-preview{display:inline-flex;align-items:center;gap:8px;color:var(--color-text-muted);font-weight:600}
+.novelty-color-swatches{display:flex;flex-wrap:wrap;gap:8px}
+.novelty-color-swatch{display:inline-grid;place-items:center;padding:3px;border:2px solid transparent;border-radius:999px;background:transparent}
+.novelty-color-swatch .cell-novelty-pill{min-width:40px;justify-content:center;padding:5px 8px}
+.novelty-color-swatch.active{border-color:var(--color-primary)}
+.novelty-color-swatch:focus-visible{outline:2px solid var(--color-primary);outline-offset:1px}
+.novelty-color-swatch:disabled{cursor:not-allowed;opacity:.6}
+.novelty-type-editor-footer{position:sticky;bottom:0;z-index:3;display:grid;gap:10px;padding:12px 16px;border:1px solid var(--ds-slate-200,#e2e8f0);border-radius:var(--radius-lg);background:#fff;box-shadow:0 -6px 16px #0f172a0d}
+.novelty-type-editor-footer .form-actions{margin:0;padding:0;border:0;background:transparent}
+.novelty-type-editor .novelty-type-field-wide{grid-column:1/-1}
+.novelty-type-editor .novelty-type-field-wide textarea{width:100%;min-height:96px}
+.novelty-type-editor input[readonly]{background:var(--ds-slate-50,#f8fafc);color:var(--color-text-secondary)}
+.novelty-type-editor-footer .error{margin:0}
+.novelty-type-summary-panel{position:sticky;top:80px;display:grid;gap:12px;padding:18px;border:1px solid var(--ds-slate-200,#e2e8f0);border-radius:var(--radius-lg);background:#fff}
+.novelty-type-summary-panel h3{font-size:14px}
+.novelty-type-summary-panel .cell-novelty-pill{justify-self:start;max-width:100%;overflow-wrap:anywhere}
+.novelty-type-summary-panel ul{display:grid;gap:8px;margin:0;padding-left:18px;color:var(--color-text-secondary);font-size:12px;line-height:1.5}
+@media(max-width:1180px){.novelty-type-editor{grid-template-columns:minmax(0,1fr)}.novelty-type-summary-panel{position:static}}
+@media(max-width:900px){.choice-group-options.columns-3,.choice-group-options.columns-4{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:720px){.choice-group-options.columns-2,.novelty-type-editor .form-grid,.novelty-role-grid{grid-template-columns:minmax(0,1fr)}.coverage-duration-field{max-width:none}}
+.field-stack{display:grid;gap:6px;min-width:0;align-content:start}
+.novelty-type-editor .catalog-finnegans .finnegans-unit-hint{grid-column:1/-1}
+.coverage-multiplier-example>span{flex:1 1 0;min-width:0}
+@media(max-width:720px){.novelty-type-editor-footer{padding:10px 12px}.novelty-type-editor-footer .form-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.novelty-type-editor-footer .form-actions .button{width:100%}}
+.novelty-color-name{color:var(--color-text-secondary);font-size:12px;font-weight:600}
+.novelty-legacy-hours{display:grid;gap:8px}
+.novelty-legacy-hours-title{color:var(--color-text-secondary);font-size:12px;font-weight:700}
+.novelty-type-name-pill{max-width:100%;overflow-wrap:anywhere}
+.novelty-type-time{font-weight:600;white-space:nowrap}
+/* La regla global input{min-height:40px!important;padding…!important} también alcanza
+   checkbox y radio y los deforma; acá se devuelven a su tamaño nativo. */
+.novelty-type-editor .catalog-rule-card input[type="checkbox"],.choice-card input[type="radio"]{flex:none;width:16px;height:16px;min-width:16px;min-height:16px!important;margin:2px 0 0;padding:0!important}

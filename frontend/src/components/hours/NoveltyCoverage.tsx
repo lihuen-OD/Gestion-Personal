@@ -13,7 +13,7 @@ import type {
   NoveltyCoverageState,
 } from "../../types/workedTimeAccounting.types";
 import { formatCalendarDate, formatDateTime } from "../../utils/date";
-import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils/hours";
+import { formatCompactDurationMinutes, formatDurationMinutes, formatDayDurationInput, parseDayDurationInput } from "../../utils/hours";
 import { noveltyColorClass } from "../../utils/noveltyColor";
 import { Button } from "../ui/Button";
 import { LoadingState } from "../ui/LoadingState";
@@ -111,15 +111,6 @@ export function NoveltyCoverageCompactList({ items, maxVisible = 1 }: { items: N
   );
 }
 
-function parseHoursAndMinutes(value: string) {
-  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  const total = hours * 60 + minutes;
-  return total >= 1 && total <= 1440 ? total : null;
-}
-
 function resolutionText(day: NoveltyCoverageDayDetail) {
   if (day.resolution === "CONFIRMED_ZERO") return "0 h confirmadas";
   if (day.resolution === "SET_BASE_MINUTES") return `${formatDurationMinutes(day.resolvedBaseMinutes ?? 0)} base`;
@@ -148,9 +139,7 @@ export function NoveltyCoverageResolutionModal({ target, close, onResolved }: { 
         if (!selectedDay) throw new Error("coverage day missing");
         setDay(selectedDay);
         if (selectedDay.resolution === "SET_BASE_MINUTES" && selectedDay.resolvedBaseMinutes) {
-          const hours = Math.floor(selectedDay.resolvedBaseMinutes / 60);
-          const minutes = selectedDay.resolvedBaseMinutes % 60;
-          setBaseTime(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`);
+          setBaseTime(formatDayDurationInput(selectedDay.resolvedBaseMinutes));
         }
       })
       .catch(() => {
@@ -165,7 +154,7 @@ export function NoveltyCoverageResolutionModal({ target, close, onResolved }: { 
   const isIncompatible = target.item.reviewReasons.includes("REAL_WORK_ON_INCOMPATIBLE");
   const allowsManualResolution = day?.outcome === "SCHEDULE_UNRESOLVED" || day?.outcome === "COVERED";
   const allowsSetBase = allowsManualResolution && !isIncompatible;
-  const baseMinutes = useMemo(() => parseHoursAndMinutes(baseTime), [baseTime]);
+  const baseMinutes = useMemo(() => parseDayDurationInput(baseTime), [baseTime]);
   const previewMinutes = baseMinutes && day ? Math.round(baseMinutes * day.multiplier) : 0;
 
   const submit = async () => {

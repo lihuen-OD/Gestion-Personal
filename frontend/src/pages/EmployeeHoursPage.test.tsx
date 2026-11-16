@@ -14,6 +14,7 @@ import type { Employee, Novelty } from "../types";
 import type { NoveltyType } from "../types/noveltyType.types";
 import type { EmployeeTimeGrid } from "../services/api/employeeApiService";
 import { dayAccounting, timeGridFixture } from "../test/workedTimeAccountingFixtures";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -748,7 +749,9 @@ function buildHourlyNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyTy
       allowsDateRange: false,
       finnegansValueUnit: "HOURS",
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: ["Nivel 1 - RRHH"],
     approvalRoles: ["Nivel 1 - RRHH"],
     finnegansCode: null,

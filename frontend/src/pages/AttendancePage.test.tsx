@@ -10,6 +10,7 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
 // punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
@@ -113,7 +114,9 @@ function buildGenericActiveType(): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
     finnegansCode: null,

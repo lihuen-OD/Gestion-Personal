@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 5** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos, ver §9, §12 y §13). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 7** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos; grilla; pantalla de Tipos de Novedad, ver §9, §12, §13 y §14). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -272,8 +272,10 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 2 | `expectedWorkday` (núcleo puro + cargador batch), regla P3 | **Implementada y aprobada** (2026-11-13) |
 | 3 | Motor, persistencia de días, preview, resolución, guard de cierres, relación laboral | **Implementada y aprobada** (2026-11-13) |
 | 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | **Implementada y aprobada** (2026-11-13) |
-| 5 | Recálculo automático por eventos: relación e historia laboral, turnos, plantillas, regímenes, francos, convocatorias, reglas y configuración del tipo (§13) | **Implementada** (2026-11-13), pendiente de revisión |
-| 6–8 | Grilla frontend, Tipos de Novedad, carga reactiva con vista previa | Pendiente |
+| 5 | Recálculo automático por eventos: relación e historia laboral, turnos, plantillas, regímenes, francos, convocatorias, reglas y configuración del tipo (§13) | **Implementada y aprobada** |
+| 6 | Grilla frontend: chips de cobertura, revisión manual, cierre mensual | **Implementada y aprobada** (`1068de7`) |
+| 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada** (2026-11-16), pendiente de revisión |
+| 8 | Carga reactiva de Novedades con vista previa | Pendiente |
 | 9 | Finnegans (`value1` derivado de la cobertura) | Pendiente |
 | 10 | QA y cierre | Pendiente |
 
@@ -523,4 +525,30 @@ Transacciones nuevas (timeout 30 s): asignación de turno, régimen (asignación
 - Un cambio de historia laboral no reinterpreta el multiplicador de las horas **ya cargadas** (deuda previa, no introducida acá). La cobertura de novedades sí se recalcula.
 - Cambios de estructura organizacional que no pasan por la historia laboral (p. ej. mover un sector) no disparan recálculo; tampoco reinterpretan horas hoy.
 - Una mutación directa de una novedad no reconstruye el snapshot de un cierre devuelto (§6.3); se rehace en el próximo envío.
-- Grilla frontend, UX de tipos, UX de carga y Finnegans: etapas 6 a 9.
+- Grilla frontend, UX de tipos, UX de carga y Finnegans: etapas 6 a 9 (6 y 7 implementadas, ver §9 y §14).
+
+## 14. Pantalla de Tipos de Novedad (etapa 7)
+
+Alta (`/configuracion/tipos-novedades/nuevo`) y edición (`/configuracion/tipos-novedades/:id`) usan el mismo formulario (`NoveltyTypeForm`), por secciones y con un resumen generado desde la configuración (nunca por nombre, código ni categoría). Las pestañas General/Reglas/Finnegans de la edición se reemplazaron por las mismas secciones. Sin cambios de backend, esquema ni contratos: el frontend sólo empezó a leer y enviar los campos de §4.
+
+| Sección | Pregunta en pantalla | Campo |
+|---|---|---|
+| Datos generales | Nombre, código interno (sólo lectura, no define comportamiento), categoría, estado, color con vista previa del chip, descripción | existentes |
+| Tiempo que cubre | ¿Esta novedad representa tiempo? (No registra horas / Cantidad fija HH:mm / Cantidad indicada al cargar / Según la jornada que debía cumplir) | `coverageMode`, `coverageFixedMinutes` |
+| Días y situaciones especiales | Sólo con cantidad fija o jornada. ¿Qué días puede cubrir?; con reglas por calendario, ¿qué sucede si tiene franco? y si es feriado (sin opción preseleccionada, C3/P1). Con "días que debía trabajar" se explica que francos y feriados los decide la jornada | `coverageDayRule`, `coverageWeekdays`, `coverageOnDayOff`, `coverageOnHoliday` |
+| Impacto en el cálculo | ¿Suma al total? y ¿aplica domingos, feriados u Horas Especiales? (sólo si registra tiempo, con ejemplo 8 h cubiertas → 16 h para liquidación); ¿puede coexistir con horas trabajadas? (siempre) | `coverageCountsTowardTotal`, `coverageAppliesSpecialHours`, `realWorkCompatibility` |
+| Carga y control | Varios días (vacío = un día), aprobación, observación obligatoria, documentación, cantidad de horas informativa, bloqueo de nueva carga, roles | `allowsDateRange`, `requiresApproval`, `requiresObservation`, `requiresDocumentation`, `allowsHours`, `timeEntryBehavior`, roles |
+| Integración y otras opciones | Finnegans (sin cambios de lógica, etapa 9) y observaciones internas | existentes |
+
+Reglas de la pantalla:
+
+- Los enums sólo viajan como valor; las etiquetas están en `frontend/src/utils/noveltyTypeCoverage.ts`.
+- La coherencia la sigue validando el backend (`assertCoverageConfigCoherent` + CHECK). El frontend no la reimplementa: las transiciones (`applyCoverageMode`, `applyCoverageDayRule`) dejan inalcanzables las combinaciones rechazadas (por ejemplo, cantidad indicada al cargar fuerza un día y `allowsHours`; jornada esperada fuerza `WORK_OBLIGATION`; nunca se inventa una política de franco o feriado), y antes de enviar sólo se marcan datos faltantes (cantidad, días, políticas, Finnegans). Si el backend rechaza, se muestra su mensaje de negocio.
+- Los días se envían ordenados como los normaliza el backend, así un guardado sin cambios reales no dispara recálculo (§13.2). En edición, si cambia lo que cubre, la pantalla avisa que se recalculan los períodos abiertos.
+- El payload siempre viaja en forma canónica (`canonicalCoverage`): lo que el modo o la regla de días no usa va en `null`/`[]`/`EVERY_DAY`. Un tipo ya guardado se reenvía idéntico (round-trip probado en `noveltyTypeApiService.test.ts` y `NoveltyTypeDetailPage.test.tsx`).
+- Errores: el mensaje de negocio del backend se muestra tal cual; si trae códigos, enums o JSON (`apiClient.ts::isInternalMessage`), se reemplaza por un texto de negocio por código. Los errores de validación nombran los campos de cobertura en castellano.
+- Listado: el nombre se muestra con su color y la columna "Tiempo" resume "4 h fijas" / "Según jornada" / "Cantidad al cargar" / "Sin horas", con "Suma al total" o "Informativa".
+- Tipos ya usados: no hay borrado (sólo inactivar/"Ocultar"); el código es de sólo lectura en pantalla; cambiar lo que cubre recalcula períodos abiertos y no toca los protegidos (§13.5).
+- `allowsHours` sigue existiendo (deuda: se retira cuando la carga use sólo la cobertura, etapa 8 o limpieza posterior, y Finnegans en horas deje de leer `quantityHours`, etapa 9). Con cantidad indicada al cargar es implícito; en los demás modos está en "Integración y otras opciones" como registro administrativo que no es tiempo cubierto.
+
+Pendientes de la etapa: la carga de Novedades todavía no marca la observación obligatoria ni usa la cobertura para la vista previa (etapa 8).

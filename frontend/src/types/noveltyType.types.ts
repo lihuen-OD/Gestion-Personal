@@ -27,6 +27,30 @@ export type NoveltyTimeEntryBehavior = "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
 // todavía sin determinar (no se infiere sin evidencia).
 export type FinnegansValueUnit = "HOURS" | "DAYS" | "UNIT";
 
+// Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §4). Mismos
+// valores que backend/src/modules/novelty-types/noveltyTypes.schemas.ts; la
+// pantalla nunca los muestra crudos (ver utils/noveltyTypeCoverage.ts).
+export type NoveltyCoverageMode = "NONE" | "FIXED_MINUTES" | "MANUAL_MINUTES" | "EXPECTED_SCHEDULE";
+export type NoveltyCoverageDayRule = "EVERY_DAY" | "SELECTED_WEEKDAYS" | "WORK_OBLIGATION";
+export type NoveltyCoverageDayOffPolicy = "NO_COVERAGE" | "COVER";
+export type NoveltyCoverageHolidayPolicy = "NO_COVERAGE" | "COVER" | "ONLY_IF_CONVOKED";
+export type NoveltyRealWorkCompatibility = "COMPATIBLE" | "INCOMPATIBLE";
+
+export interface NoveltyTypeCoverage {
+  mode: NoveltyCoverageMode;
+  /** Sólo FIXED_MINUTES: 1..1440. */
+  fixedMinutes: number | null;
+  dayRule: NoveltyCoverageDayRule;
+  /** 0 = domingo .. 6 = sábado; sólo SELECTED_WEEKDAYS. */
+  weekdays: number[];
+  /** Sólo reglas por calendario (EVERY_DAY / SELECTED_WEEKDAYS) con cantidad fija. */
+  onDayOff: NoveltyCoverageDayOffPolicy | null;
+  onHoliday: NoveltyCoverageHolidayPolicy | null;
+  appliesSpecialHours: boolean;
+  countsTowardTotal: boolean;
+  realWorkCompatibility: NoveltyRealWorkCompatibility;
+}
+
 export interface NoveltyTypeRules {
   exportsToFinnegans: boolean;
   requiresApproval: boolean;
@@ -36,6 +60,7 @@ export interface NoveltyTypeRules {
   allowsDateRange: boolean;
   finnegansValueUnit: FinnegansValueUnit | null;
   finnegansRequiresValidity: boolean;
+  requiresObservation: boolean;
 }
 
 export interface NoveltyType {
@@ -47,6 +72,7 @@ export interface NoveltyType {
   description: string;
   status: NoveltyTypeStatus;
   rules: NoveltyTypeRules;
+  coverage: NoveltyTypeCoverage;
   allowedLoadRoles: Role[];
   approvalRoles: Role[];
   // Etapa 15L.6: reemplaza FinnegansNoveltyLink (1:N) -- 1:1 físico, igual

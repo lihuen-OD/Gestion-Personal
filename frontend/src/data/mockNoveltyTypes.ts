@@ -1,4 +1,5 @@
 import type { NoveltyType } from "../types/noveltyType.types";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 const now = "2026-06-01T09:00:00.000Z";
 const rrhh = "Nivel 1 - RRHH" as const;
@@ -14,6 +15,7 @@ const baseRules = {
   allowsDateRange: true,
   finnegansValueUnit: null as "HOURS" | "DAYS" | "UNIT" | null,
   finnegansRequiresValidity: true,
+  requiresObservation: false,
 };
 
 export const mockNoveltyTypes: NoveltyType[] = [
@@ -26,6 +28,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     description: "Ausencia justificada por enfermedad. Requiere certificado medico para seguimiento.",
     status: "ACTIVO",
     rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [rrhh, supervisor, carga],
     approvalRoles: [rrhh, supervisor],
     finnegansCode: "LIC_ENF",
@@ -45,6 +48,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     description: "Licencia anual planificada. Se informa a Finnegans como novedad con vigencia.",
     status: "ACTIVO",
     rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansCode: "VAC_GOZ",
@@ -63,6 +67,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     description: "Novedad horaria por ingreso posterior al horario asignado. Registra horas no trabajadas.",
     status: "ACTIVO",
     rules: { ...baseRules, requiresApproval: false, allowsDateRange: false, allowsHours: true, finnegansRequiresValidity: false, finnegansValueUnit: "HOURS" },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [rrhh, supervisor, carga],
     approvalRoles: [rrhh, supervisor],
     finnegansCode: null,
@@ -81,6 +86,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     description: "Suspension informada a Finnegans. Bloquea la carga horaria del dia y registra 0 hs trabajadas.",
     status: "ACTIVO",
     rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: false, timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansCode: "SUSP",
@@ -99,6 +105,7 @@ export const mockNoveltyTypes: NoveltyType[] = [
     description: "Accidente laboral informado a ART y eventualmente a Finnegans.",
     status: "ACTIVO",
     rules: { ...baseRules, exportsToFinnegans: true, requiresDocumentation: true, timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", finnegansValueUnit: "DAYS" },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [rrhh, supervisor],
     approvalRoles: [rrhh],
     finnegansCode: "ACC_ART",

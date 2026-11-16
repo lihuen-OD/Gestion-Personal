@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useId, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import type {
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
@@ -7,6 +7,7 @@ import type {
   NoveltyUiColor,
 } from "../../types/noveltyType.types";
 import { noveltyColorClass, noveltyUiColors } from "../../utils/noveltyColor";
+import { defaultNoveltyTypeCoverage, noveltyTypeIssues } from "../../utils/noveltyTypeCoverage";
 
 export const noveltyKinds: NoveltyTypeKind[] = ["AUSENCIA", "LICENCIA", "HORARIA", "ACCIDENTE", "VACACIONES", "SANCION", "OTRO"];
 
@@ -90,7 +91,9 @@ export function emptyNoveltyType(): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
     approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
     finnegansCode: null,
@@ -103,24 +106,31 @@ export function emptyNoveltyType(): NoveltyType {
   };
 }
 
-// Etapa 15L.2B, punto 27: validación compartida entre creación y edición
-// -- evita tener dos implementaciones distintas de la misma regla.
+// Etapa 15L.2B, punto 27: validación compartida entre creación y edición.
+// Etapa 7: delega en noveltyTypeIssues (que también marca cada campo).
 export function validateNoveltyType(item: NoveltyType): string | null {
-  if (!item.name.trim()) return "Completá el nombre de la novedad.";
-  if (!item.description.trim()) return "Completá la descripción funcional.";
-  if (item.rules.exportsToFinnegans) {
-    if (!item.finnegansCode?.trim() || !item.finnegansName?.trim()) {
-      return "Para exportar a Finnegans completá el código y el nombre Finnegans.";
-    }
-    if (!item.rules.finnegansValueUnit) {
-      return "Para exportar a Finnegans elegí la unidad de Valor 1.";
-    }
-  }
-  return null;
+  return noveltyTypeIssues(item)[0]?.message ?? null;
 }
 
-export function TextField({ label, value, onChange, disabled, type = "text", spellCheck = false }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; type?: string; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] }) {
-  return <label>{label}<input type={type} value={value} disabled={disabled} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
+type FieldMessagesProps = { hint?: string; error?: string };
+
+/** Ayuda y error fuera del <label> (no ensucian el nombre accesible) y vinculados con aria-describedby. */
+export function FieldMessages({ id, hint, error }: FieldMessagesProps & { id: string }) {
+  return <>
+    {hint ? <small id={`${id}-hint`} className="field-hint">{hint}</small> : null}
+    {error ? <small id={`${id}-error`} className="field-error" role="alert">{error}</small> : null}
+  </>;
+}
+
+export function describedBy(id: string, { hint, error }: FieldMessagesProps) {
+  return [hint ? `${id}-hint` : "", error ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined;
+}
+
+export function TextField({ label, value, onChange, disabled, readOnly, type = "text", spellCheck = false, hint, error }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; readOnly?: boolean; type?: string; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] } & FieldMessagesProps) {
+  const id = useId();
+  const input = <input type={type} value={value} disabled={disabled} readOnly={readOnly} aria-invalid={error ? true : undefined} aria-describedby={describedBy(id, { hint, error })} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} />;
+  if (!hint && !error) return <label>{label}{input}</label>;
+  return <div className="field-stack"><label>{label}{input}</label><FieldMessages id={id} hint={hint} error={error} /></div>;
 }
 
 // Etapa 15M.20: `labels` es opcional -- humaniza el texto visible de cada
@@ -130,8 +140,11 @@ export function SelectField({ label, value, onChange, options, labels, disabled 
   return <label>{label}<select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option} value={option}>{labels?.[option] ?? option}</option>)}</select></label>;
 }
 
-export function TextAreaField({ label, value, onChange, disabled, spellCheck = true }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; spellCheck?: TextareaHTMLAttributes<HTMLTextAreaElement>["spellCheck"] }) {
-  return <label>{label}<textarea value={value} disabled={disabled} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} /></label>;
+export function TextAreaField({ label, value, onChange, disabled, spellCheck = true, hint, error }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean; spellCheck?: TextareaHTMLAttributes<HTMLTextAreaElement>["spellCheck"] } & FieldMessagesProps) {
+  const id = useId();
+  const textarea = <textarea value={value} disabled={disabled} aria-invalid={error ? true : undefined} aria-describedby={describedBy(id, { hint, error })} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} />;
+  if (!hint && !error) return <label>{label}{textarea}</label>;
+  return <div className="field-stack"><label>{label}{textarea}</label><FieldMessages id={id} hint={hint} error={error} /></div>;
 }
 
 export function RoleChecklist({ label, value, onChange, disabled }: { label: string; value: string[]; onChange: (value: string[]) => void; disabled?: boolean }) {
@@ -143,23 +156,27 @@ export function RoleChecklist({ label, value, onChange, disabled }: { label: str
 // (usedColors nunca se poblaba con los colores de otros tipos, ver 15L.1
 // §18/§25/§23) y, auditado, no hay ninguna regla de negocio real que exija
 // unicidad de color. Es sólo una ayuda visual: permitir colores repetidos.
-export function NoveltyColorField({ value, onChange, disabled }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; disabled?: boolean }) {
-  return <div className="catalog-check-block form-wide">
-    <small>Color en carga horaria</small>
-    <div className="novelty-color-grid">
-      {noveltyUiColors.map((color) => {
-        const active = value === color;
-        return <button
+// Etapa 7: muestras compactas + vista previa del chip tal como se ve en la
+// grilla (mismas clases novelty-color-*, que ya fijan el contraste del texto).
+export function NoveltyColorField({ value, onChange, previewLabel, disabled }: { value: NoveltyUiColor; onChange: (value: NoveltyUiColor) => void; previewLabel: string; disabled?: boolean }) {
+  return <div className="novelty-color-field">
+    <div className="novelty-color-field-head">
+      <span id="novelty-color-label">Color en carga horaria</span>
+      <span className="novelty-color-preview">Vista previa: <span className={`cell-novelty-pill ${noveltyColorClass(value, value)}`}>{previewLabel.trim() || "Nueva novedad"}</span><span className="novelty-color-name">{noveltyUiColorLabels[value]}</span></span>
+    </div>
+    <div className="novelty-color-swatches" role="group" aria-labelledby="novelty-color-label">
+      {noveltyUiColors.map((color) => (
+        <button
           key={color}
           type="button"
-          className={`novelty-color-option ${active ? "active" : ""}`}
+          className={`novelty-color-swatch${value === color ? " active" : ""}`}
+          aria-pressed={value === color}
+          aria-label={noveltyUiColorLabels[color]}
+          title={noveltyUiColorLabels[color]}
           disabled={disabled}
           onClick={() => onChange(color)}
-        >
-          <span className={`cell-novelty-pill ${noveltyColorClass(color, color)}`}>{noveltyUiColorLabels[color]}</span>
-          <small>{active ? "Seleccionado" : "Usar color"}</small>
-        </button>;
-      })}
+        ><span aria-hidden="true" className={`cell-novelty-pill ${noveltyColorClass(color, color)}`}>Aa</span></button>
+      ))}
     </div>
   </div>;
 }

@@ -66,6 +66,19 @@ const fieldLabels: Record<string, string> = {
   openShiftOverflowAction: "Acción ante jornada excedida",
   alertOnOutOfShift: "Alerta fuera de turno",
   description: "Descripción",
+  // Tipos de Novedad (motor de cobertura, docs/decisions/NOVELTY_COVERAGE_ENGINE.md §14).
+  coverageMode: "Tiempo que cubre",
+  coverageFixedMinutes: "Cantidad de horas",
+  coverageDayRule: "Días que puede cubrir",
+  coverageWeekdays: "Días de la semana",
+  coverageOnDayOff: "Qué sucede si tiene franco",
+  coverageOnHoliday: "Qué sucede si es feriado",
+  coverageAppliesSpecialHours: "Reglas de domingos y feriados",
+  coverageCountsTowardTotal: "Suma al total",
+  realWorkCompatibility: "Convivencia con horas trabajadas",
+  requiresObservation: "Observación obligatoria",
+  allowsDateRange: "Carga para varios días",
+  allowsHours: "Horas al cargar",
 };
 
 const errorMessagesByCode: Record<string, string> = {
@@ -187,9 +200,24 @@ function humanizeField(field: string) {
   return fieldLabels[field] || field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+// Un mensaje con códigos o valores internos (NOVELTY_TYPE_..., EXPECTED_SCHEDULE)
+// o con estructura JSON nunca se muestra tal cual.
+const TECHNICAL_TOKEN = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|[{}[\]]/;
+
 function isInternalMessage(message: string) {
-  return /\b(backend|api|storage|cloudinary|google drive|not found|invalid|missing|required|already exists|unexpected server error|permission to|only (draft|entries|pending|rrhh|supervision))\b/i.test(message);
+  return TECHNICAL_TOKEN.test(message)
+    || /\b(backend|api|storage|cloudinary|google drive|not found|invalid|missing|required|already exists|unexpected server error|permission to|only (draft|entries|pending|rrhh|supervision))\b/i.test(message);
 }
+
+// Sólo se usan cuando el mensaje del backend no es apto para mostrarse: el
+// backend ya explica estos rechazos en lenguaje de negocio y ese texto es más
+// específico que cualquier genérico (por eso no van en errorMessagesByCode).
+const fallbackMessagesByCode: Record<string, string> = {
+  NOVELTY_TYPE_COVERAGE_CONFIG_INVALID: "La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.",
+  NOVELTY_TYPE_HOURS_DAYS_CONFLICT: "Si al cargar la novedad se indican horas, la unidad de Valor 1 no puede ser \"Días\".",
+  NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED: "Para exportar a Finnegans completá el código y el nombre Finnegans.",
+  NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED: "Para exportar a Finnegans elegí la unidad de Valor 1.",
+};
 
 export function formatApiErrorMessage(payload: ApiErrorPayload) {
   const error = payload.error;
@@ -202,6 +230,7 @@ export function formatApiErrorMessage(payload: ApiErrorPayload) {
   const rawMessage = error?.message && !isInternalMessage(error.message) ? error.message : undefined;
   return (error?.code && errorMessagesByCode[error.code])
     || rawMessage
+    || (error?.code && fallbackMessagesByCode[error.code])
     || "No pudimos completar la operación. Intentá nuevamente.";
 }
 

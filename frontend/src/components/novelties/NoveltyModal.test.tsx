@@ -8,6 +8,7 @@ import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService"
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
 import type { Employee } from "../../types";
 import type { NoveltyType } from "../../types/noveltyType.types";
+import { defaultNoveltyTypeCoverage } from "../../utils/noveltyTypeCoverage";
 
 vi.mock("../../services/api/noveltyApiService", () => ({
   noveltyApiService: { create: vi.fn() },
@@ -123,7 +124,9 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
     finnegansCode: null,
@@ -149,6 +152,7 @@ const llegadaTardeType = buildNoveltyType({
     allowsDateRange: false,
     finnegansValueUnit: "HOURS",
     finnegansRequiresValidity: false,
+    requiresObservation: false,
   },
 });
 

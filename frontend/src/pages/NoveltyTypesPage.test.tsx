@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { NoveltyTypesPage } from "./NoveltyTypesPage";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 vi.mock("../services/appDialog", () => ({
   confirmAction: vi.fn().mockResolvedValue(true),
@@ -45,9 +46,10 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     status: "ACTIVO",
     finnegansCode: null,
     finnegansName: null,
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
-    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false },
+    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false, requiresObservation: false },
     createdAt: "",
     updatedAt: "",
     createdBy: "",

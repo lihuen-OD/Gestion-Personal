@@ -1,42 +1,39 @@
 import { Power, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
-import { NoveltyTypeFinnegansTab } from "../components/novelty-types/NoveltyTypeFinnegansTab";
-import { noveltyKindLabels, validateNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
-import { NoveltyTypeIdentificationTab } from "../components/novelty-types/NoveltyTypeIdentificationTab";
-import { NoveltyTypeRulesTab } from "../components/novelty-types/NoveltyTypeRulesTab";
+import { noveltyKindLabels } from "../components/novelty-types/NoveltyTypeFields";
+import { NoveltyTypeForm } from "../components/novelty-types/NoveltyTypeForm";
 import { useAuth } from "../context/AuthContext";
+import { getUserErrorMessage } from "../services/api/apiClient";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
+import { MISSING_DATA_MESSAGE, noveltyTypeIssues } from "../utils/noveltyTypeCoverage";
 import { roleLevel } from "../utils/roles";
 import { activoInactivoLabel, statusTone } from "../utils/status";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { Section } from "../components/ui/Section";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
-import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { confirmAction } from "../services/appDialog";
 
-// Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): se
-// quita la pestaña "Historial" -- history queda hardcodeado vacío en
-// noveltyTypeApiService.ts (el backend audita en AuditLog, pero esta
-// pantalla no lo consulta todavía). Mostrar una pestaña siempre vacía es
-// peor que no mostrarla; se reconecta en una etapa futura si se conecta a
-// AuditLog. Ver también §14 del documento de decisión.
-const tabs = ["General", "Reglas", "Finnegans"];
-const tabItems = tabs.map((label, index) => ({ key: String(index), label }));
-
+// Etapa 15L.2B: sin pestaña "Historial" (el backend audita en AuditLog, pero
+// esta pantalla no lo consulta todavía). Etapa 7 (NOVELTY_COVERAGE_ENGINE.md
+// §14): las pestañas General/Reglas/Finnegans se reemplazan por el mismo
+// formulario por secciones de la creación, con resumen de la configuración.
 export function NoveltyTypeDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [item, setItem] = useState<NoveltyType | undefined>(undefined);
+  const [saved, setSaved] = useState<NoveltyType | undefined>(undefined);
+  const [showIssues, setShowIssues] = useState(false);
+  const [focusIssuesRequest, setFocusIssuesRequest] = useState(0);
+  const [saveError, setSaveError] = useState("");
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
   const [loadRetry, setLoadRetry] = useState(0);
-  const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Tipo de novedad creado correctamente." : "");
 
   useEffect(() => {
@@ -47,6 +44,7 @@ export function NoveltyTypeDetailPage() {
       .then((source) => {
         if (!alive) return;
         setItem(source);
+        setSaved(source);
         setLoadStatus("success");
       })
       .catch(() => {
@@ -55,17 +53,28 @@ export function NoveltyTypeDetailPage() {
     return () => { alive = false; };
   }, [id, loadRetry]);
 
-  const { isRunning: isSaving, run: save } = useAsyncAction(async () => {
+  const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
+    event.preventDefault();
     if (!item) return;
-    const validationError = validateNoveltyType(item);
-    if (validationError) return setNotice(validationError);
+    const issues = noveltyTypeIssues(item);
+    if (issues.length) {
+      setSaveError("");
+      setShowIssues(true);
+      return setFocusIssuesRequest((value) => value + 1);
+    }
+    setSaveError("");
     try {
-      const saved = await noveltyTypeApiService.update(item.id, item);
-      if (saved) setItem(saved);
+      const updated = await noveltyTypeApiService.update(item.id, item);
+      if (updated) {
+        setItem(updated);
+        setSaved(updated);
+      }
+      setShowIssues(false);
       setNotice("Cambios guardados correctamente.");
       setTimeout(() => setNotice(""), 2200);
-    } catch {
-      setNotice("No pudimos guardar el tipo de novedad. Revisá si el código ya existe e intentá nuevamente.");
+    } catch (error) {
+      // El backend explica en lenguaje de negocio por qué rechaza una configuración.
+      setSaveError(getUserErrorMessage(error, "No pudimos guardar el tipo de novedad. Intentá nuevamente."));
     }
   });
 
@@ -77,22 +86,22 @@ export function NoveltyTypeDetailPage() {
   const toggle = async (alreadyConfirmed = false) => {
     const action = item.status === "ACTIVO" ? "inactivar" : "activar";
     if (!alreadyConfirmed && !await confirmAction(`¿Querés ${action} el tipo de novedad “${item.name}”?`, { title: `${action === "inactivar" ? "Inactivar" : "Activar"} tipo de novedad`, confirmLabel: action === "inactivar" ? "Inactivar" : "Activar", tone: action === "inactivar" ? "danger" : "primary" })) return;
-    const next = { ...item, status: item.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as NoveltyType;
+    // Sólo cambia el estado sobre la versión guardada: no envía ediciones sin guardar.
+    const base = saved ?? item;
+    const next = { ...base, status: base.status === "ACTIVO" ? "INACTIVO" : "ACTIVO" } as NoveltyType;
     try {
-      const saved = await noveltyTypeApiService.update(item.id, next);
-      if (saved) setItem(saved);
+      const updated = await noveltyTypeApiService.update(item.id, next);
+      if (updated) {
+        setItem({ ...item, status: updated.status, updatedAt: updated.updatedAt });
+        setSaved(updated);
+      }
     } catch {
       setNotice("No pudimos cambiar el estado. Intentá nuevamente.");
     }
   };
 
-  const render = () => {
-    if (tab === 0) return <NoveltyTypeIdentificationTab item={item} setItem={setItem} />;
-    if (tab === 1) return <NoveltyTypeRulesTab item={item} setItem={setItem} />;
-    return <NoveltyTypeFinnegansTab item={item} setItem={setItem} />;
-  };
-
   const statusLabel = activoInactivoLabel(item.status);
+  const issues = noveltyTypeIssues(item);
 
   return (
     <>
@@ -113,15 +122,21 @@ export function NoveltyTypeDetailPage() {
           <button className="table-icon-action danger-link" title="Ocultar" aria-label="Ocultar" onClick={async () => { if (await confirmAction("El tipo de novedad no se eliminará: quedará inactivo para conservar su trazabilidad.", { title: "Ocultar tipo de novedad", confirmLabel: "Ocultar", tone: "danger" })) await toggle(true); }}><Trash2 size={14} /><span>Ocultar</span></button>
         </div>
       </div>
-      {notice && <div className="toast">{notice}</div>}
-      <Tabs tabs={tabItems} active={String(tab)} onChange={(key) => setTab(Number(key))} />
-      <Section
-        title={tabs[tab]}
-        subtitle={tab === 2 ? "Equivalencias entre la novedad interna y conceptos externos." : "Configuracion editable del tipo de novedad."}
-        action={<Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button>}
-      >
-        {render()}
-      </Section>
+      {notice && <div className="toast" role="status">{notice}</div>}
+      <form onSubmit={save} noValidate>
+        <NoveltyTypeForm
+          item={item}
+          setItem={setItem}
+          original={saved}
+          issues={showIssues ? issues : undefined}
+          focusIssuesRequest={focusIssuesRequest}
+          error={showIssues && issues.length ? MISSING_DATA_MESSAGE : saveError}
+          actions={<>
+            <Button to="/configuracion/tipos-novedades" variant="subtle">Volver</Button>
+            <Button variant="primary" disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button>
+          </>}
+        />
+      </form>
     </>
   );
 }
