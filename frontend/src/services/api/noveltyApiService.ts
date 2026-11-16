@@ -3,6 +3,8 @@ import { appendSortParams, collectAllPages } from "./listQuery";
 import type { SortState } from "../../utils/sort";
 import { NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES, type CacheFamily, invalidateCacheFamily } from "../cache";
 import type { Novelty, Role, User } from "../../types";
+import type { NoveltyCoverageReviewReason, NoveltyCoverageState } from "../../types/workedTimeAccounting.types";
+import { fileToBase64 } from "../../utils/documentFile";
 
 type ApiNoveltyStatus = "BORRADOR" | "PENDIENTE" | "EN_REVISION" | "APROBADO" | "RECHAZADO" | "DEVUELTO" | "CERRADO";
 
@@ -81,6 +83,33 @@ export type NoveltyCoverageDetail = {
   totals: { days: number; coveredDays: number; pendingReviewDays: number; baseMinutes: number; computedMinutes: number };
 };
 
+// Vista previa de cobertura (NOVELTY_COVERAGE_ENGINE.md §6 y §15): mismo
+// motor que la persistencia, sin escribir. `stateWhenApproved` y
+// `reviewReasons` salen de la misma contabilidad que la grilla.
+export type NoveltyCoveragePreviewDay = NoveltyCoverageDayDetail & {
+  workedMinutes: number;
+  stateWhenApproved: Exclude<NoveltyCoverageState, "PENDING_APPROVAL">;
+  reviewReasons: NoveltyCoverageReviewReason[];
+};
+
+export type NoveltyCoveragePreview = {
+  noveltyType: { id: string; code: string; name: string };
+  initialStatus: "APROBADO" | "PENDIENTE";
+  employees: Array<{
+    employee: { id: string; legajo: string; firstName: string; lastName: string };
+    days: NoveltyCoveragePreviewDay[];
+    totals: NoveltyCoverageDetail["totals"];
+  }>;
+};
+
+export type NoveltyCoveragePreviewInput = {
+  employeeIds: string[];
+  noveltyTypeId: string;
+  fromDate: string;
+  toDate: string | null;
+  quantityHours: number | null;
+};
+
 export type ResolveNoveltyCoverageDayInput = {
   resolution: NoveltyCoverageResolution;
   baseMinutes?: number | null;
@@ -107,7 +136,7 @@ function normalizeRoles(value: unknown): Role[] {
   return roles.length ? roles : fallbackApprovalRoles;
 }
 
-type CreateNoveltyApiInput = {
+export type CreateNoveltyApiInput = {
   employeeIds: string[];
   noveltyTypeId: string;
   fromDate: string;
@@ -116,6 +145,8 @@ type CreateNoveltyApiInput = {
   quantityDays?: number | null;
   observation?: string | null;
   targetHourConceptId?: string | null;
+  // Corrección de RRHH sobre un período ya enviado a cierre (etapa 3).
+  correctionReason?: string | null;
 };
 
 function dateOnly(value?: string | null) {
@@ -234,6 +265,27 @@ export const noveltyApiService = {
     return response.data.map(mapNoveltyFromApi);
   },
 
+  /**
+   * Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): alta junto con su documento en
+   * un solo pedido. El backend sube el archivo y crea novedad + documento de
+   * forma coordinada: si algo falla, no queda ninguna novedad creada.
+   */
+  async createWithDocument(input: CreateNoveltyApiInput, file: File, notes?: string | null) {
+    const response = await apiRequest<ApiCreateResponse>("/novelties/with-document", {
+      method: "POST",
+      body: {
+        ...input,
+        document: { fileName: file.name, fileMimeType: file.type || "application/octet-stream", fileSizeBytes: file.size, fileBase64: await fileToBase64(file), notes: notes || null },
+      },
+    });
+    await Promise.all([
+      invalidateNoveltyDependentCaches("novelty created with document"),
+      invalidateCacheFamily("employees", "novelty document created"),
+      invalidateCacheFamily("dashboard", "novelty document created"),
+    ]);
+    return response.data.map(mapNoveltyFromApi);
+  },
+
   async approve(id: string) {
     const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/approve`, { method: "POST" });
     await invalidateNoveltyDependentCaches("novelty approved");
@@ -258,6 +310,12 @@ export const noveltyApiService = {
     await apiRequest<{ data: { id: string } }>(`/novelties/${id}`, { method: "DELETE" });
     await invalidateNoveltyDependentCaches("novelty deleted");
     return id;
+  },
+
+  /** Sin escritura ni invalidación de cachés: sólo calcula. */
+  async previewCoverage(input: NoveltyCoveragePreviewInput, signal?: AbortSignal) {
+    const response = await apiRequest<{ data: NoveltyCoveragePreview }>("/novelties/coverage-preview", { method: "POST", body: input, signal, silentErrors: true });
+    return response.data;
   },
 
   async getCoverage(id: string) {

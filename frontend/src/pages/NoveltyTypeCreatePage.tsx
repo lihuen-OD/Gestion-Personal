@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { emptyNoveltyType } from "../components/novelty-types/NoveltyTypeFields";
 import { NoveltyTypeForm } from "../components/novelty-types/NoveltyTypeForm";
@@ -19,17 +19,6 @@ export function NoveltyTypeCreatePage() {
   const [error, setError] = useState("");
   const [showIssues, setShowIssues] = useState(false);
   const [focusIssuesRequest, setFocusIssuesRequest] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    noveltyTypeApiService.getAll()
-      .then((items) => {
-        if (!alive) return;
-        setItem((current) => ({ ...current, code: noveltyTypeApiService.getNextCode(items) }));
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
 
   const issues = noveltyTypeIssues(item);
 

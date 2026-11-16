@@ -358,3 +358,24 @@ describe("NoveltyTypeCreatePage — Etapa 7 (accesibilidad del envío)", () => {
     expect(screen.getByText("Esmeralda", { selector: ".novelty-color-name" })).toBeInTheDocument();
   });
 });
+
+// Regresión: "Revisá los campos obligatorios o inválidos: Código." El código
+// interno lo asigna el backend al guardar; la pantalla no lo calcula ni lo pide.
+describe("NoveltyTypeCreatePage — código interno", () => {
+  it("alta sin escribir código: se guarda aunque el catálogo no haya cargado, sin error de código", async () => {
+    vi.mocked(noveltyTypeApiService.getAll).mockRejectedValue(new Error("sin catálogo"));
+    vi.mocked(noveltyTypeApiService.create).mockResolvedValue({ id: "nt-new", code: "NOV-008" } as NoveltyType);
+    renderPage();
+    await fillRequired("Trámite bancario");
+
+    const code = screen.getByLabelText("Código interno");
+    expect(code).toHaveAttribute("readonly");
+    expect(code).toHaveValue("");
+    expect(code).toHaveAttribute("placeholder", "Se asigna al guardar");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));
+
+    await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/Código/, { selector: ".error, .field-error" })).not.toBeInTheDocument();
+    expect(noveltyTypeApiService.getAll).not.toHaveBeenCalled();
+  });
+});

@@ -14,6 +14,8 @@ describe("largeBodyRoutes — qué rutas parsean su propio body grande", () => {
     ["POST", "/API/Clock/Photo-Punch", CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES],
     ["POST", "/api/employees/11111111-1111-4111-8111-111111111111/documents", EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES],
     ["POST", "/api/employees/x/documents/", EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES],
+    ["POST", "/api/novelties/with-document", EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES],
+    ["POST", "/api/Novelties/With-Document/", EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES],
   ])("%s %s → límite propio (Express rutea sin distinguir mayúsculas ni barra final)", (method, path, limit) => {
     expect(limitFor(method, path)).toBe(limit);
   });
@@ -26,6 +28,9 @@ describe("largeBodyRoutes — qué rutas parsean su propio body grande", () => {
     ["POST", "/api/time-entries/clock/photo-punch"],
     ["POST", "/api/employees/x/documents/y"],
     ["POST", "/api/employees/x/y/documents"],
+    ["POST", "/api/novelties"],
+    ["POST", "/api/novelties/coverage-preview"],
+    ["POST", "/api/novelties/x/with-document"],
     ["POST", "/apixclock/photo-punch"],
     ["POST", "/clock/photo-punch"],
   ])("%s %s → límite general", (method, path) => {

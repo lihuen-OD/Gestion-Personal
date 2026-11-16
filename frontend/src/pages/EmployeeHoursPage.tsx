@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ClipboardList, RefreshCcw } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
-import { documentApiService } from "../services/api/documentApiService";
-import { documentCategoryApiService } from "../services/api/documentCategoryApiService";
 import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
@@ -15,7 +13,6 @@ import type { TimeGridDayOff } from "../services/api/employeeDayOffApiService";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { NoveltyType } from "../types/noveltyType.types";
-import { calendarDaysInclusive } from "../utils/noveltyDateRange";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { formatCompactDurationMinutes, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
@@ -38,13 +35,16 @@ import { MonthlyHoursTableSections } from "../components/hours/MonthlyHoursTable
 import { amountDescription, amountMinutes, realLabel, SettlementTotalCell, SpecialHourDot } from "../components/hours/SettlementAmount";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
-import { Field } from "../components/ui/FormControls";
 import { Modal } from "../components/ui/Modal";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { NoveltyCoverageChipList, NoveltyCoverageResolutionModal, type NoveltyCoverageReviewTarget } from "../components/hours/NoveltyCoverage";
+import { NoveltyCoveragePreviewPanel } from "../components/novelties/NoveltyCoveragePreviewPanel";
+import { NoveltyLoadFields, NoveltyTypeLoadSummary } from "../components/novelties/NoveltyLoadFields";
+import { useNoveltyCoveragePreview } from "../components/novelties/useNoveltyCoveragePreview";
+import { adaptNoveltyLoadValues, buildNoveltyCreateInput, buildNoveltyPreviewInput, initialNoveltyLoadValues, noveltyLoadIssues, noveltyLoadLayout, type NoveltyLoadValues } from "../utils/noveltyLoad";
 
 function timeEntrySaveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -129,13 +129,14 @@ export function EmployeeHoursPage() {
   const [noveltyTypes, setNoveltyTypes] = useState<NoveltyType[]>([]);
   const [rows, setRows] = useState<EmployeeTimeGridRow[]>([]);
   const activeTypes = noveltyTypes.filter((item) => item.status === "ACTIVO");
+  // Mismo criterio que el backend (assertCanLoad) y que el alta de novedades: RRHH carga cualquiera.
+  const loadableTypes = user && roleLevel(user.role) === 1 ? activeTypes : activeTypes.filter((item) => Boolean(user && item.allowedLoadRoles.includes(user.role)));
   const noveltyTypesById = new Map(noveltyTypes.map((item) => [item.id, item]));
   const [noveltyTypeId, setNoveltyTypeId] = useState("");
-  const [noveltyFrom, setNoveltyFrom] = useState(monthDate(period, 1));
-  const [noveltyTo, setNoveltyTo] = useState(monthDate(period, 1));
-  const [noveltyHours, setNoveltyHours] = useState("1");
-  const [fileName, setFileName] = useState("");
-  const [docNotes, setDocNotes] = useState("");
+  // Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): mismos campos, validación y
+  // payload que el alta de novedades (utils/noveltyLoad.ts).
+  const [noveltyValues, setNoveltyValues] = useState<NoveltyLoadValues>(() => initialNoveltyLoadValues(undefined, { fromDate: monthDate(period, 1) }));
+  const [showNoveltyIssues, setShowNoveltyIssues] = useState(false);
   const [error, setError] = useState("");
   const [savingStatus, setSavingStatus] = useState<TimeStatus | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -300,11 +301,8 @@ export function EmployeeHoursPage() {
     setNotes(formatTimeEntryObservation(entry?.notes));
     setCorrectionReason("");
     setNoveltyTypeId("");
-    setNoveltyFrom(date);
-    setNoveltyTo(date);
-    setNoveltyHours("1");
-    setFileName("");
-    setDocNotes("");
+    setNoveltyValues(initialNoveltyLoadValues(undefined, { fromDate: date }));
+    setShowNoveltyIssues(false);
     setError("");
   };
   const selectedRow = selected ? rows.find((row) => row.concept.id === selected.conceptId) : undefined;
@@ -352,13 +350,9 @@ export function EmployeeHoursPage() {
       setManualError(manualBreakdownSaveErrorMessage(saveError));
     }
   });
-  // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): sólo
-  // previsualización -- el backend recalcula quantityDays sobre el rango
-  // real completo al crear la novedad (novelties.service.ts::resolveQuantities),
-  // sin importar lo que se mande en el payload.
-  const previewNoveltyDays = selectedType && !selectedType.rules.allowsHours
-    ? calendarDaysInclusive(noveltyFrom, selectedType.rules.allowsDateRange ? noveltyTo : noveltyFrom)
-    : null;
+  const noveltyIssues = selectedType ? noveltyLoadIssues(selectedType, noveltyValues, 1) : [];
+  const noveltyPreviewInput = useMemo(() => (selected && id ? buildNoveltyPreviewInput(selectedType, noveltyValues, [id]) : null), [selected, id, selectedType, noveltyValues]);
+  const noveltyPreview = useNoveltyCoveragePreview(noveltyPreviewInput);
   const { isRunning: isSaving, run: save } = useAsyncAction(async (status: TimeStatus) => {
     if (!selected || !employee) return;
     if (!user || !id) return;
@@ -371,15 +365,9 @@ export function EmployeeHoursPage() {
     if (canCorrectApproved && correctionReason.trim().length < 2) {
       return setError("Indicá el motivo de la corrección. Quedará registrado en auditoría.");
     }
-    if (selectedType?.rules.requiresDocumentation && !fileName) {
-      return setError("Adjunta la documentacion requerida para guardar esta novedad.");
-    }
-    if (
-      selectedType?.rules.finnegansRequiresValidity &&
-      selectedType.rules.allowsDateRange &&
-      noveltyTo < noveltyFrom
-    ) {
-      return setError("La fecha hasta no puede ser anterior a la fecha desde.");
+    if (noveltyIssues.length) {
+      setShowNoveltyIssues(true);
+      return setError("Faltan datos de la novedad. Revisá los campos marcados.");
     }
     const concept = selectedRow?.concept;
     const nextHours = Number(hours) || 0;
@@ -416,45 +404,13 @@ export function EmployeeHoursPage() {
       setEntries((prevEntries) => upsertTimeEntry(prevEntries, savedEntry!));
       setRows((prevRows) => applyNormalEntryToRows(prevRows, savedEntry!));
       if (selectedType) {
-        const hoursImpact = selectedType.rules.allowsHours ? Number(noveltyHours) || 0 : 0;
-        let createdNovelties: Novelty[] = [];
+        const noveltyInput = buildNoveltyCreateInput(selectedType, noveltyValues, [id], { targetHourConceptId: concept?.id || null });
         try {
-          createdNovelties = await noveltyApiService.create({
-            employeeIds: [id],
-            noveltyTypeId: selectedType.id,
-            fromDate: noveltyFrom,
-            toDate: selectedType.rules.allowsDateRange ? noveltyTo : null,
-            quantityHours: selectedType.rules.allowsHours ? hoursImpact : null,
-            // Etapa 15L.5: ya no se calcula acá -- el backend es la única
-            // autoridad de quantityDays (recalcula sobre el rango real
-            // completo, sin recortar al mes de fromDate).
-            quantityDays: null,
-            observation: docNotes || null,
-            targetHourConceptId: concept?.id || null,
-          });
+          // Con documento, un único pedido: novedad y documento quedan juntos o no queda ninguno.
+          if (noveltyValues.file) await noveltyApiService.createWithDocument(noveltyInput, noveltyValues.file, noveltyValues.observation.trim() || null);
+          else await noveltyApiService.create(noveltyInput);
         } catch (noveltyError) {
-          return setError(getUserErrorMessage(noveltyError, "La hora se guardó, pero no pudimos registrar la novedad. Revisá el tipo seleccionado e intentá nuevamente."));
-        }
-        if (fileName) {
-          try {
-            const categories = await documentCategoryApiService.getAll({ status: "ACTIVO", scope: "NOVEDAD" });
-            const category = categories.find((item) => item.kind === "NOVEDAD") || categories[0];
-            if (!category) {
-              return setError("No hay una categoria documental activa para novedades.");
-            }
-            await documentApiService.create({
-              employeeId: id,
-              noveltyId: createdNovelties[0]?.id,
-              categoryId: category.id,
-              fileName,
-              fileMimeType: "application/octet-stream",
-              fileSizeBytes: 1,
-              status: "Vigente",
-              notes: docNotes,
-            });
-          } catch (documentError) {
-            return setError("La novedad se guardó, pero no pudimos asociar la documentación. Intentá adjuntarla nuevamente.");
-          }
+          return setError(`La hora se guardó, pero la novedad no: ${getUserErrorMessage(noveltyError, "revisá el tipo seleccionado e intentá nuevamente.")}`);
         }
       }
       setSyncing(true);
@@ -847,65 +803,33 @@ export function EmployeeHoursPage() {
                     value={noveltyTypeId}
                     disabled={selectedLocked}
                     onChange={(event) => {
+                      const next = loadableTypes.find((item) => item.id === event.target.value);
                       setNoveltyTypeId(event.target.value);
-                      setFileName("");
-                      setDocNotes("");
+                      if (next) setNoveltyValues((current) => adaptNoveltyLoadValues(current, next));
+                      setShowNoveltyIssues(false);
                       setError("");
                     }}
                   >
                     <option value="">Sin novedad</option>
-                    {activeTypes.map((item) => (
+                    {loadableTypes.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name}
                       </option>
                     ))}
                   </select>
                 </label>
-                {selectedType ? (
-                  <Field
-                    label="Desde"
-                    type="date"
-                    value={noveltyFrom}
-                    set={setNoveltyFrom}
-                    disabled={selectedLocked}
-                  />
-                ) : null}
-                {selectedType?.rules.allowsDateRange ? (
-                  <Field
-                    label="Hasta"
-                    type="date"
-                    value={noveltyTo}
-                    set={setNoveltyTo}
-                    disabled={selectedLocked}
-                  />
-                ) : null}
-                {selectedType?.rules.allowsHours ? (
-                  <Field
-                    label="Cantidad de horas"
-                    type="number"
-                    value={noveltyHours}
-                    set={setNoveltyHours}
-                    disabled={selectedLocked}
-                  />
-                ) : null}
               </div>
 
-              {previewNoveltyDays !== null ? (
-                // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md
-                // §8): sólo previsualización -- el backend calcula el valor
-                // definitivo al guardar, sobre el rango real completo.
-                <p className="table-sub">Cantidad de días: {previewNoveltyDays}</p>
-              ) : null}
+              {selectedType ? <>
+                <NoveltyTypeLoadSummary type={selectedType} />
+                <NoveltyLoadFields type={selectedType} values={noveltyValues} onChange={setNoveltyValues} issues={showNoveltyIssues ? noveltyIssues : undefined} isRrhh={isRrhh} disabled={selectedLocked} />
+                <NoveltyCoveragePreviewPanel state={noveltyPreview.state} layout={noveltyLoadLayout(selectedType)} employeeCount={1} missingHint="Completá los datos de la novedad para ver cómo quedará." onRetry={noveltyPreview.retry} />
+              </> : null}
 
               {selectedType ? (
                 <div className="hour-novelty-state applied" role="status">
                   <span className="hour-novelty-eyebrow">Novedad asociada</span>
                   <b>{selectedType.name}</b>
-                  <span className="hour-novelty-duration">
-                    {selectedType.rules.allowsHours
-                      ? `Duración: ${formatCompactDurationMinutes(hoursDecimalToMinutes(noveltyHours))}`
-                      : `Duración: ${previewNoveltyDays ?? 1} día(s)`}
-                  </span>
                   <p>Se asociará únicamente a esta fila cuando guardes la hora.</p>
                 </div>
               ) : selectedConceptNovelties.length ? (
@@ -922,32 +846,6 @@ export function EmployeeHoursPage() {
                 </div>
               )}
 
-              {selectedType?.rules.requiresDocumentation ? (
-                <div className="document-upload-card">
-                  <b>Documentacion requerida</b>
-                  <p>Adjunta el comprobante o certificado respaldatorio.</p>
-                  <label>
-                    Adjuntar documento
-                    <input
-                      type="file"
-                      disabled={selectedLocked}
-                      onChange={(event) => setFileName(event.target.files?.[0]?.name || "")}
-                    />
-                  </label>
-                  {fileName ? <small>Archivo seleccionado: {fileName}</small> : null}
-                  <label>
-                    Observacion documental
-                    <textarea
-                      spellCheck
-                      lang="es-AR"
-                      value={docNotes}
-                      disabled={selectedLocked}
-                      onChange={(event) => setDocNotes(event.target.value)}
-                      placeholder="Detalle opcional del documento adjunto"
-                    />
-                  </label>
-                </div>
-              ) : null}
 
             </div>
             </div>

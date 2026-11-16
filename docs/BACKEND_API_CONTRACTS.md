@@ -31,6 +31,7 @@ El body JSON se limita por ruta (`backend/src/shared/http/bodyLimits.ts`):
 | Todas las demás | 1 MiB | Antes del routing (parser global) |
 | `POST /api/clock/photo-punch` | 6 MiB | Después del límite por IP, `requireClockDevice()` y el límite por dispositivo |
 | `POST /api/employees/:id/documents` | 36 MiB | Después de `requireAuth` y del rol |
+| `POST /api/novelties/with-document` | 36 MiB | Después de `requireAuth` y del rol |
 
 Un `Content-Length` declarado por encima del límite de su ruta se rechaza
 antes de leer el body (y se cierra la conexión); un body chunked lo corta el
@@ -44,7 +45,7 @@ y nunca 500:
 | 400 | `INVALID_REQUEST_BODY` | Body que no coincide con su `Content-Length` o request interrumpida |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Codificación o charset del body no soportados |
 
-En las dos rutas de body grande, un request sin credencial responde 401 sin
+En las rutas de body grande, un request sin credencial responde 401 sin
 que su body se lea. `JSON_BODY_LIMIT` ya no existe.
 
 Los listados grandes pueden incluir metadatos de paginación sin cambiar `data`:
@@ -1281,6 +1282,32 @@ Reglas:
   - En carga masiva (`employeeIds` con más de un legajo), si **cualquiera** tiene un conflicto se rechaza el lote completo — no crea parcialmente al resto.
   - El mensaje (`error.message`) identifica el tipo de novedad y el/los legajo(s) en conflicto (p. ej. `Ya existe una novedad "Vacaciones" para el legajo 100 que se superpone con el rango de fechas seleccionado.`) — nunca un id/UUID técnico.
   - **No** evalúa compatibilidad entre `NoveltyType` distintos (dos tipos diferentes pueden seguir superponiéndose sin bloqueo) — ver el documento de decisión para el alcance exacto.
+- **Cobertura horaria, etapa 8** (ADR §15.1): un tipo con `requiresDocumentation=true` se rechaza en esta ruta con `400 NOVELTY_DOCUMENTATION_REQUIRED` (se crea con `POST /api/novelties/with-document`). Los tipos sin documentación obligatoria no cambian.
+
+### Crear con documento (etapa 8)
+
+```txt
+POST /api/novelties/with-document
+```
+
+Mismos roles, body y reglas que `POST /api/novelties`, más `document`, con los mismos campos y límites que un documento de legajo (`POST /api/employees/:id/documents`). El body (hasta 36 MiB) se parsea recién después de `requireAuth` y del rol.
+
+```json
+{
+  "employeeIds": ["uuid"],
+  "noveltyTypeId": "uuid",
+  "fromDate": "2026-11-23",
+  "toDate": null,
+  "observation": "Certificado médico",
+  "document": { "fileName": "certificado.pdf", "fileMimeType": "application/pdf", "fileSizeBytes": 48213, "fileBase64": "...", "notes": "opcional" }
+}
+```
+
+- Hasta **25 personas** por alta con documento (`400 NOVELTY_DOCUMENT_TOO_MANY_EMPLOYEES`, validado antes de cualquier lectura o subida); sin documento, `POST /api/novelties` sigue admitiendo 250.
+- Antes de tocar el storage valida lo mismo que el alta (alcance, tipo, rol de carga, solapamiento) más la categoría documental de novedades (activa, alcance `NOVEDAD`; `409 NOVELTY_DOCUMENT_CATEGORY_MISSING` si no hay) y su permiso de subida (`403 DOCUMENT_UPLOAD_FORBIDDEN`).
+- Sube una copia del archivo por legajo (cada documento vive en la carpeta de su legajo) y después crea, en una transacción, novedades, cobertura, `StorageFile` y `EmployeeDocument` (con `noveltyId`, estado `VIGENTE`).
+- Si una subida falla, borra las anteriores y responde `502 NOVELTY_DOCUMENT_UPLOAD_FAILED` (un archivo inválido responde su `4xx` de validación). Si la transacción falla, borra los archivos subidos y responde el error del alta. Nunca queda una novedad sin su documento; si el borrado compensatorio falla, el archivo queda huérfano en el storage, sin filas, y se registra como error crítico.
+- Respuesta: igual que `POST /api/novelties`.
 
 ### Aprobar / rechazar
 
@@ -1332,17 +1359,21 @@ Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcan
 ```json
 {
   "noveltyType": { "id": "uuid", "code": "VAC", "name": "Vacaciones" },
+  "initialStatus": "PENDIENTE",
   "employees": [{
     "employee": { "id": "uuid", "legajo": "101", "firstName": "Ana", "lastName": "Pérez" },
     "days": [{
       "date": "2026-11-22", "outcome": "COVERED", "scheduleReviewReason": null, "reviewStatus": "NOT_REQUIRED",
       "label": "Cubre", "expectedMinutes": 480, "baseMinutes": 480, "resolution": null, "resolvedBaseMinutes": null,
-      "effectiveBaseMinutes": 480, "multiplier": 2, "computedMinutes": 960, "countsTowardTotal": true
+      "effectiveBaseMinutes": 480, "multiplier": 2, "computedMinutes": 960, "countsTowardTotal": true,
+      "workedMinutes": 0, "stateWhenApproved": "COUNTED", "reviewReasons": []
     }],
     "totals": { "days": 7, "coveredDays": 5, "pendingReviewDays": 0, "baseMinutes": 2400, "computedMinutes": 2880 }
   }]
 }
 ```
+
+**Etapa 8 (aditivo, `NOVELTY_COVERAGE_ENGINE.md` §15):** `initialStatus` es el estado con que se crearía la novedad (`APROBADO` para RRHH o si el tipo no requiere aprobación; si no, `PENDIENTE`, mismo criterio que el alta). Por día, `workedMinutes` es el trabajo real ya registrado (mismo criterio que la grilla por legajo) y `stateWhenApproved` / `reviewReasons` son el resultado de `accountNoveltyDay` evaluando la novedad como aprobada: `COUNTED`, `INFORMATIVE` o `REVIEW_REQUIRED` con sus motivos (`REAL_WORK_ON_INCOMPATIBLE`, `REAL_WORK_EXCEEDS_EXPECTED`, `REAL_WORK_WITHOUT_EXPECTED`, `SCHEDULE_UNRESOLVED`). Sigue sin escribir nada; una novedad con conflicto se puede guardar igual y queda para revisión.
 
 - `outcome`: `COVERED`, `NO_COVERAGE`, `WEEKDAY_NOT_INCLUDED`, `NO_WORK_OBLIGATION`, `HOLIDAY_NOT_CONVOKED`, `HOLIDAY_EXCLUDED`, `DAY_OFF`, `OUTSIDE_EMPLOYMENT` o `SCHEDULE_UNRESOLVED` (0 h provisional, a revisar; `scheduleReviewReason` dice por qué).
 - `label` es el texto legible para mostrar.

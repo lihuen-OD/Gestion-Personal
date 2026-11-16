@@ -134,6 +134,28 @@ async function createManyWithin(tx: PrismaTransactionClient, input: CreateNovelt
 }
 
 export const noveltiesRepository = {
+  /**
+   * Categoría documental de las novedades (mismo criterio que usaba la
+   * pantalla): activa, con alcance NOVEDAD; si hay varias, la de tipo NOVEDAD.
+   */
+  async findNoveltyDocumentCategory() {
+    const categories = await prisma.documentCategory.findMany({
+      where: { status: "ACTIVO", scopes: { array_contains: "NOVEDAD" } },
+      select: { id: true, code: true, name: true, kind: true, uploadRoles: true },
+      orderBy: { code: "asc" },
+    });
+    return categories.find((category) => category.kind === "NOVEDAD") ?? categories[0] ?? null;
+  },
+
+  findEmployeeIdentities(employeeIds: string[]) {
+    return prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, legajo: true, firstName: true, lastName: true } });
+  },
+
+  /** Documentos de las novedades, dentro de la transacción del alta. */
+  createDocumentsWithin(tx: PrismaTransactionClient, rows: Prisma.EmployeeDocumentUncheckedCreateInput[]) {
+    return Promise.all(rows.map((data) => tx.employeeDocument.create({ data, select: { id: true, employeeId: true, noveltyId: true, fileName: true } })));
+  },
+
   findMany(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;

@@ -750,7 +750,7 @@ Fichador standalone (`fichador/`, since F1 of `docs/decisions/FICHADOR_STANDALON
   * Asistencia shows kiosk punches as "Kiosco · <current device name>".
 * Hardening since F11 (plan §30):
   * Only `/api/clock/*`: the legacy alias `/time-entries/clock/*` answers 404; the admin has no `/fichador`.
-  * Request bodies: 1 MiB global; `photo-punch` (6 MiB) and employee documents (36 MiB) parse their body only after their guards; oversized or malformed bodies get 413/400, never 500 (`backend/src/shared/http/bodyLimits.ts`).
+  * Request bodies: 1 MiB global; `photo-punch` (6 MiB), employee documents and novelties with a document (36 MiB) parse their body only after their guards; oversized or malformed bodies get 413/400, never 500 (`backend/src/shared/http/bodyLimits.ts`).
   * The fichador CSP is enforced (`_headers` and `vite preview`), validated with the real build and MediaPipe in Chromium; physical Safari/Chrome coverage is deferred to the F12 device matrix in public staging.
   * The punch `AuditLog` is written inside the punch transaction: a confirmed punch always has its audit, and an audit failure rolls the punch back (503, attempt `FAILED`).
   * Deferred with evidence: dropping `AttendancePunch.kioskId` (needs an authorized migration), a non-extractable signing key for devices (protocol change) and a shared rate-limit store (only needed with more than one backend instance).

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sortQueryShape } from "../../shared/validation/listSort";
 import { queryBoolean } from "../../shared/validation/queryBoolean";
+import { createEmployeeDocumentSchema } from "../employees/employees.schemas";
 
 export const approvalStatusSchema = z.enum(["BORRADOR", "PENDIENTE", "EN_REVISION", "APROBADO", "RECHAZADO", "DEVUELTO", "CERRADO"]);
 
@@ -28,24 +29,31 @@ export const listNoveltiesQuerySchema = z.object({
   ...sortQueryShape(noveltyListSortKeys),
 });
 
-export const createNoveltySchema = z
-  .object({
-    employeeIds: z.array(z.string().uuid()).min(1).max(250),
-    noveltyTypeId: z.string().uuid(),
-    fromDate: z.coerce.date(),
-    toDate: z.coerce.date().optional().nullable(),
-    quantityHours: z.coerce.number().positive().max(744).optional().nullable(),
-    quantityDays: z.coerce.number().positive().max(366).optional().nullable(),
-    observation: z.string().trim().max(800).optional().nullable(),
-    targetHourConceptId: z.string().uuid().optional().nullable(),
-    // Etapa 3: corrección explícita de RRHH sobre un período ya enviado a
-    // cierre (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §8).
-    correctionReason: z.string().trim().min(5).max(600).optional().nullable(),
-  })
-  .refine((value) => !value.toDate || value.toDate >= value.fromDate, {
-    message: "toDate must be greater than or equal to fromDate",
-    path: ["toDate"],
-  });
+const createNoveltyFields = {
+  employeeIds: z.array(z.string().uuid()).min(1).max(250),
+  noveltyTypeId: z.string().uuid(),
+  fromDate: z.coerce.date(),
+  toDate: z.coerce.date().optional().nullable(),
+  quantityHours: z.coerce.number().positive().max(744).optional().nullable(),
+  quantityDays: z.coerce.number().positive().max(366).optional().nullable(),
+  observation: z.string().trim().max(800).optional().nullable(),
+  targetHourConceptId: z.string().uuid().optional().nullable(),
+  // Etapa 3: corrección explícita de RRHH sobre un período ya enviado a
+  // cierre (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §8).
+  correctionReason: z.string().trim().min(5).max(600).optional().nullable(),
+};
+
+const toDateNotBeforeFrom = (value: { fromDate: Date; toDate?: Date | null }) => !value.toDate || value.toDate >= value.fromDate;
+const toDateNotBeforeFromIssue = { message: "toDate must be greater than or equal to fromDate", path: ["toDate"] };
+
+export const createNoveltySchema = z.object(createNoveltyFields).refine(toDateNotBeforeFrom, toDateNotBeforeFromIssue);
+
+// Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): el documento obligatorio viaja
+// con el alta (POST /novelties/with-document), mismos límites que un
+// documento de legajo (POST /employees/:id/documents).
+export const noveltyDocumentSchema = createEmployeeDocumentSchema.pick({ fileName: true, fileMimeType: true, fileSizeBytes: true, fileBase64: true, notes: true });
+
+export const createNoveltyWithDocumentSchema = z.object({ ...createNoveltyFields, document: noveltyDocumentSchema }).refine(toDateNotBeforeFrom, toDateNotBeforeFromIssue);
 
 // Etapa 3: body opcional de aprobar/eliminar — sólo RRHH, con motivo, sobre
 // un período ya enviado a cierre.
@@ -91,6 +99,8 @@ export const bulkApproveNoveltiesSchema = z.object({ ids: z.array(z.string().uui
 
 export type ListNoveltiesQuery = z.infer<typeof listNoveltiesQuerySchema>;
 export type CreateNoveltyInput = z.infer<typeof createNoveltySchema>;
+export type NoveltyDocumentInput = z.infer<typeof noveltyDocumentSchema>;
+export type CreateNoveltyWithDocumentInput = z.infer<typeof createNoveltyWithDocumentSchema>;
 // Lo que el servicio persiste: el input validado más las cantidades que
 // deriva el backend (quantityMinutes, docs/decisions/NOVELTY_COVERAGE_ENGINE.md).
 // quantityMinutes no es un campo del body: el cliente nunca lo manda.

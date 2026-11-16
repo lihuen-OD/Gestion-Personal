@@ -220,7 +220,8 @@ function weekdayListLabel(weekdays: number[]) {
   return selected.map((option) => option.long.toLowerCase()).join(", ");
 }
 
-function timeLine(coverage: NoveltyTypeCoverage) {
+/** Una línea en lenguaje de negocio sobre el tiempo que cubre el tipo. */
+export function coverageTimeDescription(coverage: NoveltyTypeCoverage) {
   if (coverage.mode === "NONE") return "No registra horas: sólo deja constancia de la situación.";
   if (coverage.mode === "MANUAL_MINUTES") return "Cubre la duración que se indique al cargarla, para un único día.";
   if (coverage.mode === "EXPECTED_SCHEDULE") return "Cubre las horas que la persona debía trabajar cada día.";
@@ -248,7 +249,7 @@ function dayLines(coverage: NoveltyTypeCoverage) {
  */
 export function describeNoveltyTypeConfig(item: NoveltyType): string[] {
   const { coverage, rules } = item;
-  const lines = [timeLine(coverage), ...dayLines(coverage)];
+  const lines = [coverageTimeDescription(coverage), ...dayLines(coverage)];
   if (coverageRegistersTime(coverage)) {
     lines.push(coverage.appliesSpecialHours
       ? "Aplica reglas de domingos, feriados y Horas Especiales para liquidación."

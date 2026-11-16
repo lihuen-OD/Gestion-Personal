@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 7** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos; grilla; pantalla de Tipos de Novedad, ver §9, §12, §13 y §14). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 8** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos; grilla; pantalla de Tipos de Novedad; carga de Novedades con vista previa, ver §9, §12, §13, §14 y §15). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -274,8 +274,8 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 4 | Contabilidad (`accountDay`), consumidores, snapshot de cierre, bloqueo de envío con revisión pendiente | **Implementada y aprobada** (2026-11-13) |
 | 5 | Recálculo automático por eventos: relación e historia laboral, turnos, plantillas, regímenes, francos, convocatorias, reglas y configuración del tipo (§13) | **Implementada y aprobada** |
 | 6 | Grilla frontend: chips de cobertura, revisión manual, cierre mensual | **Implementada y aprobada** (`1068de7`) |
-| 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada** (2026-11-16), pendiente de revisión |
-| 8 | Carga reactiva de Novedades con vista previa | Pendiente |
+| 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada y aprobada** (`75b96f0`) |
+| 8 | Carga de Novedades guiada por el Tipo, con vista previa de cobertura (§15) | **Implementada** (2026-11-16), pendiente de revisión |
 | 9 | Finnegans (`value1` derivado de la cobertura) | Pendiente |
 | 10 | QA y cierre | Pendiente |
 
@@ -552,3 +552,38 @@ Reglas de la pantalla:
 - `allowsHours` sigue existiendo (deuda: se retira cuando la carga use sólo la cobertura, etapa 8 o limpieza posterior, y Finnegans en horas deje de leer `quantityHours`, etapa 9). Con cantidad indicada al cargar es implícito; en los demás modos está en "Integración y otras opciones" como registro administrativo que no es tiempo cubierto.
 
 Pendientes de la etapa: la carga de Novedades todavía no marca la observación obligatoria ni usa la cobertura para la vista previa (etapa 8).
+
+## 15. Carga de Novedades (etapa 8)
+
+El alta (`NoveltyModal`: Novedades, legajo, alertas y notificaciones) y la novedad asociada a una hora en la grilla por legajo (`EmployeeHoursPage`) usan los mismos campos (`NoveltyLoadFields`), validación, payload (`frontend/src/utils/noveltyLoad.ts`) y vista previa (`NoveltyCoveragePreviewPanel`). El Tipo decide; la persona no vuelve a elegir cantidad fija, compatibilidad, suma ni multiplicadores.
+
+| Tipo | Se pide | Se envía |
+|---|---|---|
+| Cantidad fija | Nada (se informa "cubre 4 h por día") | sin cantidad |
+| Según la jornada | Nada (se informa que se calcula por la jornada) | sin cantidad |
+| Cantidad indicada al cargar | "Duración" HH:mm, obligatoria, un día | `quantityHours` = minutos / 60; el backend deriva `quantityMinutes` |
+| No registra horas | Nada | sin cantidad |
+| Cualquier modo salvo el manual, con `allowsHours` | "Cantidad de horas informativa" (opcional, sólo dato) | `quantityHours`, nunca cobertura |
+
+- **Fechas:** sin rango, sólo "Fecha"; con rango, "Desde" y "Hasta (opcional)". Hasta vacía es un solo día (`toDate = null`), nunca un rango abierto. Hasta es obligatoria sólo si el tipo exige vigencia (regla existente del backend).
+- **Observación** siempre visible; obligatoria si el tipo lo pide (el backend ya lo exige). **Documentación** obligatoria si el tipo lo pide, garantizada por el backend (§15.1). Antes el alta sólo validaba que hubiera un archivo elegido y la grilla registraba metadatos sin archivo.
+- **Aprobación:** se informa si la novedad quedará pendiente (no suma hasta aprobarse) o, para RRHH, que queda aprobada.
+- **Vista previa:** `POST /novelties/coverage-preview` con debounce, cancelando el pedido anterior y sin mostrar respuestas viejas. Muestra por día lo que cubre, el multiplicador, lo que vale para liquidación, francos, feriados, revisión (con 0 h provisional) y, desde esta etapa, el trabajo real ya registrado y si el día quedará para revisión. Para eso la vista previa devuelve `workedMinutes`, `stateWhenApproved` y `reviewReasons` por día (resultado de `accountNoveltyDay`, la misma función que la grilla y el cierre) e `initialStatus`; el frontend sólo traduce y suma lo ya calculado. Un conflicto no bloquea el alta: la novedad se guarda y queda para revisión, como ya hacía el backend. Si la vista previa falla, se informa y se puede guardar igual.
+- **Errores:** período cerrado, corrección de RRHH con motivo (`NOVELTY_CORRECTION_REASON_REQUIRED` → pide el motivo y reintenta), duplicados y el resto en lenguaje de negocio (`apiClient.ts`).
+- **Edición:** no existe edición de novedades (sólo alta, aprobación, rechazo y eliminación); no hay round-trip que probar.
+- **Carga para varias personas:** se mantiene (hasta 250); la vista previa se calcula hasta 50 personas.
+
+Deudas: la lista de "Aplica sobre hora" sigue atada a `allowsHours` (comportamiento previo). `allowsHours` se retira cuando Finnegans deje de leer `quantityHours` (etapa 9).
+
+### 15.1 Documentación obligatoria (`requiresDocumentation`)
+
+**Problema:** la regla vivía sólo en la pantalla; `POST /novelties` creaba una novedad de un tipo con documentación obligatoria sin ningún documento.
+
+**Arquitectura existente:** un documento es un `EmployeeDocument` de un legajo (con `noveltyId` opcional) que apunta a un `StorageFile`; el archivo va al storage configurado para `LEGAJOS` (local, Neon Object Storage o Google Drive, con archivo secundario opcional). La base y el storage externo no comparten transacción; el patrón ya usado por la foto del fichador (F12-PERF-3) es: subir el objeto fuera de la transacción, persistir `StorageFile` y las filas en la transacción, y compensar borrando el objeto si la transacción falla.
+
+**Solución (mismo patrón, sin estados nuevos):**
+
+- `POST /novelties` rechaza un tipo con documentación obligatoria (`400 NOVELTY_DOCUMENTATION_REQUIRED`); ninguna llamada directa la saltea.
+- `POST /novelties/with-document` recibe la novedad y el documento: valida todo lo del alta, la categoría documental de novedades y su permiso de subida; sube una copia por legajo; crea en una transacción novedades, cobertura, `StorageFile` y `EmployeeDocument`; si algo falla, borra lo subido. Es atómico para la base; para el storage externo, la garantía es la compensación (un objeto huérfano posible, sin filas, registrado como crítico), nunca una novedad sin documento.
+- Carga para varias personas: no había una regla previa (el alta anterior descartaba el archivo). Cada legajo recibe su propia copia, porque el documento, su carpeta y su visibilidad son del legajo; compartir un `StorageFile` entre legajos mezclaría carpetas y permisos. Como es una subida síncrona por persona, **con documento el alta admite hasta 25 personas** (decisión de negocio, 2026-11-16; constante `MAX_EMPLOYEES_WITH_DOCUMENT` en `noveltyDocuments.ts`, reflejada en `frontend/src/utils/noveltyLoad.ts`). Se valida antes de cualquier lectura o subida (`400 NOVELTY_DOCUMENT_TOO_MANY_EMPLOYEES`); sin documento sigue el máximo general de 250.
+- El frontend usa un único pedido cuando hay archivo: si falla, no quedó nada creado y reintentar no duplica.

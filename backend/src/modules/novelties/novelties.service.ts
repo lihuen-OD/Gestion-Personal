@@ -11,11 +11,15 @@ import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 import { evaluateSpecialHourRulesByDate, SpecialHourScopeHistoryMissingError } from "../time-entries/timeEntries.repository";
 import { formatMinutes } from "../time-entries/manualHoursConflict.service";
 import { noveltiesRepository } from "./novelties.repository";
+import type { CoverageDayResult } from "./noveltyCoverage.engine";
+import { assertDocumentBatchSize, compensateNoveltyDocuments, persistNoveltyDocumentsWithin, uploadNoveltyDocuments } from "./noveltyDocuments";
 import type {
   CorrectionNoveltyInput,
   CreateNoveltyCommand,
   CreateNoveltyInput,
+  CreateNoveltyWithDocumentInput,
   ListNoveltiesQuery,
+  NoveltyDocumentInput,
   NoveltyCoveragePreviewInput,
   NoveltyCoverageResolutionInput,
   RejectNoveltyInput,
@@ -25,6 +29,7 @@ import {
   computeNoveltyCoverage,
   coverageDayLabel,
   coverageRangeDays,
+  loadRealWorkedMinutesByDay,
   loadRealWorkedMinutesOnDate,
   MAX_COVERAGE_RANGE_DAYS,
   MAX_COVERAGE_ROWS_PER_OPERATION,
@@ -349,6 +354,113 @@ function coverageTotals(days: Array<{ outcome: string; reviewStatus: string; eff
   };
 }
 
+// RRHH crea siempre APROBADO; el resto, según requiresApproval del tipo
+// (ver create). La vista previa usa el mismo criterio para avisar si va a
+// quedar pendiente.
+function initialNoveltyStatus(type: { requiresApproval: boolean | null }, user: Express.AuthUser): "APROBADO" | "PENDIENTE" {
+  return user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
+}
+
+/**
+ * Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): cómo quedará el día frente al
+ * trabajo real ya registrado, con la MISMA función que la grilla y el cierre
+ * (`accountNoveltyDay`). Se evalúa como aprobada para mostrar si va a sumar,
+ * si es informativa o si quedará para revisión; el estado inicial real se
+ * informa aparte (`initialStatus`).
+ */
+function previewDayAccounting(employeeId: string, noveltyTypeId: string, day: CoverageDayResult, workedMinutes: number) {
+  const [item] = accountNoveltyDay([{
+    employeeId,
+    day: Number(day.dateKey.slice(8, 10)),
+    dateKey: day.dateKey,
+    noveltyId: "preview",
+    noveltyTypeId,
+    status: "APROBADO",
+    outcome: day.outcome,
+    scheduleReviewReason: day.scheduleReviewReason,
+    baseMinutes: day.baseMinutes,
+    resolvedBaseMinutes: day.resolvedBaseMinutes,
+    multiplier: day.multiplier,
+    countsTowardTotal: day.countsTowardTotal,
+    realWorkCompatibility: day.realWorkCompatibility,
+    expectedMinutes: day.expectedMinutes,
+    reviewStatus: day.reviewStatus,
+    resolution: day.resolution,
+    resolvedAgainstWorkedMinutes: day.resolvedAgainstWorkedMinutes,
+  }], workedMinutes).items;
+  // Una sola cobertura no rechazada siempre produce un ítem.
+  return { workedMinutes, stateWhenApproved: item!.state, reviewReasons: item!.reviewReasons };
+}
+
+/**
+ * Alta de novedades (una por legajo). `document` sólo llega por
+ * createWithDocument; un tipo que exige documentación no se crea sin ella
+ * (NOVELTY_COVERAGE_ENGINE.md §15.1).
+ */
+async function createNovelties(input: CreateNoveltyInput, document: NoveltyDocumentInput | null, user: Express.AuthUser, audit?: AuditContext) {
+  // Antes de cualquier lectura o subida: con documento, lotes de hasta 25 personas.
+  if (document) assertDocumentBatchSize(input.employeeIds);
+  await ensureEmployeesVisible(input.employeeIds, user);
+  const type = await ensureNoveltyTypeReady(input);
+  if (type.requiresDocumentation && !document) {
+    throw new AppError("Este tipo de novedad requiere adjuntar documentación.", 400, "NOVELTY_DOCUMENTATION_REQUIRED");
+  }
+  const normalizedInput = resolveQuantities(normalizeCreateInput(input, type), type);
+  assertCanLoad(type, user);
+  await ensureNoOverlap(normalizedInput, type);
+  // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
+  // punto 15): RRHH sigue siendo la autoridad final -- crea siempre
+  // APROBADO. Para el resto de los roles, requiresApproval del tipo ahora
+  // decide de verdad: `false` autoaprueba, cualquier otro valor (incluido
+  // ausente, por defecto seguro) sigue pidiendo aprobación como hasta hoy.
+  const status = initialNoveltyStatus(type, user);
+  // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+  // decisión funcional final — crear una novedad NUNCA crea ni modifica
+  // TimeEntry, sea cual sea el status resultante o `timeEntryBehavior` del
+  // tipo. El fichador y la carga horaria manual son la única fuente de
+  // verdad de horas reales; Novedades es sólo justificación administrativa.
+  // Etapa 3: la cobertura diaria (NoveltyDayCoverage, nunca TimeEntry) se
+  // genera en la misma transacción; si no se puede calcular sin inventar
+  // (historia laboral faltante) o el período está cerrado, no se crea nada.
+  const policy = correctionPolicy(user, input.correctionReason);
+  // Documento: se sube antes de la transacción (sin red adentro) y se
+  // compensa si la transacción falla (noveltyDocuments.ts).
+  const uploads = document ? await uploadNoveltyDocuments([...new Set(normalizedInput.employeeIds)], document, user, audit) : [];
+  const { items, coverage, documents } = await execute(() =>
+    prisma.$transaction(async (tx) => {
+      const created = await noveltiesRepository.createMany(normalizedInput, status, user.id, tx);
+      const summary = await persistNoveltyCoverageWithin(tx, created.map((item) => item.id), {
+        protectedPeriods: policy.allowCorrection ? "ALLOW_CORRECTION" : "REJECT",
+      });
+      const createdDocuments = document ? await persistNoveltyDocumentsWithin(tx, uploads, created, document, audit?.userId) : [];
+      return { items: created, coverage: summary, documents: createdDocuments };
+    }, NOVELTY_TRANSACTION_OPTIONS),
+  ).catch(async (error) => {
+    await compensateNoveltyDocuments(uploads);
+    if (error instanceof AppError && error.code === "PERIOD_CLOSED" && policy.isRrhh && !policy.reason) {
+      throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "NOVELTY_CORRECTION_REASON_REQUIRED");
+    }
+    throw error;
+  });
+
+  await auditService.register({
+    ...audit,
+    action: "CREATE",
+    entity: "Novelty",
+    entityId: items[0]?.id || normalizedInput.noveltyTypeId,
+    description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.${coverageAuditText(coverage)}${documents.length ? ` Con documentación (${documents.length} archivo${documents.length === 1 ? "" : "s"}).` : ""}${coverage.protectedPeriods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
+    after: { items, coverage, documents, ...(coverage.protectedPeriods.length ? { correctionReason: policy.reason } : {}) } as unknown as Prisma.InputJsonValue,
+  });
+
+  // Etapa 15L.2A: sólo notifica si de verdad queda pendiente -- con
+  // requiresApproval=false ya nace APROBADO y no hay nada que revisar.
+  if (status === "PENDIENTE") {
+    await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
+  }
+
+  return redactPiiForRole(items, user);
+}
+
 export const noveltiesService = {
   async list(query: ListNoveltiesQuery, user: Express.AuthUser) {
     const [items, total] = await noveltiesRepository.findMany(query, employeeAccessWhere(user));
@@ -363,58 +475,19 @@ export const noveltiesService = {
     };
   },
 
-  async create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
-    await ensureEmployeesVisible(input.employeeIds, user);
-    const type = await ensureNoveltyTypeReady(input);
-    const normalizedInput = resolveQuantities(normalizeCreateInput(input, type), type);
-    assertCanLoad(type, user);
-    await ensureNoOverlap(normalizedInput, type);
-    // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
-    // punto 15): RRHH sigue siendo la autoridad final -- crea siempre
-    // APROBADO. Para el resto de los roles, requiresApproval del tipo ahora
-    // decide de verdad: `false` autoaprueba, cualquier otro valor (incluido
-    // ausente, por defecto seguro) sigue pidiendo aprobación como hasta hoy.
-    const status = user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
-    // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
-    // decisión funcional final — crear una novedad NUNCA crea ni modifica
-    // TimeEntry, sea cual sea el status resultante o `timeEntryBehavior` del
-    // tipo. El fichador y la carga horaria manual son la única fuente de
-    // verdad de horas reales; Novedades es sólo justificación administrativa.
-    // Etapa 3: la cobertura diaria (NoveltyDayCoverage, nunca TimeEntry) se
-    // genera en la misma transacción; si no se puede calcular sin inventar
-    // (historia laboral faltante) o el período está cerrado, no se crea nada.
-    const policy = correctionPolicy(user, input.correctionReason);
-    const { items, coverage } = await execute(() =>
-      prisma.$transaction(async (tx) => {
-        const created = await noveltiesRepository.createMany(normalizedInput, status, user.id, tx);
-        const summary = await persistNoveltyCoverageWithin(tx, created.map((item) => item.id), {
-          protectedPeriods: policy.allowCorrection ? "ALLOW_CORRECTION" : "REJECT",
-        });
-        return { items: created, coverage: summary };
-      }, NOVELTY_TRANSACTION_OPTIONS),
-    ).catch((error) => {
-      if (error instanceof AppError && error.code === "PERIOD_CLOSED" && policy.isRrhh && !policy.reason) {
-        throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "NOVELTY_CORRECTION_REASON_REQUIRED");
-      }
-      throw error;
-    });
+  /** Alta sin documento: un tipo que exige documentación se rechaza (usar createWithDocument). */
+  create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
+    return createNovelties(input, null, user, audit);
+  },
 
-    await auditService.register({
-      ...audit,
-      action: "CREATE",
-      entity: "Novelty",
-      entityId: items[0]?.id || normalizedInput.noveltyTypeId,
-      description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.${coverageAuditText(coverage)}${coverage.protectedPeriods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
-      after: { items, coverage, ...(coverage.protectedPeriods.length ? { correctionReason: policy.reason } : {}) } as unknown as Prisma.InputJsonValue,
-    });
-
-    // Etapa 15L.2A: sólo notifica si de verdad queda pendiente -- con
-    // requiresApproval=false ya nace APROBADO y no hay nada que revisar.
-    if (status === "PENDIENTE") {
-      await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
-    }
-
-    return redactPiiForRole(items, user);
+  /**
+   * Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): alta con su documento, de
+   * forma coordinada (ver noveltyDocuments.ts). Nunca queda una novedad que
+   * exige documentación sin su documento.
+   */
+  createWithDocument(input: CreateNoveltyWithDocumentInput, user: Express.AuthUser, audit?: AuditContext) {
+    const { document, ...noveltyInput } = input;
+    return createNovelties(noveltyInput, document, user, audit);
   },
 
   async approve(id: string, user: Express.AuthUser, audit?: AuditContext, input: CorrectionNoveltyInput = {}) {
@@ -535,13 +608,16 @@ export const noveltiesService = {
       const employee = employees.find((item) => item.id === (error as { employeeId?: string }).employeeId);
       throw toCoverageAppError(error, employee);
     }
+    const worked = await loadRealWorkedMinutesByDay(prisma, employeeIds, calendarDateKey(input.fromDate), calendarDateKey(toDate));
     return {
       noveltyType: { id: type.id, code: type.code, name: type.name },
+      initialStatus: initialNoveltyStatus(type, user),
       employees: employees.map((employee) => {
         const days = computed.get(employee.id) ?? [];
+        const workedByDay = worked.get(employee.id);
         return {
           employee,
-          days: days.map(coverageDayView),
+          days: days.map((day) => ({ ...coverageDayView(day), ...previewDayAccounting(employee.id, type.id, day, workedByDay?.get(day.dateKey) ?? 0) })),
           totals: coverageTotals(days),
         };
       }),

@@ -15,7 +15,7 @@ import { X } from "lucide-react";
 // `position: fixed`. Sin este portal, `.modal-backdrop` (fixed, pensado
 // para cubrir todo el viewport) quedaría contenido dentro de `.page-wrap`
 // en vez de cubrir sidebar/topbar.
-export function Modal({ title, subtitle, close, children, closeDisabled = false }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean }) {
+export function Modal({ title, subtitle, close, children, closeDisabled = false, size = "default" }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean; size?: "default" | "wide" }) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -51,7 +51,7 @@ export function Modal({ title, subtitle, close, children, closeDisabled = false 
 
   return createPortal(
     <div className="modal-backdrop">
-      <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}>
+      <div ref={dialogRef} className={size === "wide" ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}>
         <div className="modal-head">
           <div className="modal-head-text">
             <h3 id={titleId}>{title}</h3>

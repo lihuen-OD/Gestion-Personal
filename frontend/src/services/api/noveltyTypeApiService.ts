@@ -125,10 +125,12 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
 }
 
 /** Payload de alta/edición. La cobertura viaja en su forma canónica (sin valores ocultos). */
+// El código interno nunca viaja desde la pantalla: en el alta lo asigna el
+// backend (noveltyTypes.repository.ts::generateNextCode, con reintento ante
+// colisión) y en la edición se conserva el existente.
 export function mapNoveltyTypeToApi(item: NoveltyType) {
   const coverage = canonicalCoverage(item.coverage);
   return {
-    code: item.code,
     name: item.name,
     uiColor: item.uiColor,
     kind: item.kind,
@@ -171,11 +173,6 @@ function toQuery(filters?: Partial<NoveltyTypeFilters>) {
   if (filters?.exportsToFinnegans) params.set("exportsToFinnegans", filters.exportsToFinnegans);
   const query = params.toString();
   return query ? `?${query}` : "";
-}
-
-function nextCode(items: NoveltyType[]) {
-  const max = items.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
-  return `NOV-${String(max + 1).padStart(3, "0")}`;
 }
 
 function isNoveltyType(value: NoveltyType) {
@@ -225,5 +222,4 @@ export const noveltyTypeApiService = {
     return mapNoveltyTypeFromApi(response.data);
   },
 
-  getNextCode: nextCode,
 };

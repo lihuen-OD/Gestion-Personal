@@ -1,4 +1,5 @@
 import { useId, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import { describedBy, FieldMessages, type FieldMessagesProps } from "../ui/FieldMessages";
 import type {
   FinnegansValueUnit,
   NoveltyTimeEntryBehavior,
@@ -112,23 +113,9 @@ export function validateNoveltyType(item: NoveltyType): string | null {
   return noveltyTypeIssues(item)[0]?.message ?? null;
 }
 
-type FieldMessagesProps = { hint?: string; error?: string };
-
-/** Ayuda y error fuera del <label> (no ensucian el nombre accesible) y vinculados con aria-describedby. */
-export function FieldMessages({ id, hint, error }: FieldMessagesProps & { id: string }) {
-  return <>
-    {hint ? <small id={`${id}-hint`} className="field-hint">{hint}</small> : null}
-    {error ? <small id={`${id}-error`} className="field-error" role="alert">{error}</small> : null}
-  </>;
-}
-
-export function describedBy(id: string, { hint, error }: FieldMessagesProps) {
-  return [hint ? `${id}-hint` : "", error ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined;
-}
-
-export function TextField({ label, value, onChange, disabled, readOnly, type = "text", spellCheck = false, hint, error }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; readOnly?: boolean; type?: string; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] } & FieldMessagesProps) {
+export function TextField({ label, value, onChange, disabled, readOnly, placeholder, type = "text", spellCheck = false, hint, error }: { label: string; value: string | number; onChange: (value: string) => void; disabled?: boolean; readOnly?: boolean; placeholder?: string; type?: string; spellCheck?: InputHTMLAttributes<HTMLInputElement>["spellCheck"] } & FieldMessagesProps) {
   const id = useId();
-  const input = <input type={type} value={value} disabled={disabled} readOnly={readOnly} aria-invalid={error ? true : undefined} aria-describedby={describedBy(id, { hint, error })} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} />;
+  const input = <input type={type} value={value} disabled={disabled} readOnly={readOnly} placeholder={placeholder} aria-invalid={error ? true : undefined} aria-describedby={describedBy(id, { hint, error })} spellCheck={spellCheck} lang={spellCheck ? "es-AR" : undefined} onChange={(event) => onChange(event.target.value)} />;
   if (!hint && !error) return <label>{label}{input}</label>;
   return <div className="field-stack"><label>{label}{input}</label><FieldMessages id={id} hint={hint} error={error} /></div>;
 }

@@ -215,7 +215,7 @@ describe("NoveltyTypeDetailPage — Etapa 7 (round-trip y cambios inocuos)", () 
     await waitFor(() => expect(noveltyTypeApiService.update).toHaveBeenCalledTimes(1));
     const sent = vi.mocked(noveltyTypeApiService.update).mock.calls[0][1];
     expect(sent).toEqual(loaded);
-    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...persisted } = apiRow;
+    const { id: _id, code: _code, createdAt: _createdAt, updatedAt: _updatedAt, ...persisted } = apiRow;
     expect(mapNoveltyTypeToApi(sent)).toEqual(persisted);
   });
 
@@ -237,5 +237,22 @@ describe("NoveltyTypeDetailPage — Etapa 7 (round-trip y cambios inocuos)", () 
       uiColor: "emerald",
       rules: expect.objectContaining({ requiresObservation: true }),
     })));
+  });
+});
+
+describe("NoveltyTypeDetailPage — código interno", () => {
+  it("cambiar el nombre conserva el código histórico", async () => {
+    vi.mocked(noveltyTypeApiService.getById).mockResolvedValue(buildNoveltyType({ code: "NOV-001" }));
+    vi.mocked(noveltyTypeApiService.update).mockImplementation(async (_id, item) => item);
+    renderPage();
+    await screen.findByRole("heading", { name: "Vacaciones" });
+
+    const name = screen.getByLabelText("Nombre de la novedad *");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Vacaciones anuales");
+    expect(screen.getByLabelText("Código interno")).toHaveValue("NOV-001");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(noveltyTypeApiService.update).toHaveBeenCalledWith("nt-1", expect.objectContaining({ name: "Vacaciones anuales", code: "NOV-001" })));
   });
 });

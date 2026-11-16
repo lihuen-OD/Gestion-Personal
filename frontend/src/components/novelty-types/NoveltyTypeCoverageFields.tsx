@@ -16,7 +16,7 @@ import {
   type NoveltyTypeIssue,
 } from "../../utils/noveltyTypeCoverage";
 import { ChoiceGroup } from "../ui/ChoiceGroup";
-import { describedBy, FieldMessages } from "./NoveltyTypeFields";
+import { describedBy, FieldMessages } from "../ui/FieldMessages";
 
 // Etapa 7 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §14): secciones "Tiempo
 // que cubre", "Días y situaciones especiales" e "Impacto en el cálculo".

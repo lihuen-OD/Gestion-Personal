@@ -23,6 +23,7 @@ import { evaluateEmployeeWorkday, loadEmployeeWorkdayContext, type EmployeeWorkd
 import { evaluateSpecialHourRulesForEmployees, SpecialHourScopeHistoryMissingError, type SpecialHourEvaluation } from "../time-entries/timeEntries.repository";
 import {
   accountEmployeePeriod,
+  accountEmployeePeriods,
   accountingBaseEntrySelect,
   accountingBreakdownSelect,
   countedBreakdownStatusWhere,
@@ -677,4 +678,45 @@ export async function loadRealWorkedMinutesOnDate(db: Db, employeeId: string, da
   ]);
   const accounting = accountEmployeePeriod(entries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
   return accounting.totalWorkedMinutes;
+}
+
+/**
+ * `loadRealWorkedMinutesOnDate` en lote para un rango y varios legajos (vista
+ * previa de una novedad): mismas fuentes y misma contabilidad, tres consultas
+ * por pedido. Se contabiliza por mes porque `accountEmployeePeriods` indexa
+ * por día del mes. Devuelve legajo → fecha → minutos (sólo días con trabajo).
+ */
+export async function loadRealWorkedMinutesByDay(db: Db, employeeIds: string[], fromKey: string, toKey: string): Promise<Map<string, Map<string, number>>> {
+  const result = new Map<string, Map<string, number>>();
+  if (!employeeIds.length) return result;
+  const from = argentinaCalendarDate(fromKey);
+  const to = argentinaCalendarDate(toKey);
+  const [entries, breakdowns, dayOffs] = await Promise.all([
+    db.timeEntry.findMany({
+      where: { employeeId: { in: employeeIds }, date: { gte: from, lte: to }, status: { in: ["APROBADO", "EN_REVISION"] }, hourConcept: { systemRole: "NORMAL_BASE" } },
+      select: accountingBaseEntrySelect,
+    }),
+    db.hourConceptBreakdown.findMany({ where: { employeeId: { in: employeeIds }, date: { gte: from, lte: to }, status: countedBreakdownStatusWhere }, select: accountingBreakdownSelect }),
+    loadDayOffAccounting({ employeeIds, from, to: new Date(to.getTime() + DAY_MS) }, db),
+  ]);
+  const byPeriod = new Map<string, { entries: typeof entries; breakdowns: typeof breakdowns }>();
+  const periodRows = (date: Date) => {
+    const period = periodFromCalendarDate(date);
+    const rows = byPeriod.get(period) ?? { entries: [], breakdowns: [] };
+    byPeriod.set(period, rows);
+    return rows;
+  };
+  for (const entry of entries) periodRows(entry.date).entries.push(entry);
+  for (const breakdown of breakdowns) periodRows(breakdown.date).breakdowns.push(breakdown);
+  for (const [period, rows] of byPeriod) {
+    const accounting = accountEmployeePeriods(rows.entries.map(toAccountingBaseEntry), rows.breakdowns.map(toAccountingBreakdown), dayOffs);
+    for (const [employeeId, periodAccounting] of accounting) {
+      const days = result.get(employeeId) ?? new Map<string, number>();
+      result.set(employeeId, days);
+      for (const [day, dayAccounting] of Object.entries(periodAccounting.days)) {
+        if (dayAccounting.totalWorkedMinutes > 0) days.set(`${period}-${day.padStart(2, "0")}`, dayAccounting.totalWorkedMinutes);
+      }
+    }
+  }
+  return result;
 }

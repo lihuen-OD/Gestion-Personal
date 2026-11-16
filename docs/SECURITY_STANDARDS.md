@@ -200,7 +200,7 @@ Details: plan §20.3 and §30.5.
 The JSON body is limited per route (`backend/src/shared/http/bodyLimits.ts`), never with one large global limit:
 
 - **1 MiB** global parser for everything else (the largest legitimate normal body is ~100 KB).
-- **`POST /api/clock/photo-punch`, 6 MiB** (schema maximum ~5.1 MB; real photos are under 100 KB in base64) and **`POST /api/employees/:id/documents`, 36 MiB** (base64 of a 25 MiB file) skip the global parser and parse their own body **after** authentication and authorization, so an unauthenticated request never gets its body parsed.
+- **`POST /api/clock/photo-punch`, 6 MiB** (schema maximum ~5.1 MB; real photos are under 100 KB in base64) and **`POST /api/employees/:id/documents`** and **`POST /api/novelties/with-document`, 36 MiB** (base64 of a 25 MiB file) skip the global parser and parse their own body **after** authentication and authorization, so an unauthenticated request never gets its body parsed.
 - A declared `Content-Length` above the route limit is rejected with `413` before reading the body, and the connection is closed. Chunked bodies are bounded by each parser's own limit.
 - body-parser errors map to `413 PAYLOAD_TOO_LARGE`, `400 INVALID_JSON` / `INVALID_REQUEST_BODY` and `415 UNSUPPORTED_MEDIA_TYPE`, never `500`, and they are **not logged** (the raw body could be a punch photo or a document).
 - A new large-body route must be added to `largeBodyRoutes` **and** mount `jsonBody(limit)` after its guards; either one alone fails closed.

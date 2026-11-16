@@ -44,7 +44,7 @@ vi.mock("../services/api/employeeApiService", async (importOriginal) => {
 
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyApiService")>();
-  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, getAll: vi.fn().mockResolvedValue([]), create: vi.fn() } };
+  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, getAll: vi.fn().mockResolvedValue([]), create: vi.fn(), createWithDocument: vi.fn(), previewCoverage: vi.fn().mockReturnValue(new Promise(() => undefined)) } };
 });
 
 vi.mock("../services/api/noveltyTypeApiService", async (importOriginal) => {
@@ -799,7 +799,8 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
     const selector = await screen.findByLabelText("Tipo de novedad");
     await user.selectOptions(selector, "type-late");
     expect(screen.getByText("Novedad asociada", { selector: ".hour-novelty-eyebrow" })).toBeInTheDocument();
-    expect(screen.getByText("Duración: 1h")).toBeInTheDocument();
+    // Etapa 8: los campos dependen del Tipo (acá, registro heredado de horas, sólo informativo).
+    expect(screen.getByLabelText("Cantidad de horas informativa")).toBeInTheDocument();
     expect(screen.getByText(/Se asociará únicamente a esta fila/i)).toBeInTheDocument();
 
     await user.selectOptions(selector, "");
@@ -815,11 +816,61 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
     ]);
     await openNormalDayOne();
     await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
-    const noveltyHoursInput = screen.getAllByLabelText("Cantidad de horas")[1]!;
-    await user.clear(noveltyHoursInput);
-    await user.type(noveltyHoursInput, "26.8667");
-    expect(screen.getByText("26h 52m", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/justificación administrativa pendiente/i, { selector: ".hour-novelty-state b" })).toBeInTheDocument();
+  });
+});
+
+// Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): la novedad de la grilla usa los
+// mismos campos, validación y payload que el alta de novedades.
+describe("EmployeeHoursPage — novedad asociada a una hora (Etapa 8)", () => {
+  it("valida los datos de la novedad antes de guardar la hora y envía el payload del tipo", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([
+      buildHourlyNoveltyType({ rules: { ...buildHourlyNoveltyType().rules, requiresObservation: true }, coverage: { ...defaultNoveltyTypeCoverage(), mode: "MANUAL_MINUTES" } }),
+    ]);
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "nov-1", employeeId: "employee-1" } as never]);
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    expect(screen.getByText("Faltan datos de la novedad. Revisá los campos marcados.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Duración *")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Observación *")).toHaveAttribute("aria-invalid", "true");
+    expect(timeEntryApiService.save).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Duración *"), "00:45");
+    await user.type(screen.getByLabelText("Observación *"), "Ingresó 8:45");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({
+      employeeIds: ["employee-1"], noveltyTypeId: "type-late", toDate: null, quantityHours: 0.75, quantityDays: null, observation: "Ingresó 8:45",
+    })));
+  });
+});
+
+describe("EmployeeHoursPage — novedad con documentación obligatoria (Etapa 8 §15.1)", () => {
+  it("envía la novedad y su documento en un solo pedido; si falla, avisa que la novedad no se guardó", async () => {
+    vi.mocked(noveltyApiService.create).mockClear();
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildHourlyNoveltyType({ rules: { ...buildHourlyNoveltyType().rules, allowsHours: false, requiresDocumentation: true } })]);
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.createWithDocument).mockRejectedValueOnce(new ApiError("No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.", "NOVELTY_DOCUMENT_UPLOAD_FAILED", 502));
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
+    const file = new File(["%PDF"], "certificado.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Documentación *"), file);
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(await screen.findByText("La hora se guardó, pero la novedad no: No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.")).toBeInTheDocument();
+    expect(noveltyApiService.createWithDocument).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ["employee-1"], noveltyTypeId: "type-late" }), file, null);
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
   });
 });
 

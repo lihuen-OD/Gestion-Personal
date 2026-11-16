@@ -36,7 +36,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   const users = { rrhh: "", sup: "", carga: "" };
   const employees = { a: "", b: "", minimal: "", late: "" };
   let normalConceptId = "";
-  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "" };
+  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "" };
 
   const as = (role: "rrhh" | "sup" | "carga") =>
     ({ id: users[role], email: `${role}@example.com`, name: role, role: { rrhh: "NIVEL_1_RRHH", sup: "NIVEL_2_SUPERVISION", carga: "NIVEL_3_CARGA_HORARIA" }[role] }) as Express.AuthUser;
@@ -51,6 +51,10 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       throw new Error("NOVELTY_COVERAGE_IT_DATABASE_URL debe ser localhost/clock_it*.");
     }
     process.env.DATABASE_URL = url;
+    // Documentos de novedades (etapa 8): siempre al storage local de la
+    // máquina (backend/uploads, ignorado por git), nunca a un proveedor externo
+    // que pudiera venir del .env. Se fija antes de importar la configuración.
+    for (const name of ["STORAGE_PROVIDER", "DEFAULT_STORAGE_PROVIDER", "DOCUMENT_STORAGE_PROVIDER"]) process.env[name] = "local";
     delete (globalThis as { prisma?: unknown }).prisma;
     const [{ prisma }, { noveltiesService }, noveltySchemas, { noveltyTypesService }, typeSchemas, coverage, { employeesService }, { timeEntriesRepository }, { timeEntriesService }, { workforceService }] = await Promise.all([
       import("../../shared/prisma/client"),
@@ -115,6 +119,9 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     types.llegadaTarde = await createType({ name: "Llegada tarde", kind: "HORARIA", allowsHours: true, allowsDateRange: false, coverageMode: "MANUAL_MINUTES" });
     types.faltaSinAviso = await createType({ name: "Falta sin aviso", kind: "AUSENCIA", allowsDateRange: false, realWorkCompatibility: "INCOMPATIBLE", timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
     types.licenciaAbierta = await createType({ name: "Licencia abierta", kind: "LICENCIA" });
+    // Etapa 8: documentación obligatoria (misma cobertura que Maternidad sin feriados).
+    types.conCertificado = await createType({ name: "Licencia con certificado", kind: "LICENCIA", requiresDocumentation: true, ...maternidad, coverageOnHoliday: "NO_COVERAGE" });
+    await holder.documentCategory.create({ data: { code: "DOC-NOV-IT", name: "Respaldo de novedad", kind: "NOVEDAD", scopes: ["NOVEDAD"], uploadRoles: ["Nivel 1 - RRHH"] } });
   });
 
   afterAll(async () => {
@@ -251,6 +258,34 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
     });
     expect(await holder.novelty.count()).toBe(before);
+  });
+
+  // Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): documentación obligatoria garantizada por el backend.
+  it("documentación obligatoria: sin documento se rechaza; con documento crea novedad, archivo y vínculo; si el alta falla, no queda nada", async () => {
+    const document = { fileName: "certificado.pdf", fileMimeType: "application/pdf", fileSizeBytes: 23, fileBase64: Buffer.from("%PDF-1.4\n%%EOF\n trailer").toString("base64") };
+    const withDocument = (payload: Record<string, unknown>) => m.novelties.createWithDocument(m.noveltySchemas.createNoveltyWithDocumentSchema.parse({ ...payload, document }), as("rrhh"), { userId: users.rrhh } as never);
+    const counts = async () => ({ novelties: await holder.novelty.count(), documents: await holder.employeeDocument.count(), files: await holder.storageFile.count({ where: { status: { not: "DELETED" } } }) });
+    const before = await counts();
+
+    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-16" })).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_DOCUMENTATION_REQUIRED" });
+    expect(await counts()).toEqual(before);
+
+    // El alta falla dentro de la transacción (feriado con alcance sin historia): el archivo ya subido se borra.
+    await expect(withDocument({ employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-25" })).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
+    expect(await counts()).toEqual(before);
+
+    const created = await withDocument({ employeeIds: [employees.a, employees.b], noveltyTypeId: types.conCertificado, fromDate: "2026-12-01" });
+    expect(created).toHaveLength(2);
+    const documents = await holder.employeeDocument.findMany({ where: { noveltyId: { in: created.map((item) => item.id) } }, include: { storageFile: true } });
+    expect(documents).toHaveLength(2);
+    for (const item of created) {
+      const linked = documents.find((doc) => doc.noveltyId === item.id)!;
+      expect(linked).toMatchObject({ employeeId: item.employeeId, fileName: "certificado.pdf", fileMimeType: "application/pdf", status: "VIGENTE" });
+      expect(linked.storageFile).toMatchObject({ employeeId: item.employeeId, storageProvider: "LOCAL", status: "ACTIVE" });
+    }
+    // Limpieza del archivo local de prueba.
+    const { storageService } = await import("../../shared/storage/storage.service");
+    for (const doc of documents) await storageService.deleteManaged(doc.storageFileId!);
   });
 
   it("toDate nulo es exactamente un día (fromDate) para cualquier tipo, aunque admita rango; nunca un rango abierto", async () => {
@@ -427,6 +462,16 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     it("Falta sin aviso (NONE + INCOMPATIBLE) con trabajo real: revisión administrativa sin minutos que resolver", async () => {
       // Marzo, legajo B: aislado de los totales de febrero.
       await worked(employees.b, "2027-03-03", 8);
+      // Etapa 8: la vista previa anticipa la revisión con la misma contabilidad, sin escribir.
+      const preview = await m.novelties.previewCoverage(m.noveltySchemas.noveltyCoveragePreviewSchema.parse({ employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2027-03-03" }), as("rrhh"));
+      expect(preview.initialStatus).toBe("APROBADO");
+      expect(preview.employees[0]!.days).toEqual([expect.objectContaining({ date: "2027-03-03", workedMinutes: 480, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] })]);
+      // Rango que cruza de mes: el trabajo real cae en su fecha exacta (la contabilidad indexa por día del mes).
+      const crossMonth = await m.novelties.previewCoverage(m.noveltySchemas.noveltyCoveragePreviewSchema.parse({ employeeIds: [employees.b], noveltyTypeId: types.vacaciones, fromDate: "2027-02-27", toDate: "2027-03-04" }), as("rrhh"));
+      const crossDays = new Map(crossMonth.employees[0]!.days.map((item) => [item.date, item]));
+      expect(crossDays.get("2027-03-03")).toMatchObject({ workedMinutes: 480, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] });
+      expect(crossDays.get("2027-03-04")).toMatchObject({ workedMinutes: 0 });
+      expect(await holder.noveltyDayCoverage.count({ where: { employeeId: employees.b, date: { gte: new Date("2027-02-27"), lte: new Date("2027-03-04") } } })).toBe(0);
       const [falta] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2027-03-03" });
       const marchGrid = () => m.employees.getTimeGrid(employees.b, { period: "2027-03" } as never, as("rrhh")) as Promise<{ accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting }>;
       const { accounting } = await marchGrid();

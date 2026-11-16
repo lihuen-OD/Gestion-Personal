@@ -25,7 +25,8 @@ const rows: Record<string, ApiNoveltyType> = {
 describe("noveltyTypeApiService — round-trip de configuración", () => {
   for (const [name, row] of Object.entries(rows)) {
     it(`${name}: leer y reenviar sin cambios produce el mismo payload`, () => {
-      const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...persisted } = { ...row, name };
+      // El código no viaja: lo asigna el backend en el alta y se conserva en la edición.
+      const { id: _id, code: _code, createdAt: _createdAt, updatedAt: _updatedAt, ...persisted } = { ...row, name };
       expect(mapNoveltyTypeToApi(mapNoveltyTypeFromApi({ ...row, name }))).toEqual(persisted);
     });
   }
@@ -34,5 +35,15 @@ describe("noveltyTypeApiService — round-trip de configuración", () => {
     const item = mapNoveltyTypeFromApi({ ...base, requiresObservation: true });
     expect(item.rules.requiresObservation).toBe(true);
     expect(mapNoveltyTypeToApi({ ...item, rules: { ...item.rules, requiresObservation: false } }).requiresObservation).toBe(false);
+  });
+});
+
+// Regresión: "Revisá los campos obligatorios o inválidos: Código." al crear un tipo.
+describe("noveltyTypeApiService — código interno", () => {
+  it("nunca envía el código: el alta lo genera el backend y la edición conserva el existente", () => {
+    const item = mapNoveltyTypeFromApi({ ...base, code: "NOV-007" });
+    expect(mapNoveltyTypeToApi(item)).not.toHaveProperty("code");
+    expect(mapNoveltyTypeToApi({ ...item, code: "" })).not.toHaveProperty("code");
+    expect(mapNoveltyTypeToApi({ ...item, name: "Nombre nuevo" })).not.toHaveProperty("code");
   });
 });

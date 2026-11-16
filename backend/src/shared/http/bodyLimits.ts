@@ -11,7 +11,7 @@ import { AppError } from "../errors/AppError";
  * - El body normal se parsea globalmente con DEFAULT (1 MiB). El body legítimo
  *   más grande fuera de las dos rutas de abajo son las operaciones masivas
  *   (≤ 1000 ids, ~100 KB): 1 MiB deja ~10× de margen.
- * - Sólo dos rutas aceptan más, y su body se parsea DENTRO de la ruta,
+ * - Sólo tres rutas aceptan más, y su body se parsea DENTRO de la ruta,
  *   después de autenticar y autorizar (el parser global las saltea):
  *   - POST /clock/photo-punch: el schema acepta foto ≤ 4.500.000 caracteres
  *     y miniatura ≤ 600.000 (≈ 5,1 MB con los demás campos); el límite es el
@@ -20,6 +20,8 @@ import { AppError } from "../errors/AppError";
  *     staging, foto ≤ 53 KB y miniatura ≤ 7 KB; < 100 KB en base64 juntas).
  *   - POST /employees/:id/documents: archivo ≤ 25 MiB, en base64 ≤ 35 MiB
  *     (`fileBase64` del schema) más los metadatos.
+ *   - POST /novelties/with-document (etapa 8 de cobertura de novedades): el
+ *     mismo documento (mismo schema y límite) junto con el alta de la novedad.
  * - Antes de cualquier parser, un `Content-Length` declarado por encima del
  *   límite de su ruta se rechaza con 413 sin leer el body y se cierra la
  *   conexión. Es una defensa adicional: un request sin Content-Length
@@ -48,6 +50,7 @@ export function largeBodyRoutes(apiPrefix: string): LargeBodyRoute[] {
   return [
     { method: "POST", path: new RegExp(`^${prefix}/clock/photo-punch/?$`, "i"), limit: CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES },
     { method: "POST", path: new RegExp(`^${prefix}/employees/[^/]+/documents/?$`, "i"), limit: EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES },
+    { method: "POST", path: new RegExp(`^${prefix}/novelties/with-document/?$`, "i"), limit: EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES },
   ];
 }
 

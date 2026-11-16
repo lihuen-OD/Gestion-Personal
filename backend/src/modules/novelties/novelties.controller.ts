@@ -29,6 +29,12 @@ export const noveltiesController = {
     res.status(201).json({ data: items });
   }) satisfies RequestHandler,
 
+  createWithDocument: (async (req, res) => {
+    const items = await noveltiesService.createWithDocument(req.body, req.user!, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
+    res.status(201).json({ data: items });
+  }) satisfies RequestHandler,
+
   approve: (async (req, res) => {
     const item = await noveltiesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
     clearNoveltyCoverageReadCaches();

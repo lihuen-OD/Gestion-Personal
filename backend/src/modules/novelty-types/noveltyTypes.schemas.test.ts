@@ -48,3 +48,15 @@ describe("createNoveltyTypeSchema — cobertura horaria", () => {
     expect(parsed).toEqual({ name: "Otro" });
   });
 });
+
+// Regresión: el alta de un tipo no exige código (lo genera el repositorio,
+// generateNextCode con reintento ante colisión) y una edición sin código no lo toca.
+describe("código interno del tipo", () => {
+  it("el alta sin código es válida y no inventa uno vacío", () => {
+    const parsed = createNoveltyTypeSchema.parse(base);
+    expect(parsed.code).toBeUndefined();
+  });
+  it("una edición sin código no lo modifica", () => {
+    expect(updateNoveltyTypeSchema.parse({ name: "Otro nombre" })).not.toHaveProperty("code");
+  });
+});
