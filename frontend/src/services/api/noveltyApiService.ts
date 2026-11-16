@@ -47,6 +47,47 @@ type ApiPaginatedListResponse = ApiListResponse & { meta: ApiListMeta };
 type ApiCreateResponse = { data: ApiNovelty[] };
 type ApiItemResponse = { data: ApiNovelty };
 
+export type NoveltyCoverageResolution = "CONFIRMED_ZERO" | "SET_BASE_MINUTES";
+
+export type NoveltyCoverageDayDetail = {
+  date: string;
+  outcome: "COVERED" | "NO_COVERAGE" | "WEEKDAY_NOT_INCLUDED" | "NO_WORK_OBLIGATION" | "HOLIDAY_NOT_CONVOKED" | "HOLIDAY_EXCLUDED" | "DAY_OFF" | "SCHEDULE_UNRESOLVED" | "OUTSIDE_EMPLOYMENT";
+  scheduleReviewReason: string | null;
+  reviewStatus: "PENDING" | "RESOLVED" | "NOT_REQUIRED";
+  label: string;
+  expectedMinutes: number | null;
+  baseMinutes: number;
+  resolution: NoveltyCoverageResolution | null;
+  resolvedBaseMinutes: number | null;
+  effectiveBaseMinutes: number;
+  multiplier: number;
+  computedMinutes: number;
+  countsTowardTotal: boolean;
+  shiftTemplate?: { code: string; name: string } | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  resolutionNote?: string | null;
+};
+
+export type NoveltyCoverageDetail = {
+  novelty: {
+    id: string;
+    status: ApiNoveltyStatus;
+    fromDate: string;
+    toDate?: string | null;
+    noveltyType: { code: string; name: string };
+  };
+  days: NoveltyCoverageDayDetail[];
+  totals: { days: number; coveredDays: number; pendingReviewDays: number; baseMinutes: number; computedMinutes: number };
+};
+
+export type ResolveNoveltyCoverageDayInput = {
+  resolution: NoveltyCoverageResolution;
+  baseMinutes?: number | null;
+  note: string;
+  correctionReason?: string | null;
+};
+
 // Etapa 4 de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §12): una
 // novedad aprobada cambia totales (cobertura), así que sus mutaciones
 // invalidan todas las familias con contabilidad de horas (grilla por legajo,
@@ -217,6 +258,19 @@ export const noveltyApiService = {
     await apiRequest<{ data: { id: string } }>(`/novelties/${id}`, { method: "DELETE" });
     await invalidateNoveltyDependentCaches("novelty deleted");
     return id;
+  },
+
+  async getCoverage(id: string) {
+    return apiRequest<{ data: NoveltyCoverageDetail }>(`/novelties/${id}/coverage`).then((response) => response.data);
+  },
+
+  async resolveCoverageDay(id: string, date: string, input: ResolveNoveltyCoverageDayInput) {
+    const response = await apiRequest<{ data: NoveltyCoverageDayDetail }>(`/novelties/${id}/coverage-days/${date}/resolution`, {
+      method: "POST",
+      body: input,
+    });
+    await invalidateNoveltyDependentCaches("novelty coverage day resolved");
+    return response.data;
   },
 
   canApprove(novelty: Novelty, user: User) {

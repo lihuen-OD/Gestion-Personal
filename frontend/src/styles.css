@@ -1622,20 +1622,23 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 }
 .people-hours-table th.day-col,
 .people-hours-table td.day-cell{
-  width:64px!important;
-  min-width:64px!important;
+  width:112px!important;
+  min-width:112px!important;
   text-align:center!important;
   white-space:nowrap!important;
   overflow-wrap:normal!important;
 }
 .day-cell-trigger{
+  position:relative!important;
   width:100%!important;
-  padding:6px 4px!important;
+  min-height:58px!important;
+  padding:5px 4px!important;
   border:0!important;
   background:transparent!important;
   color:inherit!important;
   font:inherit!important;
   display:flex!important;
+  flex-direction:column!important;
   align-items:center!important;
   justify-content:center!important;
   gap:4px!important;
@@ -1648,9 +1651,10 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
   background:var(--ds-slate-100)!important;
 }
 .people-hours-table td.day-cell.is-novelty .day-cell-trigger{
-  padding:0!important;
   background:transparent!important;
 }
+.day-cell-trigger>.alert-dot{position:absolute;top:4px;right:4px}
+.day-cell-trigger>.alert-dot.orange+.alert-dot.review{right:14px}
 /* Misma paleta que el catálogo y la grilla individual; el borde reemplaza
    1px de padding por lado para conservar las dimensiones del chip. */
 .day-cell-novelty-mark.cell-novelty-pill{
@@ -2588,6 +2592,55 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .alert-dot.review{background:var(--color-bg-surface);box-shadow:inset 0 0 0 2px var(--color-warning)}
 .day-cell-manual-review{color:var(--ds-slate-700);font-weight:600;line-height:1.4}
 .day-cell-manual-review.is-pending{color:var(--color-warning)!important;font-weight:700!important}
+
+/* Etapa 6 · cobertura diaria de novedades. El color siempre llega por la
+   clase resuelta en noveltyColorClass; estado y texto mantienen significado
+   sin depender exclusivamente del color. */
+.novelty-coverage-chip-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.novelty-coverage-chip{appearance:none;display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:28px;padding:5px 8px;border:1px solid currentColor;border-radius:8px;background:#fff;font:700 11px/1.2 inherit;text-align:left}
+button.novelty-coverage-chip{cursor:pointer}
+button.novelty-coverage-chip:hover,button.novelty-coverage-chip:focus-visible{box-shadow:0 0 0 2px #fff,0 0 0 4px currentColor;outline:0}
+.novelty-coverage-chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.novelty-coverage-chip-time{font-variant-numeric:tabular-nums;white-space:nowrap}
+.novelty-coverage-chip-state{padding-left:5px;border-left:1px solid currentColor;font-size:9px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.novelty-coverage-chip.is-compact{min-height:24px;padding:3px 6px}
+.novelty-coverage-chip.is-pending-approval,.novelty-coverage-grid-cell.is-pending-approval,.day-cell-novelty-chip.is-pending-approval{border-style:dashed;opacity:.82}
+.novelty-coverage-chip.is-informative,.novelty-coverage-grid-cell.is-informative,.day-cell-novelty-chip.is-informative{filter:saturate(.55)}
+.novelty-coverage-chip.is-review-required,.novelty-coverage-grid-cell.is-review-required,.day-cell-novelty-chip.is-review-required{box-shadow:inset 0 0 0 1px #b45309}
+.novelty-coverage-chip.novelty-color-blue,.novelty-coverage-grid-cell.novelty-color-blue,.day-cell-novelty-chip.novelty-color-blue{border-color:#80b8ff;background:#eef6ff;color:#1d5f9f}
+.novelty-coverage-chip.novelty-color-sky,.novelty-coverage-grid-cell.novelty-color-sky,.day-cell-novelty-chip.novelty-color-sky{border-color:#7dd3fc;background:#f0f9ff;color:#0369a1}
+.novelty-coverage-chip.novelty-color-cyan,.novelty-coverage-grid-cell.novelty-color-cyan,.day-cell-novelty-chip.novelty-color-cyan{border-color:#67e8f9;background:#ecfeff;color:#0e7490}
+.novelty-coverage-chip.novelty-color-teal,.novelty-coverage-grid-cell.novelty-color-teal,.day-cell-novelty-chip.novelty-color-teal{border-color:#6ed5d0;background:#ecfbfa;color:#14767d}
+.novelty-coverage-chip.novelty-color-emerald,.novelty-coverage-grid-cell.novelty-color-emerald,.day-cell-novelty-chip.novelty-color-emerald{border-color:#6ee7b7;background:#ecfdf5;color:#047857}
+.novelty-coverage-chip.novelty-color-green,.novelty-coverage-grid-cell.novelty-color-green,.day-cell-novelty-chip.novelty-color-green{border-color:#85d2a4;background:#effaf3;color:#25764a}
+.novelty-coverage-chip.novelty-color-lime,.novelty-coverage-grid-cell.novelty-color-lime,.day-cell-novelty-chip.novelty-color-lime{border-color:#bef264;background:#f7fee7;color:#4d7c0f}
+.novelty-coverage-chip.novelty-color-amber,.novelty-coverage-grid-cell.novelty-color-amber,.day-cell-novelty-chip.novelty-color-amber{border-color:#f4bd73;background:#fff7e8;color:#9a661b}
+.novelty-coverage-chip.novelty-color-orange,.novelty-coverage-grid-cell.novelty-color-orange,.day-cell-novelty-chip.novelty-color-orange{border-color:#fdba74;background:#fff7ed;color:#c2410c}
+.novelty-coverage-chip.novelty-color-red,.novelty-coverage-grid-cell.novelty-color-red,.day-cell-novelty-chip.novelty-color-red{border-color:#f1a7bf;background:#fff0f5;color:#a6385d}
+.novelty-coverage-chip.novelty-color-rose,.novelty-coverage-grid-cell.novelty-color-rose,.day-cell-novelty-chip.novelty-color-rose{border-color:#fda4af;background:#fff1f2;color:#be123c}
+.novelty-coverage-chip.novelty-color-pink,.novelty-coverage-grid-cell.novelty-color-pink,.day-cell-novelty-chip.novelty-color-pink{border-color:#f9a8d4;background:#fdf2f8;color:#be185d}
+.novelty-coverage-chip.novelty-color-violet,.novelty-coverage-grid-cell.novelty-color-violet,.day-cell-novelty-chip.novelty-color-violet{border-color:#b69df4;background:#f5f0ff;color:#6341aa}
+.novelty-coverage-chip.novelty-color-purple,.novelty-coverage-grid-cell.novelty-color-purple,.day-cell-novelty-chip.novelty-color-purple{border-color:#d8b4fe;background:#faf5ff;color:#7e22ce}
+.novelty-coverage-chip.novelty-color-slate,.novelty-coverage-grid-cell.novelty-color-slate,.day-cell-novelty-chip.novelty-color-slate{border-color:#cbd5e1;background:#f8fafc;color:#475569}
+.day-cell-novelty-chips{display:flex;align-items:center;justify-content:center;gap:3px;width:100%;min-width:0}
+.day-cell-novelty-chip{display:grid;flex:1 1 auto;min-width:0;max-width:90px;padding:3px 4px;border:1px solid currentColor;border-radius:6px;line-height:1.05;text-align:left}
+.day-cell-novelty-chip-main{display:flex;align-items:center;gap:3px;min-width:0}
+.day-cell-novelty-chip-main>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px;font-weight:800;text-transform:uppercase}
+.day-cell-novelty-chip-main>b{flex:none;font-size:8px;font-variant-numeric:tabular-nums}
+.day-cell-novelty-chip small{font-size:7px;font-weight:800;letter-spacing:.03em;text-transform:uppercase}
+.day-cell-novelty-more{flex:none;padding:3px;border:1px solid var(--ds-slate-300);border-radius:999px;background:#fff;color:var(--ds-slate-600);font-size:8px;font-weight:800}
+.day-cell-computable{display:grid;justify-items:center;gap:1px}.day-cell-computable small{font-size:8px;font-weight:800;line-height:1;text-transform:uppercase;color:var(--ds-amber-700)}
+.day-cell-computable-total{color:var(--ds-blue-700)!important;padding-top:4px;border-top:1px solid var(--color-border-default)}
+.hours-novelty-row td{background:#fcfdff}.novelty-coverage-grid-cell{display:flex!important;min-width:42px;min-height:36px;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px;border:1px solid currentColor;border-radius:7px;font:700 10px/1 inherit}.novelty-coverage-grid-cell small{font-size:7px;text-transform:uppercase;letter-spacing:.03em}
+button.novelty-coverage-grid-cell{width:100%;cursor:pointer}button.novelty-coverage-grid-cell:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.novelty-review-banner{display:flex;align-items:center;gap:10px;margin-top:14px;padding:11px 13px;border:1px solid var(--ds-amber-200);border-radius:9px;background:var(--ds-amber-50);color:var(--ds-amber-700)}.novelty-review-banner>div{display:grid;gap:2px;min-width:0}.novelty-review-banner span{font-size:11px;white-space:normal}.novelty-review-banner .table-link{margin-left:auto;white-space:nowrap}
+.novelty-coverage-review-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.novelty-coverage-review-summary>div{display:grid;gap:3px;padding:10px;border:1px solid var(--color-border-default);border-radius:8px;background:var(--color-bg-subtle)}.novelty-coverage-review-summary span{font-size:10px;color:var(--color-text-muted)}
+.modal-body .novelty-coverage-resolution{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.novelty-coverage-resolution>.form-actions{grid-column:1/-1}
+.novelty-resolution-options{display:grid;gap:8px;padding:12px;border:1px solid var(--color-border-default);border-radius:9px}.novelty-resolution-options legend{padding:0 5px;font-size:11px;font-weight:800}.novelty-resolution-options label{display:flex;align-items:flex-start;gap:8px}.novelty-resolution-options label span{display:grid;gap:2px}.novelty-resolution-options small{font-weight:400;color:var(--color-text-muted)}
+.novelty-corrective-links{display:flex;flex-wrap:wrap;gap:12px;padding-top:4px}
+.closure-coverage-review-error{margin:0 0 16px;padding:14px;border:1px solid var(--ds-amber-200);border-radius:10px;background:var(--ds-amber-50);color:var(--ds-amber-700)}.closure-coverage-review-error ul{display:grid;gap:7px;margin:9px 0 0;padding:0;list-style:none}.closure-coverage-review-error li{display:flex;align-items:center;gap:12px;justify-content:space-between;padding-top:7px;border-top:1px solid var(--ds-amber-200)}.closure-coverage-review-error li span{display:grid;gap:2px}.closure-coverage-review-error small{font-size:11px}
+.hours-composition tr.is-muted{color:var(--color-text-muted)}.hours-composition tr.is-warning{color:var(--ds-amber-700)}.hours-composition .hours-computable-total th,.hours-composition .hours-computable-total td{background:var(--ds-blue-50);color:var(--ds-blue-700)}
+@media(max-width:620px){.modal-body .novelty-coverage-resolution,.novelty-coverage-review-summary{grid-template-columns:minmax(0,1fr)}.novelty-review-banner,.closure-coverage-review-error li{align-items:flex-start;flex-direction:column}.novelty-review-banner .table-link{margin-left:0}.novelty-coverage-chip{max-width:100%}}
 .manual-hours-review{display:grid;gap:14px;min-width:0}
 .manual-hours-review-lead{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
 .manual-hours-review-lead p{flex:1 1 260px;margin:0;color:var(--ds-slate-700);font-size:13px;line-height:1.5}

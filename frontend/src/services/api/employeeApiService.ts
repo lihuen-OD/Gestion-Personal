@@ -11,7 +11,7 @@ import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type { TimeGridDayOff } from "./employeeDayOffApiService";
-import type { PeriodAccounting } from "../../types/workedTimeAccounting.types";
+import type { NoveltyCoverageItem, NoveltyCoverageState, NoveltyTypeAccounting, PeriodAccounting } from "../../types/workedTimeAccounting.types";
 import { currentCacheScope } from "../cache/cacheKey";
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
@@ -163,7 +163,21 @@ type ApiTimeGridResponse = {
     attendanceIssues: number;
     specialHoursByDay?: Record<string, ApiTimeGridSpecialHourDay>;
     dayOffsByDay?: Record<string, TimeGridDayOff>;
+    totalWorkedMinutes: number;
+    noveltyCoveredMinutes: number;
+    computableMinutes: number;
+    noveltyCoverageRows: NoveltyCoverageRow[];
+    noveltiesByDay: Record<string, NoveltyCoverageItem[]>;
   };
+};
+
+export type NoveltyCoverageRow = {
+  noveltyType: { id: string; code: string; name: string; uiColor: string };
+  countsTowardTotal: boolean;
+  minutesByDay: Record<string, number>;
+  settlementMinutesByDay: Record<string, number>;
+  stateByDay: Record<string, NoveltyCoverageState>;
+  totals: NoveltyTypeAccounting;
 };
 
 // Filas de la grilla por legajo (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md):
@@ -192,6 +206,11 @@ export type EmployeeTimeGrid = {
   specialHoursByDay: Record<string, ApiTimeGridSpecialHourDay>;
   // Francos ACTIVOS por día (docs/decisions/EMPLOYEE_DAY_OFF.md §15).
   dayOffsByDay: Record<string, TimeGridDayOff>;
+  totalWorkedMinutes: number;
+  noveltyCoveredMinutes: number;
+  computableMinutes: number;
+  noveltyCoverageRows: NoveltyCoverageRow[];
+  noveltiesByDay: Record<string, NoveltyCoverageItem[]>;
 };
 
 export type ManualHourConceptBreakdownInput = {
@@ -823,6 +842,11 @@ export const employeeApiService = {
       attendanceIssues: response.data.attendanceIssues || 0,
       specialHoursByDay: response.data.specialHoursByDay || {},
       dayOffsByDay: response.data.dayOffsByDay || {},
+      totalWorkedMinutes: response.data.totalWorkedMinutes,
+      noveltyCoveredMinutes: response.data.noveltyCoveredMinutes,
+      computableMinutes: response.data.computableMinutes,
+      noveltyCoverageRows: response.data.noveltyCoverageRows || [],
+      noveltiesByDay: response.data.noveltiesByDay || {},
     };
   },
   async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {

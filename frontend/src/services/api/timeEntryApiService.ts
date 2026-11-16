@@ -13,7 +13,7 @@ import { hourConceptApiService } from "./hourConceptApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee, TimeEntry, TimeStatus, User } from "../../types";
 import type { HoursExportColumn } from "../../utils/hoursExport";
-import type { PeriodAccounting, PeriodAccountingSummary } from "../../types/workedTimeAccounting.types";
+import type { NoveltyCoverageItem, PeriodAccounting, PeriodAccountingSummary } from "../../types/workedTimeAccounting.types";
 
 type ApiApprovalStatus =
   | "BORRADOR"
@@ -82,6 +82,10 @@ export type EmployeePeriodDay = {
   dayOff?: DayOffActivity | null;
   specialHourRuleNames: string[];
   specialHourConflict: boolean;
+  totalWorkedMinutes: number;
+  noveltyCoveredMinutes: number;
+  computableMinutes: number;
+  novelties: NoveltyCoverageItem[];
 };
 
 type ApiEmployeePeriodRow = {
@@ -155,6 +159,8 @@ type ApiSummaryResponse = {
     pendingEmployees: number;
     reviewEmployees: number;
     countableHours: number;
+    coveredHours: number;
+    computableHours: number;
     coverage: number;
   };
 };

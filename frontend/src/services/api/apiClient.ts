@@ -116,6 +116,10 @@ const errorMessagesByCode: Record<string, string> = {
   NOVELTY_DELETE_HAS_DOCUMENTS: "La novedad tiene documentación asociada y debe conservarse para mantener la trazabilidad.",
   NOVELTY_DELETE_HAS_TIME_IMPACT: "La novedad ya generó movimientos horarios y no se puede eliminar. Debe corregirse mediante una anulación.",
   NOVELTY_DELETE_EXPORTABLE_APPROVED: "La novedad está aprobada y puede haber sido informada externamente. Debe conservarse o anularse.",
+  NOVELTY_COVERAGE_DAY_NOT_FOUND: "No encontramos ese día dentro de la cobertura de la novedad.",
+  NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW: "Ese día ya no requiere una resolución manual. Actualizá la pantalla.",
+  NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED: "La resolución elegida no es válida para este conflicto. Corregí las horas o gestioná la novedad.",
+  NOVELTY_COVERAGE_EXCEEDS_EXPECTED: "El trabajo registrado más la cobertura superaría la jornada esperada.",
   // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
   // NOVELTY_DUPLICATE y NOVELTY_OVERLAP se dejan deliberadamente afuera de
   // este mapa. El backend ya arma, para estos dos códigos, un mensaje

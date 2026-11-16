@@ -30,8 +30,11 @@ export function emptyPeriodAccounting(): PeriodAccounting {
     additiveMinutes: 0,
     totalWorkedMinutes: 0,
     dayOffUncountedMinutes: 0,
-    settlement: { normalMinutes: 0, withinBaseMinutes: 0, additiveMinutes: 0, totalMinutes: 0 },
+    noveltyCoveredMinutes: 0,
+    computableMinutes: 0,
+    settlement: { normalMinutes: 0, withinBaseMinutes: 0, additiveMinutes: 0, noveltyMinutes: 0, totalMinutes: 0 },
     concepts: [],
+    novelty: { coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewDays: 0, reviewDates: [], types: [] },
   };
 }
 

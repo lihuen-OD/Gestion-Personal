@@ -7,6 +7,7 @@ import type { EmployeeTimeGrid } from "../services/api/employeeApiService";
 import { dayAccounting, timeGridFixture } from "../test/workedTimeAccountingFixtures";
 import { workforceApiService, type MonthlyClosure } from "../services/api/workforceApiService";
 import type { Employee } from "../types";
+import { ApiError } from "../services/api/apiClient";
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -265,6 +266,65 @@ describe("MonthlyClosuresPage — Etapa 15K (regresión: acciones existentes int
     await user.click(screen.getByRole("button", { name: "Enviar cierre a RH" }));
 
     await waitFor(() => expect(workforceApiService.submitClosures).toHaveBeenCalledWith(period, ["employee-1"]));
+  });
+
+  it("si el cierre tiene cobertura pendiente lista legajo y fechas y permite abrir la revisión", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    vi.mocked(workforceApiService.closures).mockResolvedValue([]);
+    vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([buildEmployeeOption()]);
+    vi.mocked(workforceApiService.submitClosures).mockRejectedValue(new ApiError(
+      "No se puede enviar el cierre: hay novedades con días para revisar.",
+      "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+      409,
+      { error: { details: { employees: [{ employeeId: "employee-1", reviewDays: 2, reviewDates: ["2026-11-16", "2026-11-17"] }] } } },
+    ));
+    const user = userEvent.setup();
+    render(<MonthlyClosuresPage />);
+    await screen.findByText("100");
+    await user.click(screen.getByLabelText("Seleccionar pendientes"));
+    await user.click(screen.getByRole("button", { name: "Enviar cierre a RH" }));
+    expect(await screen.findByText("Legajos y días que requieren revisión")).toBeInTheDocument();
+    expect(screen.getByText("100 · Gomez, Ana")).toBeInTheDocument();
+    expect(screen.getByText("16/11/2026 · 17/11/2026")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Revisar horas" })[0]!);
+    expect(await screen.findByText(/Legajo 100/)).toBeInTheDocument();
+  });
+
+  it("sin details conserva el mensaje legible del backend de producción", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    vi.mocked(workforceApiService.closures).mockResolvedValue([]);
+    vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([buildEmployeeOption()]);
+    vi.mocked(workforceApiService.submitClosures).mockRejectedValue(new ApiError(
+      "No se puede enviar el cierre: el legajo 100 tiene 1 día para revisar (16/11/2026).",
+      "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+      409,
+    ));
+    const user = userEvent.setup();
+    render(<MonthlyClosuresPage />);
+    await screen.findByText("100");
+    await user.click(screen.getByLabelText("Seleccionar pendientes"));
+    await user.click(screen.getByRole("button", { name: "Enviar cierre a RH" }));
+    expect(await screen.findByText(/legajo 100 tiene 1 día para revisar/)).toBeInTheDocument();
+    expect(screen.queryByText("CLOSURE_HAS_PENDING_NOVELTY_REVIEW")).not.toBeInTheDocument();
+  });
+
+  it("si el backend devuelve texto técnico sin details usa un fallback accionable", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    vi.mocked(workforceApiService.closures).mockResolvedValue([]);
+    vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([buildEmployeeOption()]);
+    vi.mocked(workforceApiService.submitClosures).mockRejectedValue(new ApiError(
+      "409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW {\"error\":true}",
+      "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+      409,
+    ));
+    const user = userEvent.setup();
+    render(<MonthlyClosuresPage />);
+    await screen.findByText("100");
+    await user.click(screen.getByLabelText("Seleccionar pendientes"));
+    await user.click(screen.getByRole("button", { name: "Enviar cierre a RH" }));
+    expect(await screen.findByText(/Abrí la revisión de horas, resolvé esos días/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("CLOSURE_HAS_PENDING_NOVELTY_REVIEW");
+    expect(document.body).not.toHaveTextContent('{"error":true}');
   });
 
   it("RRHH puede seguir devolviendo un cierre enviado (acción existente)", async () => {

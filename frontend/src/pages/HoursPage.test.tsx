@@ -9,7 +9,7 @@ import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { employeeDayOffApiService } from "../services/api/employeeDayOffApiService";
 import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
 import type { EmployeePeriodDay } from "../services/api/timeEntryApiService";
-import type { DayAccounting } from "../types/workedTimeAccounting.types";
+import type { DayAccounting, NoveltyCoverageItem } from "../types/workedTimeAccounting.types";
 import { dayAccounting, periodAccounting } from "../test/workedTimeAccountingFixtures";
 import type { Employee, TimeEntry } from "../types";
 
@@ -863,7 +863,8 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     expect(popover.getByText("Horas normales: 10 h")).toBeInTheDocument();
     expect(popover.getByText("Dentro de la jornada: 6 h")).toBeInTheDocument();
     expect(popover.getByText("Horas adicionales: 2 h")).toBeInTheDocument();
-    expect(popover.queryByText(/Equivalencia para liquidación|18 h|22 h|24 h|Total liquidable/)).not.toBeInTheDocument();
+    expect(popover.getByText("Total para liquidación: 18 h")).toBeInTheDocument();
+    expect(popover.queryByText(/22 h|24 h|Total liquidable/)).not.toBeInTheDocument();
   });
 
   it("un día sin regla especial ni conceptos muestra sólo horas base y total trabajado", async () => {
@@ -893,7 +894,7 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
       items: [buildPeriodRow({
         days: [dayAccounting(16, { sereno: 0, colectivo: 0, multiplier: 2.5 })],
-        dailyBreakdown: [{ day: 16, novelty: null, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true }],
+        dailyBreakdown: [{ day: 16, novelty: null, specialHourRuleNames: ["Domingo Odwyer", "Domingo Pañol"], specialHourConflict: true, totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480, novelties: [] }],
       })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
@@ -921,7 +922,7 @@ describe("HoursPage — grilla de período con el modelo de tiempo trabajado", (
     expect(screen.getByRole("columnheader", { name: "Total trabajado" })).toBeInTheDocument();
     expect(within(row).getByText("16 h")).toBeInTheDocument();
     expect(within(row).getByText("1 h")).toBeInTheDocument();
-    expect(within(row).getByText("17 h")).toBeInTheDocument();
+    expect(within(row).getAllByText("17 h")).toHaveLength(2);
     expect(within(row).queryByText("20 h")).not.toBeInTheDocument();
   });
 
@@ -1090,7 +1091,7 @@ describe("HoursPage — francos", () => {
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
       items: [buildPeriodRow({
         days: [zero],
-        dailyBreakdown: [{ day: 5, novelty: null, dayOff: { notes: "Compensatorio", activityShifts: 1, activityMinutes: 480 }, specialHourRuleNames: [], specialHourConflict: false }],
+        dailyBreakdown: [{ day: 5, novelty: null, dayOff: { notes: "Compensatorio", activityShifts: 1, activityMinutes: 480 }, specialHourRuleNames: [], specialHourConflict: false, totalWorkedMinutes: 0, noveltyCoveredMinutes: 0, computableMinutes: 0, novelties: [] }],
       })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
@@ -1132,60 +1133,93 @@ describe("HoursPage — francos", () => {
 
 // Chip de novedad en la grilla de período: color del tipo (ver
 // dayNoveltyColorClass); con franco, el franco manda y la novedad no se oculta.
-describe("HoursPage — novedades en la grilla de período", () => {
+describe("HoursPage — cobertura de novedades en la grilla de período", () => {
+  const coverageItem = (overrides: Partial<NoveltyCoverageItem> = {}): NoveltyCoverageItem => ({ noveltyId: "novelty-1", noveltyTypeId: "nt-vacaciones", code: "VAC", label: "Vacaciones", uiColor: "teal", minutes: 480, settlementMinutes: 480, state: "COUNTED", countsTowardTotal: true, reviewRequired: false, reviewReasons: [], ...overrides });
   function mockDay(entry: Pick<EmployeePeriodDay, "day" | "novelty"> & Partial<EmployeePeriodDay>, days: DayAccounting[] = []) {
     vi.mocked(timeEntryApiService.getPeriodEmployees).mockResolvedValue({
-      items: [buildPeriodRow({ days, dailyBreakdown: [{ dayOff: null, specialHourRuleNames: [], specialHourConflict: false, ...entry }] })],
+      items: [buildPeriodRow({ days, dailyBreakdown: [{ dayOff: null, specialHourRuleNames: [], specialHourConflict: false, totalWorkedMinutes: 0, noveltyCoveredMinutes: 0, computableMinutes: 0, novelties: [], ...entry }] })],
       meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
     });
   }
 
-  it("una novedad muestra el chip con el color de su tipo, sin el punto genérico", async () => {
+  it("muestra el total computable como número principal y el chip configurado en el detalle", async () => {
     authAs("Nivel 1 - RRHH");
-    mockDay({ day: 3, novelty: { label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" } });
+    mockDay({ day: 3, novelty: null, noveltyCoveredMinutes: 480, computableMinutes: 480, novelties: [coverageItem()] });
     renderGrid();
 
-    const trigger = await screen.findByRole("button", { name: /Detalle del .* 3\. Novedad: Vacaciones/ });
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 3\. 1 novedad.*Vacaciones, 8 h, Computa.*8 h cubiertas/ });
     expect(trigger.closest("td")).toHaveClass("is-novelty");
-    expect(trigger.querySelector(".day-cell-novelty-mark")).toHaveClass("novelty-color-teal");
-    expect(trigger.querySelector(".alert-dot.purple")).toBeNull();
+    expect(trigger).toHaveTextContent("8 h");
+    expect(trigger.querySelector(".day-cell-novelty-chip")).toHaveClass("novelty-color-teal", "is-counted");
+    expect(trigger).toHaveTextContent("Vacaciones8hComputa");
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByLabelText(/Vacaciones: 8 h.*Suma al total computable/)).toHaveClass("novelty-color-teal");
   });
 
-  it("varias novedades de colores distintos: estilo neutro propio, nunca un color del catálogo como fallback", async () => {
+  it("varias novedades conservan su color y estado por chip", async () => {
     authAs("Nivel 1 - RRHH");
-    mockDay({ day: 4, novelty: { label: "Vacaciones, Enfermedad", uiColor: null, noveltyTypeId: null } });
+    mockDay({ day: 4, novelty: null, novelties: [coverageItem(), coverageItem({ noveltyId: "novelty-2", noveltyTypeId: "nt-enfermedad", code: "ENF", label: "Enfermedad", uiColor: "rose", minutes: 240, settlementMinutes: 0, state: "PENDING_APPROVAL", countsTowardTotal: true })] });
     renderGrid();
 
-    const trigger = await screen.findByRole("button", { name: /Detalle del .* 4\. Novedad: Vacaciones, Enfermedad/ });
-    const mark = trigger.querySelector(".day-cell-novelty-mark")!;
-    expect(mark).toHaveClass("novelty-mixed");
-    expect(mark.className).not.toMatch(/novelty-color-/);
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 4\. 2 novedad/ });
+    expect(trigger.querySelector(".day-cell-novelty-chip")).toHaveClass("novelty-color-teal");
+    expect(trigger.querySelector(".day-cell-novelty-more")).toHaveTextContent("+1");
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByLabelText(/Vacaciones/)).toHaveClass("novelty-color-teal");
+    expect(popover.getByLabelText(/Enfermedad/)).toHaveClass("novelty-color-rose", "is-pending-approval");
   });
 
-  it("franco + novedad: FRANCO sigue siendo el estado principal y la novedad queda como mini-chip con su color", async () => {
+  it.each([
+    ["PENDING_APPROVAL", "Pendiente", "is-pending-approval"],
+    ["INFORMATIVE", "Informativa", "is-informative"],
+    ["REVIEW_REQUIRED", "Revisar", "is-review-required"],
+  ] as const)("el chip inline representa %s con texto, no sólo color", async (state, label, className) => {
+    authAs("Nivel 1 - RRHH");
+    mockDay({ day: 6, novelty: null, novelties: [coverageItem({ state, reviewRequired: state === "REVIEW_REQUIRED", reviewReasons: state === "REVIEW_REQUIRED" ? ["REAL_WORK_EXCEEDS_EXPECTED"] : [] })] });
+    renderGrid();
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 6\. 1 novedad/ });
+    expect(trigger.querySelector(".day-cell-novelty-chip")).toHaveClass(className);
+    expect(trigger).toHaveTextContent(label);
+  });
+
+  it("Vacaciones en domingo x2 mantiene 8 h computables y 0 h trabajadas; 16 h sólo para liquidación", async () => {
+    authAs("Nivel 1 - RRHH");
+    const sunday = dayAccounting(2, { base: 0, sereno: 0, colectivo: 0, multiplier: 2 });
+    sunday.noveltyCoveredMinutes = 480;
+    sunday.computableMinutes = 480;
+    sunday.settlement = { ...sunday.settlement, noveltyMinutes: 960, totalMinutes: 960 };
+    sunday.novelty = { coveredMinutes: 480, settlementMinutes: 960, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewRequired: false, items: [] };
+    mockDay({ day: 2, novelty: null, totalWorkedMinutes: 0, noveltyCoveredMinutes: 480, computableMinutes: 480, novelties: [coverageItem({ settlementMinutes: 960 })] }, [sunday]);
+    renderGrid();
+
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 2\. 1 novedad.*8 h cubiertas/ });
+    expect(trigger).toHaveTextContent("8 h");
+    trigger.click();
+    const popover = await waitFor(() => currentDayPopover());
+    expect(popover.getByText("Total trabajado: 0 h")).toBeInTheDocument();
+    expect(popover.getByText("Total computable: 8 h")).toBeInTheDocument();
+    expect(popover.getByText("Total para liquidación: 16 h")).toBeInTheDocument();
+  });
+
+  it("franco + novedad: FRANCO sigue siendo el estado principal y la novedad aparece en el detalle", async () => {
     authAs("Nivel 1 - RRHH");
     mockDay(
-      { day: 5, novelty: { label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" }, dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 } },
+      { day: 5, novelty: null, novelties: [coverageItem({ state: "INFORMATIVE", countsTowardTotal: false, settlementMinutes: 0 })], dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 } },
       [dayAccounting(5, { base: 0, sereno: 0, colectivo: 0 })],
     );
     renderGrid();
 
-    const trigger = await screen.findByRole("button", { name: /Detalle del .* 5: Franco asignado.*\. Novedad: Vacaciones$/ });
+    const trigger = await screen.findByRole("button", { name: /Detalle del .* 5: Franco asignado.*\. 1 novedad/ });
     expect(trigger.closest("td")).toHaveClass("is-day-off");
     expect(trigger.closest("td")).not.toHaveClass("is-novelty");
     expect(trigger).toHaveTextContent("Franco");
     expect(trigger).toHaveTextContent("0 h");
-    const tag = trigger.querySelector(".day-off-novelty-tag");
-    expect(tag).toHaveTextContent("Nov.");
-    expect(tag).toHaveClass("novelty-color-teal");
-    // Un solo chip principal: no se apila el chip grande de novedad.
-    expect(trigger.querySelector(".day-cell-novelty-mark")).toBeNull();
-    expect(trigger).toHaveAttribute("title", expect.stringContaining("Novedad: Vacaciones"));
-
     trigger.click();
     const popover = await waitFor(() => currentDayPopover());
     expect(popover.getByText("Franco asignado: no debía trabajar.")).toBeInTheDocument();
-    expect(popover.getByText("Novedad: Vacaciones")).toBeInTheDocument();
+    expect(popover.getByLabelText(/Vacaciones.*Visible, no suma/)).toBeInTheDocument();
   });
 });
 

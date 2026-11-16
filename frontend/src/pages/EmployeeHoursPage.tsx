@@ -10,12 +10,11 @@ import { noveltyApiService } from "../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import type { Employee, Novelty, TimeEntry, TimeStatus } from "../types";
-import type { ApiTimeGridSpecialHourDay, EmployeeTimeGridRow } from "../services/api/employeeApiService";
+import type { ApiTimeGridSpecialHourDay, EmployeeTimeGridRow, NoveltyCoverageRow } from "../services/api/employeeApiService";
 import type { TimeGridDayOff } from "../services/api/employeeDayOffApiService";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
 import type { NoveltyType } from "../types/noveltyType.types";
-import { noveltyColorClass } from "../utils/noveltyColor";
 import { calendarDaysInclusive } from "../utils/noveltyDateRange";
 import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, formatPeriodLabel, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
@@ -32,7 +31,7 @@ import {
   upsertTimeEntry,
 } from "../utils/employeeHoursGrid";
 import { conceptDayAmount, conceptPeriodAmount, emptyPeriodAccounting, normalDayAmount, workTreatmentDescriptions, workTreatmentLabels } from "../utils/workedTimeAccounting";
-import type { PeriodAccounting } from "../types/workedTimeAccounting.types";
+import type { NoveltyCoverageItem, PeriodAccounting } from "../types/workedTimeAccounting.types";
 import { AccountingStatCards } from "../components/hours/AccountingStatCards";
 import { HoursAccountingSummary } from "../components/hours/HoursAccountingSummary";
 import { MonthlyHoursTableSections } from "../components/hours/MonthlyHoursTableSections";
@@ -45,9 +44,7 @@ import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
-
-const noveltyTone = (novelty?: Novelty, uiColor?: string) =>
-  novelty ? noveltyColorClass(uiColor, novelty.noveltyTypeId || novelty.type) : "";
+import { NoveltyCoverageChipList, NoveltyCoverageResolutionModal, type NoveltyCoverageReviewTarget } from "../components/hours/NoveltyCoverage";
 
 function timeEntrySaveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
@@ -101,15 +98,16 @@ function manualBreakdownSaveErrorMessage(error: unknown) {
 }
 
 async function fetchPeriodNovelties(employeeId: string, forPeriod: string) {
-  const [apiNovelties, apiNoveltyTypes] = await Promise.all([
-    noveltyApiService.getAll({ employeeId }),
+  const [noveltiesResult, typesResult] = await Promise.allSettled([
+    noveltyApiService.getAll({ employeeId, period: forPeriod }),
     noveltyTypeApiService.getAll(),
   ]);
   return {
-    novelties: apiNovelties.filter(
-      (novelty) => novelty.from.startsWith(forPeriod) || (novelty.to || novelty.from).startsWith(forPeriod),
-    ),
-    noveltyTypes: apiNoveltyTypes,
+    // El listado trae `timeEntryBehavior` por novedad. No se descarta si el
+    // catálogo auxiliar falla: los IDs diarios resueltos siguen viniendo de
+    // `noveltiesByDay`, sin volver a expandir rangos en el frontend.
+    novelties: noveltiesResult.status === "fulfilled" ? noveltiesResult.value : [],
+    noveltyTypes: typesResult.status === "fulfilled" ? typesResult.value : [],
   };
 }
 
@@ -132,9 +130,6 @@ export function EmployeeHoursPage() {
   const [rows, setRows] = useState<EmployeeTimeGridRow[]>([]);
   const activeTypes = noveltyTypes.filter((item) => item.status === "ACTIVO");
   const noveltyTypesById = new Map(noveltyTypes.map((item) => [item.id, item]));
-  const noveltyTypesByName = new Map(
-    noveltyTypes.map((item) => [item.name.trim().toLowerCase(), item]),
-  );
   const [noveltyTypeId, setNoveltyTypeId] = useState("");
   const [noveltyFrom, setNoveltyFrom] = useState(monthDate(period, 1));
   const [noveltyTo, setNoveltyTo] = useState(monthDate(period, 1));
@@ -145,6 +140,7 @@ export function EmployeeHoursPage() {
   const [savingStatus, setSavingStatus] = useState<TimeStatus | null>(null);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [periodNovelties, setPeriodNovelties] = useState<Novelty[]>([]);
+  const periodNoveltiesById = new Map(periodNovelties.map((item) => [item.id, item]));
   const [attendanceIssues, setAttendanceIssues] = useState(0);
   // Contabilidad del período (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md)
   // e indicador de Hora Especial por día: se sincronizan con el mismo refetch
@@ -153,6 +149,9 @@ export function EmployeeHoursPage() {
   // contabilidad recalculada por el backend.
   const [accounting, setAccounting] = useState<PeriodAccounting>(emptyPeriodAccounting);
   const [specialHoursByDay, setSpecialHoursByDay] = useState<Record<string, ApiTimeGridSpecialHourDay>>({});
+  const [noveltyCoverageRows, setNoveltyCoverageRows] = useState<NoveltyCoverageRow[]>([]);
+  const [noveltiesByDay, setNoveltiesByDay] = useState<Record<string, NoveltyCoverageItem[]>>({});
+  const [coverageReview, setCoverageReview] = useState<NoveltyCoverageReviewTarget | null>(null);
   // Francos activos del período (docs/decisions/EMPLOYEE_DAY_OFF.md §15): la
   // celda de Horas base muestra "Franco" + lo que computa según el backend.
   const [dayOffsByDay, setDayOffsByDay] = useState<Record<string, TimeGridDayOff>>({});
@@ -182,6 +181,8 @@ export function EmployeeHoursPage() {
         setAccounting(grid.accounting);
         setSpecialHoursByDay(grid.specialHoursByDay);
         setDayOffsByDay(grid.dayOffsByDay);
+        setNoveltyCoverageRows(grid.noveltyCoverageRows);
+        setNoveltiesByDay(grid.noveltiesByDay);
         setLoading(false);
 
         fetchPeriodNovelties(id, period).then(({ novelties, noveltyTypes: apiNoveltyTypes }) => {
@@ -205,6 +206,8 @@ export function EmployeeHoursPage() {
         setAccounting(emptyPeriodAccounting());
         setSpecialHoursByDay({});
         setDayOffsByDay({});
+        setNoveltyCoverageRows([]);
+        setNoveltiesByDay({});
         setLoadError("No pudimos cargar la grilla horaria. Verificá el legajo e intentá nuevamente.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -255,6 +258,8 @@ export function EmployeeHoursPage() {
       setAccounting(grid.accounting);
       setSpecialHoursByDay(grid.specialHoursByDay);
       setDayOffsByDay(grid.dayOffsByDay);
+      setNoveltyCoverageRows(grid.noveltyCoverageRows);
+      setNoveltiesByDay(grid.noveltiesByDay);
     }).catch(() => {
       // Re-sincronización silenciosa: si falla, se conserva el último estado
       // local ya actualizado de forma optimista.
@@ -272,28 +277,13 @@ export function EmployeeHoursPage() {
   }, [refresh]);
 
   const selectedType = activeTypes.find((item) => item.id === noveltyTypeId);
-  const noveltyVisualClass = (novelty?: Novelty) => {
-    if (!novelty) return "";
-    const type =
-      (novelty.noveltyTypeId
-        ? noveltyTypesById.get(novelty.noveltyTypeId)
-        : undefined) || noveltyTypesByName.get(novelty.type.trim().toLowerCase());
-    return noveltyTone(novelty, type?.uiColor);
-  };
-  const dayNovelties = (day: number) =>
-    periodNovelties.filter((novelty) => {
-      const fromDay = Number(novelty.from.slice(8, 10));
-      const toDay = Number((novelty.to || novelty.from).slice(8, 10));
-      return day >= fromDay && day <= toDay;
-    });
-  const noveltyBlocksTimeEntry = (novelty: Novelty) => novelty.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA";
-  const conceptNovelties = (day: number, conceptName: string) =>
-    dayNovelties(day).filter((novelty) =>
-      noveltyBlocksTimeEntry(novelty) ? true : novelty.targetHourConceptName === conceptName,
-    );
+  const coverageForDay = (day: number) => noveltiesByDay[String(day)] ?? [];
   const entryFor = (day: number, conceptId: string, conceptName: string) =>
     entries.find((entry) => entry.day === day && (entry.conceptId === conceptId || entry.type === conceptName));
-  const isBlocked = (day: number) => dayNovelties(day).some(noveltyBlocksTimeEntry);
+  const isBlocked = (day: number) => coverageForDay(day).some((item) =>
+    periodNoveltiesById.get(item.noveltyId)?.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA" ||
+    noveltyTypesById.get(item.noveltyTypeId)?.rules.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA",
+  );
   const openCell = (day: number, conceptId: string, conceptName: string, entry?: TimeEntry) => {
     const date = monthDate(period, day);
     setSelected({ day, conceptId });
@@ -320,7 +310,7 @@ export function EmployeeHoursPage() {
   const selectedRow = selected ? rows.find((row) => row.concept.id === selected.conceptId) : undefined;
   const selectedConceptName = selectedRow?.concept.name ?? "Hora normal";
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
-  const selectedConceptNovelties = selected ? conceptNovelties(selected.day, selectedConceptName) : [];
+  const selectedConceptNovelties = selected ? coverageForDay(selected.day) : [];
   const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
   const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
   // Etapa 11B: multiplicador de Hora Especial del día que se está editando —
@@ -500,8 +490,9 @@ export function EmployeeHoursPage() {
   const reviewEntries = entries.filter((entry) => entry.status === "En revisión").length;
   const correctionEntries = entries.filter((entry) => entry.status === "Devuelto" || entry.status === "Rechazado").length;
   const draftEntries = entries.filter((entry) => entry.status === "Borrador" || entry.status === "Pendiente").length;
-  const entriesWithNovelties = entries.filter((entry) => conceptNovelties(entry.day, entry.type).length > 0).length;
-  const actionableCount = reviewEntries + entries.filter((entry) => entry.status === "Devuelto").length + attendanceIssues;
+  const entriesWithNovelties = entries.filter((entry) => coverageForDay(entry.day).length > 0).length;
+  const coverageReviewDays = accounting.novelty?.reviewDays ?? 0;
+  const actionableCount = reviewEntries + entries.filter((entry) => entry.status === "Devuelto").length + attendanceIssues + coverageReviewDays;
   const periodState = actionableCount > 0
     ? { label: "Con pendientes", tone: "warning" as const }
     : draftEntries > 0
@@ -571,6 +562,7 @@ export function EmployeeHoursPage() {
           <div className="employee-hours-status-item purple"><Bell size={18} /><b>{entriesWithNovelties}</b><span>Cargas con novedades</span></div>
           <Link className="employee-hours-status-item orange" to="/asistencia"><AlertTriangle size={18} /><b>{attendanceIssues}</b><span>Problemas de fichada</span></Link>
         </div>
+        {coverageReviewDays > 0 ? <div className="novelty-review-banner" role="status"><AlertTriangle size={18} /><div><b>{coverageReviewDays} día(s) con cobertura por revisar</b><span>{accounting.novelty.reviewDates.map((date) => formatPeriodDay(period, Number(date.slice(-2)))).join(" · ")}</span></div></div> : null}
       </Section>
 
       <Section
@@ -602,6 +594,9 @@ export function EmployeeHoursPage() {
               monthDays={monthDays}
               syncing={syncing}
               specialHoursByDay={specialHoursByDay}
+              noveltyCoverageRows={noveltyCoverageRows}
+              noveltiesByDay={noveltiesByDay}
+              onReviewNovelty={(item, day) => setCoverageReview({ item, date: monthDate(period, day), employeeId: id, period, workedMinutes: accounting.days[String(day)]?.totalWorkedMinutes ?? 0 })}
               renderRow={(row) => {
                 const label = timeGridRowLabel(row);
                 return (
@@ -616,8 +611,6 @@ export function EmployeeHoursPage() {
                     // abrirla sigue siendo el flujo de corrección que reconoce horas.
                     const dayOff = row.role === "NORMAL_BASE" ? dayOffsByDay[String(day)] : undefined;
                     const countedBaseMinutes = row.minutesByDay[String(day)] ?? 0;
-                    const novelties = row.role === "NORMAL_BASE" ? conceptNovelties(day, row.concept.name) : [];
-                    const mainNovelty = novelties[0];
                     const breakdownMinutes = row.minutesByDay[String(day)] ?? 0;
                     const daySpecialHour = specialHoursByDay[String(day)];
                     // Conceptos: la celda muestra lo que se liquida ese día
@@ -629,7 +622,6 @@ export function EmployeeHoursPage() {
                       "hour-cell",
                       dayOff ? "day-off" : entry || breakdownMinutes ? "filled" : "",
                       row.role === "NORMAL_BASE" && isBlocked(day) ? "blocked" : "",
-                      noveltyVisualClass(mainNovelty),
                       amount?.pending ? "is-syncing" : "",
                     ]
                       .filter(Boolean)
@@ -644,12 +636,11 @@ export function EmployeeHoursPage() {
                         {row.role === "NORMAL_BASE" ? (
                           <button
                             className={cellClass}
-                            title={[dayOff ? dayOffDescription(dayOff, countedBaseMinutes) : entry || isBlocked(day) ? fullDuration : "Agregar horas", ...novelties.map((novelty) => novelty.type)].filter(Boolean).join(" · ")}
+                            title={dayOff ? dayOffDescription(dayOff, countedBaseMinutes) : entry || isBlocked(day) ? fullDuration : "Agregar horas"}
                             aria-label={`${label}, día ${day}: ${dayOff ? dayOffDescription(dayOff, countedBaseMinutes) : entry || isBlocked(day) ? fullDuration : "agregar horas"}`}
                             onClick={() => openCell(day, row.concept.id, row.concept.name, entry)}
                           >
                             {dayOff ? <DayOffMark countedMinutes={countedBaseMinutes} /> : <span>{entry ? compactDuration : isBlocked(day) ? "0m" : "+"}</span>}
-                            {mainNovelty ? <small>{mainNovelty.type.slice(0, 3)}</small> : null}
                             {specialHourDot}
                           </button>
                         ) : isManualBreakdownEditable(row) ? (
@@ -758,8 +749,8 @@ export function EmployeeHoursPage() {
                 </span>
               </div>
               <Badge tone="neutral">
-                {conceptNovelties(selected.day, selectedConceptName).length
-                  ? `${conceptNovelties(selected.day, selectedConceptName).length} novedad(es)`
+                {selectedConceptNovelties.length
+                  ? `${selectedConceptNovelties.length} novedad(es)`
                   : "Sin novedad cargada"}
               </Badge>
               </div>
@@ -920,13 +911,8 @@ export function EmployeeHoursPage() {
               ) : selectedConceptNovelties.length ? (
                 <div className="hour-novelty-state suggested" role="status">
                   <span className="hour-novelty-eyebrow">Detección del sistema</span>
-                  {selectedConceptNovelties.map((novelty) => (
-                    <div className="hour-novelty-detection" key={novelty.id}>
-                      <b>{novelty.type}</b>
-                      <span className="hour-novelty-duration">Duración estimada: {novelty.quantity}</span>
-                    </div>
-                  ))}
-                  <p>Esta detección es informativa y no queda asociada automáticamente a la fila.</p>
+                  <NoveltyCoverageChipList items={selectedConceptNovelties} compact onReview={(item) => setCoverageReview({ item, date: monthDate(period, selected!.day), employeeId: id, period, workedMinutes: selectedDayAccounting?.totalWorkedMinutes ?? 0 })} />
+                  <p>El estado y las horas provienen de la cobertura diaria calculada por el sistema.</p>
                 </div>
               ) : (
                 <div className="hour-novelty-state empty" role="status">
@@ -996,6 +982,7 @@ export function EmployeeHoursPage() {
           </div>
         </Modal>
       ) : null}
+      {coverageReview ? <NoveltyCoverageResolutionModal target={coverageReview} close={() => setCoverageReview(null)} onResolved={() => { setSyncing(true); setRefresh((value) => value + 1); }} /> : null}
     </>
   );
 }

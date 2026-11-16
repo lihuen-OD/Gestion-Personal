@@ -1,22 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MonthlyHoursReviewGrid } from "./MonthlyHoursReviewGrid";
-import type { Novelty } from "../../types";
 import { dayAccounting, periodAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
-
-function buildNovelty(overrides: Partial<Novelty> = {}): Novelty {
-  return {
-    id: "novelty-1",
-    employeeId: "employee-1",
-    type: "Vacaciones",
-    from: "2026-08-04",
-    to: "2026-08-04",
-    quantity: "1 día",
-    status: "Aprobado",
-    createdBy: "Sistema",
-    ...overrides,
-  };
-}
 
 function rowNamed(name: string) {
   const row = screen.getAllByRole("row").find((item) => within(item).queryByText(name, { selector: "b" }));
@@ -165,10 +150,16 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(within(rowNamed("Horas base")).getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("muestra un indicador cuando hay novedades asociadas al día", () => {
-    const grid = timeGridFixture(undefined, { novelties: [buildNovelty()] });
+  it("muestra la cobertura resuelta como fila de novedad, sin reintroducir el indicador legacy", () => {
+    const coverageItem = { noveltyId: "novelty-1", noveltyTypeId: "type-vac", code: "VAC", label: "Vacaciones", uiColor: "teal", minutes: 480, settlementMinutes: 480, state: "COUNTED" as const, countsTowardTotal: true, reviewRequired: false, reviewReasons: [] };
+    const grid = timeGridFixture(undefined, {
+      noveltyCoverageRows: [{ noveltyType: { id: "type-vac", code: "VAC", name: "Vacaciones", uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": 480 }, settlementMinutesByDay: { "4": 480 }, stateByDay: { "4": "COUNTED" }, totals: { noveltyTypeId: "type-vac", coveredMinutes: 480, settlementMinutes: 480, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0 } }],
+      noveltiesByDay: { "4": [coverageItem] },
+    });
     const { container } = render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
-    expect(container.querySelector(".alert-dot.purple")).toBeInTheDocument();
+    expect(rowNamed("Vacaciones")).toHaveTextContent("Computa");
+    expect(within(rowNamed("Vacaciones")).getByTitle("Vacaciones: Computa")).toHaveClass("novelty-color-teal", "is-counted");
+    expect(container.querySelector(".alert-dot.purple")).not.toBeInTheDocument();
   });
 
   it("es read-only: no expone ningún botón dentro de la grilla", () => {
