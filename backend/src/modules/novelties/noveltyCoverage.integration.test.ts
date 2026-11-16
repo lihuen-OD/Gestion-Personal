@@ -595,5 +595,59 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       // Y aun así la versión 1 ya generada no cambia.
       expect(visible((await finnegansExportService.getHistoryDetail(first.batch.id)).rows)).toEqual(visible(first.rows));
     });
+
+    // P5 (NOVELTY_COVERAGE_ENGINE.md §12.3): coberturas de tipos distintos el
+    // mismo día que, sumadas, superan la jornada esperada. Agosto de 2027,
+    // legajo A (turno L–V de 8 h): aislado de los demás casos.
+    it("P5: Vacaciones + Trámite por encima de la jornada → revisión en grilla, cierre y Finnegans; confirmar 0 o quitar la novedad lo resuelve", async () => {
+      const { finnegansExportService } = await import("../finnegans-export/finnegansExport.service");
+      const vacacionesP5 = await createType({
+        name: "Vacaciones P5", kind: "VACACIONES", exportsToFinnegans: true, finnegansCode: "VP5", finnegansName: "Vacaciones", finnegansValueUnit: "HOURS",
+        coverageMode: "EXPECTED_SCHEDULE", coverageDayRule: "WORK_OBLIGATION", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE",
+      });
+      const tramiteP5 = await createType({
+        name: "Trámite P5", exportsToFinnegans: true, finnegansCode: "TP5", finnegansName: "Trámite", finnegansValueUnit: "HOURS", allowsDateRange: false,
+        coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 180, coverageOnDayOff: "NO_COVERAGE", coverageOnHoliday: "NO_COVERAGE", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE",
+      });
+      const grid = async () => ((await m.employees.getTimeGrid(employees.a, { period: "2027-08" } as never, as("rrhh"))) as { accounting: import("../time-entries/workedTimeAccounting").PeriodAccounting }).accounting;
+      // Lunes 2 y martes 3: Vacaciones 8 h + Trámite (3 h exportable el 2; 4 h no exportable el 3).
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: vacacionesP5, fromDate: "2027-08-02", toDate: "2027-08-03" });
+      const [tramite2] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: tramiteP5, fromDate: "2027-08-02" });
+      const [tramite3] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2027-08-03" });
+
+      // Grilla: nunca 11 h; el día computa sólo lo válido (0 h de trabajo) y queda para revisar.
+      const before = await grid();
+      expect(before.days["2"]).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 0, computableMinutes: 0 });
+      expect(before.days["2"]!.novelty).toMatchObject({ reviewRequired: true, heldMinutes: 660 });
+      expect(before.days["2"]!.novelty.items.map((item) => item.reviewReasons)).toEqual([["COVERAGE_TOTAL_EXCEEDS_EXPECTED"], ["COVERAGE_TOTAL_EXCEEDS_EXPECTED"]]);
+      expect(before.novelty).toMatchObject({ reviewDays: 2, reviewDates: ["2027-08-02", "2027-08-03"] });
+
+      // Cierre y Finnegans bloqueados.
+      await expect(m.workforce.submitClosures("2027-08", [employees.a], as("sup"))).rejects.toMatchObject({ code: "CLOSURE_HAS_PENDING_NOVELTY_REVIEW" });
+      const preview = await finnegansExportService.getPreview({ period: "2027-08" });
+      expect(preview.rows.filter((row) => ["VP5", "TP5"].includes(row.Novedad)).map((row) => [row.Novedad, row["Valor 1"], row.estado])).toEqual(
+        expect.arrayContaining([["VP5", "", "REVISION_PENDIENTE"], ["TP5", "", "REVISION_PENDIENTE"]]),
+      );
+      await expect(finnegansExportService.exportDefinitive({ period: "2027-08", format: "CSV", idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING" });
+
+      // No se acepta un total mayor a la jornada: sólo "no cubre este día".
+      const setBase = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "SET_BASE_MINUTES", baseMinutes: 60, note: "Aceptar una parte" });
+      await expect(m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", setBase, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED" });
+      const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "El trámite se hizo fuera del horario" });
+      await m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", zero, as("rrhh"));
+      // Una vez válido, el día ya no está en revisión.
+      await expect(m.novelties.resolveCoverageDay(tramite2!.id, "2027-08-02", zero, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW" });
+      // Quitar la novedad incorrecta (no exportable) resuelve el otro día.
+      await m.novelties.remove(tramite3!.id, as("rrhh"));
+
+      const after = await grid();
+      expect(after.days["2"]).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
+      expect(after.days["3"]).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
+      expect(after.novelty).toMatchObject({ reviewDays: 0, heldMinutes: 0 });
+      const [closure] = await m.workforce.submitClosures("2027-08", [employees.a], as("sup"));
+      await m.workforce.approveClosures([closure!.id], undefined, as("rrhh"));
+      const exported = await finnegansExportService.exportDefinitive({ period: "2027-08", format: "CSV", idempotencyKey: randomUUID() });
+      expect(exported.rows.filter((row) => row.Legajo === "101").map((row) => [row.Novedad, row["Valor 1"]])).toEqual([["VP5", "16"]]);
+    });
   });
 });

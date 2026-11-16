@@ -27,7 +27,8 @@ export type NoveltyCoverageReviewReason =
   | "RESOLUTION_OUTDATED"
   | "REAL_WORK_ON_INCOMPATIBLE"
   | "REAL_WORK_EXCEEDS_EXPECTED"
-  | "REAL_WORK_WITHOUT_EXPECTED";
+  | "REAL_WORK_WITHOUT_EXPECTED"
+  | "COVERAGE_TOTAL_EXCEEDS_EXPECTED";
 
 export type NoveltyCoverageItem = {
   noveltyId: string;

@@ -32,6 +32,7 @@ const reasonLabels: Record<NoveltyCoverageReviewReason, string> = {
   REAL_WORK_ON_INCOMPATIBLE: "La novedad no puede coexistir con el trabajo registrado.",
   REAL_WORK_EXCEEDS_EXPECTED: "El trabajo más la cobertura supera la jornada esperada.",
   REAL_WORK_WITHOUT_EXPECTED: "Hay trabajo registrado, pero no existe una jornada esperada para validarlo.",
+  COVERAGE_TOTAL_EXCEEDS_EXPECTED: "Las novedades de este día, junto con el trabajo registrado, superan la jornada esperada. Ninguna suma hasta que indiques cuál no cubre este día o corrijas la novedad, el trabajo o el turno.",
 };
 
 export function noveltyCoverageStateLabel(state: NoveltyCoverageState) {
@@ -152,8 +153,10 @@ export function NoveltyCoverageResolutionModal({ target, close, onResolved }: { 
   }, [target.item.noveltyId, target.date]);
 
   const isIncompatible = target.item.reviewReasons.includes("REAL_WORK_ON_INCOMPATIBLE");
+  // P5: nunca se acepta un total mayor a la jornada; sólo "no cubre este día".
+  const exceedsWithOtherCoverages = target.item.reviewReasons.includes("COVERAGE_TOTAL_EXCEEDS_EXPECTED");
   const allowsManualResolution = day?.outcome === "SCHEDULE_UNRESOLVED" || day?.outcome === "COVERED";
-  const allowsSetBase = allowsManualResolution && !isIncompatible;
+  const allowsSetBase = allowsManualResolution && !isIncompatible && !exceedsWithOtherCoverages;
   const baseMinutes = useMemo(() => parseDayDurationInput(baseTime), [baseTime]);
   const previewMinutes = baseMinutes && day ? Math.round(baseMinutes * day.multiplier) : 0;
 

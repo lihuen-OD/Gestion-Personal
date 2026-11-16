@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { accountNoveltyDay, toAccountingNoveltyCoverage } from "../time-entries/workedTimeAccounting";
+import { accountingNoveltyCoverageSelect, accountNoveltyDay, toAccountingNoveltyCoverage } from "../time-entries/workedTimeAccounting";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
@@ -692,13 +692,30 @@ export const noveltiesService = {
         //   (NOVELTY_COVERAGE_ENGINE.md §8, C1). En un tipo incompatible sólo
         //   "no cubre este día" (0 h): nunca se suman trabajo real y cobertura.
         //   En uno compatible, 0 h o minutos que entren en la jornada esperada.
+        // - P5: coberturas del día que, sumadas, superan la jornada esperada.
+        //   Sólo "no cubre este día" (0 h): corrige la evidencia de una de
+        //   ellas; nunca se acepta un total mayor a la jornada.
         // La falta de historia para un feriado nunca llega acá: es un error.
         const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
         if (row.outcome !== "SCHEDULE_UNRESOLVED") {
-          const [item] = accountNoveltyDay([{ ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }), status: "APROBADO" }], workedMinutes).items;
+          // Mismo cálculo que la grilla: con todas las coberturas del día.
+          const dayRows = await tx.noveltyDayCoverage.findMany({
+            where: { employeeId: novelty.employeeId, date, noveltyId: { not: id }, novelty: { status: { not: "RECHAZADO" } } },
+            select: accountingNoveltyCoverageSelect,
+          });
+          const current = { ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }), status: "APROBADO" as const };
+          const item = accountNoveltyDay([current, ...dayRows.map(toAccountingNoveltyCoverage)], workedMinutes).items.find((candidate) => candidate.noveltyId === id);
           const realWorkConflict = item?.reviewReasons.some((reason) => reason === "REAL_WORK_ON_INCOMPATIBLE" || reason === "REAL_WORK_EXCEEDS_EXPECTED" || reason === "REAL_WORK_WITHOUT_EXPECTED" || reason === "RESOLUTION_OUTDATED");
-          if (row.outcome !== "COVERED" || !realWorkConflict) {
+          const coverageTotalConflict = item?.reviewReasons.includes("COVERAGE_TOTAL_EXCEEDS_EXPECTED") ?? false;
+          if (row.outcome !== "COVERED" || (!realWorkConflict && !coverageTotalConflict)) {
             throw new AppError("Este día no está en revisión.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+          }
+          if (!realWorkConflict && input.resolution !== "CONFIRMED_ZERO") {
+            throw new AppError(
+              "Las novedades de este día superan la jornada esperada: indicá cuál no cubre este día, o corregí la novedad o la jornada.",
+              400,
+              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
+            );
           }
           if (row.realWorkCompatibility === "INCOMPATIBLE" && input.resolution !== "CONFIRMED_ZERO") {
             throw new AppError(

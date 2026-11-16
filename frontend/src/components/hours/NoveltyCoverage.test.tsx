@@ -109,6 +109,14 @@ describe("NoveltyCoverage", () => {
     expect(screen.getByText(/no puede coexistir con el trabajo registrado/i)).toBeInTheDocument();
   });
 
+  it("P5: coberturas que superan la jornada sólo permiten confirmar cero en una de ellas", async () => {
+    vi.mocked(noveltyApiService.getCoverage).mockResolvedValue(coverageResponse(day({ outcome: "COVERED", expectedMinutes: 420 })));
+    renderModal(item({ reviewReasons: ["COVERAGE_TOTAL_EXCEEDS_EXPECTED"] }));
+    expect(await screen.findByText("Confirmar 0 h de cobertura")).toBeInTheDocument();
+    expect(screen.queryByText("Indicar horas base")).not.toBeInTheDocument();
+    expect(screen.getByText(/superan la jornada esperada/i)).toBeInTheDocument();
+  });
+
   it("NONE/incompatible sin cobertura no ofrece ni horas ni cero y deriva a correcciones", async () => {
     vi.mocked(noveltyApiService.getCoverage).mockResolvedValue(coverageResponse(day({ outcome: "NO_COVERAGE", countsTowardTotal: false })));
     renderModal(item({ minutes: 0, countsTowardTotal: false, reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] }));

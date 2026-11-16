@@ -253,3 +253,94 @@ describe("varias novedades el mismo día y agregación del período", () => {
     expect(period.days["17"]).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 240, computableMinutes: 240 });
   });
 });
+
+// P5 (NOVELTY_COVERAGE_ENGINE.md §12.3): trabajo real + coberturas que suman
+// no puede superar la jornada esperada conocida. Si la supera, el día va a
+// revisión con todas las coberturas implicadas retenidas: nunca se trunca ni
+// se elige una por orden.
+describe("P5: varias coberturas que suman frente a la jornada esperada", () => {
+  const vacaciones = (overrides: Partial<AccountingNoveltyCoverage> = {}) => coverage({ noveltyId: "vac", noveltyTypeId: "type-vac", baseMinutes: 420, expectedMinutes: 420, ...overrides });
+  const tramite3h = (overrides: Partial<AccountingNoveltyCoverage> = {}) => coverage({ noveltyId: "tra", noveltyTypeId: "type-tra", baseMinutes: 180, expectedMinutes: 420, ...overrides });
+  const compatible = (id: string, minutes: number, expectedMinutes: number | null = 480) => coverage({ noveltyId: id, noveltyTypeId: `type-${id}`, baseMinutes: minutes, realWorkCompatibility: "COMPATIBLE", expectedMinutes });
+
+  it("Vacaciones 7 h + Trámite 3 h sobre jornada 7 h → revisión, nunca 10 h", () => {
+    const day = accountDay(16, [], [], [vacaciones(), tramite3h()]);
+    expect(day).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 0, computableMinutes: 0 });
+    expect(day.settlement.noveltyMinutes).toBe(0);
+    expect(day.novelty).toMatchObject({ reviewRequired: true, heldMinutes: 600, coveredMinutes: 0 });
+    for (const item of day.novelty.items) expect(item).toMatchObject({ state: "REVIEW_REQUIRED", reviewReasons: ["COVERAGE_TOTAL_EXCEEDS_EXPECTED"] });
+  });
+
+  it("4 h + 3 h sobre jornada 7 h → cuentan las dos (7 h)", () => {
+    const day = accountDay(16, [], [], [coverage({ noveltyId: "a", baseMinutes: 240, expectedMinutes: 420 }), coverage({ noveltyId: "b", baseMinutes: 180, expectedMinutes: 420 })]);
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 420, computableMinutes: 420 });
+    expect(day.novelty.reviewRequired).toBe(false);
+  });
+
+  it("4 h + 4 h sobre jornada 7 h → revisión", () => {
+    const day = accountDay(16, [], [], [coverage({ noveltyId: "a", baseMinutes: 240, expectedMinutes: 420 }), coverage({ noveltyId: "b", baseMinutes: 240, expectedMinutes: 420 })]);
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 0, computableMinutes: 0 });
+    expect(day.novelty).toMatchObject({ reviewRequired: true, heldMinutes: 480 });
+  });
+
+  it("trabajo 3 h + coberturas compatibles 2 h + 3 h sobre jornada 8 h → computa 8 h", () => {
+    const day = accountDay(16, [base(16, 3)], [], [compatible("a", 120), compatible("b", 180)]);
+    expect(day).toMatchObject({ totalWorkedMinutes: 180, noveltyCoveredMinutes: 300, computableMinutes: 480 });
+    expect(day.novelty.reviewRequired).toBe(false);
+  });
+
+  it("trabajo 4 h + coberturas compatibles 2 h + 3 h sobre jornada 8 h → revisión; computa sólo el trabajo", () => {
+    const day = accountDay(16, [base(16, 4)], [], [compatible("a", 120), compatible("b", 180)]);
+    expect(day).toMatchObject({ totalWorkedMinutes: 240, noveltyCoveredMinutes: 0, computableMinutes: 240 });
+    expect(day.novelty.items.map((item) => [item.noveltyId, item.state, item.reviewReasons])).toEqual([
+      ["a", "REVIEW_REQUIRED", ["COVERAGE_TOTAL_EXCEEDS_EXPECTED"]],
+      ["b", "REVIEW_REQUIRED", ["COVERAGE_TOTAL_EXCEEDS_EXPECTED"]],
+    ]);
+  });
+
+  it("el orden de las novedades no cambia el resultado", () => {
+    const summary = (coverages: AccountingNoveltyCoverage[]) => {
+      const day = accountDay(16, [base(16, 4)], [], coverages);
+      return { computable: day.computableMinutes, held: day.novelty.heldMinutes, states: Object.fromEntries(day.novelty.items.map((item) => [item.noveltyId, item.state])) };
+    };
+    expect(summary([compatible("a", 120), compatible("b", 180)])).toEqual(summary([compatible("b", 180), compatible("a", 120)]));
+    expect(accountDay(16, [], [], [tramite3h(), vacaciones()]).computableMinutes).toBe(accountDay(16, [], [], [vacaciones(), tramite3h()]).computableMinutes);
+  });
+
+  it("una novedad rechazada, pendiente o informativa no participa del límite", () => {
+    for (const other of [
+      tramite3h({ status: "RECHAZADO" }),
+      tramite3h({ status: "PENDIENTE" }),
+      tramite3h({ countsTowardTotal: false }),
+    ]) {
+      const day = accountDay(16, [], [], [vacaciones(), other]);
+      expect(day).toMatchObject({ noveltyCoveredMinutes: 420, computableMinutes: 420 });
+      expect(day.novelty.reviewRequired).toBe(false);
+    }
+  });
+
+  it("confirmar 0 h en una de ellas vuelve a dejar el día válido", () => {
+    const zero = tramite3h({ reviewStatus: "RESOLVED", resolution: "CONFIRMED_ZERO", resolvedBaseMinutes: 0, resolvedAgainstWorkedMinutes: 0 });
+    const day = accountDay(16, [], [], [vacaciones(), zero]);
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 420, computableMinutes: 420 });
+    expect(day.novelty.reviewRequired).toBe(false);
+  });
+
+  it("con jornada desconocida no se inventa un límite (rigen las reglas individuales)", () => {
+    const day = accountDay(16, [], [], [compatible("a", 240, null), compatible("b", 300, null)]);
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 540 });
+    expect(day.novelty.reviewRequired).toBe(false);
+  });
+
+  it("una cobertura sola conserva el comportamiento de su tipo (p. ej. Maternidad cubre un franco con jornada 0)", () => {
+    const day = accountDay(17, [], [], [coverage({ day: 17, outcome: "COVERED", baseMinutes: 480, expectedMinutes: 0 })]);
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 480 });
+  });
+
+  it("si una ya está en revisión por su cuenta, sólo las demás se validan juntas", () => {
+    // Vacaciones incompatible con 2 h reales → revisión propia; quedan dos compatibles 2 h + 3 h con 2 h reales sobre 8 h = 7 h → cuentan.
+    const day = accountDay(16, [base(16, 2)], [], [vacaciones({ expectedMinutes: 480 }), compatible("a", 120), compatible("b", 180)]);
+    expect(Object.fromEntries(day.novelty.items.map((item) => [item.noveltyId, item.state]))).toEqual({ vac: "REVIEW_REQUIRED", a: "COUNTED", b: "COUNTED" });
+    expect(day).toMatchObject({ noveltyCoveredMinutes: 300, computableMinutes: 420 });
+  });
+});

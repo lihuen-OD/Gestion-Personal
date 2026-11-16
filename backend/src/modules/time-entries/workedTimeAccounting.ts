@@ -126,7 +126,10 @@ export type NoveltyCoverageReviewReason =
   // Tipo compatible que suma: trabajo + cobertura supera la jornada esperada.
   | "REAL_WORK_EXCEEDS_EXPECTED"
   // Tipo compatible que suma, con trabajo real y sin jornada esperada para validar.
-  | "REAL_WORK_WITHOUT_EXPECTED";
+  | "REAL_WORK_WITHOUT_EXPECTED"
+  // P5: dos o más coberturas que suman, más el trabajo real del día, superan
+  // la jornada esperada conocida. Se retienen todas las implicadas.
+  | "COVERAGE_TOTAL_EXCEEDS_EXPECTED";
 
 export type NoveltyItemAccounting = {
   noveltyId: string;
@@ -270,14 +273,19 @@ const NOVELTY_APPLIES_OUTCOMES: ReadonlySet<NoveltyCoverageOutcome> = new Set(["
  *     y supera la jornada esperada, o sin jornada esperada para validarlo.
  *   - no suma al total → INFORMATIVE (visible).
  *   - si no → COUNTED: suma sus minutos base y, a liquidación, × multiplicador.
+ * Segunda pasada, agregada (P5, §12.3): si dos o más coberturas quedaron
+ * COUNTED y trabajo real + su suma supera la jornada esperada conocida, todas
+ * pasan a REVIEW_REQUIRED (COVERAGE_TOTAL_EXCEEDS_EXPECTED). No se elige una
+ * por orden ni se trunca; con jornada desconocida rigen las reglas
+ * individuales. Una cobertura sola conserva el comportamiento de su tipo.
  * Nunca trunca ni ajusta minutos en silencio.
  */
 export function accountNoveltyDay(coverages: AccountingNoveltyCoverage[], workedMinutes: number): NoveltyDayAccounting {
   const result = emptyNoveltyDay();
+  const evaluated: Array<{ coverage: AccountingNoveltyCoverage; baseMinutes: number; reviewReasons: NoveltyCoverageReviewReason[]; state: NoveltyCoverageState }> = [];
   for (const coverage of coverages) {
     if (coverage.status === "RECHAZADO") continue;
     const baseMinutes = coverage.resolvedBaseMinutes ?? coverage.baseMinutes;
-    const settlementMinutes = Math.round(baseMinutes * coverage.multiplier);
     const resolvedForThisWork = coverage.reviewStatus === "RESOLVED" && coverage.resolvedAgainstWorkedMinutes === workedMinutes;
     const reviewReasons: NoveltyCoverageReviewReason[] = [];
     if (coverage.reviewStatus === "PENDING") reviewReasons.push("SCHEDULE_UNRESOLVED");
@@ -293,9 +301,28 @@ export function accountNoveltyDay(coverages: AccountingNoveltyCoverage[], worked
         else if (workedMinutes + baseMinutes > coverage.expectedMinutes) reviewReasons.push("REAL_WORK_EXCEEDS_EXPECTED");
       }
     }
-
     const state: NoveltyCoverageState =
       coverage.status !== "APROBADO" ? "PENDING_APPROVAL" : reviewReasons.length ? "REVIEW_REQUIRED" : coverage.countsTowardTotal ? "COUNTED" : "INFORMATIVE";
+    evaluated.push({ coverage, baseMinutes, reviewReasons, state });
+  }
+
+  // P5: validación agregada de las candidatas a COUNTED contra la jornada
+  // esperada conocida. Una jornada desconocida en cualquiera de ellas no
+  // inventa un límite. Independiente del orden de las coberturas.
+  const candidates = evaluated.filter((item) => item.state === "COUNTED" && item.baseMinutes > 0);
+  if (candidates.length > 1 && candidates.every((item) => item.coverage.expectedMinutes !== null)) {
+    const expectedMinutes = Math.min(...candidates.map((item) => item.coverage.expectedMinutes!));
+    const claimedMinutes = workedMinutes + candidates.reduce((sum, item) => sum + item.baseMinutes, 0);
+    if (claimedMinutes > expectedMinutes) {
+      for (const item of candidates) {
+        item.state = "REVIEW_REQUIRED";
+        item.reviewReasons.push("COVERAGE_TOTAL_EXCEEDS_EXPECTED");
+      }
+    }
+  }
+
+  for (const { coverage, baseMinutes, reviewReasons, state } of evaluated) {
+    const settlementMinutes = Math.round(baseMinutes * coverage.multiplier);
     if (state === "COUNTED") {
       result.coveredMinutes += baseMinutes;
       result.settlementMinutes += settlementMinutes;

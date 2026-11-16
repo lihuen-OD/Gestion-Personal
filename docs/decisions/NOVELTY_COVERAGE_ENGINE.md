@@ -276,8 +276,8 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 6 | Grilla frontend: chips de cobertura, revisión manual, cierre mensual | **Implementada y aprobada** (`1068de7`) |
 | 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada y aprobada** (`75b96f0`) |
 | 8 | Carga de Novedades guiada por el Tipo, con vista previa de cobertura (§15) | **Implementada y aprobada** (`ca187d8`) |
-| 9 | Finnegans: Valor 1 desde la cobertura diaria (§16) | **Implementada** (2026-11-16), pendiente de revisión |
-| 10 | QA y cierre | Pendiente |
+| 9 | Finnegans: Valor 1 desde la cobertura diaria (§16) | **Implementada y aprobada** (`0c70f45`) |
+| 10 | QA y cierre | Auditoría integral hecha el 2026-11-16; P5 detectada y corregida (§12.3) |
 
 ### Etapa 1 — qué quedó implementado
 
@@ -295,10 +295,11 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 - **P2 (resuelta el 2026-11-16 por el usuario, §16):** `HOURS` = base sin multiplicador; `DAYS` = días corridos; una novedad con cobertura se divide por mes.
 - **P3 (resuelta en la etapa 2):** varios turnos el mismo día suman sólo si sus horarios no se superponen; si se superponen, la jornada queda para revisión. Ver §7.2.
 - **P4 (deuda documentada):** las alertas consideran feriado una regla FERIADO aunque tenga alcance acotado (`holidayDatesInRange`), mientras el motor de multiplicadores y la jornada esperada de Novedades (§7.3) respetan el alcance. No se cambia en este rediseño.
+- **P5 (resuelta el 2026-11-16 por el usuario, auditoría de la etapa 10):** coberturas de tipos distintos el mismo día que, sumadas con el trabajo real, superan la jornada esperada conocida van a revisión con todas las implicadas retenidas. Antes se sumaban sin tope (Vacaciones 7 h + Trámite 3 h = 10 h computables). Ver §12.2 a §12.4.
 - **Deuda menor (etapa 2):** `holidayWorkAssignment.schemas.ts` acepta horarios fuera de rango (`99:99`). La jornada esperada los trata como desconocidos y no los convierte en minutos; validar el rango en el schema queda como mejora aparte.
 - **Etapa 3 (resuelto, §5.1 y §6):** migración aditiva para `SHIFT_ASSIGNMENTS_OVERLAP`, `OUTSIDE_EMPLOYMENT` y `EMPLOYMENT_HISTORY_UNRESOLVED`; error explícito para la historia faltante; cobertura acotada a la relación laboral.
 - **Etapa 5 (resuelto, §13):** recálculo automático en la transacción de cada evento que cambia una fuente del motor. Deudas que quedan: §13.9.
-- **Otros lectores con rango abierto (fuera del alcance de la etapa 3):** la grilla (`noveltyCoversDay`), el listado por período, la exención de inactividad y falta de ingreso, y el dashboard todavía tratan `toDate` nulo de un tipo con rango como vigente abierto. Hay que alinearlos con la regla de un solo día en la etapa que toque cada uno (grilla: etapa 6). Finnegans ya usa sólo `fromDate`.
+- **Otros lectores con rango abierto (resuelto en la etapa 4, §12.9):** la grilla, el listado por período, la exención de inactividad y falta de ingreso y el dashboard usan el helper único (`toDate` nulo = un día). Finnegans: §16.
 - **Incidente (etapa 3, 2026-11-13): conexión accidental de tests unitarios a Neon, sin escrituras confirmadas.**
   - **Qué pasó:** al pasar las mutaciones de novedades a transacciones, `novelties.service.test.ts` abrió Prisma sin mockear el cliente y usó la `DATABASE_URL` del `backend/.env`. El usuario la confirmó como **NEON** (endpoint pooler de desarrollo, base `neondb`). No se documentan host completo, usuario, contraseña ni parámetros de conexión.
   - **Alcance auditado:** las escrituras de novedades estaban mockeadas. Lo que llegó a Prisma fueron lecturas y locks transaccionales (advisory locks), que fallaron porque esa base no tenía las columnas nuevas. La tabla de cobertura no existía ahí. No hay evidencia de mutaciones de datos.
@@ -359,6 +360,7 @@ Motivos de revisión (`reviewReasons`):
 - `REAL_WORK_ON_INCOMPATIBLE`: tipo `INCOMPATIBLE` con trabajo real un día que la novedad cubre (minutos > 0, o una novedad sin tiempo como Falta sin aviso). No se suman: mientras no se resuelva, gana el trabajo real. Los días sin cobertura de la novedad (franco, fin de semana excluido, sin obligación, feriado, fuera de la relación laboral) no son conflicto.
 - `REAL_WORK_EXCEEDS_EXPECTED`: tipo `COMPATIBLE` que suma, con trabajo + cobertura mayor a la jornada esperada. No se trunca.
 - `REAL_WORK_WITHOUT_EXPECTED`: tipo `COMPATIBLE` que suma, con trabajo real y sin jornada esperada para validarlo.
+- `COVERAGE_TOTAL_EXCEEDS_EXPECTED` (P5): dos o más coberturas que quedarían `COUNTED`, sumadas con el trabajo real del día, superan la jornada esperada conocida. Se retienen todas las implicadas (ver §12.3).
 
 El trabajo real del día es `totalWorkedMinutes` después de excluir lo que no computa por franco, con el criterio de la grilla.
 
@@ -367,6 +369,7 @@ El trabajo real del día es `totalWorkedMinutes` después de excluir lo que no c
 - La cobertura nunca entra a `baseMinutes`, `additiveMinutes` ni `totalWorkedMinutes`, y nunca escribe `TimeEntry`.
 - Un tipo incompatible con trabajo real retiene su cobertura: cuenta sólo el trabajo. Trámite de 4 h con 4 u 8 h reales da 4 u 8 h computables, nunca 8 o 12.
 - Un tipo compatible que excede la jornada (o sin jornada para validarlo) va a revisión, sin sumar.
+- **P5, varias coberturas el mismo día (decisión del usuario, 2026-11-16):** trabajo real + Σ coberturas candidatas a `COUNTED` no puede superar la jornada esperada conocida. `accountNoveltyDay` evalúa primero cada cobertura como siempre y después valida juntas las candidatas: si hay dos o más y la suma excede, todas pasan a `REVIEW_REQUIRED` (`COVERAGE_TOTAL_EXCEEDS_EXPECTED`) y ninguna suma. No se trunca, no se elige una por orden (el resultado no depende del orden) y no cuenta una parte arbitraria. Dentro de la jornada, dos novedades de tipos distintos conviven: no hay matriz de incompatibilidad entre novedades. Rechazadas, pendientes e informativas no participan. Con jornada desconocida en alguna candidata no se inventa un límite: rigen las reglas individuales. Una cobertura sola conserva el comportamiento de su tipo (por ejemplo Maternidad que cubre un franco con jornada 0); trabajo real + una cobertura ya lo validan las reglas individuales. Se calcula al leer, así que corregir la evidencia (confirmar 0 en una, quitar o rechazar una novedad, corregir el trabajo o el turno) resuelve el día sin otro paso. El cierre y Finnegans lo bloquean por el mismo `REVIEW_REQUIRED`.
 - Cada día se cuenta una sola vez por consumidor: la cobertura entra por la misma función pura que el trabajo real.
 
 ### 12.4 Resolución de conflictos con trabajo real
@@ -374,6 +377,7 @@ El trabajo real del día es `totalWorkedMinutes` después de excluir lo que no c
 `POST /novelties/:id/coverage-days/:date/resolution` acepta, además de los días `SCHEDULE_UNRESOLVED`, un día `COVERED` en conflicto con el trabajo real (C1):
 - **Tipo incompatible:** sólo `CONFIRMED_ZERO` ("la novedad no cubre este día"). `SET_BASE_MINUTES` responde `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`.
 - **Tipo compatible:** `CONFIRMED_ZERO`, o `SET_BASE_MINUTES` con trabajo + minutos ≤ jornada esperada si se conoce (`400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`).
+- **P5 (`COVERAGE_TOTAL_EXCEEDS_EXPECTED`):** sólo `CONFIRMED_ZERO` sobre una de las coberturas ("no cubre este día"); `SET_BASE_MINUTES` responde `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. Nunca se acepta un total mayor a la jornada. Es la única salida cuando las dos novedades están aprobadas y son exportables, porque no se pueden rechazar ni eliminar. El endpoint evalúa el día con todas las coberturas de la persona, igual que la grilla.
 - Las alternativas siguen vigentes: corregir el trabajo real por su flujo, o rechazar o eliminar la novedad.
 - **Tipo `NONE` + `INCOMPATIBLE` (Falta sin aviso + fichada real):** el día queda en `REVIEW_REQUIRED` (`REAL_WORK_ON_INCOMPATIBLE`) porque las dos evidencias se contradicen, pero la revisión es **administrativa**: no hay minutos de cobertura retenidos (`heldMinutes = 0`) ni que resolver, y cuenta sólo el trabajo real. La salida es corregir, rechazar o eliminar la novedad, o corregir el trabajo registrado, según lo que realmente ocurrió. El endpoint de resolución no aplica: cualquier resolución (`SET_BASE_MINUTES` o `CONFIRMED_ZERO`) responde `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`, porque la fila no es `COVERED`. La UI (etapas 6/8) no debe ofrecer "indicar horas de cobertura" para un tipo `coverageMode = NONE`. Cubierto por `workedTimeAccounting.novelties.test.ts` y `noveltyCoverage.integration.test.ts`.
 
@@ -418,7 +422,7 @@ Un solo helper, `novelties/novelties.dateRange.ts` (`noveltyCoversDay` y `novelt
 - la exención de inactividad y falta de ingreso (una novedad de un día anterior ya no exime los días siguientes; cambia el comportamiento de esas alertas para datos con `toDate` nulo en tipos con rango);
 - el dashboard (`absenceDays`: una ausencia de un mes anterior ya no se cuenta en todos los meses siguientes).
 
-Finnegans ya usaba sólo `fromDate` y no se tocó.
+Finnegans ya usaba sólo `fromDate` y no se tocó en la etapa 4; desde la etapa 9 una novedad con cobertura se exporta por mes (§16) y `toDate` nulo sigue siendo un día.
 
 ### 12.10 Rendimiento
 
@@ -525,7 +529,7 @@ Transacciones nuevas (timeout 30 s): asignación de turno, régimen (asignación
 - Un cambio de historia laboral no reinterpreta el multiplicador de las horas **ya cargadas** (deuda previa, no introducida acá). La cobertura de novedades sí se recalcula.
 - Cambios de estructura organizacional que no pasan por la historia laboral (p. ej. mover un sector) no disparan recálculo; tampoco reinterpretan horas hoy.
 - Una mutación directa de una novedad no reconstruye el snapshot de un cierre devuelto (§6.3); se rehace en el próximo envío.
-- Grilla frontend, UX de tipos, UX de carga y Finnegans: etapas 6 a 9 (6 y 7 implementadas, ver §9 y §14).
+- Grilla frontend, UX de tipos, UX de carga y Finnegans: etapas 6 a 9, implementadas (§9, §14 a §16).
 
 ## 14. Pantalla de Tipos de Novedad (etapa 7)
 

@@ -162,6 +162,22 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(container.querySelector(".alert-dot.purple")).not.toBeInTheDocument();
   });
 
+  it("P5: Vacaciones 7 h + Trámite 3 h sobre jornada 7 h → las dos en «Revisar» y el total válido, nunca 10 h", () => {
+    const day = dayAccounting(4, { base: 0, sereno: 0, colectivo: 0 });
+    const held = (id: string, code: string, label: string, minutes: number) => ({ noveltyId: id, noveltyTypeId: `type-${id}`, code, label, uiColor: "teal", minutes, settlementMinutes: minutes, state: "REVIEW_REQUIRED" as const, countsTowardTotal: true, reviewRequired: true, reviewReasons: ["COVERAGE_TOTAL_EXCEEDS_EXPECTED" as const] });
+    const row = (id: string, code: string, name: string, minutes: number) => ({ noveltyType: { id: `type-${id}`, code, name, uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": minutes }, settlementMinutesByDay: { "4": minutes }, stateByDay: { "4": "REVIEW_REQUIRED" as const }, totals: { noveltyTypeId: `type-${id}`, coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: minutes } });
+    const grid = timeGridFixture([day], {
+      noveltyCoverageRows: [row("vac", "VAC", "Vacaciones", 420), row("tra", "TB", "Trámite bancario", 180)],
+      noveltiesByDay: { "4": [held("vac", "VAC", "Vacaciones", 420), held("tra", "TB", "Trámite bancario", 180)] },
+    });
+    grid.accounting = periodAccounting([day]);
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
+    expect(rowNamed("Vacaciones")).toHaveTextContent("Revisar");
+    expect(rowNamed("Trámite bancario")).toHaveTextContent("Revisar");
+    expect(lastCell(rowNamed("Vacaciones"))).toHaveTextContent("a revisar");
+    expect(lastCell(rowNamed("Total para liquidación"))).not.toHaveTextContent(/10h|7h|3h/);
+  });
+
   it("es read-only: no expone ningún botón dentro de la grilla", () => {
     const { container } = render(<MonthlyHoursReviewGrid grid={timeGridFixture()} period="2026-08" />);
     expect(container.querySelectorAll("button")).toHaveLength(0);
