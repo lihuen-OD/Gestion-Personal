@@ -249,7 +249,9 @@ describe("POST /api/novelties/with-document: mismo límite que un documento, par
   });
 
   it("el alta sin documento sigue limitada a 1 MiB", async () => {
-    expect(await rawRequest({ path: "/novelties", authorization: userAuthorization, body: noveltyBody(2 * MIB) })).toMatchObject({ status: 413, code: "PAYLOAD_TOO_LARGE" });
+    // Mismo patrón que los demás 413: se declara el tamaño sin enviar el cuerpo
+    // (el servidor responde y cierra antes de leerlo; enviarlo vuelve el test intermitente).
+    expect(await rawRequest({ path: "/novelties", authorization: userAuthorization, declaredLength: DEFAULT_JSON_BODY_LIMIT_BYTES + 1 })).toMatchObject({ status: 413, code: "PAYLOAD_TOO_LARGE" });
     expect(noveltiesService.create).not.toHaveBeenCalled();
   });
 });

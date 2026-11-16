@@ -99,10 +99,19 @@ Columnas de exportación (CSV/XLSX, sin cambios desde la Etapa 15L.3A):
 | Legajo | Texto. Conserva ceros adelante. |
 | Novedad | Código Finnegans, no nombre interno. |
 | Centro de costo | Opcional. Si queda vacío, Finnegans toma el del legajo. |
-| Valor 1 | Depende exclusivamente de `NoveltyType.finnegansValueUnit` (horas/días/unidad) — sin ningún fallback entre cantidades. |
+| Valor 1 | Depende de `NoveltyType.finnegansValueUnit` (horas/días/unidad) — sin ningún fallback entre cantidades. En un tipo con cobertura horaria, las horas salen de la cobertura diaria (base, sin multiplicador) y no de `quantityHours`; ver abajo. |
 | Fecha Aplicación | Fecha de aplicación de la transacción (`fromDate`). |
 | Fecha desde | Vacía salvo que el tipo exija vigencia (`finnegansRequiresValidity`). |
 | Fecha hasta | Vacía salvo que el tipo exija vigencia; si falta, la fila queda bloqueada en vez de exportarse con la celda vacía. |
+
+**Tipos con cobertura horaria** (Etapa 9 del motor de cobertura,
+`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §16): la novedad se exporta por
+mes, con los días de su rango que caen en cada mes. En horas, Valor 1 es la
+base cubierta (lo que la novedad representa, con resoluciones manuales),
+**sin** el multiplicador de domingos/feriados: el multiplicador lo aplica
+Finnegans con su concepto. En días, los días corridos de la porción del mes.
+Un día de cobertura en revisión bloquea la exportación definitiva. Los tipos
+sin cobertura siguen igual que antes.
 
 **`quantityDays`/`quantityHours`** (Etapa 15L.5,
 `docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md`): el backend es la

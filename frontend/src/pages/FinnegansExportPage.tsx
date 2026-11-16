@@ -80,6 +80,8 @@ const rowStatusBadge: Record<FinnegansRowStatus, { tone: "success" | "warning"; 
   LISTO: { tone: "success", label: "Listo" },
   FALTA_CANTIDAD: { tone: "warning", label: "Falta cantidad" },
   FALTA_CONFIGURACION: { tone: "warning", label: "Falta configuración" },
+  // Etapa 9 de cobertura: días de la novedad en revisión en la grilla de horas.
+  REVISION_PENDIENTE: { tone: "warning", label: "Revisión pendiente" },
   CIERRE_PENDIENTE: { tone: "warning", label: "Cierre pendiente" },
 };
 
@@ -268,6 +270,9 @@ export function FinnegansExportPage() {
     } catch (error) {
       if (error instanceof ApiError && error.code === "FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED") {
         setExportError("El período tiene cierres pendientes para personas incluidas en la exportación.");
+      } else if (error instanceof ApiError && error.code === "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING") {
+        // El backend arma el mensaje con la cantidad de días.
+        setExportError(error.message);
       } else if (error instanceof ApiError && error.code === "FINNEGANS_EXPORT_NOT_READY") {
         setExportError("Hay novedades que necesitan completar su configuración antes de exportar.");
       } else if (error instanceof ApiError && error.code === "FINNEGANS_EXPORT_REASON_REQUIRED") {

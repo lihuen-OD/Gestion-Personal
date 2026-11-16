@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
+import { periodNoveltyCoverageDaysForExport } from "../novelties/noveltyCoverageAccounting";
 
 export type FinnegansExportNovelty = Awaited<ReturnType<typeof finnegansExportRepository.findExportableNovelties>>[number];
 
@@ -35,16 +36,26 @@ function periodRange(period: string) {
 // para mostrar la novedad en pantalla (`novelties.dateRange.ts`, módulo
 // distinto, no tocado) — sólo deja de decidir en qué período Finnegans se
 // exporta.
+//
+// Etapa 9 de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §16): una
+// novedad CON cobertura (coverageMode distinto de NONE) se exporta por mes:
+// además de las que empiezan en el período, entran las que empezaron antes y
+// siguen dentro de él (decisión del usuario, 2026-11-16). Las novedades sin
+// cobertura conservan la regla de fromDate.
+//
+// §16.2: que el tipo exporte, esté activo y tenga cobertura se decide en el
+// servicio con la configuración congelada en el cierre (o la vigente, si el
+// cierre no la tiene), así que acá sólo se filtra por novedad: APROBADA y con
+// fecha desde en el mes, o un rango que empezó antes y llega al mes.
 function buildWhere(period: string, employeeId?: string): Prisma.NoveltyWhereInput {
   const range = periodRange(period);
   return {
     ...(employeeId ? { employeeId } : {}),
     status: "APROBADO",
-    fromDate: { gte: range.from, lte: range.to },
-    noveltyType: {
-      status: "ACTIVO",
-      exportsToFinnegans: true,
-    },
+    OR: [
+      { fromDate: { gte: range.from, lte: range.to } },
+      { fromDate: { lt: range.from }, toDate: { gte: range.from } },
+    ],
   };
 }
 
@@ -67,11 +78,17 @@ export const finnegansExportRepository = {
   // exportación Finnegans al exportador de horas; la política de qué estado
   // cuenta como "aprobado" sí se comparte vía
   // `shared/monthlyClosure/closureLock.ts`.
+  /** Estado contable diario de la cobertura del período, por novedad (en lote). */
+  findCoverageDaysForExport(period: string, employeeIds: string[]) {
+    return periodNoveltyCoverageDaysForExport(period, employeeIds);
+  },
+
   findClosuresForExport(employeeIds: string[], period: string) {
     if (!employeeIds.length) return Promise.resolve([]);
     return prisma.monthlyTimeClosure.findMany({
       where: { employeeId: { in: employeeIds }, period },
-      select: { employeeId: true, status: true },
+      // §16.2: el snapshot trae la configuración de Finnegans congelada.
+      select: { employeeId: true, status: true, snapshot: true },
     });
   },
 };

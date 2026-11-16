@@ -10,6 +10,10 @@ export type FinnegansReadinessReasonCode =
   | "MISSING_HOURS_QUANTITY"
   | "MISSING_DAYS_QUANTITY"
   | "MISSING_VALIDITY_TO_DATE"
+  // Etapa 9 de cobertura (NOVELTY_COVERAGE_ENGINE.md §16): la cantidad sale
+  // de la cobertura diaria; un día en revisión nunca se exporta como definitivo.
+  | "COVERAGE_REVIEW_PENDING"
+  | "COVERAGE_MISSING"
   | "CLOSURE_NOT_APPROVED";
 
 // Estado visible en la tabla de preview (Etapa 15L.3A §30). "Falta
@@ -17,7 +21,7 @@ export type FinnegansReadinessReasonCode =
 // Valor 1, vigencia incompleta); "Falta cantidad" es específico de
 // quantityHours/quantityDays; "Cierre pendiente" es el único estado que
 // depende del empleado, no del tipo de novedad.
-export type FinnegansRowStatus = "LISTO" | "FALTA_CANTIDAD" | "FALTA_CONFIGURACION" | "CIERRE_PENDIENTE";
+export type FinnegansRowStatus = "LISTO" | "FALTA_CANTIDAD" | "FALTA_CONFIGURACION" | "REVISION_PENDIENTE" | "CIERRE_PENDIENTE";
 
 export interface NoveltyReadinessInput {
   quantityHours: { toString(): string } | null;
@@ -27,6 +31,13 @@ export interface NoveltyReadinessInput {
   finnegansRequiresValidity: boolean;
   hasFinnegansCode: boolean;
   closureApproved: boolean;
+  /**
+   * Tipos con cobertura: la cantidad sale de la cobertura diaria (no de
+   * quantityHours/quantityDays); `missing`: sin cobertura calculada en el período.
+   */
+  coverage?: { missing: boolean };
+  /** Días de la novedad en revisión en el período (cualquier tipo, p. ej. Falta sin aviso con trabajo real). */
+  reviewDays?: number;
 }
 
 export interface NoveltyReadiness {
@@ -48,11 +59,15 @@ export function evaluateNoveltyReadiness(input: NoveltyReadinessInput): NoveltyR
   const unit = input.finnegansValueUnit;
   if (!unit) {
     reasonCodes.push("MISSING_VALUE_UNIT");
+  } else if (input.coverage) {
+    if (input.coverage.missing) reasonCodes.push("COVERAGE_MISSING");
   } else if (unit === "HOURS" && input.quantityHours == null) {
     reasonCodes.push("MISSING_HOURS_QUANTITY");
   } else if (unit === "DAYS" && input.quantityDays == null) {
     reasonCodes.push("MISSING_DAYS_QUANTITY");
   }
+
+  if ((input.reviewDays ?? 0) > 0) reasonCodes.push("COVERAGE_REVIEW_PENDING");
 
   if (input.finnegansRequiresValidity && !input.toDate) {
     reasonCodes.push("MISSING_VALIDITY_TO_DATE");
@@ -67,7 +82,8 @@ function resolveRowStatus(reasonCodes: FinnegansReadinessReasonCode[]): Finnegan
   if (reasonCodes.includes("MISSING_LINK") || reasonCodes.includes("MISSING_VALUE_UNIT") || reasonCodes.includes("MISSING_VALIDITY_TO_DATE")) {
     return "FALTA_CONFIGURACION";
   }
-  if (reasonCodes.includes("MISSING_HOURS_QUANTITY") || reasonCodes.includes("MISSING_DAYS_QUANTITY")) {
+  if (reasonCodes.includes("COVERAGE_REVIEW_PENDING")) return "REVISION_PENDIENTE";
+  if (reasonCodes.includes("MISSING_HOURS_QUANTITY") || reasonCodes.includes("MISSING_DAYS_QUANTITY") || reasonCodes.includes("COVERAGE_MISSING")) {
     return "FALTA_CANTIDAD";
   }
   if (reasonCodes.includes("CLOSURE_NOT_APPROVED")) return "CIERRE_PENDIENTE";
@@ -88,6 +104,8 @@ const REASON_ORDER: FinnegansReadinessReasonCode[] = [
   "MISSING_HOURS_QUANTITY",
   "MISSING_DAYS_QUANTITY",
   "MISSING_VALIDITY_TO_DATE",
+  "COVERAGE_REVIEW_PENDING",
+  "COVERAGE_MISSING",
   "CLOSURE_NOT_APPROVED",
 ];
 
@@ -101,13 +119,16 @@ const REASON_LABELS: Record<FinnegansReadinessReasonCode, (count: number) => str
   MISSING_HOURS_QUANTITY: (count) => pluralize(count, "novedad sin cantidad de horas", "novedades sin cantidad de horas"),
   MISSING_DAYS_QUANTITY: (count) => pluralize(count, "novedad sin cantidad de días", "novedades sin cantidad de días"),
   MISSING_VALIDITY_TO_DATE: (count) => pluralize(count, "novedad sin fecha hasta (vigencia requerida)", "novedades sin fecha hasta (vigencia requerida)"),
+  // Cuenta días (no novedades): es lo que hay que resolver en la grilla.
+  COVERAGE_REVIEW_PENDING: (count) => pluralize(count, "día de novedades pendiente de revisión", "días de novedades pendientes de revisión"),
+  COVERAGE_MISSING: (count) => pluralize(count, "novedad sin cobertura calculada en el período", "novedades sin cobertura calculada en el período"),
   CLOSURE_NOT_APPROVED: (count) => pluralize(count, "persona con cierre mensual pendiente", "personas con cierre mensual pendiente"),
 };
 
 // Etapa 15L.3A §16/§17/§29: agrega los blockers de todas las filas en un
 // resumen legible por RRHH, sin exponer ningún id técnico. CLOSURE_NOT_APPROVED
 // cuenta personas distintas (no filas) — el resto cuenta novedades (filas).
-export function buildReadinessSummary(rows: readonly { employeeId: string; readiness: NoveltyReadiness }[]): FinnegansReadinessSummary {
+export function buildReadinessSummary(rows: readonly { employeeId: string; readiness: NoveltyReadiness; reviewDays?: number }[]): FinnegansReadinessSummary {
   const totalRows = rows.length;
   const readyRows = rows.filter((row) => row.readiness.ready).length;
   const blockedRows = totalRows - readyRows;
@@ -121,7 +142,8 @@ export function buildReadinessSummary(rows: readonly { employeeId: string; readi
         closureEmployeeIds.add(row.employeeId);
         continue;
       }
-      rowReasonCounts.set(code, (rowReasonCounts.get(code) ?? 0) + 1);
+      const increment = code === "COVERAGE_REVIEW_PENDING" ? row.reviewDays ?? 1 : 1;
+      rowReasonCounts.set(code, (rowReasonCounts.get(code) ?? 0) + increment);
     }
   }
 

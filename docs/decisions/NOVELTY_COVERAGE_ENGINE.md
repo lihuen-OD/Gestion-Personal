@@ -1,6 +1,6 @@
 # Motor de cobertura horaria de Novedades
 
-**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 8** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos; grilla; pantalla de Tipos de Novedad; carga de Novedades con vista previa, ver §9, §12, §13, §14 y §15). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
+**Estado:** decisión aprobada el 2026-11-13; implementación por etapas en `feat/novelties-coverage-engine`. **Implementado hasta la Etapa 9** (modelo y configuración; jornada esperada; motor y persistencia de la cobertura diaria; contabilidad; recálculo automático por eventos; grilla; pantalla de Tipos de Novedad; carga de Novedades con vista previa; exportación a Finnegans, ver §9 y §12 a §16). Desde la etapa 4, la cobertura APROBADA que suma entra al total computable y a la liquidación. **El total trabajado sigue siendo sólo trabajo real**: el comportamiento productivo sigue siendo el de 15G.1 (justificación administrativa + bloqueo de nueva carga).
 
 **Reemplaza parcialmente** la decisión "una novedad es sólo una justificación administrativa y nunca genera ni modifica horas" ([`NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`](NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md)). Ver §11.
 
@@ -275,8 +275,8 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 | 5 | Recálculo automático por eventos: relación e historia laboral, turnos, plantillas, regímenes, francos, convocatorias, reglas y configuración del tipo (§13) | **Implementada y aprobada** |
 | 6 | Grilla frontend: chips de cobertura, revisión manual, cierre mensual | **Implementada y aprobada** (`1068de7`) |
 | 7 | Pantalla de alta y edición de Tipos de Novedad con preguntas de negocio (§14) | **Implementada y aprobada** (`75b96f0`) |
-| 8 | Carga de Novedades guiada por el Tipo, con vista previa de cobertura (§15) | **Implementada** (2026-11-16), pendiente de revisión |
-| 9 | Finnegans (`value1` derivado de la cobertura) | Pendiente |
+| 8 | Carga de Novedades guiada por el Tipo, con vista previa de cobertura (§15) | **Implementada y aprobada** (`ca187d8`) |
+| 9 | Finnegans: Valor 1 desde la cobertura diaria (§16) | **Implementada** (2026-11-16), pendiente de revisión |
 | 10 | QA y cierre | Pendiente |
 
 ### Etapa 1 — qué quedó implementado
@@ -292,7 +292,7 @@ Implementación: `backend/src/modules/shifts/expectedWorkday.ts`. Núcleo puro `
 ## 10. Pendientes
 
 - **P1 (abierta):** Maternidad en un feriado lunes a viernes: no cuenta / cuenta igual / sólo si estaba convocada. No bloquea el motor; impide configurar el tipo definitivo.
-- **P2:** Finnegans para tipos con cobertura: `HOURS` sin multiplicador (propuesto); Vacaciones en `DAYS`: días corridos (actual) o días cubiertos. Antes de la etapa 9.
+- **P2 (resuelta el 2026-11-16 por el usuario, §16):** `HOURS` = base sin multiplicador; `DAYS` = días corridos; una novedad con cobertura se divide por mes.
 - **P3 (resuelta en la etapa 2):** varios turnos el mismo día suman sólo si sus horarios no se superponen; si se superponen, la jornada queda para revisión. Ver §7.2.
 - **P4 (deuda documentada):** las alertas consideran feriado una regla FERIADO aunque tenga alcance acotado (`holidayDatesInRange`), mientras el motor de multiplicadores y la jornada esperada de Novedades (§7.3) respetan el alcance. No se cambia en este rediseño.
 - **Deuda menor (etapa 2):** `holidayWorkAssignment.schemas.ts` acepta horarios fuera de rango (`99:99`). La jornada esperada los trata como desconocidos y no los convierte en minutos; validar el rango en el schema queda como mejora aparte.
@@ -587,3 +587,48 @@ Deudas: la lista de "Aplica sobre hora" sigue atada a `allowsHours` (comportamie
 - `POST /novelties/with-document` recibe la novedad y el documento: valida todo lo del alta, la categoría documental de novedades y su permiso de subida; sube una copia por legajo; crea en una transacción novedades, cobertura, `StorageFile` y `EmployeeDocument`; si algo falla, borra lo subido. Es atómico para la base; para el storage externo, la garantía es la compensación (un objeto huérfano posible, sin filas, registrado como crítico), nunca una novedad sin documento.
 - Carga para varias personas: no había una regla previa (el alta anterior descartaba el archivo). Cada legajo recibe su propia copia, porque el documento, su carpeta y su visibilidad son del legajo; compartir un `StorageFile` entre legajos mezclaría carpetas y permisos. Como es una subida síncrona por persona, **con documento el alta admite hasta 25 personas** (decisión de negocio, 2026-11-16; constante `MAX_EMPLOYEES_WITH_DOCUMENT` en `noveltyDocuments.ts`, reflejada en `frontend/src/utils/noveltyLoad.ts`). Se valida antes de cualquier lectura o subida (`400 NOVELTY_DOCUMENT_TOO_MANY_EMPLOYEES`); sin documento sigue el máximo general de 250.
 - El frontend usa un único pedido cuando hay archivo: si falla, no quedó nada creado y reintentar no duplica.
+
+## 16. Exportación a Finnegans (etapa 9)
+
+**Auditoría (antes de cambiar):** `finnegans-export` exportaba una fila por novedad APROBADA de un tipo ACTIVO con `exportsToFinnegans`, en el mes de `fromDate` (15L.3B.1). Valor 1 dependía sólo de `finnegansValueUnit`: `HOURS` → `quantityHours` (dato manual, sólo con `allowsHours`), `DAYS` → `quantityDays` (días corridos del rango completo), `UNIT` → 1. No leía `TimeEntry`, cobertura ni snapshots; exigía el cierre mensual APROBADO de cada legajo incluido y deja un lote versionado e idempotente (15L.4). Con el motor de cobertura, un tipo "según jornada" o "cantidad fija" no tiene `quantityHours`, así que en horas quedaba sin valor o con un dato informativo. "Aplica sobre hora" (`targetHourConceptId`) no participa de la exportación: es un dato de la novedad que muestran la bandeja y la lista, nada más.
+
+**Decisiones del usuario (2026-11-16, cierra P2):**
+
+| Tema | Decisión |
+|---|---|
+| Valor 1 en horas | Base efectiva, **sin multiplicador**: el multiplicador vive en la liquidación interna y en el concepto de Finnegans, nunca se manda dos veces. Domingo ×2 de 8 h → 8 |
+| Valor 1 en días | Días corridos, como antes |
+| Rango que cruza de mes | Se divide: cada mes exporta los días de su porción, con su propio cierre |
+
+**Regla nueva** (`finnegansExport.rows.ts::buildFinnegansNoveltyExportRows`, única para preview y exportación definitiva):
+
+- Tipos **sin cobertura** (`NONE`, incluidos los del backfill de la etapa 1 con horas informativas): contrato anterior sin cambios.
+- Tipos **con cobertura**: una fila por novedad y mes; candidata en cada mes que alcanza su rango (`toDate` nulo = un día). Los estados diarios salen de `periodNoveltyCoverageDaysForExport`: la misma contabilidad que la grilla y el cierre (`accountEmployeePeriods`, con el trabajo real del día), en lote (4–5 consultas por período, nunca por día, novedad ni legajo).
+  - `HOURS`: suma de la base efectiva de los días COUNTED o INFORMATIVE del mes (la informativa, como Llegada tarde, conserva su duración, que es lo que exportaba `quantityHours`). Sin horas en el mes → sin fila.
+  - `DAYS`: días corridos de la porción del mes. `UNIT`: 1, sólo en el mes de inicio.
+  - `Fecha Aplicación` y la vigencia (si el tipo la exige) son las de la porción del mes.
+  - Un día REVIEW_REQUIRED deja la fila en "Revisión pendiente" y la exportación definitiva responde `409 FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING`; sin cobertura calculada, la fila queda bloqueada (nunca se inventa una cantidad).
+- Fuente y reproducibilidad: datos vivos, como antes, pero la exportación definitiva exige el cierre APROBADO de cada legajo del mes, y la cobertura de un período protegido no se recalcula (§13.5): misma entrada, mismo resultado. Una corrección de RRHH sobre un período cerrado se vuelve a exportar como una versión nueva (15L.4). No se lee el snapshot del cierre porque no guarda la cobertura por novedad.
+- Duplicados: una fila por novedad y mes; el lote sigue siendo idempotente por `idempotencyKey` y el diff usa `noveltyId`.
+
+**Lo que sigue dependiendo del tipo vigente:** código, unidad de Valor 1, vigencia y si el tipo tiene cobertura (igual que antes de esta etapa). Una versión ya generada no cambia (§16.1) y un período con cierre congela su configuración (§16.2); sólo los cierres anteriores a §16.2 siguen usando el tipo vigente.
+
+**`allowsHours`/`quantityHours` después de esta etapa:** Finnegans ya no lee `quantityHours` en tipos con cobertura. `allowsHours` sigue siendo necesario para los tipos sin cobertura (decide si se carga `quantityHours`, que es su único valor en horas, o si se calcula `quantityDays`) y para el campo heredado del formulario. `Novelty.valor1` del frontend (calculado con `allowsHours`) no lo muestra ninguna pantalla. Retirarlos exige decidir antes cómo se exportan en horas los tipos sin cobertura.
+
+### 16.1 Reproducibilidad de una versión
+
+**Campos que la exportación lee al construir las filas:** del tipo, `finnegansCode` (Novedad), `finnegansValueUnit` (Valor 1), `finnegansRequiresValidity` (Fecha desde/hasta y bloqueo por vigencia), `coverageMode` (cobertura o contrato anterior), `name` (detalle), `exportsToFinnegans` y `status` (selección); del legajo, `legajoFinnegans`/`legajo`. "Aplica sobre hora" no participa.
+
+**Qué ya quedaba congelado (y se reutiliza, sin duplicar):** cada exportación definitiva guarda un `FinnegansExportBatch` con su hash y, en `FinnegansExportBatchItem`, las celdas finales de cada fila (legajo, nombre, código, detalle, centro de costo, Valor 1, fechas). El reintento con la misma `idempotencyKey` y el detalle del historial (`GET /history/:batchId`) se reconstruyen sólo desde esas filas, nunca desde el tipo ni la cobertura. Por eso una versión N es inmutable: cambiar después nombre, código, unidad, vigencia o configuración de cobertura del tipo no la altera (probado en `finnegansExport.service.test.ts` y en la integración con PostgreSQL: cierre aprobado → exportación → cambio de código, unidad y nombre → mismo resultado en reintento e historial, una sola versión). El snapshot del cierre (V2) guarda código y nombre internos de los tipos, no su configuración de Finnegans; la cobertura diaria guarda la configuración de cobertura, tampoco la de Finnegans.
+
+**Exportaciones nuevas:** resuelto en §16.2 (decisión del usuario, 2026-11-16): la configuración de Finnegans se congela en el snapshot del cierre.
+
+### 16.2 Configuración de Finnegans congelada en el cierre
+
+**Decisión (usuario, 2026-11-16):** la configuración de Finnegans de un período queda congelada al generar el snapshot del cierre; una exportación nueva de ese período no depende de cambios posteriores del tipo. Sin tabla nueva, sin migración y sin historial general de `NoveltyType`.
+
+**Snapshot:** `MonthlyTimeClosure.snapshot.finnegans = { model: "FINNEGANS_CONFIG_V1", types[] }` (`workforce-management/closureSnapshot.ts`). Una entrada por tipo de las novedades no rechazadas del legajo que tocan el período (empiezan en el mes o lo alcanzan por rango), sólo con lo que consume la exportación: `noveltyTypeId`, `name` (detalle), `status` y `exportsToFinnegans` (selección), `finnegansCode` (Novedad), `finnegansValueUnit` (Valor 1), `finnegansRequiresValidity` (Fecha desde/hasta) y `coverageMode` (cobertura o contrato anterior). Una consulta más al construir los snapshots del período. Se arma al enviar el cierre (un cierre devuelto y vuelto a enviar congela de nuevo). Cuando un evento reconstruye el snapshot (concepto horario, regla, franco, cobertura), se conserva la sección congelada tal cual; a un snapshot anterior sin ella no se le agrega una retroactiva.
+
+**Fuente al exportar (preview y definitiva, la misma función `withPeriodFinnegansConfig`):** para cada novedad, la configuración congelada en el cierre de su legajo y período; si el cierre no existe, no tiene la sección (snapshot anterior a §16.2) o no incluye ese tipo (p. ej. una corrección posterior de RRHH), el tipo vigente, que es el comportamiento anterior. La selección del repositorio ya no filtra por la configuración del tipo: si exporta, si está activo y si un rango del mes anterior entra (sólo con cobertura) se decide con esa configuración efectiva. Como la vista previa usa la misma fuente, un cambio del tipo vigente no aparece como "cambio desde la última exportación" de un período congelado.
+
+**Ejemplo probado (integración PostgreSQL):** junio con TBF en horas, cierre aprobado; el tipo pasa a NUEVO en días; la primera exportación de junio sale TBF, Valor 1 = 4; el cierre de julio congela NUEVO en días y julio sale NUEVO, Valor 1 = 1; sin la sección congelada, junio vuelve a leer el tipo vigente y la versión 1 ya generada no cambia.

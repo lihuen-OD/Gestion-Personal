@@ -88,6 +88,52 @@ export async function periodNoveltyCoveredMinutes(
   return [...accounting.values()].reduce((sum, item) => sum + item.noveltyCoveredMinutes, 0);
 }
 
+export type NoveltyExportCoverageDay = { dateKey: string; state: NoveltyItemAccounting["state"]; baseMinutes: number };
+
+/**
+ * Etapa 9 (NOVELTY_COVERAGE_ENGINE.md §16): estado contable de cada día de
+ * cobertura del período, por novedad, para la exportación a Finnegans. Misma
+ * contabilidad que la grilla y el cierre (trabajo real del día incluido, así
+ * que una incompatibilidad o un exceso quedan en REVIEW_REQUIRED). En lote:
+ * 1 consulta si no hay cobertura, 4–5 si hay; nunca por día ni por novedad.
+ * `baseMinutes` es la base efectiva (resolución manual incluida), sin
+ * multiplicador.
+ */
+export async function periodNoveltyCoverageDaysForExport(
+  period: string,
+  employeeIds: string[],
+  db: Pick<PrismaTransactionClient, "noveltyDayCoverage" | "timeEntry" | "hourConceptBreakdown" | "employeeDayOff" | "workShift"> = prisma,
+): Promise<Map<string, NoveltyExportCoverageDay[]>> {
+  const result = new Map<string, NoveltyExportCoverageDay[]>();
+  const { coverages } = await loadNoveltyCoverageForAccounting({ period, employeeIds }, db);
+  if (!coverages.length) return result;
+  const coveredEmployeeIds = [...new Set(coverages.map((coverage) => coverage.employeeId))];
+  const [year, month] = period.split("-").map(Number);
+  const start = new Date(Date.UTC(year!, month! - 1, 1));
+  const end = new Date(Date.UTC(year!, month!, 1));
+  const [entries, breakdowns, dayOffs] = await Promise.all([
+    db.timeEntry.findMany({
+      where: { employeeId: { in: coveredEmployeeIds }, period, status: { in: ["APROBADO", "EN_REVISION"] }, hourConcept: { systemRole: "NORMAL_BASE" } },
+      select: accountingBaseEntrySelect,
+    }),
+    db.hourConceptBreakdown.findMany({ where: { employeeId: { in: coveredEmployeeIds }, period, status: countedBreakdownStatusWhere }, select: accountingBreakdownSelect }),
+    loadDayOffAccounting({ employeeIds: coveredEmployeeIds, from: start, to: end }, db),
+  ]);
+  const accounting = accountEmployeePeriods(entries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverages);
+  for (const periodAccounting of accounting.values()) {
+    for (const [day, dayAccounting] of Object.entries(periodAccounting.days)) {
+      const dateKey = `${period}-${day.padStart(2, "0")}`;
+      for (const item of dayAccounting.novelty.items) {
+        const days = result.get(item.noveltyId) ?? [];
+        days.push({ dateKey, state: item.state, baseMinutes: item.baseMinutes });
+        result.set(item.noveltyId, days);
+      }
+    }
+  }
+  for (const days of result.values()) days.sort((left, right) => left.dateKey.localeCompare(right.dateKey));
+  return result;
+}
+
 // ── Vistas para la grilla (etapa 6 las muestra; acá sólo se arman) ─────────
 
 export type NoveltyDayItemView = {

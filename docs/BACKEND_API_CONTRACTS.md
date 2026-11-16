@@ -1797,8 +1797,18 @@ lastExport              FinnegansExportBatchSummary & { sameAsCurrent: boolean }
 ```
 
 Cada fila trae, además de las columnas de abajo, un campo `estado`
-(`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`CIERRE_PENDIENTE`) — sólo
+(`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`REVISION_PENDIENTE`/`CIERRE_PENDIENTE`) — sólo
 para la UI de preview, nunca se exporta en el CSV/XLSX.
+
+**Etapa 9 de cobertura** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §16):
+
+- Novedad de un tipo **con cobertura** (`coverageMode` distinto de `NONE`): una fila por novedad y **mes**. Entra en cada mes que alcanza su rango (no sólo en el de `fromDate`); `Fecha Aplicación` (y la vigencia, si el tipo la exige) es la porción del mes. Valor 1:
+  - `HOURS`: suma de la base efectiva (resoluciones manuales incluidas) de sus días del mes que cuentan o son informativos, **sin multiplicador**. Nunca `quantityHours`. Sin horas en el mes → sin fila.
+  - `DAYS`: días corridos de la porción del mes.
+  - `UNIT`: `1`, sólo en el mes de `fromDate`.
+  - Un día en revisión deja la fila en `REVISION_PENDIENTE` (sin valor); sin cobertura calculada, `FALTA_CANTIDAD`.
+- Novedad de un tipo **sin cobertura**: sin cambios (15L.3A/15L.3B.1/15L.5).
+- **Configuración del período (§16.2):** preview y exportación definitiva usan, por novedad, la configuración de Finnegans congelada en el snapshot del cierre del legajo (código, unidad, vigencia, nombre, si exporta, si está activo, si tiene cobertura). Si el cierre no existe, es anterior a esa congelación o no incluye el tipo, usan el tipo vigente. Un cambio posterior del tipo no altera el período ni aparece como "cambio desde la última exportación".
 
 ### Finnegans novedades — exportación definitiva (Etapa 15L.4)
 
@@ -1821,7 +1831,10 @@ Reemplaza al GET sin `preview` y a `GET .../novelties.csv` de 15L.3A
 }
 ```
 
-Revalida todo desde cero: exige que el cierre mensual de cada empleado
+Revalida todo desde cero: si hay días de cobertura en revisión responde
+`409 FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING` ("No se puede generar la
+exportación porque hay N días de novedades pendientes de revisión.", con
+precedencia sobre los demás); exige que el cierre mensual de cada empleado
 incluido esté `APROBADO` (si no, `409 FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED`),
 que cada fila esté completamente lista (si no, `409 FINNEGANS_EXPORT_NOT_READY`
 — con precedencia sobre el de cierre si ambos aplican), y que venga motivo
@@ -2045,7 +2058,7 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. |
+| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. Etapa 9 de cobertura (§16.2): el snapshot agrega `finnegans = { model: "FINNEGANS_CONFIG_V1", types[] }` con la configuración de Finnegans de los tipos con novedades del legajo en el período (`noveltyTypeId`, `name`, `status`, `exportsToFinnegans`, `finnegansCode`, `finnegansValueUnit`, `finnegansRequiresValidity`, `coverageMode`); una reconstrucción del snapshot la conserva y nunca la agrega a un snapshot anterior. |
 | POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |

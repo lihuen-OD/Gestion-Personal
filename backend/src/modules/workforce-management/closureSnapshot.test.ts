@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildClosureSnapshots, findClosuresForHourConcept, rebuildClosureSnapshots } from "./closureSnapshot";
+import { buildClosureSnapshots, findClosuresForHourConcept, frozenFinnegansConfigOf, rebuildClosureSnapshots } from "./closureSnapshot";
 
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §9/§14: el snapshot de cierre
 // es lo único que persiste la lectura de un concepto; si RRHH corrige o
@@ -11,6 +11,7 @@ function db(overrides: { closures?: unknown[]; base?: unknown[]; breakdowns?: un
     hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue(overrides.breakdowns ?? []) },
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
     noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
+    novelty: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -137,5 +138,46 @@ describe("buildClosureSnapshots — francos (docs/decisions/EMPLOYEE_DAY_OFF.md 
     expect(snapshot.accounting.totalWorkedMinutes).toBe(480);
     expect(snapshot.accounting.dayOffUncountedMinutes).toBe(480);
     expect(snapshot.dayOffs).toEqual(["2026-11-05"]);
+  });
+});
+
+// §16.2 (NOVELTY_COVERAGE_ENGINE.md): la configuración de Finnegans se congela
+// al generar el snapshot y una reconstrucción posterior no la vuelve a leer.
+describe("snapshot del cierre — configuración de Finnegans congelada", () => {
+  const tipoTB = { id: "type-tb", name: "Trámite bancario", status: "ACTIVO", exportsToFinnegans: true, finnegansCode: "TB", finnegansValueUnit: "HOURS", finnegansRequiresValidity: false, coverageMode: "FIXED_MINUTES", finnegansName: "no se copia", description: "no se copia" };
+  const recalc = { reason: "SPECIAL_HOUR_RECONCILIATION" } as const;
+
+  it("congela sólo los campos de Finnegans de los tipos con novedades del legajo en el período, en 1 consulta", async () => {
+    const client = db();
+    client.novelty.findMany.mockResolvedValue([{ employeeId: "emp-1", noveltyType: tipoTB }, { employeeId: "emp-1", noveltyType: tipoTB }]);
+
+    const snapshots = await buildClosureSnapshots(client as never, ["emp-1", "emp-2"], "2026-11");
+
+    expect(client.novelty.findMany).toHaveBeenCalledTimes(1);
+    expect(client.novelty.findMany.mock.calls[0]![0].where).toMatchObject({ employeeId: { in: ["emp-1", "emp-2"] }, status: { not: "RECHAZADO" } });
+    expect(snapshots.get("emp-1")).toMatchObject({ finnegans: { model: "FINNEGANS_CONFIG_V1", types: [{ noveltyTypeId: "type-tb", name: "Trámite bancario", status: "ACTIVO", exportsToFinnegans: true, finnegansCode: "TB", finnegansValueUnit: "HOURS", finnegansRequiresValidity: false, coverageMode: "FIXED_MINUTES" }] } });
+    expect(JSON.stringify(snapshots.get("emp-1"))).not.toContain("no se copia");
+    expect(snapshots.get("emp-2")).toMatchObject({ finnegans: { model: "FINNEGANS_CONFIG_V1", types: [] } });
+    expect(frozenFinnegansConfigOf(snapshots.get("emp-1"))!.get("type-tb")).toMatchObject({ finnegansCode: "TB" });
+  });
+
+  it("una reconstrucción conserva la configuración congelada aunque el tipo haya cambiado", async () => {
+    const client = db();
+    client.novelty.findMany.mockResolvedValue([{ employeeId: "emp-1", noveltyType: { ...tipoTB, finnegansCode: "NUEVO", finnegansValueUnit: "DAYS" } }]);
+    const frozen = { model: "FINNEGANS_CONFIG_V1", types: [{ noveltyTypeId: "type-tb", finnegansCode: "TB", finnegansValueUnit: "HOURS" }] };
+
+    await rebuildClosureSnapshots(client as never, [{ id: "c-1", employeeId: "emp-1", period: "2026-11", snapshot: { accounting: {}, finnegans: frozen } }], recalc);
+
+    expect(client.monthlyTimeClosure.update.mock.calls[0]![0].data.snapshot.finnegans).toEqual(frozen);
+  });
+
+  it("a un snapshot histórico sin configuración no se le agrega una retroactiva al reconstruirlo", async () => {
+    const client = db();
+    client.novelty.findMany.mockResolvedValue([{ employeeId: "emp-1", noveltyType: tipoTB }]);
+
+    await rebuildClosureSnapshots(client as never, [{ id: "c-1", employeeId: "emp-1", period: "2026-11", snapshot: { accounting: {} } }], recalc);
+
+    expect(client.monthlyTimeClosure.update.mock.calls[0]![0].data.snapshot).not.toHaveProperty("finnegans");
+    expect(frozenFinnegansConfigOf({ accounting: {} })).toBeNull();
   });
 });

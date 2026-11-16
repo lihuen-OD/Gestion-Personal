@@ -11,6 +11,7 @@
  * empezar. Nunca usa el DATABASE_URL del .env y verifica `current_database()`.
  */
 import { Prisma, PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const url = process.env.NOVELTY_COVERAGE_IT_DATABASE_URL;
@@ -507,6 +508,92 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect(closure).toMatchObject({ status: "ENVIADO" });
       expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140, novelty: expect.objectContaining({ reviewDays: 0 }) });
       expect(snapshot.accounting.novelty.types.map((type) => type.name)).toEqual(expect.arrayContaining(["Trámite bancario", "Llegada tarde"]));
+    });
+
+    // Etapa 9 (NOVELTY_COVERAGE_ENGINE.md §16): Finnegans lee la cobertura diaria
+    // con la contabilidad real. Abril–mayo de 2027, legajo B (turno todos los días).
+    it("Finnegans: horas base por mes desde la cobertura, sin multiplicador; revisión bloquea; la resolución manual cuenta", async () => {
+      const { finnegansExportService } = await import("../finnegans-export/finnegansExport.service");
+      const vacacionesFinnegans = await createType({
+        name: "Vacaciones Finnegans", kind: "VACACIONES", exportsToFinnegans: true, finnegansCode: "VACF", finnegansName: "Vacaciones", finnegansValueUnit: "HOURS",
+        coverageMode: "EXPECTED_SCHEDULE", coverageDayRule: "WORK_OBLIGATION", coverageAppliesSpecialHours: true, coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE",
+      });
+      // Jueves 29/04 a domingo 02/05: el domingo es ×2 en la liquidación interna.
+      const [vacation] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: vacacionesFinnegans, fromDate: "2027-04-29", toDate: "2027-05-02" });
+      const rowFor = async (period: string) => (await finnegansExportService.getPreview({ period })).rows.find((row) => row.sourceId === vacation!.id);
+
+      expect(await rowFor("2027-04")).toMatchObject({ Novedad: "VACF", "Valor 1": "16", "Fecha Aplicación": "29/04/2027", estado: "CIERRE_PENDIENTE" });
+      // Mayo: sábado 8 h + domingo 8 h base (nunca 24 h con el ×2).
+      expect(await rowFor("2027-05")).toMatchObject({ "Valor 1": "16", "Fecha Aplicación": "01/05/2027" });
+
+      // Trabajo real el 30/04 en un tipo incompatible: abril queda en revisión y no exporta horas.
+      await worked(employees.b, "2027-04-30", 8);
+      const april = await finnegansExportService.getPreview({ period: "2027-04" });
+      expect(april.rows.find((row) => row.sourceId === vacation!.id)).toMatchObject({ "Valor 1": "", estado: "REVISION_PENDIENTE" });
+      expect(april.readiness.reasons).toContain("1 día de novedades pendiente de revisión");
+
+      // "No cubre este día": la base efectiva de ese día pasa a 0 y abril exporta sólo el 29.
+      const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "Trabajó ese día" });
+      await m.novelties.resolveCoverageDay(vacation!.id, "2027-04-30", zero, as("rrhh"));
+      expect(await rowFor("2027-04")).toMatchObject({ "Valor 1": "8", estado: "CIERRE_PENDIENTE" });
+      // Mismos datos, mismo resultado.
+      expect(await finnegansExportService.getPreview({ period: "2027-04" })).toEqual(await finnegansExportService.getPreview({ period: "2027-04" }));
+    });
+
+    // Reproducibilidad (§16.1/§16.2): la configuración de Finnegans se congela
+    // con el snapshot del cierre; una versión generada guarda sus filas.
+    it("Finnegans: el cierre congela la configuración; la primera exportación posterior a un cambio del Tipo usa la del cierre", async () => {
+      const { finnegansExportService } = await import("../finnegans-export/finnegansExport.service");
+      const tramiteFinnegans = await createType({
+        name: "Trámite Finnegans", exportsToFinnegans: true, finnegansCode: "TBF", finnegansName: "Trámite", finnegansValueUnit: "HOURS", allowsDateRange: false,
+        coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 240, coverageOnDayOff: "NO_COVERAGE", coverageOnHoliday: "NO_COVERAGE", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE",
+      });
+      const closeAndApprove = async (period: string) => {
+        const [closure] = await m.workforce.submitClosures(period, [employees.a], as("sup"));
+        await m.workforce.approveClosures([closure!.id], undefined, as("rrhh"));
+        return closure!;
+      };
+      const visible = (rows: Array<Record<string, unknown>>) => rows.map(({ estado: _estado, sourceId: _sourceId, employeeId: _employeeId, ...cells }) => cells);
+
+      // Junio: TBF en horas, cierre aprobado. Después el tipo cambia a NUEVO en días.
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: tramiteFinnegans, fromDate: "2027-06-14" });
+      const june = await closeAndApprove("2027-06");
+      expect((await holder.monthlyTimeClosure.findUniqueOrThrow({ where: { id: june.id } })).snapshot).toMatchObject({
+        finnegans: { model: "FINNEGANS_CONFIG_V1", types: [expect.objectContaining({ noveltyTypeId: tramiteFinnegans, finnegansCode: "TBF", finnegansValueUnit: "HOURS", name: "Trámite Finnegans" })] },
+      });
+      await m.types.update(tramiteFinnegans, m.typeSchemas.updateNoveltyTypeSchema.parse({ finnegansCode: "NUEVO", finnegansValueUnit: "DAYS", name: "Trámite renombrado" }));
+
+      // Primera exportación de junio, ya con el tipo cambiado: sale con la configuración del cierre.
+      const junePreview = await finnegansExportService.getPreview({ period: "2027-06" });
+      const idempotencyKey = randomUUID();
+      const first = await finnegansExportService.exportDefinitive({ period: "2027-06", format: "CSV", idempotencyKey });
+      expect(first.rows).toEqual([expect.objectContaining({ Novedad: "TBF", "Valor 1": "4", "Fecha Aplicación": "14/06/2027", detail: "Trámite Finnegans" })]);
+      expect(visible(junePreview.rows)).toEqual(visible(first.rows));
+
+      // La versión generada no cambia: reintento, historial y vista previa coinciden.
+      const retry = await finnegansExportService.exportDefinitive({ period: "2027-06", format: "CSV", idempotencyKey });
+      const detail = await finnegansExportService.getHistoryDetail(first.batch.id);
+      expect(retry.batch).toMatchObject({ id: first.batch.id, version: 1 });
+      expect(visible(retry.rows)).toEqual(visible(first.rows));
+      expect(visible(detail.rows)).toEqual(visible(first.rows));
+      expect((await finnegansExportService.getHistory({ period: "2027-06" })).batches).toHaveLength(1);
+      expect((await finnegansExportService.getPreview({ period: "2027-06" })).lastExport).toMatchObject({ version: 1, sameAsCurrent: true });
+
+      // Julio: el cierre nuevo congela la configuración nueva.
+      await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: tramiteFinnegans, fromDate: "2027-07-12" });
+      await closeAndApprove("2027-07");
+      const july = await finnegansExportService.exportDefinitive({ period: "2027-07", format: "CSV", idempotencyKey: randomUUID() });
+      expect(july.rows).toEqual([expect.objectContaining({ Novedad: "NUEVO", "Valor 1": "1", "Fecha Aplicación": "12/07/2027", detail: "Trámite renombrado" })]);
+
+      // Un snapshot histórico sin configuración congelada usa el tipo vigente (comportamiento anterior).
+      const legacySnapshot = { ...((await holder.monthlyTimeClosure.findUniqueOrThrow({ where: { id: june.id } })).snapshot as Record<string, unknown>) };
+      delete legacySnapshot.finnegans;
+      await holder.monthlyTimeClosure.update({ where: { id: june.id }, data: { snapshot: legacySnapshot as never } });
+      const fallback = await finnegansExportService.getPreview({ period: "2027-06" });
+      expect(fallback.rows).toEqual([expect.objectContaining({ Novedad: "NUEVO", "Valor 1": "1" })]);
+      expect(fallback.lastExport).toMatchObject({ version: 1, sameAsCurrent: false });
+      // Y aun así la versión 1 ya generada no cambia.
+      expect(visible((await finnegansExportService.getHistoryDetail(first.batch.id)).rows)).toEqual(visible(first.rows));
     });
   });
 });
