@@ -36,9 +36,16 @@ describe("employeeAccessWhere", () => {
     expect(responsibleClause(where)).toEqual({
       OR: [
         { userId: "sup-42" },
-        { user: { role: roles.cargaHoraria, supervisionsAsSupervised: { some: { supervisorUserId: "sup-42" } } } },
+        { user: { role: roles.cargaHoraria, status: "ACTIVO", supervisionsAsSupervised: { some: { supervisorUserId: "sup-42" } } } },
       ],
     });
+  });
+
+  it("la herencia exige supervisado Nivel 3 ACTIVO; la rama directa del Nivel 2 y el alcance del Nivel 3 no dependen de eso", () => {
+    const supervision = responsibleClause(employeeAccessWhere(user(roles.supervision, "sup-1"))) as { OR: Array<Record<string, unknown>> };
+    expect(supervision.OR[0]).toEqual({ userId: "sup-1" });
+    expect(supervision.OR[1]).toMatchObject({ user: { role: roles.cargaHoraria, status: "ACTIVO" } });
+    expect(responsibleClause(employeeAccessWhere(user(roles.cargaHoraria, "carga-1")))).toEqual({ userId: "carga-1" });
   });
 
   it("status ACTIVO/Activo estan cubiertos: el filtro acepta ambas variantes ademas de status nulo", () => {

@@ -349,4 +349,63 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
       expect(await visibleLegajos(cargaR)).toEqual(["ADD", "STALE"]);
     });
   });
+  describe("Nivel 3 inactivo: deja de transmitir alcance al Nivel 2, sin borrar la relación (invalidación inmediata por /users)", () => {
+    let cargaI: AppUser;
+    let jefeI: AppUser;
+    const period = new Date().toISOString().slice(0, 7);
+    const hoursLegajos = async (user: AppUser) => {
+      const { status, json } = await api(user, "GET", `/time-entries/period-employees?period=${period}&take=100`);
+      expect(status).toBe(200);
+      return (json!.data as Array<{ employee: { legajo: string } }>).map((item) => item.employee.legajo).sort();
+    };
+    const detailStatus = async (user: AppUser, key: string) => (await api(user, "GET", `/employees/${employee[key]}`)).status;
+    const setStatus = async (target: AppUser, status: "ACTIVO" | "INACTIVO") => expect((await api(rrhh, "PATCH", `/users/${target.id}`, { status })).status).toBe(200);
+
+    beforeAll(async () => {
+      cargaI = await createUser("CARGA INACTIVABLE", "NIVEL_3_CARGA_HORARIA");
+      jefeI = await createUser("JEFE INACTIVABLE", "NIVEL_2_SUPERVISION");
+      for (const [index, key] of ["INA", "DIRI"].entries()) {
+        const created = await holder.employee.create({ data: { legajo: key, cuil: `20-6${index}`, dni: `6${index}`, firstName: "Prueba", lastName: `Inactivo ${key}` } });
+        employee[key] = created.id;
+      }
+      await assign("INA", cargaI);
+      await assign("DIRI", jefeI);
+      await supervise(jefeI, cargaI);
+      await clearReadCaches();
+    });
+
+    it("ACTIVO → INACTIVO → ACTIVO: el Nivel 2 pierde y recupera los legajos heredados en la consulta siguiente; sus directos no cambian; la relación se conserva (1, 2, 3, 5, 8)", async () => {
+      // (1) Nivel 3 activo: el Nivel 2 hereda INA y conserva su directo DIRI (respuestas quedan cacheadas).
+      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+      expect(await detailStatus(jefeI, "INA")).toBe(200);
+      expect(await hoursLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+      // (6) El Nivel 3 ve su propio alcance directo.
+      expect(await visibleLegajos(cargaI)).toEqual(["INA"]);
+
+      // (2, 8) Se inactiva por el write path real: sin esperar TTL.
+      await setStatus(cargaI, "INACTIVO");
+      expect(await visibleLegajos(jefeI)).toEqual(["DIRI"]);
+      expect(await detailStatus(jefeI, "INA")).toBe(404);
+      expect(await hoursLegajos(jefeI)).toEqual(["DIRI"]);
+      // La relación no se borra al inactivar.
+      expect(await holder.userSupervisionAssignment.count({ where: { supervisorUserId: jefeI.id, supervisedUserId: cargaI.id } })).toBe(1);
+      // RRHH sigue global (7).
+      expect(await visibleLegajos(rrhh)).toEqual(expect.arrayContaining(["DIRI", "INA"]));
+
+      // (3, 8) Se reactiva: vuelve a heredar en la consulta siguiente.
+      await setStatus(cargaI, "ACTIVO");
+      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+      expect(await detailStatus(jefeI, "INA")).toBe(200);
+      expect(await hoursLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+    });
+
+    it("relación existente con un supervisado que ya no tiene rol Nivel 3 (aunque esté ACTIVO): no hereda (4)", async () => {
+      await holder.user.update({ where: { id: cargaI.id }, data: { role: "NIVEL_1_RRHH" } });
+      await clearReadCaches();
+      expect(await visibleLegajos(jefeI)).toEqual(["DIRI"]);
+      await holder.user.update({ where: { id: cargaI.id }, data: { role: "NIVEL_3_CARGA_HORARIA" } });
+      await clearReadCaches();
+      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+    });
+  });
 });

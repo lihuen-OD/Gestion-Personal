@@ -20,6 +20,7 @@ import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observabi
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
+import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
@@ -910,9 +911,11 @@ function clockPostProcessWriter(employeeId: string, request: ClockPunchPostProce
 
 // `startAt`: eventAt de la notificación — la jornada que quedó sin salida, no
 // el momento en que se detectó/cerró (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+// También es la fecha de referencia de los destinatarios (vigencia de
+// TIME_RESPONSIBLE en el día Argentina de inicio de la jornada).
 // PERF-5D: el post-proceso durable del rollover pasa `db` (su transacción) y
 // `rethrow` (un fallo reintenta el paso en vez de quedar sólo logueado).
-export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification">; rethrow?: boolean } = {}) {
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification"> & RecipientsReader; rethrow?: boolean } = {}) {
   // Etapa 10E: best-effort — un fallo acá (ej. problema transitorio de DB)
   // no debe tirar abajo una fichada/rollover que ya se confirmó. El otro
   // llamador (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch
@@ -920,7 +923,7 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string,
   // (F0 del fichador standalone retiró los caminos legacy sin foto
   // clockInResolved/clockIn, que también lo llamaban.)
   try {
-    await notifyUsers(await attendanceRecipients(employeeId), {
+    await notifyUsers(await attendanceRecipients(employeeId, startAt, options.db), {
       type: "FALTA_SALIDA",
       title: "Falta registrar la salida",
       message: "La jornada venció sin salida registrada y requiere revisión.",

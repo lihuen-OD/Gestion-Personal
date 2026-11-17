@@ -11,7 +11,7 @@ import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { AttendanceObservationsQuery } from "./timeEntries.schemas";
 import { evaluateShiftEntry, evaluateShiftExit, flagOpenShiftOverflowForReview, notifyClassificationAlerts } from "../shifts/workShiftEvaluationRunner";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
-import { notifyUsers } from "../workforce-management/workforce.service";
+import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
@@ -911,8 +911,12 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     it("desde el post-proceso durable escribe en la tx del paso con eventAt = inicio de la jornada, y con rethrow propaga el fallo (el paso se reintenta)", async () => {
       const stepTx = { systemNotification: {} };
 
+      vi.mocked(attendanceRecipients).mockResolvedValueOnce(["rrhh", "joaquin", "eugenia"]);
       await notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt, { db: stepTx as never, rethrow: true });
-      expect(mockedNotifyUsers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }), stepTx);
+      // FALTA_SALIDA: destinatarios (RRHH + responsables + Nivel 2 heredados)
+      // resueltos en la fecha de inicio de la jornada y dentro de la tx del paso.
+      expect(attendanceRecipients).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.startAt, stepTx);
+      expect(mockedNotifyUsers).toHaveBeenCalledWith(["rrhh", "joaquin", "eugenia"], expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }), stepTx);
 
       mockedNotifyUsers.mockRejectedValueOnce(new Error("db hiccup"));
       await expect(notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt, { db: stepTx as never, rethrow: true })).rejects.toThrow("db hiccup");

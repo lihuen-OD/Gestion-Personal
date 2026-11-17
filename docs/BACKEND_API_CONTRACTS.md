@@ -210,7 +210,7 @@ NIVEL_3_CARGA_HORARIA
 Regla general:
 
 - `NIVEL_1_RRHH`: alcance global.
-- `NIVEL_2_SUPERVISION` (desde 2026-11-17): unión de (A) los legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado al propio usuario (compatibilidad con datos anteriores) y (B) los legajos con `TIME_RESPONSIBLE` vigente de cada usuario Nivel 3 que supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). Es dinámico: no copia asignaciones; un legajo agregado o quitado a ese Nivel 3 entra o sale del alcance del Nivel 2 sin editarlo. Una sola query (`some` anidados), sin duplicados; el supervisado debe seguir siendo Nivel 3. Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
+- `NIVEL_2_SUPERVISION` (desde 2026-11-17): unión de (A) los legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado al propio usuario (compatibilidad con datos anteriores) y (B) los legajos con `TIME_RESPONSIBLE` vigente de cada usuario Nivel 3 que supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). Es dinámico: no copia asignaciones; un legajo agregado o quitado a ese Nivel 3 entra o sale del alcance del Nivel 2 sin editarlo. Una sola query (`some` anidados), sin duplicados; el supervisado debe seguir siendo Nivel 3 y estar `ACTIVO` (inactivarlo no borra la relación: el Nivel 2 deja de heredar sus legajos y los recupera si se lo reactiva; `PATCH /api/users/:id` invalida las cachés de alcance en el acto). Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
 - `NIVEL_3_CARGA_HORARIA`: alcance por legajos asignados como responsable de carga horaria.
 
 ## Legajos
@@ -2122,6 +2122,16 @@ Sólo para 4 valores de `entityType` llega además un `employee` ya resuelto (`{
 - `AttendanceInactivityIncident` (**"no asistió"**, `type: "SIN_ACTIVIDAD_REGISTRADA"` — agregado en la Etapa 15G.2, docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md; antes de esta etapa este `entityType` no traía `employee`).
 
 El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `employee`. El enriquecimiento sólo consulta el entityId de la página actual (nunca recorre todo el histórico) y usa un `select` mínimo — no dispara ningún fetch de legajo completo.
+
+#### Destinatarios de las notificaciones operativas del legajo (desde 2026-11-17)
+
+`ALERTA_FICHADA` (todas las alertas de turno/fichada, incluida `ACTIVIDAD_EN_FRANCO`), `FALTA_SALIDA`, `FALTA_INGRESO` y `SIN_ACTIVIDAD_REGISTRADA` se crean, por legajo, para la unión deduplicada de:
+
+- **RRHH:** usuarios `ACTIVO` con rol `NIVEL_1_RRHH`.
+- **Responsables directos:** usuarios `ACTIVO` (cualquier rol) con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente sobre el legajo. Vigente = mismo criterio que el alcance (`activeTimeResponsibleWhere` en `employeeAccess.ts`): `status` nulo/`ACTIVO`/`Activo`, `effectiveFrom` nulo o ≤ fecha, `effectiveTo` nulo o ≥ fecha (inclusivos).
+- **Supervisores Nivel 2 heredados:** por cada responsable directo `NIVEL_3_CARGA_HORARIA` `ACTIVO`, los usuarios `NIVEL_2_SUPERVISION` `ACTIVO` que lo supervisan (`UserSupervisionAssignment`). Roles y estados de ambos lados se verifican al resolver: una relación desfasada no concede el aviso. `EmployeeAssignment.role` nunca se usa.
+
+Cada usuario recibe una sola fila por evento aunque llegue por varias vías. La vigencia se evalúa en la fecha del hecho, no en la de procesamiento: `ShiftAlert.actualAt` (alertas), inicio de la jornada (`FALTA_SALIDA`) y fecha operativa del incidente (`FALTA_INGRESO` / `SIN_ACTIVIDAD_REGISTRADA`). El cambio aplica a eventos nuevos: no hay backfill de notificaciones anteriores. Fuente única: `backend/src/modules/workforce-management/employeeNotificationRecipients.ts` (resolución en batch, a lo sumo 3 consultas por lote). El resto de las notificaciones (`NOVEDAD_PENDIENTE`, `CIERRE_MENSUAL`, `CORRECCION_HORARIA`) siguen siendo sólo para RRHH.
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 

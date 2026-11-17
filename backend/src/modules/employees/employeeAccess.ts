@@ -13,7 +13,7 @@ import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datet
  *   asignado a él.
  * - Nivel 2: unión de (A) sus TIME_RESPONSIBLE vigentes directos
  *   (compatibilidad con datos anteriores) y (B) los TIME_RESPONSIBLE vigentes
- *   de cada usuario Nivel 3 que supervisa (UserSupervisionAssignment). Es
+ *   de cada usuario Nivel 3 ACTIVO que supervisa (UserSupervisionAssignment). Es
  *   dinámico: no copia asignaciones, así que un legajo agregado o quitado a
  *   ese Nivel 3 aparece o desaparece del alcance del Nivel 2 sin tocarlo.
  *
@@ -26,14 +26,16 @@ export function employeeAccessWhere(user: Express.AuthUser, reference: Date = ne
 
   if (user.role !== roles.supervision && user.role !== roles.cargaHoraria) return { id: "__NO_ACCESS__" };
 
-  const today = argentinaCalendarDate(todayArgentinaDateKey(reference));
   const responsible: Prisma.EmployeeAssignmentWhereInput = user.role === roles.supervision
     ? {
         OR: [
           { userId: user.id },
-          // El supervisado tiene que seguir siendo Nivel 3: una relación que
-          // quedara desfasada nunca abre el alcance de otro rol.
-          { user: { role: roles.cargaHoraria, supervisionsAsSupervised: { some: { supervisorUserId: user.id } } } },
+          // El supervisado tiene que seguir siendo Nivel 3 y estar ACTIVO: una
+          // relación desfasada nunca abre el alcance de otro rol, y un Nivel 3
+          // inactivo deja de transmitir sus legajos (la relación se conserva y
+          // vuelve a valer si se lo reactiva). Mismo criterio que los
+          // destinatarios de notificaciones (employeeNotificationRecipients.ts).
+          { user: { role: roles.cargaHoraria, status: "ACTIVO", supervisionsAsSupervised: { some: { supervisorUserId: user.id } } } },
         ],
       }
     : { userId: user.id };
@@ -42,13 +44,29 @@ export function employeeAccessWhere(user: Express.AuthUser, reference: Date = ne
     assignments: {
       some: {
         type: "TIME_RESPONSIBLE",
-        AND: [
-          { OR: [{ status: null }, { status: "ACTIVO" }, { status: "Activo" }] },
-          { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: today } }] },
-          { OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }] },
-          responsible,
-        ],
+        AND: [...timeResponsibleValidityConditions(todayArgentinaDateKey(reference)), responsible],
       },
     },
   };
+}
+
+/**
+ * Única definición de "EmployeeAssignment TIME_RESPONSIBLE vigente" en una
+ * fecha calendario Argentina (`dateKey`, "YYYY-MM-DD"): estado nulo/ACTIVO/
+ * Activo, `effectiveFrom` nulo o <= fecha y `effectiveTo` nulo o >= fecha
+ * (ambos extremos inclusivos, columnas @db.Date). La usan el alcance de
+ * legajos (arriba) y los destinatarios de notificaciones operativas
+ * (workforce-management/employeeNotificationRecipients.ts); no copiarla.
+ */
+export function activeTimeResponsibleWhere(dateKey: string): Prisma.EmployeeAssignmentWhereInput {
+  return { type: "TIME_RESPONSIBLE", AND: timeResponsibleValidityConditions(dateKey) };
+}
+
+function timeResponsibleValidityConditions(dateKey: string): Prisma.EmployeeAssignmentWhereInput[] {
+  const day = argentinaCalendarDate(dateKey);
+  return [
+    { OR: [{ status: null }, { status: "ACTIVO" }, { status: "Activo" }] },
+    { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: day } }] },
+    { OR: [{ effectiveTo: null }, { effectiveTo: { gte: day } }] },
+  ];
 }

@@ -7,7 +7,8 @@ import { roles } from "../../shared/security/roles";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { argentinaDateKey, humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { resolveEmployeeNotificationRecipients, type RecipientsReader } from "./employeeNotificationRecipients";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
@@ -66,15 +67,15 @@ export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
   await notifyUsers(users.map((item) => item.id), input);
 }
 
-export async function attendanceRecipients(employeeId: string) {
-  const [rrhh, responsible] = await Promise.all([
-    prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } }),
-    prisma.employeeAssignment.findMany({
-      where: { employeeId, type: "TIME_RESPONSIBLE", userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
-      select: { userId: true },
-    }),
-  ]);
-  return [...rrhh.map((item) => item.id), ...responsible.flatMap((item) => item.userId ? [item.userId] : [])];
+/**
+ * Destinatarios de un aviso operativo del legajo: RRHH + responsables
+ * directos + supervisores Nivel 2 heredados de responsables Nivel 3
+ * (employeeNotificationRecipients.ts). `eventAt`: instante del hecho que
+ * origina el aviso; la vigencia de TIME_RESPONSIBLE se evalúa en su día
+ * Argentina, no en el momento en que se procesa o reintenta.
+ */
+export async function attendanceRecipients(employeeId: string, eventAt: Date, db?: RecipientsReader) {
+  return resolveEmployeeNotificationRecipients(employeeId, argentinaDateKey(eventAt), db);
 }
 
 // Etapa 8B: para recurrenceType FECHA, fromDate/toDate ya no son la
