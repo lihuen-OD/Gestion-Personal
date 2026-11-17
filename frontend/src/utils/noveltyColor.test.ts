@@ -34,15 +34,22 @@ describe("dayNoveltyColorClass", () => {
   });
 });
 
-describe("paleta de 22 colores", () => {
-  it("son 22 colores con hex distinto, en el orden pedido, y conserva los 15 nombres anteriores", () => {
-    expect(noveltyUiColors).toHaveLength(22);
-    expect(new Set(Object.values(noveltyUiColorHex).map((hex) => hex.toLowerCase())).size).toBe(22);
+describe("paleta de 23 colores", () => {
+  it("son 23 colores con hex distinto, en el orden pedido, y conserva los 15 nombres anteriores", () => {
+    expect(noveltyUiColors).toHaveLength(23);
+    expect(new Set(Object.values(noveltyUiColorHex).map((hex) => hex.toLowerCase())).size).toBe(23);
     expect(noveltyUiColors.slice(0, 3).map((color) => noveltyUiColorHex[color])).toEqual(["#2563EB", "#F97316", "#7C3AED"]);
     for (const legacy of ["blue", "sky", "cyan", "teal", "emerald", "green", "lime", "amber", "orange", "red", "rose", "pink", "violet", "purple", "slate"]) {
       // El color persistido se usa tal cual (nunca el fallback por id).
       expect(noveltyColorClass(legacy, "cualquier-id")).toBe(`novelty-color-${legacy}`);
     }
+  });
+
+  it("navy es el color 23, al final, con hex #1E3A8A y su propia clase", () => {
+    expect(noveltyUiColors.at(-1)).toBe("navy");
+    expect(noveltyUiColors.indexOf("navy")).toBe(22);
+    expect(noveltyUiColorHex.navy).toBe("#1E3A8A");
+    expect(noveltyColorClass("navy", "cualquier-id")).toBe("novelty-color-navy");
   });
 });
 
@@ -53,9 +60,13 @@ describe("pickNoveltyUiColor", () => {
     expect(pickNoveltyUiColor(["orange"])).toBe("blue");
   });
 
-  it("con los 22 en uso permite repetir: el menos usado", () => {
+  it("con los 23 en uso permite repetir: el menos usado", () => {
     expect(pickNoveltyUiColor([...noveltyUiColors])).toBe("blue");
     expect(pickNoveltyUiColor([...noveltyUiColors, "blue"])).toBe("orange");
+  });
+
+  it("con los 22 colores anteriores en uso, el siguiente es navy", () => {
+    expect(pickNoveltyUiColor(noveltyUiColors.filter((color) => color !== "navy"))).toBe("navy");
   });
 
   it("ignora colores fuera de la paleta", () => {

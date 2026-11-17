@@ -2,7 +2,7 @@ import type { Role } from "./index";
 
 export type NoveltyTypeStatus = "ACTIVO" | "INACTIVO";
 export type NoveltyTypeKind = "AUSENCIA" | "LICENCIA" | "HORARIA" | "ACCIDENTE" | "VACACIONES" | "SANCION" | "OTRO";
-// Paleta fija de 22 colores (misma lista que el backend, NOVELTY_UI_COLORS).
+// Paleta fija de 23 colores (misma lista que el backend, NOVELTY_UI_COLORS).
 export type NoveltyUiColor =
   | "blue"
   | "orange"
@@ -25,7 +25,8 @@ export type NoveltyUiColor =
   | "slate"
   | "amber"
   | "magenta"
-  | "teal";
+  | "teal"
+  | "navy";
 // Etapa 15L.2A: fuente de verdad del comportamiento en carga horaria.
 // Etapa 15L.6 (docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md): retiró
 // los campos legacy que reemplazaba (blocksTimeEntry/setsWorkedHoursToZero/

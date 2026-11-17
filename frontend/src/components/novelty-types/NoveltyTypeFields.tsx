@@ -79,6 +79,7 @@ export const noveltyUiColorLabels: Record<NoveltyUiColor, string> = {
   amber: "Ámbar",
   magenta: "Magenta",
   teal: "Turquesa",
+  navy: "Azul marino",
 };
 
 export function emptyNoveltyType(): NoveltyType {

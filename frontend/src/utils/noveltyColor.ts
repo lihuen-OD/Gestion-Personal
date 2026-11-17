@@ -1,9 +1,9 @@
 import type { NoveltyUiColor } from "../types/noveltyType.types";
 
-// Paleta fija de 22 colores (decisión del usuario, 2026-11-16), en el orden en
-// que se muestran y se asignan. Misma lista que el backend
+// Paleta fija de 23 colores (decisión del usuario, 2026-11-16; "navy" agregado
+// al final el 2026-11-17), en el orden en que se muestran y se asignan. Misma lista que el backend
 // (novelty-types/noveltyTypes.schemas.ts). Los 15 nombres anteriores son 15
-// de estos 22: el color persistido de cada tipo se conserva. El hex es la
+// de estos 23: el color persistido de cada tipo se conserva. El hex es la
 // fuente de los tonos de styles.css (fondo, borde y texto derivados).
 export const noveltyUiColorHex = {
   blue: "#2563EB",
@@ -28,6 +28,7 @@ export const noveltyUiColorHex = {
   amber: "#D97706",
   magenta: "#A21CAF",
   teal: "#0D9488",
+  navy: "#1E3A8A",
 } as const satisfies Record<NoveltyUiColor, string>;
 
 export const noveltyUiColors = Object.keys(noveltyUiColorHex) as NoveltyUiColor[];
