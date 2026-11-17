@@ -10,9 +10,11 @@ import { dashboardMetricsQuerySchema } from "./dashboard.schemas";
 export const dashboardRouter = Router();
 
 dashboardRouter.use(requireAuth);
+// 2026-11-17: Dashboard y Reportes de Gestión son sólo de Nivel 1; ningún
+// otro módulo consume estas métricas.
 dashboardRouter.get(
   "/metrics",
-  requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]),
+  requireAnyRole([roles.rrhh]),
   validateQuery(dashboardMetricsQuerySchema),
   asyncHandler(dashboardController.metrics),
 );

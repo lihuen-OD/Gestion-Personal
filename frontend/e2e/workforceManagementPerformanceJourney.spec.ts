@@ -45,12 +45,11 @@ const SLOW_THRESHOLD_MS = Number(process.env.WORKFORCE_PERF_SLOW_MS || 3000);
 const ACTION_TIMEOUT_MS = 15_000;
 const SETTLE_GRACE_MS = 250;
 
-// Zonas A-J del pedido — `zone` y `submodule` son el mismo valor en este
+// Zonas B-J del pedido (A. Inicio se retiró el 2026-11-17) — `zone` y `submodule` son el mismo valor en este
 // journey (ver nota de cabecera de workforceManagementJourney.ts). Centralizado
 // acá para que nunca haya un typo entre acciones de la misma zona.
 const ZONE = {
   login: "Login",
-  inicio: "A. Inicio",
   asistencia: "B. Asistencia",
   alertas: "C. Alertas de turnos",
   cargaHoras: "D. Carga de horas",
@@ -284,7 +283,7 @@ test("workforce management performance journey — recorrido macro de Gestión h
   const previousPeriod = shiftPeriod(currentPeriod, -1);
 
   // ---------------------------------------------------------------------
-  // Login — Nivel 1 (RRHH), el único nivel con acceso a los 10 submódulos
+  // Login — Nivel 1 (RRHH), el único nivel con acceso a los 9 submódulos
   // (Exportación es exclusivo de Nivel 1; Bandeja de revisión no existe para
   // Nivel 3). Mismo mecanismo que 14D.1/14F.1.
   // ---------------------------------------------------------------------
@@ -297,24 +296,6 @@ test("workforce management performance journey — recorrido macro de Gestión h
     };
   });
   expect(actions.at(-1)!.covered, "El login con el acceso rápido demo debe dejar ver el shell de la app").toBe(true);
-
-  // ---------------------------------------------------------------------
-  // A. Inicio
-  // ---------------------------------------------------------------------
-  await measure("Entrar a Inicio (Gestión horaria)", ZONE.inicio, false, async () => {
-    await page.goto("/gestion-horaria");
-    return { visibleLocator: page.locator("h1").first() };
-  });
-
-  const statGrid = page.locator(".stat-grid");
-  if (actions.at(-1)!.covered && (await statGrid.count())) {
-    await measure("Ver KPIs/resumen de Inicio", ZONE.inicio, false, async () => ({
-      visibleLocator: statGrid.first(),
-      notes: ["no dispara endpoint propio — los StatLink son <Link>, se confirma ausencia de requests nuevos en la ventana de esta acción"],
-    }));
-  } else {
-    skip("Ver KPIs/resumen de Inicio", ZONE.inicio, "el resumen de Inicio no cargó (estado de error) en el entorno actual");
-  }
 
   // ---------------------------------------------------------------------
   // B. Asistencia

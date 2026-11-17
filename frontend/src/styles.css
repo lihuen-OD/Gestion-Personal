@@ -2814,3 +2814,17 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .context-novelty-card .novelty-preview{position:static}
 @media(max-width:900px){.novelty-load-layout{grid-template-columns:minmax(0,1fr)}.novelty-preview{position:static}}
 @media(max-width:520px){.novelty-load-dates{grid-template-columns:minmax(0,1fr)}.novelty-load-duration{max-width:none}}
+/* Usuarios y roles: responsables de carga supervisados por un Nivel 2 (SupervisedUsersSelector) y ayuda del empleado vinculado. Reusa .people-search. */
+.supervised-users-head{display:grid;gap:4px}
+.supervised-users-head b{color:var(--color-text-primary,#203648);font-size:13px}
+.supervised-users-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.supervised-users .people-search-results{max-height:220px}
+.supervised-users .people-search-results b{display:inline-flex;align-items:center;gap:8px}
+.supervised-users button:disabled{cursor:not-allowed;opacity:.6}
+.modal-body label>small.field-hint{display:block;margin-top:6px}
+/* Modal de usuario: grilla explícita de 2 columnas parejas (sin ella,
+   .form-stack>.form-actions{grid-column:span 2} arma columnas implícitas
+   desparejas). Notas, bloques anchos, error y acciones ocupan la fila. */
+.modal-body .user-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.user-form>.info-note,.user-form>.supervised-users,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
+@media(max-width:620px){.modal-body .user-form{grid-template-columns:minmax(0,1fr)}}

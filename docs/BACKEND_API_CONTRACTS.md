@@ -210,7 +210,7 @@ NIVEL_3_CARGA_HORARIA
 Regla general:
 
 - `NIVEL_1_RRHH`: alcance global.
-- `NIVEL_2_SUPERVISION`: alcance por legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente para el usuario (misma regla que Nivel 3, `backend/src/modules/employees/employeeAccess.ts`). **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
+- `NIVEL_2_SUPERVISION` (desde 2026-11-17): unión de (A) los legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado al propio usuario (compatibilidad con datos anteriores) y (B) los legajos con `TIME_RESPONSIBLE` vigente de cada usuario Nivel 3 que supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). Es dinámico: no copia asignaciones; un legajo agregado o quitado a ese Nivel 3 entra o sale del alcance del Nivel 2 sin editarlo. Una sola query (`some` anidados), sin duplicados; el supervisado debe seguir siendo Nivel 3. Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
 - `NIVEL_3_CARGA_HORARIA`: alcance por legajos asignados como responsable de carga horaria.
 
 ## Legajos
@@ -293,7 +293,7 @@ Reglas:
 GET /api/employees/org-chart
 ```
 
-Endpoint optimizado para alimentar el organigrama sin traer el detalle completo del legajo.
+Endpoint optimizado para alimentar el organigrama sin traer el detalle completo del legajo. Sólo Nivel 1 (desde 2026-11-17 Organigramas es exclusivo de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`).
 
 Query:
 
@@ -630,6 +630,8 @@ Body:
 
 `EmployeeAssignment.role` (`String?`, in `schema.prisma`) still exists in the schema and in `employeeAssignmentSchema` as an optional/nullable field, but it is legacy: it has no consumer anywhere in permissions, access scoping (`employeeAccess.ts`), notifications (`workforce.service.ts`), or hour calculation. The frontend stopped sending it from the "Responsable de carga horaria actual" modal (2026-09-15) — a user's real role/level is `User.role` (`RoleName`), managed only from Usuarios/Roles, and the assignment must never redefine or duplicate it. The column and the schema field were kept as-is (not migrated away) because old rows may still carry a value and dropping it was not required to fix the UI confusion; do not read it for any authorization decision.
 
+Es el único write path de `EmployeeAssignment` (además del seed). Un `TIME_RESPONSIBLE` agregado o quitado cambia el alcance del responsable directo y el de todo Nivel 2 que lo supervise: después del commit se llama `invalidateEmployeeScopeCaches()` (`backend/src/modules/employees/employeeScopeCaches.ts`), que limpia todas las cachés de lectura backend cuya respuesta sale de `employeeAccessWhere` (Legajos, Horas/asistencia, Novedades, Documentos, Alertas, resumen de Turnos, Cierres/correcciones, Dashboard). El cambio de alcance es visible en la siguiente consulta, sin esperar TTL. Pendientes, Francos y Feriados no tienen caché backend; las cachés globales y las de notificaciones no se tocan.
+
 ### Horas especiales habilitadas
 
 ```txt
@@ -916,6 +918,19 @@ take
 page
 ```
 
+Uso: `NIVEL_1_RRHH`. Cuerpo de `POST`/`PATCH` (además de `name`, `email`, `role`, `status`, `companyId`, `employeeId`; `password` sólo en el alta — en la edición la contraseña se cambia por `POST /:id/reset-password`):
+
+```txt
+supervisedUserIds?: uuid[]   // sólo Nivel 2; lista completa, sin repetidos (máx. 200)
+```
+
+- `supervisedUserIds` reemplaza la lista de Nivel 3 supervisados; omitirlo la conserva. Sólo la acepta un usuario cuyo rol final sea `NIVEL_2_SUPERVISION` (otro rol con lista no vacía → `400 USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE`). Cada id debe ser un usuario existente con rol `NIVEL_3_CARGA_HORARIA` y distinto del propio (si no → `400 USER_SUPERVISION_INVALID_TARGET`). Repetidos → `400 VALIDATION_ERROR`.
+- Cambio de rol: quien deja de ser Nivel 2 deja de supervisar a todos; quien deja de ser Nivel 3 deja de estar supervisado. Ocurre en la misma transacción que la edición y se audita.
+- Usuario, relaciones y auditoría se escriben en una sola transacción (`entity: "UserSupervisionAssignment"`, `entityId` = Nivel 2, descripción con nombres y emails de los agregados/quitados).
+- `employeeId` ("Empleado vinculado") identifica a la persona de la cuenta; **no** define alcance. Es único: si ya pertenece a otro usuario → `409 EMPLOYEE_ALREADY_LINKED_TO_USER` ("Este empleado ya está vinculado a otro usuario."), validado antes de escribir; el P2002 de una carrera se mapea al mismo error. Empleado inexistente → `400 USER_EMPLOYEE_NOT_FOUND`. Email repetido → `409 EMAIL_ALREADY_EXISTS`.
+- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`.
+- Alta y edición llaman `invalidateEmployeeScopeCaches()` (el mismo helper que `PUT /api/employees/:id/assignments`), porque rol y supervisión cambian el alcance de otros usuarios: visible en la siguiente consulta, sin esperar TTL. `reset-password` no cambia alcance y no lo llama.
+
 ### Parametros de auditoria
 
 ```txt
@@ -1183,6 +1198,8 @@ POST /api/positions
 PATCH /api/positions/:id
 DELETE /api/positions/:id
 ```
+
+Roles: `GET /api/positions`, `GET /api/positions/:id` y `GET /api/positions/:id/employees` son sólo Nivel 1 desde 2026-11-17 (el módulo Puestos y Horario laboral son exclusivos de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`). `GET /api/positions/options` sigue abierto a cualquier usuario autenticado porque lo consumen los selects de Legajos. Las escrituras siguen siendo sólo Nivel 1.
 
 Archivo (A8-1): listado y opciones excluyen puestos archivados; `PATCH`/`DELETE` de un archivado → `409 POSITION_ARCHIVED`; un nodo archivado no puede ser alcance nuevo (`409 POSITION_SCOPE_ARCHIVED`). Ver "Registros archivados" en Estructura organizacional.
 
@@ -1581,6 +1598,8 @@ POST /api/time-entries/:id/return
 ```txt
 GET /api/pending
 ```
+
+Roles: sólo Nivel 1 y Nivel 2 (desde 2026-11-17 su único consumidor es la Bandeja de revisión, `/pendientes`, que no existe para Nivel 3; Nivel 3 → `403 FORBIDDEN`). Carga de horas usa `/api/time-entries`, que no cambia.
 
 Query:
 
@@ -2158,7 +2177,7 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
 
 ### Dashboard (`dashboard`, montado en `/api/dashboard`)
 
-`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` ("Horas cargadas") es el total trabajado real del período: Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO); nunca suma conceptos `WITHIN_BASE` (base 8 + Sereno 3 + Colectivo 1 → 9, no 8 ni 12). Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`.
+`GET /metrics` (sólo Nivel 1 desde 2026-11-17: Dashboard y Reportes de Gestión son exclusivos de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` ("Horas cargadas") es el total trabajado real del período: Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO); nunca suma conceptos `WITHIN_BASE` (base 8 + Sereno 3 + Colectivo 1 → 9, no 8 ni 12). Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`.
 
 ### Storage (`storage`, montado en `/api/storage`)
 

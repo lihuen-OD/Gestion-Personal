@@ -209,14 +209,12 @@ Can:
 
 Management/supervision access limited to their scope.
 
-**As implemented today:** the backend scope is the set of employees for which the user has an active, in-date `EmployeeAssignment` of type `TIME_RESPONSIBLE`. This is the same rule as Nivel 3 (`backend/src/modules/employees/employeeAccess.ts`). It is **not** scoped by area, sector, establishment or business unit, and `User.companyId/sectorId` never filter data. Any change to that rule is a separate business decision. The organizational reorganization (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) does not change permissions.
+**As implemented today (business decision of 2026-11-17):** the backend scope is the union of (A) the employees for which the user has an active, in-date `EmployeeAssignment` of type `TIME_RESPONSIBLE` (kept for existing data) and (B) the employees with an active, in-date `TIME_RESPONSIBLE` of every Nivel 3 user this Nivel 2 supervises (`UserSupervisionAssignment`, configured in Usuarios y roles). The inheritance is dynamic: nothing is copied, so an employee added to or removed from a supervised Nivel 3 enters or leaves the Nivel 2 scope automatically. Nivel 3 keeps only its own direct assignments. The single source is `backend/src/modules/employees/employeeAccess.ts`. It is **not** scoped by area, sector, establishment or business unit, and `User.companyId/sectorId` never filter data. `User.employeeId` ("Empleado vinculado") only identifies the person behind the account and never grants scope. The organizational reorganization (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) does not change permissions.
 
 Can:
 
-* View employees within their scope.
-* View dashboards and indicators limited to their scope.
-* Review working hours, absences and operational information for their area.
-* View organization charts and assigned teams.
+* View employees within their scope (Legajos de mi área).
+* Review working hours, absences and operational information for their area (Gestión horaria).
 * View employee information needed for management.
 
 Cannot:
@@ -224,6 +222,9 @@ Cannot:
 * Access full system configuration.
 * Access global audit information.
 * Modify sensitive HR data unless explicitly allowed.
+* Access Dashboard, Puestos, Organigramas or Reportes de Gestión (business decision of 2026-11-17). The frontend routes are guarded by `RoleRoute` (Nivel 1 only) and the endpoints only those screens consume are Nivel 1 only (`GET /api/dashboard/metrics`, `GET /api/employees/org-chart`, `GET /api/positions`, `GET /api/positions/:id`, `GET /api/positions/:id/employees`). `GET /api/positions/options` stays open because Legajos uses it.
+
+**Landing (2026-11-17):** Gestión horaria no longer has an "Inicio" screen. Nivel 1 lands on the Dashboard (`/`); Nivel 2 and Nivel 3 land on Asistencia (`/asistencia`). The old `/gestion-horaria` URL redirects to `/asistencia` for every level.
 
 ### Nivel 3 - Administrativo de Carga Horaria
 

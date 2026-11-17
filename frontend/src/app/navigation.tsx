@@ -7,7 +7,6 @@ import {
   Clock3,
   FileBarChart,
   FolderOpen,
-  Home,
   LayoutDashboard,
   Network,
   Settings,
@@ -52,7 +51,6 @@ const group = (label: string, Icon: LucideIcon, items: NavLinkItem[]): NavGroupI
 
 const hourlyManagement = (level: number) =>
   group("Gestión horaria", Clock3, [
-    link("Inicio", "/gestion-horaria", Home),
     link("Asistencia", "/asistencia", TimerReset),
     link("Alertas de turnos", "/asistencia/alertas", AlertTriangle),
     link("Carga de horas", "/horas", Clock3),
@@ -76,12 +74,8 @@ export const navByLevel: Record<number, NavItem[]> = {
     link("Auditoría", "/auditoria", ShieldCheck),
   ],
   2: [
-    link("Dashboard", "/", LayoutDashboard),
     hourlyManagement(2),
     link("Legajos de mi área", "/legajos", Users),
-    link("Puestos", "/puestos", BriefcaseBusiness),
-    link("Organigramas", "/organigramas", Network),
-    link("Reportes de Gestión", "/reportes", FileBarChart),
   ],
   3: [hourlyManagement(3)],
 };
@@ -92,4 +86,16 @@ export function flattenNavigation(items: NavItem[]): NavLinkItem[] {
 
 export function navigationForRole(role: Role) {
   return navByLevel[roleLevel(role)];
+}
+
+/**
+ * Primer módulo real de cada nivel. Gestión horaria ya no tiene una pantalla
+ * "Inicio" propia: Nivel 2 y Nivel 3 aterrizan en Asistencia, que es el
+ * primer submódulo del grupo para todos los niveles. Nivel 1 conserva el
+ * Dashboard en "/".
+ */
+export const HOURLY_MANAGEMENT_ENTRY_PATH = "/asistencia";
+
+export function homePathForLevel(level: number) {
+  return level === 1 ? "/" : HOURLY_MANAGEMENT_ENTRY_PATH;
 }

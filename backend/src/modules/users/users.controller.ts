@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
+import { invalidateEmployeeScopeCaches } from "../employees/employeeScopeCaches";
 import type { ListUsersQuery } from "./users.schemas";
 import { usersService } from "./users.service";
 
@@ -34,12 +35,16 @@ export const usersController = {
   create: (async (req, res) => {
     const user = await usersService.create(req.body, requestAuditContext(req));
     clearUsersReadCache();
+    // Rol y supervisión Nivel 2 → Nivel 3 cambian el alcance de otros usuarios.
+    invalidateEmployeeScopeCaches();
     res.status(201).json({ data: user });
   }) satisfies RequestHandler,
 
   update: (async (req, res) => {
     const user = await usersService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearUsersReadCache();
+    // Rol y supervisión Nivel 2 → Nivel 3 cambian el alcance de otros usuarios.
+    invalidateEmployeeScopeCaches();
     res.json({ data: user });
   }) satisfies RequestHandler,
 

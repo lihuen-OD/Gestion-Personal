@@ -166,7 +166,7 @@ export function PuestosPage() {
     return () => { alive = false; };
   }, [page, debouncedSearch, filters.status, filters.scopeLevel, filters.scopeNodeId, filters.scopeMode, filters.salaryRangeCategory, refresh, sort]);
 
-  if (level === 3) return <Navigate to="/gestion-horaria" />;
+  if (level === 3) return <Navigate to="/" replace />;
 
   const positionSummary = summary(statsItems);
 

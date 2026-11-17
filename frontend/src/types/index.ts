@@ -8,6 +8,15 @@ export type LaborMovementType = "ALTA" | "BAJA";
 export interface User {
   id: string; name: string; email: string; password: string; role: Role; status: "Activo" | "Inactivo";
   company?: string; sector?: string; employeeId?: string; employeeName?: string;
+  /** Nivel 2: ids de los Nivel 3 (responsables de carga) que supervisa. */
+  supervisedUserIds?: string[];
+  supervisedUsers?: UserSupervisionPerson[];
+  /** Nivel 3: los Nivel 2 que lo supervisan. */
+  supervisorUsers?: UserSupervisionPerson[];
+}
+
+export interface UserSupervisionPerson {
+  id: string; name: string; email: string; status: "Activo" | "Inactivo";
 }
 
 export interface Employee {

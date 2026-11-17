@@ -19,24 +19,26 @@ describe("employeeAccessWhere", () => {
     expect(employeeAccessWhere(user(roles.rrhh))).toEqual({});
   });
 
-  it("Supervision ve solo empleados asignados: filtra por TIME_RESPONSIBLE + userId propio", () => {
-    const where = employeeAccessWhere(user(roles.supervision, "sup-42"));
-    expect(where).toMatchObject({
-      assignments: {
-        some: {
-          type: "TIME_RESPONSIBLE",
-          userId: "sup-42",
-        },
-      },
-    });
+  type AssignmentFilter = { assignments: { some: { type: string; AND: Array<Record<string, unknown>> } } };
+  const responsibleClause = (where: unknown) =>
+    (where as AssignmentFilter).assignments.some.AND.find((clause) => "userId" in clause || "OR" in clause && (clause.OR as Array<Record<string, unknown>>).some((option) => "userId" in option));
+
+  it("Nivel 3 ve solo sus asignaciones directas: TIME_RESPONSIBLE + userId propio, sin herencia", () => {
+    const where = employeeAccessWhere(user(roles.cargaHoraria, "carga-7")) as AssignmentFilter;
+    expect(where.assignments.some.type).toBe("TIME_RESPONSIBLE");
+    expect(responsibleClause(where)).toEqual({ userId: "carga-7" });
+    expect(JSON.stringify(where)).not.toContain("supervisionsAsSupervised");
   });
 
-  it("Carga horaria ve solo empleados asignados: mismo filtro que Supervision, con su propio userId", () => {
-    const where = employeeAccessWhere(user(roles.cargaHoraria, "carga-7")) as {
-      assignments: { some: { type: string; userId: string } };
-    };
+  it("Nivel 2 ve la unión: sus TIME_RESPONSIBLE directos o los de los Nivel 3 que supervisa (por relación, sin copiar asignaciones)", () => {
+    const where = employeeAccessWhere(user(roles.supervision, "sup-42")) as AssignmentFilter;
     expect(where.assignments.some.type).toBe("TIME_RESPONSIBLE");
-    expect(where.assignments.some.userId).toBe("carga-7");
+    expect(responsibleClause(where)).toEqual({
+      OR: [
+        { userId: "sup-42" },
+        { user: { role: roles.cargaHoraria, supervisionsAsSupervised: { some: { supervisorUserId: "sup-42" } } } },
+      ],
+    });
   });
 
   it("status ACTIVO/Activo estan cubiertos: el filtro acepta ambas variantes ademas de status nulo", () => {
@@ -63,7 +65,8 @@ describe("employeeAccessWhere", () => {
     const where = employeeAccessWhere(user(roles.cargaHoraria)) as {
       assignments: { some: { AND: unknown[] } };
     };
-    expect(where.assignments.some.AND).toHaveLength(3);
+    // status + effectiveFrom + effectiveTo + responsable.
+    expect(where.assignments.some.AND).toHaveLength(4);
   });
 
   it("evalúa la vigencia con el día calendario Argentina cerca del cambio de día UTC", () => {

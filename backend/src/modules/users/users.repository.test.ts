@@ -30,7 +30,7 @@ beforeEach(() => {
 
 describe("usersRepository.findMany — Etapa 14I.2", () => {
   it("pagina con Promise.all([findMany, count]) — sin $transaction", async () => {
-    mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-1" }]);
+    mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-1", supervisionsAsSupervisor: [], supervisionsAsSupervised: [] }]);
     mockedPrisma.user.count.mockResolvedValue(1);
 
     const [items, total] = await usersRepository.findMany(baseQuery({ page: 2, take: 10 }));
@@ -38,7 +38,7 @@ describe("usersRepository.findMany — Etapa 14I.2", () => {
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10 }));
     expect(mockedPrisma.user.count).toHaveBeenCalledWith(expect.objectContaining({ where: expect.any(Object) }));
-    expect(items).toEqual([{ id: "user-1" }]);
+    expect(items).toEqual([{ id: "user-1", supervisedUsers: [], supervisorUsers: [] }]);
     expect(total).toBe(1);
   });
 
@@ -79,5 +79,18 @@ describe("usersRepository.findMany — Etapa 14I.2", () => {
     expect(call.where).toEqual({});
     expect(call.skip).toBe(0);
     expect(call.take).toBe(100);
+  });
+});
+
+describe("usersRepository — relaciones de supervisión Nivel 2 → Nivel 3", () => {
+  it("aplana a supervisedUsers/supervisorUsers sin exponer la forma interna", async () => {
+    const ana = { id: "n3-a", name: "CARGA PLANTA", email: "planta@example.com", role: "NIVEL_3_CARGA_HORARIA", status: "ACTIVO" };
+    const jefe = { id: "n2-a", name: "ENCARGADO PLANTA", email: "jefe@example.com", role: "NIVEL_2_SUPERVISION", status: "ACTIVO" };
+    mockedPrisma.user.findUnique.mockResolvedValue({ id: "u-1", supervisionsAsSupervisor: [{ supervised: ana }], supervisionsAsSupervised: [{ supervisor: jefe }] });
+
+    const user = await usersRepository.findById("u-1");
+
+    expect(user).toEqual({ id: "u-1", supervisedUsers: [ana], supervisorUsers: [jefe] });
+    expect(user).not.toHaveProperty("supervisionsAsSupervisor");
   });
 });

@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import type { Request, Response } from "express";
 import { usersController } from "./users.controller";
 import { usersService } from "./users.service";
+import { invalidateEmployeeScopeCaches } from "../employees/employeeScopeCaches";
 
 /**
  * Etapa 14I.7 — `users` era, junto con `salary-categories`, uno de los 2
@@ -23,6 +24,10 @@ import { usersService } from "./users.service";
  * entre tests. La invalidación real (`create`/`update`/`resetPassword`) se
  * prueba igual, vía los mutadores reales del controller.
  */
+vi.mock("../employees/employeeScopeCaches", () => ({
+  invalidateEmployeeScopeCaches: vi.fn(),
+}));
+
 vi.mock("./users.service", () => ({
   usersService: {
     list: vi.fn(),
@@ -207,5 +212,20 @@ describe("usersController — invalidación de usersListCache/usersDetailCache (
     await usersController.getById(detailReq, fakeRes());
     expect(mockedService.list).toHaveBeenCalledTimes(2);
     expect(mockedService.getById).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("usersController — rol y supervisión cambian el alcance de otros usuarios", () => {
+  it("create() y update() invalidan las cachés de alcance; resetPassword() no (no cambia alcance)", async () => {
+    mockedService.create.mockResolvedValue({ id: "scope-1" });
+    mockedService.update.mockResolvedValue({ id: "scope-1" });
+    mockedService.resetPassword.mockResolvedValue({ id: "scope-1" });
+
+    await usersController.create(fakeReq({ body: { name: "x" } }), fakeRes());
+    expect(invalidateEmployeeScopeCaches).toHaveBeenCalledTimes(1);
+    await usersController.update(fakeReq({ params: { id: "scope-1" }, body: { supervisedUserIds: [] } }), fakeRes());
+    expect(invalidateEmployeeScopeCaches).toHaveBeenCalledTimes(2);
+    await usersController.resetPassword(fakeReq({ params: { id: "scope-1" }, body: { password: "secreto123" } }), fakeRes());
+    expect(invalidateEmployeeScopeCaches).toHaveBeenCalledTimes(2);
   });
 });
