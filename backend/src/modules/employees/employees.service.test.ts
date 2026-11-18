@@ -38,8 +38,13 @@ vi.mock("./employees.repository", () => ({
     approveManualHourConceptBreakdown: vi.fn(),
     rejectManualHourConceptBreakdown: vi.fn(),
     returnManualHourConceptBreakdown: vi.fn(),
+    findLaborAuditSnapshot: vi.fn(),
+    createLaborMovement: vi.fn(),
   },
 }));
+// Etapa 5: el recálculo de cobertura se prueba en su módulo y en la integración PostgreSQL.
+vi.mock("../novelties/noveltyCoverage.service", () => ({ lockEmployeeCoverage: vi.fn() }));
+vi.mock("../novelties/noveltyCoverageRecalculation", () => ({ recalculateNoveltyCoverage: vi.fn(), auditNoveltyCoverageRecalculation: vi.fn() }));
 
 vi.mock("../audit/audit.service", () => ({ auditService: { register: vi.fn() } }));
 vi.mock("../time-entries/timeEntries.repository", () => ({ resolveDoubleHourMultipliersByDate: vi.fn() }));
@@ -66,6 +71,8 @@ const repo = employeesRepository as unknown as {
   approveManualHourConceptBreakdown: Mock;
   rejectManualHourConceptBreakdown: Mock;
   returnManualHourConceptBreakdown: Mock;
+  findLaborAuditSnapshot: Mock;
+  createLaborMovement: Mock;
 };
 const rrhhUser = { id: "user-rrhh", role: roles.rrhh } as unknown as Express.AuthUser;
 
@@ -169,7 +176,7 @@ describe("buildEmployeeTimeGrid", () => {
     ], [breakdown(sereno, 27, 180, 2), breakdown(colectivo, 27, 60, 2)]);
 
     expect(result.totalWorkedMinutes).toBe(540);
-    expect(result.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+    expect(result.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
     expect(result.specialHoursByDay["27"]).toEqual({ multiplier: 2, ruleNames: ["Domingos"], conflict: false });
   });
 
@@ -852,5 +859,28 @@ describe("employeesService — auditoría del desglose manual con identidad huma
       "Se devolvió el desglose manual Colectivo de Pérez, Juan · Legajo 30. Motivo: Falta el destino",
     ]);
     for (const description of audited()) expect(description).not.toContain(employeeUuid);
+  });
+});
+
+describe("employeesService.createLaborMovement — cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+  it("un ALTA/BAJA recalcula la cobertura del legajo sólo en el rango que cambia, en la transacción del movimiento y con el lock tomado antes de escribir", async () => {
+    const { lockEmployeeCoverage } = await import("../novelties/noveltyCoverage.service");
+    const { recalculateNoveltyCoverage, auditNoveltyCoverageRecalculation } = await import("../novelties/noveltyCoverageRecalculation");
+    const tx = { tx: true };
+    const coverage = { changedDays: 3 };
+    vi.mocked(recalculateNoveltyCoverage).mockResolvedValue(coverage as never);
+    repo.findLaborAuditSnapshot.mockResolvedValue({ id: "emp-1", legajo: "30", status: "ACTIVO", laborMovements: [] });
+    repo.createLaborMovement.mockImplementation(async (_id: string, _input: unknown, _user: unknown, hooks: { beforeWrite: (db: unknown) => Promise<void>; afterWrite: (db: unknown, previous: unknown[]) => Promise<unknown> }) => {
+      await hooks.beforeWrite(tx);
+      const after = await hooks.afterWrite(tx, [{ type: "ALTA", effectiveFrom: new Date("2026-01-01T00:00:00.000Z") }]);
+      return { employee: { id: "emp-1", legajo: "30", status: "BAJA" }, movement: { id: "mov-1" }, after };
+    });
+
+    const baja = new Date("2026-11-15T00:00:00.000Z");
+    await employeesService.createLaborMovement("emp-1", { type: "BAJA", effectiveFrom: baja, reason: "Renuncia" } as never, { userId: "user-rrhh" });
+
+    expect(lockEmployeeCoverage).toHaveBeenCalledWith(tx, ["emp-1"]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(tx, { employeeIds: ["emp-1"], from: baja, to: null }, { source: "LABOR_MOVEMENT_CHANGED", label: "baja del legajo 30 desde el 15/11/2026" });
+    expect(auditNoveltyCoverageRecalculation).toHaveBeenCalledWith(coverage, { userId: "user-rrhh" });
   });
 });

@@ -19,24 +19,34 @@ async function whereFor(period: string): Promise<Prisma.NoveltyWhereInput> {
   return vi.mocked(prisma.novelty.findMany).mock.calls.at(-1)![0]!.where as Prisma.NoveltyWhereInput;
 }
 
-// Etapa 15L.3B.1: el `where` de Prisma usa `gte`/`lte` — esto es exactamente
-// la misma comparación que hace Postgres, así que evaluarla acá con Date
-// nativo prueba el comportamiento observable real (no sólo la forma del
-// objeto) sin necesitar una base de datos.
-function matchesFromDate(where: Prisma.NoveltyWhereInput, fromDate: Date) {
-  const condition = where.fromDate as { gte: Date; lte: Date };
-  return fromDate >= condition.gte && fromDate <= condition.lte;
+// Etapa 15L.3B.1 / etapa 9 de cobertura / §16.2: evalúa el `where` con Date
+// nativo (misma comparación que Postgres). Desde §16.2 el repositorio sólo
+// filtra por novedad; si el tipo exporta, está activo o tiene cobertura lo
+// decide el servicio con la configuración congelada en el cierre (ver
+// finnegansExport.service.test.ts, "configuración del período").
+type Candidate = { fromDate: Date; toDate: Date | null };
+type DateFilter = { gte?: Date; gt?: Date; lt?: Date; lte?: Date };
+function matchesDate(value: Date | null, filter: DateFilter | undefined) {
+  if (!filter) return true;
+  if (value === null) return false;
+  return (!filter.gte || value >= filter.gte) && (!filter.gt || value > filter.gt) && (!filter.lt || value < filter.lt) && (!filter.lte || value <= filter.lte);
 }
+function isCandidate(where: Prisma.NoveltyWhereInput, candidate: Candidate) {
+  return (where.OR as Prisma.NoveltyWhereInput[]).some((branch) => matchesDate(candidate.fromDate, branch.fromDate as DateFilter | undefined) && matchesDate(candidate.toDate, branch.toDate as DateFilter | undefined));
+}
+const utc = (year: number, month: number, day: number) => new Date(Date.UTC(year, month - 1, day));
 
-describe("finnegansExportRepository.findExportableNovelties — Etapa 15L.3A/15L.3B.1", () => {
-  it("filtra por status APROBADO, tipo ACTIVO+exportsToFinnegans y fromDate dentro del período, sin exigir vínculo activo ni ninguna cláusula sobre toDate", async () => {
+describe("finnegansExportRepository.findExportableNovelties", () => {
+  it("filtra sólo por novedad: APROBADA, con fecha desde en el mes o un rango que llega al mes", async () => {
     const where = await whereFor("2026-09");
     expect(where).toEqual({
       status: "APROBADO",
-      fromDate: { gte: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)), lte: new Date(Date.UTC(2026, 8, 30, 23, 59, 59, 999)) },
-      noveltyType: { status: "ACTIVO", exportsToFinnegans: true },
+      OR: [
+        { fromDate: { gte: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)), lte: new Date(Date.UTC(2026, 8, 30, 23, 59, 59, 999)) } },
+        { fromDate: { lt: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)) }, toDate: { gte: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)) } },
+      ],
     });
-    expect(where).not.toHaveProperty("OR");
+    expect(where).not.toHaveProperty("noveltyType");
   });
 
   it("agrega employeeId al WHERE cuando se pasa", async () => {
@@ -50,46 +60,13 @@ describe("finnegansExportRepository.findExportableNovelties — Etapa 15L.3A/15L
     const call = vi.mocked(prisma.novelty.findMany).mock.calls[0]![0]! as { include: { noveltyType: boolean } };
     expect(call.include.noveltyType).toBe(true);
   });
-});
 
-describe("finnegansExportRepository.findExportableNovelties — pertenencia mensual única (Etapa 15L.3B.1)", () => {
-  it("cross-month (30/07 → 02/08): candidata en julio, NO candidata en agosto — comportamiento observable, no sólo forma del where", async () => {
-    const fromDate = new Date(Date.UTC(2026, 6, 30)); // 30/07/2026
-
-    expect(matchesFromDate(await whereFor("2026-07"), fromDate)).toBe(true);
-    expect(matchesFromDate(await whereFor("2026-08"), fromDate)).toBe(false);
-  });
-
-  it("cross-month: el where de julio no tiene ninguna cláusula OR sobre toDate (antes permitía que un toDate de agosto la colara)", async () => {
-    const where = await whereFor("2026-07");
-    expect(where).not.toHaveProperty("OR");
-    expect(where).toEqual({
-      status: "APROBADO",
-      fromDate: { gte: new Date(Date.UTC(2026, 6, 1, 0, 0, 0, 0)), lte: new Date(Date.UTC(2026, 6, 31, 23, 59, 59, 999)) },
-      noveltyType: { status: "ACTIVO", exportsToFinnegans: true },
-    });
-  });
-
-  it("open-ended (15/07, toDate=null): candidata sólo en julio, nunca en agosto/septiembre — toDate=null ya no tiene ningún efecto en la selección", async () => {
-    const fromDate = new Date(Date.UTC(2026, 6, 15));
-
-    expect(matchesFromDate(await whereFor("2026-07"), fromDate)).toBe(true);
-    expect(matchesFromDate(await whereFor("2026-08"), fromDate)).toBe(false);
-    expect(matchesFromDate(await whereFor("2026-09"), fromDate)).toBe(false);
-  });
-
-  it("01/08 → 01/08: candidata sólo en agosto, no en julio", async () => {
-    const fromDate = new Date(Date.UTC(2026, 7, 1));
-
-    expect(matchesFromDate(await whereFor("2026-07"), fromDate)).toBe(false);
-    expect(matchesFromDate(await whereFor("2026-08"), fromDate)).toBe(true);
-  });
-
-  it("31/12 → 02/01 del año siguiente: candidata sólo en diciembre — confirma periodRange en el cambio de año", async () => {
-    const fromDate = new Date(Date.UTC(2026, 11, 31));
-
-    expect(matchesFromDate(await whereFor("2026-12"), fromDate)).toBe(true);
-    expect(matchesFromDate(await whereFor("2027-01"), fromDate)).toBe(false);
+  it("selección observable: empieza en el mes, o empezó antes y su rango llega al mes; toDate nulo es un día", async () => {
+    expect(isCandidate(await whereFor("2026-08"), { fromDate: utc(2026, 8, 1), toDate: utc(2026, 8, 1) })).toBe(true);
+    expect(isCandidate(await whereFor("2026-08"), { fromDate: utc(2026, 7, 30), toDate: utc(2026, 8, 2) })).toBe(true);
+    expect(isCandidate(await whereFor("2026-09"), { fromDate: utc(2026, 7, 30), toDate: utc(2026, 8, 2) })).toBe(false);
+    expect(isCandidate(await whereFor("2026-08"), { fromDate: utc(2026, 7, 15), toDate: null })).toBe(false);
+    expect(isCandidate(await whereFor("2027-01"), { fromDate: utc(2026, 12, 31), toDate: utc(2027, 1, 2) })).toBe(true);
   });
 });
 
@@ -104,7 +81,7 @@ describe("finnegansExportRepository.findClosuresForExport — Etapa 15L.3A", () 
     await finnegansExportRepository.findClosuresForExport(["emp-1", "emp-2"], "2026-09");
     expect(prisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith({
       where: { employeeId: { in: ["emp-1", "emp-2"] }, period: "2026-09" },
-      select: { employeeId: true, status: true },
+      select: { employeeId: true, status: true, snapshot: true },
     });
   });
 });

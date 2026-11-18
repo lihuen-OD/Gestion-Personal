@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ClockDeviceStatus } from "@prisma/client";
 import type { Request, RequestHandler } from "express";
 import { AppError } from "../../shared/errors/AppError";
@@ -32,6 +33,58 @@ export function clockDeviceRequestMetadata(req: Request) {
   };
 }
 
+/**
+ * El header de credencial si tiene el formato válido, sin verificarlo. Para
+ * las capas previas a la autenticación (modules/clock/clockRateLimits.ts): un
+ * header ausente o mal formado se rechaza sin tocar la base.
+ */
+export function wellFormedClockDeviceCredential(req: Request): string | null {
+  const header = req.get("authorization") || "";
+  return CREDENTIAL_PATTERN.test(header) ? header : null;
+}
+
+/** Huella de la credencial presentada (nunca el secreto), para claves en memoria. */
+export function clockCredentialFingerprint(credential: string) {
+  return createHash("sha256").update(credential).digest("hex").slice(0, 32);
+}
+
+const rejectedCredentialRequests = new WeakSet<Request>();
+
+/**
+ * La credencial bien formada de esta request fue rechazada (id inexistente o
+ * secreto incorrecto). Distingue ese 401 de los 401 de negocio posteriores,
+ * como un código de mantenimiento inválido.
+ */
+export function clockCredentialWasRejected(req: Request) {
+  return rejectedCredentialRequests.has(req);
+}
+
+// §33: credenciales que pasaron requireClockDevice hace poco (huella →
+// vencimiento). El tope por IP previo a autenticar no las cuenta: el volumen
+// de un equipo legítimo ya lo acotan sus cupos por dispositivo, y así una red
+// con muchos kioscos —o con alguien que la inunda sin credencial— no bloquea a
+// los equipos verificados. Sólo se agrega una huella después de un
+// lookup + comparación exitosos y con un estado permitido, y se borra ante
+// cualquier rechazo (401 o 403): el tamaño lo acota la cantidad de equipos
+// reales y un equipo revocado vuelve a contar desde su primer 403.
+const VERIFIED_CREDENTIAL_TTL_MS = 10 * 60_000;
+const verifiedCredentials = new Map<string, number>();
+
+function rememberVerified(fingerprint: string) {
+  const now = Date.now();
+  if (verifiedCredentials.size >= 10_000) {
+    for (const [key, until] of verifiedCredentials) if (until <= now) verifiedCredentials.delete(key);
+  }
+  verifiedCredentials.set(fingerprint, now + VERIFIED_CREDENTIAL_TTL_MS);
+}
+
+/** La credencial de esta request autenticó correctamente hace menos de 10 minutos. */
+export function hasRecentlyVerifiedClockCredential(req: Request) {
+  const credential = wellFormedClockDeviceCredential(req);
+  if (!credential) return false;
+  return (verifiedCredentials.get(clockCredentialFingerprint(credential)) ?? 0) > Date.now();
+}
+
 function invalidCredential() {
   return new AppError("Invalid device credentials", 401, "CLOCK_DEVICE_INVALID_CREDENTIAL");
 }
@@ -63,10 +116,19 @@ export function requireClockDevice(options: { allow?: readonly ClockDeviceStatus
       const match = CREDENTIAL_PATTERN.exec(req.get("authorization") || "");
       if (!match) throw invalidCredential();
       const [, id, secret] = match;
+      const fingerprint = clockCredentialFingerprint(match[0]);
       const credential = await clockDevicesRepository.findCredentialById(id!.toLowerCase());
       const valid = verifyClockDeviceSecret(secret!, credential?.tokenHash || DUMMY_HASH);
-      if (!credential || !valid) throw invalidCredential();
-      if (!allowed.has(credential.status)) throw statusError(credential.status);
+      if (!credential || !valid) {
+        verifiedCredentials.delete(fingerprint);
+        rejectedCredentialRequests.add(req);
+        throw invalidCredential();
+      }
+      if (!allowed.has(credential.status)) {
+        verifiedCredentials.delete(fingerprint);
+        throw statusError(credential.status);
+      }
+      rememberVerified(fingerprint);
 
       req.clockDevice = { id: credential.id, status: credential.status, name: credential.name };
       if (options.recordPresence && credential.status === "ACTIVE" && (!credential.lastSeenAt || Date.now() - credential.lastSeenAt.getTime() >= PRESENCE_THROTTLE_MS)) {

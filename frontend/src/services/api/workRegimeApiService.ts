@@ -1,6 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import { associatedEmployeesQuery, mapAssociatedEmployeeFromApi, type ApiAssociatedEmployee } from "./associatedEmployeeMapper";
 import type {
   EmployeeWorkRegimeAssignment,
@@ -11,6 +11,11 @@ import type {
   WorkRegimeStatus,
 } from "../../types/workRegime.types";
 import type { AssociatedEmployeeFilters, AssociatedEmployeesResult, WorkRegimeEmployeeAssociation, WorkRegimeEmployeesStatusFilter } from "../../types/associatedEmployee.types";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 type ApiWorkRegime = {
   id: string;
@@ -170,13 +175,13 @@ export const workRegimeApiService = {
 
   async update(id: string, item: WorkRegimeInput) {
     const response = await apiRequest<ApiItemResponse>(`/work-regimes/${id}`, { method: "PATCH", body: mapToApi(item) });
-    await invalidateCacheFamily("work-regimes", "work regime updated");
+    await Promise.all([invalidateCacheFamily("work-regimes", "work regime updated"), invalidateNoveltyCoverageDerivedCaches("work regime updated")]);
     return mapWorkRegimeFromApi(response.data);
   },
 
   async updateStatus(id: string, status: WorkRegimeStatus) {
     const response = await apiRequest<ApiItemResponse>(`/work-regimes/${id}/status`, { method: "PATCH", body: { status } });
-    await invalidateCacheFamily("work-regimes", "work regime status updated");
+    await Promise.all([invalidateCacheFamily("work-regimes", "work regime status updated"), invalidateNoveltyCoverageDerivedCaches("work regime status updated")]);
     return mapWorkRegimeFromApi(response.data);
   },
 
@@ -199,19 +204,19 @@ export const workRegimeApiService = {
   // agregar/editar/finalizar una asignación se refleje sin esperar el TTL.
   async assign(employeeId: string, input: { workRegimeId: string; effectiveFrom: string; effectiveTo?: string | null }) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes`, { method: "POST", body: input });
-    await invalidateCacheFamily("work-regimes", "work regime assigned to employee");
+    await Promise.all([invalidateCacheFamily("work-regimes", "work regime assigned to employee"), invalidateNoveltyCoverageDerivedCaches("work regime assigned to employee")]);
     return mapAssignmentFromApi(response.data);
   },
 
   async updateAssignment(employeeId: string, assignmentId: string, input: { workRegimeId?: string; effectiveFrom?: string; effectiveTo?: string | null }) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes/${assignmentId}`, { method: "PATCH", body: input });
-    await invalidateCacheFamily("work-regimes", "work regime assignment updated");
+    await Promise.all([invalidateCacheFamily("work-regimes", "work regime assignment updated"), invalidateNoveltyCoverageDerivedCaches("work regime assignment updated")]);
     return mapAssignmentFromApi(response.data);
   },
 
   async closeAssignment(employeeId: string, assignmentId: string, effectiveTo: string) {
     const response = await apiRequest<ApiAssignmentItemResponse>(`/employees/${employeeId}/work-regimes/${assignmentId}/close`, { method: "PATCH", body: { effectiveTo } });
-    await invalidateCacheFamily("work-regimes", "work regime assignment closed");
+    await Promise.all([invalidateCacheFamily("work-regimes", "work regime assignment closed"), invalidateNoveltyCoverageDerivedCaches("work regime assignment closed")]);
     return mapAssignmentFromApi(response.data);
   },
 

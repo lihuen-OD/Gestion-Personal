@@ -33,6 +33,14 @@ export const WORKED_TIME_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [
   "monthly-closures",
 ];
 
+// Familias que muestran la cobertura de novedades (total computable y
+// liquidación): las de contabilidad de horas más Novedades. Mismo alcance que
+// backend/src/modules/novelties/noveltyCoverageReadCaches.ts. Se invalidan
+// cuando cambia una novedad o una fuente que la reinterpreta: turno,
+// plantilla, régimen, franco, convocatoria, regla de Hora Especial, relación
+// laboral o configuración del tipo (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7).
+export const NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [...WORKED_TIME_DERIVED_CACHE_FAMILIES, "novelties"];
+
 export type CachePolicy = {
   family: CacheFamily;
   ttlMs: number;

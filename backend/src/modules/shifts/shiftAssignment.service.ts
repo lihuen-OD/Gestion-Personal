@@ -1,11 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
-import type { AuditContext } from "../audit/audit.service";
+import type { AuditContext, RegisterAuditInput } from "../audit/audit.service";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, coverageWindowOf, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 import type { CreateShiftAssignmentInput, ListShiftAssignmentsQuery, UpdateShiftAssignmentInput } from "./shiftAssignment.schemas";
+
+// La asignación y el recálculo de la cobertura de novedades van juntos.
+const SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS = { timeout: 30_000 };
 
 function describeShift(template: { code: string; name: string }) {
   return `${template.code} - ${template.name}`;
@@ -49,6 +54,12 @@ export const shiftAssignmentService = {
     return shiftAssignmentRepository.findMany(query, employeeAccessWhere(user));
   },
 
+  /**
+   * Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.2): asignar,
+   * editar, habilitar/deshabilitar o quitar un turno cambia la jornada
+   * esperada; la cobertura de novedades de esos legajos se recalcula en la
+   * MISMA transacción, sólo dentro de la vigencia anterior y la nueva.
+   */
   async assign(input: CreateShiftAssignmentInput, user: Express.AuthUser, audit?: AuditContext) {
     const template = await prisma.shiftTemplate.findUnique({ where: { id: input.shiftTemplateId } });
     if (!template) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
@@ -57,61 +68,65 @@ export const shiftAssignmentService = {
     const existingEmployees = await prisma.employee.count({ where: { id: { in: employeeIds } } });
     if (existingEmployees !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
 
-    const results = [];
-    for (const employeeId of employeeIds) {
-      const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId);
+    const vigency = { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays };
+    const outcome = await execute(() => prisma.$transaction(async (tx) => {
+      await lockEmployeeCoverage(tx, employeeIds);
+      const results = [];
+      const audits: RegisterAuditInput[] = [];
+      const ranges: Array<{ from: Date; to: Date | null }> = [];
+      const changedEmployees: string[] = [];
+      for (const employeeId of employeeIds) {
+        const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId, tx);
 
-      if (!existing) {
-        const created = await execute(() =>
-          shiftAssignmentRepository.create(
-            employeeId,
-            input.shiftTemplateId,
-            { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays },
-            user.id,
-          ),
-        );
-        // Etapa 10B: entityId=employeeId (no created.id, el id de la
-        // asignación) — mismo criterio ya usado en employees.service.ts, es
-        // lo que permite que este evento aparezca en el tab "Historial de
-        // Eventos"/"Auditoría" del propio legajo (hallazgo 10A §7/§11).
-        await auditService.register({
-          ...audit,
-          action: "CREATE",
-          entity: "ShiftAssignment",
-          entityId: employeeId,
-          description: `Se asignó el turno ${describeShift(template)} al empleado ${created.employee.legajo}.`,
-          after: created as unknown as Prisma.InputJsonValue,
-        });
-        results.push(created);
-        continue;
+        if (!existing) {
+          const created = await shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, vigency, user.id, tx);
+          // Etapa 10B: entityId=employeeId (no created.id, el id de la
+          // asignación) — mismo criterio ya usado en employees.service.ts, es
+          // lo que permite que este evento aparezca en el tab "Historial de
+          // Eventos"/"Auditoría" del propio legajo (hallazgo 10A §7/§11).
+          audits.push({
+            action: "CREATE",
+            entity: "ShiftAssignment",
+            entityId: employeeId,
+            description: `Se asignó el turno ${describeShift(template)} al empleado ${created.employee.legajo}.`,
+            after: created as unknown as Prisma.InputJsonValue,
+          });
+          ranges.push({ from: input.effectiveFrom, to: input.effectiveTo ?? null });
+          changedEmployees.push(employeeId);
+          results.push(created);
+          continue;
+        }
+
+        if (existing.status === "DESHABILITADO") {
+          const reenabled = await shiftAssignmentRepository.reEnable(existing.id, vigency, user.id, tx);
+          // Etapa 10B: entityId=employeeId, mismo criterio que arriba.
+          audits.push({
+            action: "ACTIVATE",
+            entity: "ShiftAssignment",
+            entityId: employeeId,
+            description: `Se rehabilitó el turno ${describeShift(template)} para el empleado ${reenabled.employee.legajo}.`,
+            before: existing as unknown as Prisma.InputJsonValue,
+            after: reenabled as unknown as Prisma.InputJsonValue,
+          });
+          ranges.push({ from: input.effectiveFrom, to: input.effectiveTo ?? null }, { from: existing.effectiveFrom, to: existing.effectiveTo });
+          changedEmployees.push(employeeId);
+          results.push(reenabled);
+          continue;
+        }
+
+        results.push(await shiftAssignmentRepository.findById(existing.id, tx));
       }
+      const window = coverageWindowOf(ranges);
+      const coverage = window
+        ? await recalculateNoveltyCoverage(tx, { employeeIds: changedEmployees, ...window }, { source: "SHIFT_ASSIGNMENT_CHANGED", label: `asignación del turno ${describeShift(template)}` })
+        : null;
+      return { results, audits, coverage };
+    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS));
 
-      if (existing.status === "DESHABILITADO") {
-        const reenabled = await execute(() =>
-          shiftAssignmentRepository.reEnable(
-            existing.id,
-            { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays },
-            user.id,
-          ),
-        );
-        // Etapa 10B: entityId=employeeId, mismo criterio que arriba.
-        await auditService.register({
-          ...audit,
-          action: "ACTIVATE",
-          entity: "ShiftAssignment",
-          entityId: employeeId,
-          description: `Se rehabilitó el turno ${describeShift(template)} para el empleado ${reenabled.employee.legajo}.`,
-          before: existing as unknown as Prisma.InputJsonValue,
-          after: reenabled as unknown as Prisma.InputJsonValue,
-        });
-        results.push(reenabled);
-        continue;
-      }
-
-      results.push(await shiftAssignmentRepository.findById(existing.id));
-    }
-
-    return results;
+    // La auditoría se registra recién cuando la transacción confirmó.
+    for (const entry of outcome.audits) await auditService.register({ ...audit, ...entry });
+    if (outcome.coverage) await auditNoveltyCoverageRecalculation(outcome.coverage, audit);
+    return outcome.results;
   },
 
   async update(id: string, input: UpdateShiftAssignmentInput, user: Express.AuthUser, audit?: AuditContext) {
@@ -149,7 +164,17 @@ export const shiftAssignmentService = {
       }
     }
 
-    const item = await execute(() => shiftAssignmentRepository.update(id, data));
+    // Sólo la observación no cambia la jornada esperada.
+    const affectsWorkday = data.status !== undefined || data.effectiveFrom !== undefined || data.effectiveTo !== undefined || data.weekdays !== undefined;
+    const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
+      if (affectsWorkday) await lockEmployeeCoverage(tx, [before.employeeId]);
+      const updated = await shiftAssignmentRepository.update(id, data, tx);
+      const window = affectsWorkday ? coverageWindowOf([{ from: before.effectiveFrom, to: before.effectiveTo }, { from: updated.effectiveFrom, to: updated.effectiveTo }]) : null;
+      const recalculated = window
+        ? await recalculateNoveltyCoverage(tx, { employeeIds: [before.employeeId], ...window }, { source: "SHIFT_ASSIGNMENT_CHANGED", label: `cambio del turno ${describeShift(updated.shiftTemplate)} del legajo ${updated.employee.legajo}` })
+        : null;
+      return { item: updated, coverage: recalculated };
+    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS));
     // Etapa 10B: entityId=employeeId (no id, el id de la asignación), mismo
     // criterio que assign() arriba.
     await auditService.register({
@@ -161,13 +186,22 @@ export const shiftAssignmentService = {
       before: before as unknown as Prisma.InputJsonValue,
       after: item as unknown as Prisma.InputJsonValue,
     });
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return item;
   },
 
   async remove(id: string, audit?: AuditContext) {
     const before = await shiftAssignmentRepository.findById(id);
     if (!before) throw new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
-    await shiftAssignmentRepository.remove(id);
+    const coverage = await execute(() => prisma.$transaction(async (tx) => {
+      await lockEmployeeCoverage(tx, [before.employeeId]);
+      await shiftAssignmentRepository.remove(id, tx);
+      return recalculateNoveltyCoverage(
+        tx,
+        { employeeIds: [before.employeeId], from: before.effectiveFrom, to: before.effectiveTo },
+        { source: "SHIFT_ASSIGNMENT_CHANGED", label: `baja del turno ${describeShift(before.shiftTemplate)} del legajo ${before.employee.legajo}` },
+      );
+    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS));
     // Etapa 10B: entityId=employeeId, mismo criterio que assign()/update() arriba.
     await auditService.register({
       ...audit,
@@ -177,6 +211,7 @@ export const shiftAssignmentService = {
       description: `Se quitó la asociación del turno ${describeShift(before.shiftTemplate)} con el empleado ${before.employee.legajo}.`,
       before: before as unknown as Prisma.InputJsonValue,
     });
+    await auditNoveltyCoverageRecalculation(coverage, audit);
     return { id };
   },
 };

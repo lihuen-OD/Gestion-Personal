@@ -7,18 +7,22 @@ import { roles } from "../../shared/security/roles";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { argentinaDateKey, humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { resolveEmployeeNotificationRecipients, type RecipientsReader } from "./employeeNotificationRecipients";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
 import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import { buildClosureSnapshots, confirmedClosureResult } from "./closureSnapshot";
+import { buildClosureSnapshots, confirmedClosureResult, pendingNoveltyReviewOf } from "./closureSnapshot";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
 import { reinterpretSpecialHours, type RuleCalendar, type SpecialHourReinterpretation } from "./specialHourReinterpretation";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, describeNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { describeReinterpretation, reinterpretationMetadata } from "./specialHourReinterpretationSummary";
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
+import { computeExpectedMinutes } from "../shifts/shiftTemplateTime";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -63,26 +67,15 @@ export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
   await notifyUsers(users.map((item) => item.id), input);
 }
 
-export async function attendanceRecipients(employeeId: string) {
-  const [rrhh, responsible] = await Promise.all([
-    prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } }),
-    prisma.employeeAssignment.findMany({
-      where: { employeeId, type: "TIME_RESPONSIBLE", userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
-      select: { userId: true },
-    }),
-  ]);
-  return [...rrhh.map((item) => item.id), ...responsible.flatMap((item) => item.userId ? [item.userId] : [])];
-}
-
-function minutesOfDay(time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  return (hours || 0) * 60 + (minutes || 0);
-}
-
-function computeExpectedMinutes(startTime: string, endTime: string, crossesMidnight: boolean) {
-  const start = minutesOfDay(startTime);
-  const end = minutesOfDay(endTime);
-  return crossesMidnight ? 24 * 60 - start + end : end - start;
+/**
+ * Destinatarios de un aviso operativo del legajo: RRHH + responsables
+ * directos + supervisores Nivel 2 heredados de responsables Nivel 3
+ * (employeeNotificationRecipients.ts). `eventAt`: instante del hecho que
+ * origina el aviso; la vigencia de TIME_RESPONSIBLE se evalúa en su día
+ * Argentina, no en el momento en que se procesa o reintenta.
+ */
+export async function attendanceRecipients(employeeId: string, eventAt: Date, db?: RecipientsReader) {
+  return resolveEmployeeNotificationRecipients(employeeId, argentinaDateKey(eventAt), db);
 }
 
 // Etapa 8B: para recurrenceType FECHA, fromDate/toDate ya no son la
@@ -98,6 +91,32 @@ function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
   return { fromDate: new Date(Math.min(...timestamps)), toDate: new Date(Math.max(...timestamps)) };
 }
 
+// ── Turnos: cobertura de novedades de quienes usan la plantilla (etapa 5) ──
+const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
+/**
+ * Cambio de horario/minutos/estado de una plantilla: recalcula sólo los
+ * legajos que la tienen asignada (cualquier estado: la asignación puede
+ * volver a habilitarse con su vigencia) o convocada a un feriado, dentro de la
+ * ventana de esas vigencias/fechas (NOVELTY_COVERAGE_ENGINE.md §13.2). Quien
+ * llama ya tomó el lock global de cobertura.
+ */
+async function recalculateTemplateCoverage(tx: PrismaTransactionClient, shiftTemplateId: string, label: string) {
+  const [assignments, convocations] = await Promise.all([
+    tx.shiftAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } }),
+    tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, date: true } }),
+  ]);
+  const reason = { source: "SHIFT_TEMPLATE_CHANGED" as const, label };
+  const ranges = [
+    ...assignments.map((row) => ({ employeeId: row.employeeId, from: row.effectiveFrom, to: row.effectiveTo })),
+    ...convocations.map((row) => ({ employeeId: row.employeeId, from: row.date, to: row.date as Date | null })),
+  ];
+  if (!ranges.length) return recalculateNoveltyCoverage(tx, { employeeIds: [] }, reason);
+  const from = new Date(Math.min(...ranges.map((range) => range.from.getTime())));
+  const to = ranges.some((range) => range.to === null) ? null : new Date(Math.max(...ranges.map((range) => range.to!.getTime())));
+  return recalculateNoveltyCoverage(tx, { employeeIds: [...new Set(ranges.map((range) => range.employeeId))], from, to }, reason);
+}
+
 // ── Reglas de Hora Especial: cambio + reinterpretación de la historia ──────
 // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15). Crear, editar,
 // inactivar o eliminar una regla corre en la misma transacción que el
@@ -107,8 +126,8 @@ const CLOSURE_TRANSACTION_OPTIONS = { timeout: 30_000 };
 
 type RuleForChange = RuleCalendar & { name: string; kind: DoubleHourRuleKind; multiplier: Prisma.Decimal | number; status: string };
 
-function ruleCalendar(rule: RuleForChange): RuleCalendar {
-  return { id: rule.id, recurrenceType: rule.recurrenceType, fromDate: rule.fromDate, toDate: rule.toDate, weekdays: rule.weekdays, dates: rule.dates };
+function ruleCalendar(rule: RuleForChange): RuleCalendar & { kind: DoubleHourRuleKind } {
+  return { id: rule.id, recurrenceType: rule.recurrenceType, fromDate: rule.fromDate, toDate: rule.toDate, weekdays: rule.weekdays, dates: rule.dates, kind: rule.kind };
 }
 
 const WEEKDAY_PLURALS = ["domingos", "lunes", "martes", "miércoles", "jueves", "viernes", "sábados"];
@@ -145,6 +164,8 @@ function describeRuleSchedule(rule: RuleForChange) {
  * aplicaciones también en esos períodos.
  */
 async function planDoubleRuleDeletionWithin(tx: PrismaTransactionClient, id: string) {
+  // Cambio que alcanza a cualquier legajo: lock global de cobertura primero (NOVELTY_COVERAGE_ENGINE.md §13.6).
+  await lockNoveltyCoverageGlobally(tx);
   const before = await tx.doubleHourRule.findUnique({ where: { id }, include: { employees: true, dates: true } });
   if (!before) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
   if (before.status === "ACTIVO") await tx.doubleHourRule.update({ where: { id }, data: { status: "INACTIVO" } });
@@ -301,6 +322,21 @@ export const workforceService = {
       await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
       await assertClockPunchPostProcessSettled(tx, employeeIds, period);
       const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
+      // NOVELTY_COVERAGE_ENGINE.md §12: un período con cobertura de novedades
+      // en revisión no se consolida en silencio — se rechaza el envío completo.
+      const pendingReview = employeeIds
+        .map((employeeId) => ({ employeeId, ...pendingNoveltyReviewOf(snapshots.get(employeeId)) }))
+        .filter((item) => item.reviewDays > 0);
+      if (pendingReview.length) {
+        const reference = await loadEmployeeReferences(tx, pendingReview.map((item) => item.employeeId));
+        const detail = pendingReview.map((item) => `${reference(item.employeeId)}: ${item.reviewDays} día(s) (${item.reviewDates.map((date) => (date.length === 10 ? formatArgentinaDate(date) : date)).join(", ")})`).join("; ");
+        throw new AppError(
+          `No se puede enviar el cierre: hay novedades con días para revisar. ${detail}.`,
+          409,
+          "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
+          { employees: pendingReview.map((item) => ({ employeeId: item.employeeId, reviewDays: item.reviewDays, reviewDates: item.reviewDates })) },
+        );
+      }
       const saved = [];
       for (const employeeId of employeeIds) {
         const snapshot = snapshots.get(employeeId)!;
@@ -475,15 +511,25 @@ export const workforceService = {
     const startTime = input.startTime ?? before.startTime;
     const endTime = input.endTime ?? before.endTime;
     const crossesMidnight = endTime <= startTime;
-    const item = await execute(() => prisma.shiftTemplate.update({
-      where: { id },
-      data: {
-        ...input,
-        crossesMidnight,
-        expectedMinutes: computeExpectedMinutes(startTime, endTime, crossesMidnight),
-        updatedByUserId: audit?.userId || null,
-      },
-    }));
+    const expectedMinutes = computeExpectedMinutes(startTime, endTime, crossesMidnight);
+    // Horario, minutos o estado cambian la jornada esperada de quienes usan
+    // el turno: misma transacción que el recálculo de su cobertura (etapa 5).
+    const affectsWorkday = startTime !== before.startTime || endTime !== before.endTime || crossesMidnight !== before.crossesMidnight || expectedMinutes !== before.expectedMinutes || (input.status !== undefined && input.status !== before.status);
+    const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
+      if (affectsWorkday) await lockNoveltyCoverageGlobally(tx);
+      const updated = await tx.shiftTemplate.update({
+        where: { id },
+        data: {
+          ...input,
+          crossesMidnight,
+          expectedMinutes,
+          updatedByUserId: audit?.userId || null,
+        },
+      });
+      const recalculated = affectsWorkday ? await recalculateTemplateCoverage(tx, id, `cambio del turno ${updated.code} - ${updated.name}`) : null;
+      return { item: updated, coverage: recalculated };
+    }, SHIFT_TEMPLATE_TRANSACTION_OPTIONS));
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     await auditService.register({
       ...audit,
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
@@ -506,8 +552,15 @@ export const workforceService = {
       if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
       const history = before._count.workShifts + before._count.holidayWorkAssignments;
       if (history > 0) {
+        if (before.status !== "INACTIVO") await lockNoveltyCoverageGlobally(tx);
         const item = await tx.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
         await auditService.registerWithin(tx, { ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas o convocatorias de feriado históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+        // Un turno inactivo deja de definir jornada: cobertura de quienes lo usan (etapa 5).
+        if (before.status !== "INACTIVO") {
+          const coverage = await recalculateTemplateCoverage(tx, id, `inactivación del turno ${before.code} - ${before.name}`);
+          const description = describeNoveltyCoverageRecalculation(coverage);
+          if (description) await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "NoveltyDayCoverage", description, after: { source: coverage.source, novelties: coverage.changedNovelties, days: coverage.changedDays, protectedPeriods: coverage.protectedPeriods, droppedResolutions: coverage.droppedResolutions } as unknown as Prisma.InputJsonValue });
+        }
         return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
       }
       if (before._count.assignments > 0) {
@@ -539,6 +592,7 @@ export const workforceService = {
     await assertRuleSectorSupported(input.sectorId);
     const { employeeIds, dates, ...data } = input;
     const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      await lockNoveltyCoverageGlobally(tx);
       await assertRuleDestinationsNotArchived(tx, input, null, { lock: true });
       const created = await tx.doubleHourRule.create({
         data: {
@@ -559,6 +613,7 @@ export const workforceService = {
       after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
     });
     await auditSpecialHourRuleClosures(item, reinterpretation, audit);
+    if (reinterpretation.noveltyCoverage) await auditNoveltyCoverageRecalculation(reinterpretation.noveltyCoverage, audit);
     return item;
   },
   async updateDoubleRule(id: string, input: any, audit?: AuditContext) {
@@ -571,6 +626,7 @@ export const workforceService = {
     const { employeeIds, dates, ...data } = input;
     const recurrenceType = data.recurrenceType ?? before.recurrenceType;
     const { item, reinterpretation } = await execute(() => prisma.$transaction(async (tx) => {
+      await lockNoveltyCoverageGlobally(tx);
       // Autoritativa: contra las FKs de la regla leídas en esta transacción.
       const current = await tx.doubleHourRule.findUnique({ where: { id }, select: { companyId: true, sectorId: true, positionId: true } });
       if (!current) throw new AppError("No encontramos la regla solicitada", 404, "DOUBLE_HOUR_RULE_NOT_FOUND");
@@ -608,6 +664,7 @@ export const workforceService = {
       after: { ...item, reinterpretation: reinterpretationMetadata(reinterpretation) } as Prisma.InputJsonValue,
     });
     await auditSpecialHourRuleClosures(item, reinterpretation, audit);
+    if (reinterpretation.noveltyCoverage) await auditNoveltyCoverageRecalculation(reinterpretation.noveltyCoverage, audit);
     return item;
   },
   // Etapa 8B: preview de calendario — de sólo configuración (no depende de
@@ -672,13 +729,15 @@ export const workforceService = {
   // Endpoint anterior (DELETE): mismo plan y misma corrección de orden que la
   // eliminación controlada, sin vista previa. Con períodos protegidos alcanzados, 409.
   async removeDoubleRule(id: string, audit?: AuditContext) {
-    await execute(() => prisma.$transaction(async (tx) => {
+    const coverage = await execute(() => prisma.$transaction(async (tx) => {
       const plan = await planDoubleRuleDeletionWithin(tx, id);
       if (plan.preview.blockers.length) {
         throw new AppError(plan.preview.blockers.map((item) => item.message).join(" "), 409, "DOUBLE_HOUR_RULE_PROTECTED_HISTORY", { protectedPeriods: plan.reinterpretation.protectedPeriods });
       }
       await deleteDoubleRuleWithin(tx, plan, audit);
+      return plan.reinterpretation.noveltyCoverage;
     }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return { mode: "DELETED" as const, id };
   },
 
@@ -697,13 +756,14 @@ export const workforceService = {
   },
 
   async executeDoubleRuleDeletion(id: string, confirmation: DeletionConfirmation, audit?: AuditContext) {
-    const preview = await execute(() => prisma.$transaction(async (tx) => {
+    const { preview, coverage } = await execute(() => prisma.$transaction(async (tx) => {
       await assertActorAuthorizedWithin(tx, audit?.userId, [roles.rrhh]);
       const plan = await planDoubleRuleDeletionWithin(tx, id);
       assertConfirmedPlan(plan.preview, confirmation);
       await deleteDoubleRuleWithin(tx, plan, audit);
-      return plan.preview;
+      return { preview: plan.preview, coverage: plan.reinterpretation.noveltyCoverage };
     }, SPECIAL_HOUR_RULE_TRANSACTION_OPTIONS));
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return { done: true, target: preview.target, groups: preview.groups };
   },
 };

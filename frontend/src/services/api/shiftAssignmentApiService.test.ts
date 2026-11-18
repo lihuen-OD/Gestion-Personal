@@ -83,3 +83,18 @@ describe("shiftAssignmentApiService.getSummary — dedupe/cache frontend (Etapa 
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("shiftAssignmentApiService — cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13.7)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ["asignar", () => shiftAssignmentApiService.assign({ employeeIds: ["e-1"], shiftTemplateId: "t-1", effectiveFrom: "2027-03-01", weekdays: [] } as never)],
+    ["editar", () => shiftAssignmentApiService.update("a-1", { weekdays: [0, 1] } as never)],
+    ["quitar", () => shiftAssignmentApiService.remove("a-1")],
+  ])("%s un turno invalida configuración, pantallas de horas y novedades", async (_label, run) => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: {} });
+    await run();
+    const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
+    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "pending", "time-entries", "workforce-config"]);
+  });
+});

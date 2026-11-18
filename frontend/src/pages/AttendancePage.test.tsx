@@ -10,6 +10,7 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
 // punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
@@ -42,7 +43,7 @@ vi.mock("../services/api/employeeApiService", async (importOriginal) => {
 });
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyApiService")>();
-  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, create: vi.fn() } };
+  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, create: vi.fn(), previewCoverage: vi.fn().mockReturnValue(new Promise(() => undefined)) } };
 });
 vi.mock("../services/api/noveltyTypeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyTypeApiService")>();
@@ -113,7 +114,9 @@ function buildGenericActiveType(): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
     finnegansCode: null,
@@ -415,7 +418,7 @@ describe("AttendancePage — Etapa 15G.2 (crear novedad desde alerta/observació
     await userEvent.click(await screen.findByRole("button", { name: "Crear novedad" }));
 
     const modal = await findModalScope();
-    await waitFor(() => expect(modal.getByLabelText("Desde")).toHaveValue("2026-08-27"));
+    await waitFor(() => expect(modal.getByLabelText(/^(Desde|Fecha) \*$/)).toHaveValue("2026-08-27"));
     // Ausencia no tiene NoveltyType "Ausencia" seedeado garantizado -> sin
     // tipo sugerido, cae al primer tipo activo (mismo comportamiento de
     // siempre, sin romper).

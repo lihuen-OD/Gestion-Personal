@@ -12,6 +12,12 @@ vi.mock("./employees.repository", () => ({
 }));
 
 // getTimeGrid también lee el índice de francos (EMPLOYEE_DAY_OFF.md §7): sin francos.
+// Cobertura de novedades de la grilla (etapa 4): sin filas en este test.
+vi.mock("../novelties/noveltyCoverageAccounting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverageAccounting")>()),
+  loadNoveltyCoverageForAccounting: vi.fn(async () => ({ coverages: [], types: new Map() })),
+}));
+
 vi.mock("../employee-day-offs/employeeDayOffAccounting", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../employee-day-offs/employeeDayOffAccounting")>();
   return { ...actual, loadDayOffAccounting: vi.fn(async () => actual.emptyDayOffAccounting()) };

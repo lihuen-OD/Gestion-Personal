@@ -214,6 +214,9 @@ async function main() {
       kind: "HORARIA",
       allowsHours: true,
       allowsDateRange: false,
+      // Mismo criterio que el backfill de 20261113180000_add_novelty_coverage_engine:
+      // cantidad manual de un día, visible y sin sumar al total.
+      coverageMode: "MANUAL_MINUTES",
       requiresApproval: false,
       allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
       approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
@@ -439,6 +442,7 @@ async function main() {
         status: "APROBADO",
         fromDate: new Date("2026-06-01T00:00:00.000Z"),
         quantityHours: "1",
+        quantityMinutes: 60,
         observation: "Seed inicial para validar novedad horaria.",
         createdByUserId: admin.id,
         approvedByUserId: admin.id,

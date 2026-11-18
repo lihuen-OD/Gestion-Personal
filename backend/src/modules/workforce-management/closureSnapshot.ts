@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import {
   accountEmployeePeriods,
@@ -36,7 +37,10 @@ export type ClosureSnapshotRecalculation =
   // fichadas (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   | { reason: "MANUAL_HOURS_CONFLICT_RESOLVED"; date: string }
   // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
-  | { reason: "SPECIAL_HOUR_RECONCILIATION" };
+  | { reason: "SPECIAL_HOUR_RECONCILIATION" }
+  // Cambió una fuente de la cobertura de novedades (turno, franco, regla,
+  // relación laboral, configuración del tipo...): docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.
+  | { reason: "NOVELTY_COVERAGE_CHANGED"; source: string; label: string };
 
 export type ClosureSnapshotTarget = { id: string; employeeId: string; period: string; snapshot: Prisma.JsonValue | null };
 
@@ -74,11 +78,50 @@ function periodRange(period: string) {
  * estado). `accounting` congela la composición real del período con el
  * modelo único — mismo criterio de estado que la grilla por legajo (base
  * APROBADO/EN_REVISION, conceptos sin RECHAZADO), así cierre y grilla nunca
- * calculan distinto. 3 consultas batch para todos los legajos del período.
+ * calculan distinto. Consultas batch para todos los legajos del período.
+ *
+ * Modelo WORKED_TIME_ACCOUNTING_V2 (NOVELTY_COVERAGE_ENGINE.md §12): agrega la
+ * cobertura de novedades (`noveltyCoveredMinutes`, `computableMinutes`,
+ * `settlement.noveltyMinutes`, `novelty` con estados y tipos). Los snapshots
+ * V1 ya guardados siguen siendo legibles: V2 sólo agrega campos y conserva los
+ * de V1 con el mismo significado.
  */
+export const CLOSURE_ACCOUNTING_MODEL = "WORKED_TIME_ACCOUNTING_V2";
+
+/**
+ * Configuración de Finnegans congelada al generar el snapshot
+ * (NOVELTY_COVERAGE_ENGINE.md §16.2): por cada tipo con novedades del legajo
+ * en el período, sólo los campos que consume la exportación. Un snapshot
+ * anterior no la tiene y la exportación usa el tipo vigente.
+ */
+export const CLOSURE_FINNEGANS_CONFIG_MODEL = "FINNEGANS_CONFIG_V1";
+
+export type FrozenFinnegansNoveltyType = {
+  noveltyTypeId: string;
+  name: string;
+  status: "ACTIVO" | "INACTIVO";
+  exportsToFinnegans: boolean;
+  finnegansCode: string | null;
+  finnegansValueUnit: "HOURS" | "DAYS" | "UNIT" | null;
+  finnegansRequiresValidity: boolean;
+  coverageMode: "NONE" | "FIXED_MINUTES" | "MANUAL_MINUTES" | "EXPECTED_SCHEDULE";
+};
+
+/** Configuración congelada de un snapshot, o null si es un snapshot anterior a §16.2. */
+export function frozenFinnegansConfigOf(snapshot: Prisma.JsonValue | Prisma.InputJsonObject | null | undefined): Map<string, FrozenFinnegansNoveltyType> | null {
+  const finnegans = (snapshot as { finnegans?: { model?: string; types?: FrozenFinnegansNoveltyType[] } } | null)?.finnegans;
+  if (finnegans?.model !== CLOSURE_FINNEGANS_CONFIG_MODEL || !Array.isArray(finnegans.types)) return null;
+  return new Map(finnegans.types.map((type) => [type.noveltyTypeId, type]));
+}
+
+/** Días con cobertura de novedades en revisión según un snapshot (V2; un V1 no tiene). */
+export function pendingNoveltyReviewOf(snapshot: Prisma.JsonValue | Prisma.InputJsonObject | null | undefined): { reviewDays: number; reviewDates: string[] } {
+  const novelty = (snapshot as { accounting?: { novelty?: { reviewDays?: number; reviewDates?: string[] } } } | null)?.accounting?.novelty;
+  return { reviewDays: novelty?.reviewDays ?? 0, reviewDates: novelty?.reviewDates ?? [] };
+}
 export async function buildClosureSnapshots(db: Db, employeeIds: string[], period: string): Promise<Map<string, Prisma.InputJsonObject>> {
   const range = periodRange(period);
-  const [rows, baseEntries, breakdowns, dayOffs] = await Promise.all([
+  const [rows, baseEntries, breakdowns, dayOffs, coverage] = await Promise.all([
     db.timeEntry.groupBy({
       by: ["employeeId", "status"],
       where: { employeeId: { in: employeeIds }, period, hourConcept: { systemRole: "NORMAL_BASE" } },
@@ -95,8 +138,11 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
     }),
     // Francos: mismo criterio que la grilla (docs/decisions/EMPLOYEE_DAY_OFF.md §7).
     loadDayOffAccounting({ employeeIds, from: range.start, to: range.end }, db),
+    // Cobertura de novedades: mismo criterio que la grilla (1 consulta).
+    loadNoveltyCoverageForAccounting({ period, employeeIds }, db),
   ]);
-  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+  const finnegansTypes = await loadFinnegansConfigForClosures(db, employeeIds, range);
+  const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
   const dayOffDatesByEmployee = new Map<string, string[]>();
   for (const item of dayOffsWithin(dayOffs, range.start, range.end)) dayOffDatesByEmployee.set(item.employeeId, [...(dayOffDatesByEmployee.get(item.employeeId) ?? []), item.dateKey].sort());
   const conceptNames = new Map(breakdowns.map((breakdown) => [breakdown.hourConceptId, { code: breakdown.hourConcept.code, name: breakdown.hourConcept.name }]));
@@ -106,16 +152,61 @@ export async function buildClosureSnapshots(db: Db, employeeIds: string[], perio
       range,
       entries: rows.filter((row) => row.employeeId === employeeId).map((row) => ({ status: row.status, hours: Number(row._sum.hours || 0), records: row._count })),
       accounting: {
-        model: "WORKED_TIME_ACCOUNTING_V1",
+        model: CLOSURE_ACCOUNTING_MODEL,
         ...accounting,
         concepts: accounting.concepts.map((concept) => ({ ...concept, ...conceptNames.get(concept.hourConceptId) })),
+        novelty: {
+          ...accounting.novelty,
+          types: accounting.novelty.types.map((type) => {
+            const noveltyType = coverage.types.get(type.noveltyTypeId);
+            return { ...type, code: noveltyType?.code ?? "", name: noveltyType?.name ?? "" };
+          }),
+        },
       },
       // Fechas con franco activo al congelar: traza de "tenía franco" junto a
       // lo que efectivamente computó.
       dayOffs: dayOffDatesByEmployee.get(employeeId) ?? [],
+      finnegans: { model: CLOSURE_FINNEGANS_CONFIG_MODEL, types: finnegansTypes.get(employeeId) ?? [] },
     };
     return [employeeId, snapshot as unknown as Prisma.InputJsonObject];
   }));
+}
+
+/**
+ * Tipos de las novedades no rechazadas de cada legajo que tocan el período
+ * (mismo alcance que la exportación: las que empiezan en el mes y las que lo
+ * alcanzan por rango). 1 consulta.
+ */
+async function loadFinnegansConfigForClosures(db: Db, employeeIds: string[], range: { start: Date; end: Date }) {
+  const lastDay = new Date(range.end.getTime() - 86_400_000);
+  const novelties = await db.novelty.findMany({
+    where: {
+      employeeId: { in: employeeIds },
+      status: { not: "RECHAZADO" },
+      fromDate: { lte: lastDay },
+      OR: [{ fromDate: { gte: range.start } }, { toDate: { gte: range.start } }],
+    },
+    select: {
+      employeeId: true,
+      noveltyType: { select: { id: true, name: true, status: true, exportsToFinnegans: true, finnegansCode: true, finnegansValueUnit: true, finnegansRequiresValidity: true, coverageMode: true } },
+    },
+  });
+  const byEmployee = new Map<string, Map<string, FrozenFinnegansNoveltyType>>();
+  for (const { employeeId, noveltyType: type } of novelties) {
+    const types = byEmployee.get(employeeId) ?? new Map<string, FrozenFinnegansNoveltyType>();
+    byEmployee.set(employeeId, types);
+    types.set(type.id, {
+      noveltyTypeId: type.id,
+      name: type.name,
+      status: type.status,
+      exportsToFinnegans: type.exportsToFinnegans,
+      finnegansCode: type.finnegansCode,
+      finnegansValueUnit: type.finnegansValueUnit,
+      finnegansRequiresValidity: type.finnegansRequiresValidity,
+      coverageMode: type.coverageMode,
+    });
+  }
+  return new Map([...byEmployee].map(([employeeId, types]) => [employeeId, [...types.values()].sort((left, right) => left.noveltyTypeId.localeCompare(right.noveltyTypeId))]));
 }
 
 function snapshotMentionsConcept(snapshot: Prisma.JsonValue | null, hourConceptId: string) {
@@ -174,7 +265,12 @@ export async function rebuildClosureSnapshots(db: Db, closures: ClosureSnapshotT
   for (const [period, items] of byPeriod) {
     const snapshots = await buildClosureSnapshots(db, items.map((item) => item.employeeId), period);
     for (const closure of items) {
-      const after = { ...snapshots.get(closure.employeeId)!, recalculation: { ...recalculation, at: recalculatedAt } };
+      // La configuración de Finnegans queda la que se congeló al generar el
+      // snapshot original: una reconstrucción no la vuelve a leer del tipo, y
+      // a un snapshot anterior a §16.2 no se le inventa una retroactiva.
+      const { finnegans: _current, ...rebuiltSnapshot } = snapshots.get(closure.employeeId)! as Prisma.InputJsonObject & { finnegans?: unknown };
+      const frozen = (closure.snapshot as { finnegans?: Prisma.InputJsonValue } | null)?.finnegans;
+      const after = { ...rebuiltSnapshot, ...(frozen !== undefined ? { finnegans: frozen } : {}), recalculation: { ...recalculation, at: recalculatedAt } };
       await db.monthlyTimeClosure.update({ where: { id: closure.id }, data: { snapshot: after } });
       rebuilt.push({ id: closure.id, employeeId: closure.employeeId, period, before: closure.snapshot, after });
     }

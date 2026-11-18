@@ -1,5 +1,7 @@
 # Etapa 15L.6 — Retiro controlado de campos legacy en Tipos de Novedad
 
+> **Reemplazado parcialmente (2026-11-13) por [`NOVELTY_COVERAGE_ENGINE.md`](NOVELTY_COVERAGE_ENGINE.md).** §3: "registrar horas no trabajadas" ya no se representa con `allowsHours` sino con `coverageMode` (cantidad fija, manual o según jornada, con o sin suma al total). `allowsHours` se conserva hasta que deje de tener consumidores y se retira en una etapa de limpieza, igual que los campos de esta etapa.
+
 ## 1. Objetivo
 
 Las etapas 15L.2A/B/C introdujeron un modelo nuevo de `NoveltyType`

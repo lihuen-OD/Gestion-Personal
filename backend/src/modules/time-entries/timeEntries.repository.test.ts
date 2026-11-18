@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { ClockPunchAttemptNotProcessing, duplicateTimeEntryError, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
+import { ClockPunchAttemptNotProcessing, clockDniSearchDigits, duplicateTimeEntryError, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
 import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 
@@ -56,6 +57,8 @@ vi.mock("../../shared/prisma/client", () => {
   return {
     prisma: {
       ...historyFrom(prismaEmployee),
+      // Fichador §32: búsqueda por DNI ignorando separadores (SQL parametrizado).
+      $queryRaw: vi.fn(),
       workShift: { findMany: vi.fn(), count: vi.fn() },
       employeeHourConcept: { findFirst: vi.fn() },
       hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
@@ -83,6 +86,7 @@ vi.mock("../../shared/prisma/client", () => {
       // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos por default, la
       // contabilidad queda como hasta hoy.
       employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+      noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
       // Etapa 15E.2: findClosuresForExport consulta MonthlyTimeClosure vía
       // el cliente `prisma` global (mismo criterio que el resto de este
       // repositorio para queries de sólo lectura sin necesidad de $transaction).
@@ -134,6 +138,7 @@ const mockedPrisma = prisma as unknown as {
   clockPunchAttempt: { update: Mock; updateMany: Mock; findUnique: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
+  $queryRaw: Mock;
   employeePositionPeriod: { findMany: Mock };
   doubleHourRule: { findMany: Mock };
   holidayWorkAssignment: { findMany: Mock };
@@ -141,6 +146,7 @@ const mockedPrisma = prisma as unknown as {
   hourConceptBreakdown: { findMany: Mock; aggregate: Mock };
   monthlyTimeClosure: { findMany: Mock };
   employeeDayOff: { findMany: Mock };
+  noveltyDayCoverage: { findMany: Mock };
   novelty: { findMany: Mock; count: Mock; findFirst: Mock };
   $transaction: Mock;
   __tx: TxMocks;
@@ -2455,7 +2461,7 @@ describe("findMany(view=byEmployee) — resumen por empleado suma sólo Horas no
         normalResidualMinutes: 300,
         additiveMinutes: 60,
         totalWorkedMinutes: 540,
-        settlement: { normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 },
+        settlement: { normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 },
       });
       expect(items[0]!.summary.accounting).not.toHaveProperty("days");
       expect(items[0]!.summary).toMatchObject({ specialHourRuleNames: ["Domingo"], specialHourConflict: false });
@@ -2683,9 +2689,20 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
       const summary = result.items[0]!.summary;
 
       expect(summary.accounting.totalWorkedMinutes).toBe(540);
-      expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, totalMinutes: 1080 });
+      expect(summary.accounting.settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
       expect(summary.accounting.hasSpecialMultiplier).toBe(true);
-      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({ day: 27, novelty: null, dayOff: null, specialHourRuleNames: ["Feriado"], specialHourConflict: false });
+      expect(summary.dailyBreakdown.find((day) => day.day === 27)).toEqual({
+        day: 27,
+        novelty: null,
+        dayOff: null,
+        specialHourRuleNames: ["Feriado"],
+        specialHourConflict: false,
+        // Etapa 4 de cobertura (aditivo): sin novedades el computable es el trabajo real.
+        totalWorkedMinutes: 540,
+        noveltyCoveredMinutes: 0,
+        computableMinutes: 540,
+        novelties: [],
+      });
     });
 
     it("Colectivo de domingo sin Horas base ese día usa su propio multiplicador (ya no queda en x1 por falta de TimeEntry)", async () => {
@@ -2740,7 +2757,8 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
 
       const result = await timeEntriesRepository.findPeriodEmployees(baseQuery, employeeAccessWhere);
 
-      expect(mockedPrisma.novelty.findMany.mock.calls.at(0)?.[0].select.noveltyType).toEqual({ select: { id: true, name: true, uiColor: true, allowsDateRange: true } });
+      // Etapa 4 de cobertura: toDate nulo es siempre un día, ya no hace falta allowsDateRange.
+      expect(mockedPrisma.novelty.findMany.mock.calls.at(0)?.[0].select.noveltyType).toEqual({ select: { id: true, name: true, uiColor: true } });
       expect(dayOf(result, 10)?.novelty).toEqual({ label: "Vacaciones", uiColor: "teal", noveltyTypeId: "nt-vacaciones" });
     });
 
@@ -2781,6 +2799,10 @@ describe("findPeriodEmployees — total=Normal, adicionales desde HourConceptBre
         dayOff: { notes: null, activityShifts: 0, activityMinutes: 0 },
         specialHourRuleNames: [],
         specialHourConflict: false,
+        totalWorkedMinutes: 0,
+        noveltyCoveredMinutes: 0,
+        computableMinutes: 0,
+        novelties: [],
       });
     });
   });
@@ -3092,6 +3114,20 @@ describe("findBlockingNovelty — sólo novedades APROBADAS bloquean (Etapa 15G.
     const call = mockedPrisma.novelty.findFirst.mock.calls[0]![0] as { where: { status: unknown } };
     expect(call.where.status).toBe("APROBADO");
   });
+
+  // Etapa 3 de cobertura: toDate nulo es siempre un único día (fromDate),
+  // para cualquier tipo — nunca un rango abierto.
+  it("toDate nulo bloquea sólo su fecha, aunque el tipo admita rango", async () => {
+    mockedPrisma.novelty.findFirst.mockResolvedValue(null);
+    const date = new Date("2026-08-10");
+
+    await timeEntriesRepository.findBlockingNovelty("employee-1", date);
+
+    const call = mockedPrisma.novelty.findFirst.mock.calls.at(-1)![0] as { where: { fromDate: unknown; OR: unknown[] } };
+    expect(call.where.fromDate).toEqual({ lte: date });
+    expect(call.where.OR).toEqual([{ toDate: { gte: date } }, { toDate: null, fromDate: date }]);
+    expect(call.where.OR).not.toContainEqual({ toDate: null });
+  });
 });
 
 // Etapa 15L.2C (docs/decisions/NOVELTY_TYPE_CONSUMER_MIGRATION_15L2C.md):
@@ -3217,5 +3253,117 @@ describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
     await timeEntriesRepository.update("entry-1", before, { hours: 7, correctionReason: "Error de carga" } as never, "user-rrhh");
     expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
+  });
+});
+
+// Fichador §32: búsqueda por nombre, apellido o DNI (nunca legajo). Nombre y
+// apellido: el `where` de Prisma se evalúa sobre filas en memoria con su
+// semántica (`contains` = substring; `insensitive` = ILIKE). DNI: el SQL
+// parametrizado se emula con el mismo criterio (dígitos del DNI guardado,
+// LIKE '%dígitos%', ACTIVO, orden y LIMIT); clock.integration.test.ts lo
+// verifica contra PostgreSQL real.
+describe("searchEmployeesForClock — nombre, apellido o DNI (fichador §32)", () => {
+  type Row = { id: string; legajo: string; dni: string; firstName: string; lastName: string; status: "ACTIVO" | "INACTIVO" };
+  const rows: Row[] = [
+    { id: "e-juan", legajo: "9901", dni: "32456789", firstName: "Juan", lastName: "Perez", status: "ACTIVO" },
+    { id: "e-ana", legajo: "9902", dni: "27111222", firstName: "Ana", lastName: "Gomez", status: "ACTIVO" },
+    { id: "e-dots", legajo: "9903", dni: "32.401.118", firstName: "Lucia", lastName: "Alvarez", status: "ACTIVO" },
+    { id: "e-baja", legajo: "9904", dni: "32456000", firstName: "Juana", lastName: "Perez", status: "INACTIVO" },
+  ];
+  type Where = Record<string, unknown>;
+  const matches = (row: Row, where: Where): boolean => Object.entries(where).every(([key, condition]) => {
+    if (key === "OR") return (condition as Where[]).some((inner) => matches(row, inner));
+    if (key === "AND") return (condition as Where[]).every((inner) => matches(row, inner));
+    if (key === "status") return row.status === condition;
+    const { contains, mode } = condition as { contains: string; mode?: string };
+    const value = row[key as keyof Row];
+    return mode === "insensitive" ? value.toLowerCase().includes(contains.toLowerCase()) : value.includes(contains);
+  });
+  const byName = (a: Row, b: Row) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
+  type Sql = { sql: string; values: unknown[] };
+  const search = async (term: string) => {
+    const findMany = mockedPrisma.employee.findMany as Mock;
+    findMany.mockReset();
+    findMany.mockResolvedValueOnce([]);
+    mockedPrisma.$queryRaw.mockReset();
+    mockedPrisma.$queryRaw.mockResolvedValueOnce([]);
+    await timeEntriesRepository.searchEmployeesForClock(term);
+    if (mockedPrisma.$queryRaw.mock.calls.length) {
+      expect(findMany).not.toHaveBeenCalled();
+      const query = mockedPrisma.$queryRaw.mock.calls[0]![0] as Sql;
+      const [pattern, limit] = query.values as [string, number];
+      const digits = pattern.slice(1, -1);
+      const ids = rows.filter((row) => row.status === "ACTIVO" && row.dni.replace(/[^0-9]/g, "").includes(digits)).sort(byName).slice(0, limit).map((row) => row.id);
+      return { ids, sql: query, args: undefined };
+    }
+    const args = findMany.mock.calls[0]![0] as { where: Where; take: number; select: Record<string, boolean> };
+    return { ids: rows.filter((row) => matches(row, args.where)).map((row) => row.id), args, sql: undefined };
+  };
+
+  it("por nombre, apellido y nombre + apellido en cualquier orden (sin SQL de DNI)", async () => {
+    expect((await search("Juan")).ids).toEqual(["e-juan"]);
+    expect((await search("perez")).ids).toEqual(["e-juan"]);
+    expect((await search("Juan Perez")).ids).toEqual(["e-juan"]);
+    expect((await search("Perez Juan")).ids).toEqual(["e-juan"]);
+    expect((await search("Juan")).sql).toBeUndefined();
+  });
+
+  it("DNI guardado con puntos: se encuentra progresivamente ignorando separadores", async () => {
+    for (const term of ["32", "324", "3240", "32401", "32401118", "32.401.118", "32.401", "32 401 118", "401118"]) {
+      expect((await search(term)).ids, term).toContain("e-dots");
+    }
+    expect((await search("3240")).ids).toEqual(["e-dots"]);
+    expect((await search("32.401.118")).ids).toEqual(["e-dots"]);
+  });
+
+  it("DNI guardado sin puntos: se encuentra escribiéndolo con o sin puntos", async () => {
+    expect((await search("32456789")).ids).toEqual(["e-juan"]);
+    expect((await search("32.456.789")).ids).toEqual(["e-juan"]);
+    expect((await search("3245")).ids).toEqual(["e-juan"]);
+    expect((await search("32")).ids).toEqual(["e-dots", "e-juan"]); // por apellido; 32456000 está INACTIVO
+  });
+
+  it("un DNI no devuelve a otro empleado y el INACTIVO nunca aparece", async () => {
+    expect((await search("27111222")).ids).toEqual(["e-ana"]);
+    expect((await search("32456000")).ids).toEqual([]);
+    expect((await search("Juana")).ids).toEqual([]);
+    expect((await search("99999999")).ids).toEqual([]);
+  });
+
+  it("el SQL de DNI es parametrizado: ACTIVO, sin separadores, LIMIT 12, sin legajo", async () => {
+    const { sql } = await search("32.401");
+    expect(sql!.values).toEqual(["%32401%", 12]);
+    expect(sql!.sql).toContain(`"status" = 'ACTIVO'`);
+    expect(sql!.sql).toContain("regexp_replace(\"dni\", '[^0-9]', '', 'g') LIKE");
+    expect(sql!.sql).toContain(`ORDER BY "lastName" ASC, "firstName" ASC`);
+    expect(sql!.sql).not.toMatch(/legajo/i);
+    expect(sql!.sql).not.toContain("32401"); // el término nunca se interpola
+  });
+
+  it("nunca se busca por legajo", async () => {
+    // Legajos que no aparecen en ningún DNI: escribirlos no encuentra a nadie.
+    expect((await search("9901")).ids).toEqual([]);
+    expect((await search("9903")).ids).toEqual([]);
+    expect(JSON.stringify((await search("Juan")).args!.where)).not.toContain("legajo");
+  });
+
+  it("nombre: mantiene ACTIVO, máximo 12 resultados y no selecciona el legajo", async () => {
+    const { args } = await search("Perez");
+    expect(args!.where.status).toBe("ACTIVO");
+    expect(args!.take).toBe(12);
+    expect(args!.select).toEqual({ id: true, dni: true, firstName: true, lastName: true, status: true });
+  });
+});
+
+describe("clockDniSearchDigits", () => {
+  it("sólo términos numéricos de 2+ dígitos (CLOCK_SEARCH_MIN_LENGTH) son DNI; los separadores se ignoran", () => {
+    expect(CLOCK_SEARCH_MIN_LENGTH).toBe(2);
+    expect(clockDniSearchDigits("Juan")).toBeNull();
+    expect(clockDniSearchDigits("Juan 3245")).toBeNull();
+    expect(clockDniSearchDigits("1")).toBeNull();
+    expect(clockDniSearchDigits("1.")).toBeNull();
+    expect(clockDniSearchDigits("12")).toBe("12");
+    expect(clockDniSearchDigits(" 32.401.118 ")).toBe("32401118");
+    expect(clockDniSearchDigits("32 401-118")).toBe("32401118");
   });
 });

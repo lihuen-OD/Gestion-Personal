@@ -3,7 +3,7 @@ import { apiRequest } from "./apiClient";
 // Etapa 15L.3A (docs/decisions/FINNEGANS_EXPORT_NORMALIZED_15L3A.md): estado
 // de preparación de una fila, calculado en el backend — nunca se infiere en
 // el frontend.
-export type FinnegansRowStatus = "LISTO" | "FALTA_CANTIDAD" | "FALTA_CONFIGURACION" | "CIERRE_PENDIENTE";
+export type FinnegansRowStatus = "LISTO" | "FALTA_CANTIDAD" | "FALTA_CONFIGURACION" | "REVISION_PENDIENTE" | "CIERRE_PENDIENTE";
 
 export type FinnegansReadinessSummary = {
   ready: boolean;

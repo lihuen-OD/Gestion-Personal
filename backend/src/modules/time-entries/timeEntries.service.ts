@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import { createHash } from "node:crypto";
 import { Prisma, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
@@ -19,6 +20,7 @@ import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observabi
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
+import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
@@ -170,6 +172,11 @@ type HoursExportPerson = {
 const exportHours = (minutes: number) => formatNumber(minutes / 60);
 
 export function buildHoursExportTable(people: HoursExportPerson[], concepts: HoursExportConcept[]) {
+  // Cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §12): columnas sólo si
+  // alguien del export tiene cobertura que cuenta, igual que las de concepto.
+  // "Total trabajado" sigue siendo trabajo real; la equivalencia suma la
+  // cobertura × su multiplicador.
+  const withNovelties = people.some(({ accounting }) => accounting.noveltyCoveredMinutes > 0 || accounting.settlement.noveltyMinutes > 0);
   const ordered = [...concepts].sort((a, b) =>
     (a.treatment === b.treatment ? 0 : a.treatment === "WITHIN_BASE" ? -1 : 1) || a.name.localeCompare(b.name, "es"));
   const repeatedNames = new Set(ordered.filter((concept, index) => ordered.findIndex((item) => item.name === concept.name) !== index).map((concept) => concept.name));
@@ -182,8 +189,10 @@ export function buildHoursExportTable(people: HoursExportPerson[], concepts: Hou
     hours("Horas normales"),
     ...ordered.map((concept) => hours(`${labels.get(concept.id)} (horas reales)`)),
     hours("Total trabajado"),
+    ...(withNovelties ? [hours("Cubierto por novedades"), hours("Total computable")] : []),
     hours("Horas normales (para liquidación)"),
     ...ordered.map((concept) => hours(`${labels.get(concept.id)} (para liquidación)`)),
+    ...(withNovelties ? [hours("Novedades (para liquidación)")] : []),
     hours("Equivalencia para liquidación"),
     text("Reglas de horas especiales aplicadas"),
     text("Conflicto de reglas"),
@@ -202,6 +211,11 @@ export function buildHoursExportTable(people: HoursExportPerson[], concepts: Hou
         "Conflicto de reglas": conflict ? "Sí" : "",
         Estado: status,
       };
+      if (withNovelties) {
+        row["Cubierto por novedades"] = exportHours(accounting.noveltyCoveredMinutes);
+        row["Total computable"] = exportHours(accounting.computableMinutes);
+        row["Novedades (para liquidación)"] = exportHours(accounting.settlement.noveltyMinutes);
+      }
       for (const concept of ordered) {
         const values = accounting.concepts.find((item) => item.hourConceptId === concept.id);
         row[`${labels.get(concept.id)} (horas reales)`] = exportHours(values?.realMinutes ?? 0);
@@ -511,21 +525,16 @@ async function validateShift(input: PreviewWorkShiftInput, user: Express.AuthUse
   return { employee, hourConcept, ...calculation };
 }
 
-// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
-// todo lo que devuelve /clock/* lo puede leer cualquiera que tenga el token
-// compartido del kiosco (embebido en el bundle público). Para distinguir
-// homónimos en pantalla alcanzan legajo + últimos 3 dígitos del DNI; el DNI
-// completo no sale del backend por este camino.
-function clockDniSuffix(dni?: string | null) {
-  const digits = (dni || "").replace(/\D/g, "");
-  return digits ? digits.slice(-3) : null;
-}
-
-function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; legajo: string; dni?: string | null }) {
+// Contrato del empleado en /api/clock/* (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+// §32): id, DNI completo, nombre y apellido. /api/clock/* exige un ClockDevice
+// ACTIVE autenticado individualmente, y el kiosco identifica a la persona como
+// "Apellido Nombre · DNI <completo>". El legajo no se expone al fichador (sigue
+// usándose internamente: auditoría, storage, Drive). Reemplaza la política F0
+// (legajo + últimos 3 dígitos del DNI).
+function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; dni: string }) {
   return {
     id: employee.id,
-    legajo: employee.legajo,
-    dniSuffix: clockDniSuffix(employee.dni),
+    dni: employee.dni,
     firstName: employee.firstName,
     lastName: employee.lastName,
     name: `${employee.lastName}, ${employee.firstName}`,
@@ -855,10 +864,12 @@ function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.Json
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-// F0: un intento guardado antes de F0 (se retienen
-// CLOCK_ATTEMPT_RETENTION_DAYS) puede traer el DNI completo y los
-// TimeEntry/TimeSegment internos de la salida. Se proyecta al mismo contrato
-// público que una respuesta nueva antes de devolverlo al kiosco.
+// Un intento guardado con un contrato anterior (se retienen
+// CLOCK_ATTEMPT_RETENTION_DAYS) puede traer los TimeEntry/TimeSegment internos
+// de la salida (antes de F0) o legajo + dniSuffix (F0 hasta §32). Se proyecta
+// al contrato público vigente antes de devolverlo al kiosco: nunca el legajo;
+// el DNI completo si quedó guardado, si no `null` (el kiosco sólo usa el nombre
+// del resultado).
 function storedAttemptResponse(value: Prisma.JsonValue | null) {
   if (!isJsonObject(value)) return null;
   const { entries: _entries, timeSegments: _timeSegments, employee, ...rest } = value;
@@ -868,8 +879,7 @@ function storedAttemptResponse(value: Prisma.JsonValue | null) {
     ...rest,
     employee: {
       id: text("id") || undefined,
-      legajo: text("legajo"),
-      dniSuffix: text("dniSuffix") || clockDniSuffix(text("dni")),
+      dni: text("dni") || null,
       firstName: text("firstName"),
       lastName: text("lastName"),
       name: text("name"),
@@ -897,9 +907,11 @@ function clockPostProcessWriter(employeeId: string, request: ClockPunchPostProce
 
 // `startAt`: eventAt de la notificación — la jornada que quedó sin salida, no
 // el momento en que se detectó/cerró (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+// También es la fecha de referencia de los destinatarios (vigencia de
+// TIME_RESPONSIBLE en el día Argentina de inicio de la jornada).
 // PERF-5D: el post-proceso durable del rollover pasa `db` (su transacción) y
 // `rethrow` (un fallo reintenta el paso en vez de quedar sólo logueado).
-export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification">; rethrow?: boolean } = {}) {
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification"> & RecipientsReader; rethrow?: boolean } = {}) {
   // Etapa 10E: best-effort — un fallo acá (ej. problema transitorio de DB)
   // no debe tirar abajo una fichada/rollover que ya se confirmó. El otro
   // llamador (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch
@@ -907,7 +919,7 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string,
   // (F0 del fichador standalone retiró los caminos legacy sin foto
   // clockInResolved/clockIn, que también lo llamaban.)
   try {
-    await notifyUsers(await attendanceRecipients(employeeId), {
+    await notifyUsers(await attendanceRecipients(employeeId, startAt, options.db), {
       type: "FALTA_SALIDA",
       title: "Falta registrar la salida",
       message: "La jornada venció sin salida registrada y requiere revisión.",
@@ -1879,11 +1891,16 @@ export const timeEntriesService = {
 
   async exportByPerson(query: TimeEntriesExportQuery, user: Express.AuthUser, audit?: AuditContext) {
     const accessWhere = employeeAccessWhere(user);
-    const [entries, breakdowns] = await Promise.all([
+    const [entries, breakdowns, coverage] = await Promise.all([
       timeEntriesRepository.findForExport(query, accessWhere),
       timeEntriesRepository.findBreakdownsForExport(query, accessWhere),
+      // Cobertura de novedades del período (NOVELTY_COVERAGE_ENGINE.md §12): 1 consulta.
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeWhere: accessWhere, ...(query.employeeId ? { employeeIds: [query.employeeId] } : {}) }),
     ]);
-    const employeeIds = Array.from(new Set([...entries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId)]));
+    // Quien sólo tiene cobertura que puede contar (p. ej. vacaciones todo el
+    // mes) también se exporta, y también le aplica el gate de cierre.
+    const coverageEmployeeIds = coverage.coverages.filter((item) => item.status === "APROBADO" && item.countsTowardTotal).map((item) => item.employeeId);
+    const employeeIds = Array.from(new Set([...entries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId), ...coverageEmployeeIds]));
 
     // Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
     // exportación DEFINITIVA (includeInReview=false, el default) exige que
@@ -1918,7 +1935,7 @@ export const timeEntriesService = {
     const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE");
     const exportRange = periodCalendarBounds(query.period);
     const dayOffs = await loadDayOffAccounting({ employeeIds, from: exportRange.start, to: exportRange.end });
-    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+    const accountingByEmployee = accountEmployeePeriods(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
 
     const ruleNames = new Map<string, Set<string>>();
     const conflicts = new Set<string>();
@@ -1955,7 +1972,7 @@ export const timeEntriesService = {
         const employeeStatuses = statuses.get(employeeId) ?? new Set<string>();
         return [{
           identity: {
-            CUIL: employee.cuil,
+            CUIL: employee.cuil ?? "",
             Apellido: employee.lastName,
             Nombre: employee.firstName,
             Legajo: employee.legajo,

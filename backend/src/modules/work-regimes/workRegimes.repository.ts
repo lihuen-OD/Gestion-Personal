@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { resolveOrderBy } from "../../shared/validation/listSort";
 import { associatedEmployeeSelect, buildEmployeeAssociationWhere } from "../../shared/prisma/employeeAssociationQuery";
 import type { CreateWorkRegimeInput, ListWorkRegimeEmployeesQuery, ListWorkRegimesQuery, UpdateWorkRegimeInput, WorkRegimeEmployeesVigencyStatus } from "./workRegimes.schemas";
@@ -127,8 +127,8 @@ export const workRegimesRepository = {
     });
   },
 
-  update(id: string, data: UpdateWorkRegimeInput, updatedByUserId?: string | null) {
-    return prisma.workRegime.update({
+  update(id: string, data: UpdateWorkRegimeInput, updatedByUserId?: string | null, db: PrismaTransactionClient = prisma) {
+    return db.workRegime.update({
       where: { id },
       data: { ...data, updatedByUserId: updatedByUserId || null },
     });
@@ -155,8 +155,8 @@ export const workRegimesRepository = {
 
   findOverlappingAssignment,
 
-  createAssignment(data: { employeeId: string; workRegimeId: string; effectiveFrom: Date; effectiveTo?: Date | null; assignedByUserId?: string | null }) {
-    return prisma.employeeWorkRegime.create({
+  createAssignment(data: { employeeId: string; workRegimeId: string; effectiveFrom: Date; effectiveTo?: Date | null; assignedByUserId?: string | null }, db: PrismaTransactionClient = prisma) {
+    return db.employeeWorkRegime.create({
       data: {
         employeeId: data.employeeId,
         workRegimeId: data.workRegimeId,
@@ -168,8 +168,8 @@ export const workRegimesRepository = {
     });
   },
 
-  updateAssignment(id: string, data: { workRegimeId?: string; effectiveFrom?: Date; effectiveTo?: Date | null }) {
-    return prisma.employeeWorkRegime.update({
+  updateAssignment(id: string, data: { workRegimeId?: string; effectiveFrom?: Date; effectiveTo?: Date | null }, db: PrismaTransactionClient = prisma) {
+    return db.employeeWorkRegime.update({
       where: { id },
       data,
       include: { workRegime: true },

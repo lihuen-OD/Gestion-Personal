@@ -76,6 +76,9 @@ describe("corrección de workTreatment con horas cargadas — test principal", (
         },
         hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue([{ ...breakdown, hourConcept: { workTreatment: treatment, code: "HOR-005", name: "Prueba" } }]) },
         employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+        noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
+        // Configuración de Finnegans congelada en el snapshot (NOVELTY_COVERAGE_ENGINE.md §16.2).
+        novelty: { findMany: vi.fn().mockResolvedValue([]) },
       };
       return (await buildClosureSnapshots(client as never, ["emp-1"], "2026-10")).get("emp-1") as { accounting: { totalWorkedMinutes: number; normalResidualMinutes: number } };
     };
@@ -89,12 +92,12 @@ describe("corrección de workTreatment — domingo ×2", () => {
   it("ADDITIVE: real 10, equivalencia 20 → WITHIN_BASE: real 8, normal 6, Prueba 2, equivalencia 16, sin recrear horas", () => {
     const before = readAs("ADDITIVE_TO_WORKED_TOTAL", 2);
     expect(before.grid.totalWorkedMinutes).toBe(600);
-    expect(before.grid.accounting.settlement).toEqual({ normalMinutes: 960, withinBaseMinutes: 0, additiveMinutes: 240, totalMinutes: 1200 });
+    expect(before.grid.accounting.settlement).toEqual({ normalMinutes: 960, withinBaseMinutes: 0, additiveMinutes: 240, noveltyMinutes: 0, totalMinutes: 1200 });
 
     const after = readAs("WITHIN_BASE", 2);
     expect(after.breakdown).toEqual(before.breakdown);
     expect(after.grid.accounting).toMatchObject({ baseMinutes: 480, normalResidualMinutes: 360, withinBaseMinutes: 120, totalWorkedMinutes: 480 });
-    expect(after.grid.accounting.settlement).toEqual({ normalMinutes: 720, withinBaseMinutes: 240, additiveMinutes: 0, totalMinutes: 960 });
+    expect(after.grid.accounting.settlement).toEqual({ normalMinutes: 720, withinBaseMinutes: 240, additiveMinutes: 0, noveltyMinutes: 0, totalMinutes: 960 });
     expect(after.grid.specialHoursByDay["4"]).toMatchObject({ multiplier: 2 });
   });
 });

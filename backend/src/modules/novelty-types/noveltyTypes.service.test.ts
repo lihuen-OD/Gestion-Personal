@@ -4,6 +4,32 @@ import { noveltyTypesRepository, invalidateNoveltyTypesCache } from "./noveltyTy
 import { noveltyTypesService } from "./noveltyTypes.service";
 import type { CreateNoveltyTypeInput, UpdateNoveltyTypeInput } from "./noveltyTypes.schemas";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+vi.mock("../../shared/prisma/client", () => ({
+  // Etapa 5: cambio de régimen + recálculo de cobertura en una transacción.
+  prisma: { $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback({ employeeWorkRegime: { findMany: vi.fn().mockResolvedValue([]) } })) },
+}));
+import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 vi.mock("./noveltyTypes.repository", () => ({
   noveltyTypesRepository: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), findById: vi.fn() },
   invalidateNoveltyTypesCache: vi.fn(),
@@ -14,6 +40,31 @@ vi.mock("../audit/audit.service", () => ({
 }));
 
 const repo = noveltyTypesRepository as unknown as { create: Mock; update: Mock; findMany: Mock; findById: Mock };
+
+// Forma real de una fila de NoveltyType: la base siempre devuelve los campos
+// de cobertura con sus defaults neutros (migración
+// 20261113180000_add_novelty_coverage_engine).
+function currentRow(overrides: Record<string, unknown> = {}) {
+  return {
+    exportsToFinnegans: false,
+    finnegansValueUnit: null,
+    finnegansCode: null,
+    finnegansName: null,
+    allowsHours: false,
+    allowsDateRange: true,
+    coverageMode: "NONE",
+    coverageFixedMinutes: null,
+    coverageDayRule: "EVERY_DAY",
+    coverageWeekdays: [],
+    coverageOnDayOff: null,
+    coverageOnHoliday: null,
+    coverageAppliesSpecialHours: false,
+    coverageCountsTowardTotal: false,
+    realWorkCompatibility: "COMPATIBLE",
+    requiresObservation: false,
+    ...overrides,
+  };
+}
 
 function createInput(overrides: Partial<CreateNoveltyTypeInput> = {}): CreateNoveltyTypeInput {
   return {
@@ -183,7 +234,7 @@ describe("noveltyTypesService.update — Etapa 15L.6 (sin sincronización legacy
   beforeEach(() => {
     vi.clearAllMocks();
     repo.update.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Vacaciones" });
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
+    repo.findById.mockResolvedValue(currentRow({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null }));
   });
 
   it("un PATCH que sólo cambia name no toca ningún otro campo", async () => {
@@ -198,6 +249,8 @@ describe("noveltyTypesService.update — Etapa 15L.6 (sin sincronización legacy
     await noveltyTypesService.update("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } as UpdateNoveltyTypeInput);
 
     expect(repo.update).toHaveBeenCalledWith("nt-1", { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" });
+    // Un campo que no cambia la cobertura no recalcula nada.
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 
   it("un PATCH que manda allowsDateRange lo persiste tal cual", async () => {
@@ -219,13 +272,13 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   });
 
   it("un PATCH que no toca nada de Finnegans no exige nada, aunque la fila actual no exporte", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
+    repo.findById.mockResolvedValue(currentRow({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null }));
 
     await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
   });
 
   it("un PATCH que sólo prende exportsToFinnegans, con la fila actual sin código, rechaza", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null });
+    repo.findById.mockResolvedValue(currentRow({ exportsToFinnegans: false, finnegansValueUnit: null, finnegansCode: null, finnegansName: null }));
 
     await expect(
       noveltyTypesService.update("nt-1", { exportsToFinnegans: true } as UpdateNoveltyTypeInput),
@@ -234,12 +287,12 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   });
 
   it("un PATCH que sólo cambia name, con la fila actual ya exportando correctamente, no exige nada de nuevo", async () => {
-    repo.findById.mockResolvedValue({
+    repo.findById.mockResolvedValue(currentRow({
       exportsToFinnegans: true,
       finnegansValueUnit: "HOURS",
       finnegansCode: "VAC",
       finnegansName: "Vacaciones",
-    });
+    }));
 
     await expect(noveltyTypesService.update("nt-1", { name: "Vacaciones anuales" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
   });
@@ -247,7 +300,7 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   // Etapa 15L.5: mismo criterio que create() -- mira el estado RESULTANTE
   // (fila actual + patch), no sólo lo que vino en este PATCH puntual.
   it("un PATCH que sólo prende allowsHours, con la fila actual ya en finnegansValueUnit=DAYS, rechaza (NOVELTY_TYPE_HOURS_DAYS_CONFLICT)", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "DAYS", finnegansCode: null, finnegansName: null, allowsHours: false });
+    repo.findById.mockResolvedValue(currentRow({ exportsToFinnegans: false, finnegansValueUnit: "DAYS", finnegansCode: null, finnegansName: null, allowsHours: false }));
 
     await expect(
       noveltyTypesService.update("nt-1", { allowsHours: true } as UpdateNoveltyTypeInput),
@@ -256,10 +309,141 @@ describe("noveltyTypesService.update — Etapa 15L.2B (coherencia Finnegans)", (
   });
 
   it("un PATCH que sólo cambia finnegansValueUnit a DAYS, con la fila actual ya en allowsHours=true, rechaza", async () => {
-    repo.findById.mockResolvedValue({ exportsToFinnegans: false, finnegansValueUnit: "HOURS", finnegansCode: null, finnegansName: null, allowsHours: true });
+    repo.findById.mockResolvedValue(currentRow({ exportsToFinnegans: false, finnegansValueUnit: "HOURS", finnegansCode: null, finnegansName: null, allowsHours: true }));
 
     await expect(
       noveltyTypesService.update("nt-1", { finnegansValueUnit: "DAYS" } as UpdateNoveltyTypeInput),
     ).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_TYPE_HOURS_DAYS_CONFLICT" });
+  });
+});
+
+// Motor de cobertura — Etapa 1 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md):
+// la configuración se valida con la misma regla que el CHECK
+// "NoveltyType_coverage_config_check", sobre el estado resultante.
+describe("noveltyTypesService — configuración de cobertura horaria", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repo.create.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Tipo" });
+    repo.update.mockResolvedValue({ id: "nt-1", code: "NOV-001", name: "Tipo" });
+  });
+
+  // Los 5 tipos de validación del motor se expresan sólo con configuración.
+  it.each([
+    ["Trámite bancario: 4 h fijas, todos los días, suma, incompatible con trabajo real", {
+      allowsDateRange: false,
+      coverageMode: "FIXED_MINUTES",
+      coverageFixedMinutes: 240,
+      coverageDayRule: "EVERY_DAY",
+      coverageOnDayOff: "NO_COVERAGE",
+      coverageOnHoliday: "NO_COVERAGE",
+      coverageCountsTowardTotal: true,
+      realWorkCompatibility: "INCOMPATIBLE",
+    }],
+    ["Maternidad: 8 h de lunes a viernes, sin multiplicadores, suma", {
+      coverageMode: "FIXED_MINUTES",
+      coverageFixedMinutes: 480,
+      coverageDayRule: "SELECTED_WEEKDAYS",
+      coverageWeekdays: [1, 2, 3, 4, 5],
+      coverageOnDayOff: "COVER",
+      coverageOnHoliday: "ONLY_IF_CONVOKED",
+      coverageCountsTowardTotal: true,
+      realWorkCompatibility: "INCOMPATIBLE",
+    }],
+    ["Vacaciones: 8 h los días que tenía que trabajar, con multiplicadores, suma", {
+      coverageMode: "FIXED_MINUTES",
+      coverageFixedMinutes: 480,
+      coverageDayRule: "WORK_OBLIGATION",
+      coverageAppliesSpecialHours: true,
+      coverageCountsTowardTotal: true,
+      realWorkCompatibility: "INCOMPATIBLE",
+    }],
+    ["Llegada tarde: la indica quien carga, no suma", {
+      allowsHours: true,
+      allowsDateRange: false,
+      coverageMode: "MANUAL_MINUTES",
+    }],
+    ["Falta sin aviso: no registra tiempo, incompatible y bloquea carga", {
+      allowsDateRange: false,
+      timeEntryBehavior: "BLOQUEA_NUEVA_CARGA",
+      realWorkCompatibility: "INCOMPATIBLE",
+    }],
+    ["Jornada esperada: los días que tenía que trabajar", {
+      coverageMode: "EXPECTED_SCHEDULE",
+      coverageDayRule: "WORK_OBLIGATION",
+      coverageCountsTowardTotal: true,
+    }],
+  ])("acepta %s", async (_label, overrides) => {
+    await noveltyTypesService.create(createInput(overrides as Partial<CreateNoveltyTypeInput>));
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining(overrides));
+  });
+
+  it.each([
+    ["cantidad fija sin minutos", { coverageMode: "FIXED_MINUTES", coverageOnDayOff: "COVER", coverageOnHoliday: "COVER" }, "entre 1 minuto y 24 horas"],
+    ["cantidad fija con regla por calendario sin política de feriado", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 240, coverageOnDayOff: "COVER" }, "feriado"],
+    ["cantidad fija con regla por calendario sin política de franco", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 240, coverageOnHoliday: "COVER" }, "franco"],
+    ["días que tenía que trabajar con política de feriado", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "WORK_OBLIGATION", coverageOnHoliday: "COVER" }, "convocatoria"],
+    ["días que tenía que trabajar con días elegidos", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "WORK_OBLIGATION", coverageWeekdays: [1] }, "días de la semana"],
+    ["días elegidos vacíos", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "SELECTED_WEEKDAYS", coverageOnDayOff: "COVER", coverageOnHoliday: "COVER" }, "al menos un día"],
+    ["todos los días con días elegidos", { coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageWeekdays: [1], coverageOnDayOff: "COVER", coverageOnHoliday: "COVER" }, "todos los días"],
+    ["jornada esperada con regla por calendario", { coverageMode: "EXPECTED_SCHEDULE", coverageOnDayOff: "COVER", coverageOnHoliday: "COVER" }, "tenía que trabajar"],
+    ["cantidad manual con rango", { coverageMode: "MANUAL_MINUTES", allowsHours: true, allowsDateRange: true }, "único día"],
+    ["cantidad manual sin permitir horas", { coverageMode: "MANUAL_MINUTES", allowsHours: false, allowsDateRange: false }, "cantidad de horas"],
+    ["cantidad manual con cantidad fija", { coverageMode: "MANUAL_MINUTES", allowsHours: true, allowsDateRange: false, coverageFixedMinutes: 60 }, "cantidad fija"],
+    ["sin tiempo que suma", { coverageCountsTowardTotal: true }, "sumar al total"],
+    ["sin tiempo con multiplicadores", { coverageAppliesSpecialHours: true }, "domingos y feriados"],
+    ["sin tiempo con política de franco", { coverageOnDayOff: "COVER" }, "francos"],
+  ])("rechaza %s sin persistir", async (_label, overrides, message) => {
+    await expect(noveltyTypesService.create(createInput(overrides as Partial<CreateNoveltyTypeInput>))).rejects.toMatchObject({
+      statusCode: 400,
+      code: "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID",
+      message: expect.stringContaining(message),
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("un PATCH valida el estado combinado: activar el rango en un tipo con cantidad manual se rechaza", async () => {
+    repo.findById.mockResolvedValue(currentRow({ allowsHours: true, allowsDateRange: false, coverageMode: "MANUAL_MINUTES" }));
+
+    await expect(noveltyTypesService.update("nt-1", { allowsDateRange: true } as UpdateNoveltyTypeInput)).rejects.toMatchObject({
+      code: "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID",
+    });
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("un PATCH que cambia sólo los minutos de un tipo de cantidad fija se acepta usando el resto de la fila actual", async () => {
+    repo.findById.mockResolvedValue(currentRow({
+      coverageMode: "FIXED_MINUTES",
+      coverageFixedMinutes: 240,
+      coverageOnDayOff: "NO_COVERAGE",
+      coverageOnHoliday: "NO_COVERAGE",
+      coverageCountsTowardTotal: true,
+    }));
+
+    await noveltyTypesService.update("nt-1", { coverageFixedMinutes: 300 } as UpdateNoveltyTypeInput);
+
+    // Etapa 5: cambia lo que cubre → misma transacción con lock global y recálculo de todas las novedades del tipo.
+    expect(repo.update).toHaveBeenCalledWith("nt-1", { coverageFixedMinutes: 300 }, expect.anything());
+    expect(lockNoveltyCoverageGlobally).toHaveBeenCalled();
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(expect.anything(), { noveltyTypeIds: ["nt-1"], includeNoneTypes: true }, expect.objectContaining({ source: "NOVELTY_TYPE_CHANGED" }));
+  });
+
+  it("un PATCH que pasa a no registrar tiempo sin limpiar la cantidad fija se rechaza (no se corrige en silencio)", async () => {
+    repo.findById.mockResolvedValue(currentRow({
+      coverageMode: "FIXED_MINUTES",
+      coverageFixedMinutes: 240,
+      coverageOnDayOff: "NO_COVERAGE",
+      coverageOnHoliday: "NO_COVERAGE",
+    }));
+
+    await expect(noveltyTypesService.update("nt-1", { coverageMode: "NONE" } as UpdateNoveltyTypeInput)).rejects.toMatchObject({
+      code: "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID",
+    });
+  });
+
+  it("un PATCH sin campos de cobertura sobre un tipo legado sigue aceptándose (defaults neutros)", async () => {
+    repo.findById.mockResolvedValue(currentRow());
+
+    await expect(noveltyTypesService.update("nt-1", { name: "Otro nombre" } as UpdateNoveltyTypeInput)).resolves.toBeDefined();
   });
 });

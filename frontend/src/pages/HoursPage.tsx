@@ -10,6 +10,8 @@ import {
   Eye,
   FileBarChart,
   RefreshCcw,
+  ShieldPlus,
+  Calculator,
   Users,
   X,
 } from "lucide-react";
@@ -30,7 +32,6 @@ import { displayLegajo, fullName } from "../utils/employee";
 import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
-import { dayNoveltyColorClass } from "../utils/noveltyColor";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
@@ -53,11 +54,18 @@ import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import {
+  NoveltyCoverageChipList,
+  NoveltyCoverageCompactList,
+  NoveltyCoverageResolutionModal,
+  noveltyCoverageStateLabel,
+  type NoveltyCoverageReviewTarget,
+} from "../components/hours/NoveltyCoverage";
 import { Pagination } from "../components/ui/Pagination";
 import { SortableHeader } from "../components/ui/SortableHeader";
 import { Tabs } from "../components/ui/Tabs";
 
-const DAY_POPOVER_WIDTH = 260;
+const DAY_POPOVER_WIDTH = 340;
 const DAY_VIEWPORT_PADDING = 16;
 const DAY_POPOVER_GAP = 10;
 const DAY_POPOVER_ESTIMATED_HEIGHT = 240;
@@ -74,6 +82,7 @@ function DayCell({
   onManageDayOff,
   manualHoursConflict,
   onReviewManualHours,
+  onCoverageResolved,
 }: {
   label: string;
   day?: EmployeePeriodDay;
@@ -86,9 +95,11 @@ function DayCell({
   // (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   manualHoursConflict?: ManualHoursConflict;
   onReviewManualHours?: () => void;
+  onCoverageResolved: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const [coverageReview, setCoverageReview] = useState<NoveltyCoverageReviewTarget | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -133,36 +144,35 @@ function DayCell({
   }, [open]);
 
   const dayOff = day?.dayOff ?? null;
-  const countedMinutes = accounting?.totalWorkedMinutes ?? 0;
+  const workedMinutes = accounting?.totalWorkedMinutes ?? day?.totalWorkedMinutes ?? 0;
+  const coveredMinutes = accounting?.noveltyCoveredMinutes ?? day?.noveltyCoveredMinutes ?? 0;
+  const computableMinutes = accounting?.computableMinutes ?? day?.computableMinutes ?? workedMinutes;
+  const noveltyItems = day?.novelties ?? [];
   const uncountedMinutes = accounting?.dayOffUncountedMinutes ?? 0;
   const reviewPending = manualHoursConflict?.status === "PENDIENTE";
-  const cellLabel = dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, countedMinutes)}` : `Detalle del ${label}`;
-  const noveltyDescription = day?.novelty ? `Novedad: ${day.novelty.label}` : undefined;
-  const noveltyTone = day?.novelty ? dayNoveltyColorClass(day.novelty) : undefined;
-  const noveltyHours = accounting ? countedMinutes === 0 ? "0 h" : formatCompactDurationMinutes(countedMinutes) : "-";
+  const cellLabel = dayOff ? `Detalle del ${label}: ${dayOffDescription(dayOff, workedMinutes)}` : `Detalle del ${label}`;
+  const noveltyDescription = noveltyItems.length
+    ? `${noveltyItems.length} novedad(es): ${noveltyItems.map((item) => `${item.label || item.code || "Novedad"}, ${formatDurationMinutes(item.minutes)}, ${noveltyCoverageStateLabel(item.state)}`).join("; ")}; ${coveredMinutes ? `${formatDurationMinutes(coveredMinutes)} cubiertas` : "sin cobertura computable"}`
+    : undefined;
   const reviewDescription = reviewPending ? "Revisión pendiente: fichada sobre horas cargadas manualmente" : undefined;
   return (
-    <td className={dayOff ? "day-cell is-day-off" : day?.novelty ? "day-cell is-novelty" : "day-cell"}>
+    <td className={dayOff ? "day-cell is-day-off" : noveltyItems.length ? "day-cell is-novelty" : "day-cell"}>
       <button
         ref={triggerRef}
         type="button"
         className="day-cell-trigger"
         onClick={() => setOpen((current) => !current)}
         aria-label={[cellLabel, noveltyDescription, reviewDescription].filter(Boolean).join(". ")}
-        title={[dayOff ? dayOffDescription(dayOff, countedMinutes) : undefined, noveltyDescription, reviewDescription].filter(Boolean).join(" · ") || undefined}
+        title={[dayOff ? dayOffDescription(dayOff, workedMinutes) : undefined, noveltyDescription, reviewDescription].filter(Boolean).join(" · ") || undefined}
       >
         {dayOff ? (
           // "Franco · 0 h" (o lo reconocido): nunca "-", que es "sin horas".
           // Una novedad del mismo día queda como marca secundaria, no se oculta.
-          <DayOffMark countedMinutes={countedMinutes} noveltyTone={noveltyTone} />
-        ) : day?.novelty ? (
-          <span className={`day-cell-novelty-mark cell-novelty-pill ${noveltyTone}`}>
-            <span className="day-cell-novelty-label">Novedad</span>
-            <span className="day-cell-novelty-hours">{noveltyHours}</span>
-          </span>
+          <DayOffMark countedMinutes={workedMinutes} />
         ) : (
-          <span className="day-cell-value">{accounting ? formatDurationMinutes(accounting.totalWorkedMinutes) : "-"}</span>
+          <span className="day-cell-computable"><span className="day-cell-value">{accounting || day ? formatDurationMinutes(computableMinutes) : "-"}</span></span>
         )}
+        {noveltyItems.length ? <NoveltyCoverageCompactList items={noveltyItems} /> : null}
         {accounting && accounting.multiplier > 1 ? <span className="alert-dot orange" /> : null}
         {reviewPending ? <span className="alert-dot review" /> : null}
       </button>
@@ -187,7 +197,7 @@ function DayCell({
                   {dayOff.activityShifts > 0 ? (
                     <span>
                       Actividad registrada por el fichador: {dayOff.activityMinutes > 0 ? formatDurationMinutes(dayOff.activityMinutes) : "jornada abierta"}.
-                      {countedMinutes > 0 ? "" : " No computa hasta que se reconozca."}
+                      {workedMinutes > 0 ? "" : " No computa hasta que se reconozca."}
                     </span>
                   ) : null}
                   {dayOff.notes ? <span>Observación: {dayOff.notes}</span> : null}
@@ -208,8 +218,10 @@ function DayCell({
                         </>
                       ) : null}
                       {accounting.additiveMinutes > 0 ? <span>Horas adicionales: {formatDurationMinutes(accounting.additiveMinutes)}</span> : null}
-                      <span className="day-cell-worked-total"><b>Total trabajado: {formatDurationMinutes(accounting.totalWorkedMinutes)}</b></span>
-                      {accounting.multiplier > 1 ? (
+                      <span className="day-cell-worked-total"><b>Total trabajado: {formatDurationMinutes(workedMinutes)}</b></span>
+                      <span>Cubierto por novedades: {formatDurationMinutes(coveredMinutes)}</span>
+                      <span className="day-cell-computable-total"><b>Total computable: {formatDurationMinutes(computableMinutes)}</b></span>
+                      {accounting.multiplier > 1 || accounting.settlement.noveltyMinutes !== accounting.noveltyCoveredMinutes ? (
                         <>
                           <span className="day-cell-special-hour">
                             Hora especial aplicada — Multiplicador {formatMultiplier(accounting.multiplier)}
@@ -220,6 +232,8 @@ function DayCell({
                           <span>Horas normales: {formatDurationMinutes(accounting.settlement.normalMinutes)}</span>
                           {accounting.settlement.withinBaseMinutes > 0 ? <span>Dentro de la jornada: {formatDurationMinutes(accounting.settlement.withinBaseMinutes)}</span> : null}
                           {accounting.settlement.additiveMinutes > 0 ? <span>Horas adicionales: {formatDurationMinutes(accounting.settlement.additiveMinutes)}</span> : null}
+                          {accounting.settlement.noveltyMinutes > 0 ? <span>Novedades: {formatDurationMinutes(accounting.settlement.noveltyMinutes)}</span> : null}
+                          <span><b>Total para liquidación: {formatDurationMinutes(accounting.settlement.totalMinutes)}</b></span>
                         </>
                       ) : null}
                       {accounting.withinBaseExcessMinutes > 0 ? (
@@ -230,7 +244,7 @@ function DayCell({
                   {day?.specialHourConflict ? (
                     <span className="day-cell-special-hour-conflict">Hay más de una Hora especial en conflicto ese día. Se aplicó la de mayor prioridad.</span>
                   ) : null}
-                  {day?.novelty ? <span>Novedad: {day.novelty.label}</span> : null}
+                  {noveltyItems.length ? <NoveltyCoverageChipList items={noveltyItems} compact onReview={(item) => { setOpen(false); setCoverageReview({ item, date: monthDate(period, accounting?.day ?? day?.day ?? 1), employeeId, period, workedMinutes, computableMinutes: accounting?.computableMinutes }); }} /> : null}
                 </>
               ) : (
                 <span>Sin carga ni novedades registradas.</span>
@@ -268,6 +282,7 @@ function DayCell({
             document.body,
           )
         : null}
+      {coverageReview ? <NoveltyCoverageResolutionModal target={coverageReview} close={() => setCoverageReview(null)} onResolved={onCoverageResolved} /> : null}
     </td>
   );
 }
@@ -278,6 +293,8 @@ const emptyHoursSummary = {
   pendingEmployees: 0,
   reviewEmployees: 0,
   countableHours: 0,
+  coveredHours: 0,
+  computableHours: 0,
   coverage: 0,
 };
 
@@ -785,6 +802,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           icon={BarChart3}
           tone="green"
         />
+        <StatCard label="Cubierto por novedades" value={formatDecimalHoursDuration(hoursSummary.coveredHours)} icon={ShieldPlus} tone="purple" />
+        <StatCard label="Total computable" value={formatDecimalHoursDuration(hoursSummary.computableHours)} icon={Calculator} tone="blue" />
       </div>
 
       {pendingOnly ? (
@@ -1262,6 +1281,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                 <th>Horas base</th>
                 <th>Horas adicionales</th>
                 <th>Total trabajado</th>
+                <th>Cubierto por novedades</th>
+                <th>Total computable</th>
                 <th>Acción</th>
                 {monthDays.map((day) => (
                   <th key={day} className="day-col">
@@ -1314,6 +1335,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                         ) : null}
                       </span>
                     </td>
+                    <td>{formatDurationMinutes(periodSummary.accounting.noveltyCoveredMinutes)}</td>
+                    <td><b>{formatDurationMinutes(periodSummary.accounting.computableMinutes)}</b></td>
                     <td>
                       <Link
                         className="table-icon-action"
@@ -1339,6 +1362,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
                           const conflict = manualConflictByDay.get(`${employee.id}|${monthDate(period, day)}`);
                           if (conflict) setManualConflictDialog(conflict);
                         }}
+                        onCoverageResolved={() => setRefresh((value) => value + 1)}
                       />
                     ))}
                   </tr>

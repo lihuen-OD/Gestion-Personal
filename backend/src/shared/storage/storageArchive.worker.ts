@@ -1,6 +1,8 @@
 import { AppError } from "../errors/AppError";
-import { checksum } from "./storageValidation";
-import { findGoogleDriveArchiveCopy, googleDriveStorageProvider, isGoogleDriveConfigured } from "./googleDriveStorage.provider";
+import { checksum, fileExtension } from "./storageValidation";
+import { findGoogleDriveArchiveCopy, googleDriveArchiveAppProperties, googleDriveStorageProvider, isGoogleDriveConfigured } from "./googleDriveStorage.provider";
+import { storagePathBuilder } from "./storagePathBuilder";
+import type { DriveFolderSpec } from "./storage.types";
 import { storageArchiveRepository } from "./storageArchive.repository";
 import { storageService } from "./storage.service";
 
@@ -35,9 +37,9 @@ function nextRetry(attemptCount: number) {
 }
 
 /**
- * La copia en Drive replica la key primaria bajo `<raíz>-archive/`, p. ej.
- * `attendance/2026/10/<dispositivo>/<requestId>.jpg` →
- * `attendance-archive/2026/10/<dispositivo>/` + `<requestId>.jpg`.
+ * Ubicación técnica de respaldo: replica la key primaria bajo
+ * `<raíz>-archive/`. Ya no se usa para fichadas (ver archiveTarget); queda
+ * sólo para un primary de otro módulo, que hoy no genera jobs.
  */
 export function archiveLocation(storageKey: string) {
   const parts = storageKey.split("/").filter(Boolean);
@@ -45,6 +47,67 @@ export function archiveLocation(storageKey: string) {
   return {
     folderSegments: [`${parts[0]}-archive`, ...parts.slice(1, -1)],
     fileName: parts[parts.length - 1]!,
+  };
+}
+
+const UNLINKED_WARNING = {
+  code: "STORAGE_ARCHIVE_UNLINKED",
+  message: "La evidencia no tiene fichada vinculada; se archivó en Fichadas/_Sin vincular.",
+};
+
+function metadataString(metadata: unknown, key: string) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === "string" && value ? value : undefined;
+}
+
+type ArchiveTarget = {
+  driveFolders?: DriveFolderSpec[];
+  folderSegments?: string[];
+  fileName: string;
+  warning?: { code: string; message: string };
+};
+
+/**
+ * Ruta humana de la copia en Drive de la foto de una fichada:
+ * StorageArchiveJob → StorageFile → AttendancePunch (FK photoFileId) → Employee.
+ * Una fichada normal siempre resuelve fichada, empleado, fecha y tipo. Si no
+ * (dato legacy/inconsistente), la copia igual se hace en `_Sin vincular` pero
+ * queda registrada: log de error + marca STORAGE_ARCHIVE_UNLINKED en el job.
+ */
+async function archiveTarget(jobId: string, source: { id: string; storageKey: string; module?: string | null }): Promise<ArchiveTarget> {
+  if (source.module && source.module !== "FICHADAS") return archiveLocation(source.storageKey);
+
+  const context = await storageArchiveRepository.findArchiveContext(source.id);
+  const requestId = metadataString(context?.metadata, "requestId") || source.id;
+  const extension = context?.extension || fileExtension(source.storageKey);
+  const punch = context?.attendancePunchPhotoLinks[0];
+  if (punch) {
+    return storagePathBuilder.attendanceArchive({
+      employee: punch.employee,
+      punchType: punch.type,
+      timestamp: punch.timestamp,
+      requestId,
+      extension,
+    });
+  }
+
+  console.error("STORAGE_ARCHIVE_UNLINKED", {
+    severity: "high",
+    jobId,
+    sourceStorageFileId: source.id,
+    reason: context ? "NO_ATTENDANCE_PUNCH" : "SOURCE_NOT_FOUND",
+    hasEmployee: Boolean(context?.employee),
+  });
+  return {
+    ...storagePathBuilder.unlinkedAttendanceArchive({
+      employee: context?.employee,
+      punchType: storagePathBuilder.archivePunchType(metadataString(context?.metadata, "punchType")),
+      timestamp: context?.uploadedAt || new Date(),
+      requestId,
+      extension,
+    }),
+    warning: UNLINKED_WARNING,
   };
 }
 
@@ -57,22 +120,25 @@ export async function processOneStorageArchiveJob(now = new Date()) {
     if (source.status === "DELETED") throw new AppError("Source file was deleted", 409, "STORAGE_ARCHIVE_SOURCE_DELETED");
     const existing = await findGoogleDriveArchiveCopy(source.id);
     let targetKey = existing?.id;
+    let warning: ArchiveTarget["warning"];
     if (!targetKey) {
       const downloaded = await storageService.downloadStoredFile(source);
       if (!downloaded) throw new AppError("Source provider cannot download", 500, "STORAGE_ARCHIVE_SOURCE_UNREADABLE");
       if (source.checksum && checksum(downloaded.buffer) !== source.checksum) {
         throw new AppError("Source checksum mismatch", 422, "STORAGE_ARCHIVE_SOURCE_CORRUPT");
       }
+      const { warning: targetWarning, ...location } = await archiveTarget(job.id, source);
+      warning = targetWarning;
       const target = await googleDriveStorageProvider.upload({
         buffer: downloaded.buffer,
         mimeType: source.mimeType,
-        ...archiveLocation(source.storageKey),
-        metadata: { sourceStorageFileId: source.id, checksum: source.checksum || "" },
+        ...location,
+        metadata: googleDriveArchiveAppProperties(source.id, source.checksum),
       });
       targetKey = target.storageKey;
     }
-    await storageArchiveRepository.complete(job.id, job.attemptCount, targetKey, new Date());
-    console.info("STORAGE_ARCHIVE_COMPLETED", { jobId: job.id, provider: "google_drive", attemptCount: job.attemptCount, reused: Boolean(existing) });
+    await storageArchiveRepository.complete(job.id, job.attemptCount, targetKey, new Date(), warning);
+    console.info("STORAGE_ARCHIVE_COMPLETED", { jobId: job.id, provider: "google_drive", attemptCount: job.attemptCount, reused: Boolean(existing), unlinked: Boolean(warning) });
     return { processed: true, completed: true };
   } catch (error) {
     const safe = safeError(error);

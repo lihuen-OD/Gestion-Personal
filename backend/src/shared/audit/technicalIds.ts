@@ -23,7 +23,11 @@ export function maskTechnicalIds(text: string) {
     .replace(new RegExp(UUID, "gi"), "registro correspondiente");
 }
 
-/** "/api/employees/<uuid>/overview?x=<uuid>" -> "/api/employees/:id/overview?x=:id" */
+/**
+ * "/api/employees/<uuid>/overview?x=<uuid>" -> "/api/employees/:id/overview?x=:id".
+ * El texto libre de `search` (nombre, apellido o DNI, p. ej. desde el fichador)
+ * nunca queda en la descripción: "?search=32456789" -> "?search=:texto".
+ */
 export function describeRequestPath(url: string) {
-  return maskTechnicalIds(url);
+  return maskTechnicalIds(url).replace(/([?&]search=)[^&#]*/gi, "$1:texto");
 }

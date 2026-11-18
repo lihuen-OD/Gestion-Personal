@@ -26,6 +26,28 @@ describe("formatApiErrorMessage", () => {
     })).toBe("La operación no está permitida.");
   });
 
+  // Etapa 7 (NOVELTY_COVERAGE_ENGINE.md §14): nunca códigos, enums ni JSON crudos.
+  it("keeps the business message of a rejected novelty type configuration", () => {
+    expect(formatApiErrorMessage({
+      error: { code: "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID", message: "Elegí al menos un día de la semana." },
+    })).toBe("Elegí al menos un día de la semana.");
+  });
+
+  it("replaces a message with internal codes or enums by a business explanation", () => {
+    for (const message of ["INVALID_NOVELTY_COVERAGE_CONFIGURATION", "coverageMode EXPECTED_SCHEDULE requires WORK_OBLIGATION", "ONLY_IF_CONVOKED no permitido", "{\"coverageMode\":\"NONE\"}"]) {
+      expect(formatApiErrorMessage({ error: { code: "NOVELTY_TYPE_COVERAGE_CONFIG_INVALID", message } }))
+        .toBe("La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.");
+    }
+    expect(formatApiErrorMessage({ error: { code: "SOME_UNKNOWN_CODE", message: "WORK_OBLIGATION" } }))
+      .toBe("No pudimos completar la operación. Intentá nuevamente.");
+  });
+
+  it("labels novelty type coverage fields in Spanish on validation errors", () => {
+    expect(formatApiErrorMessage({
+      error: { code: "VALIDATION_ERROR", message: "Invalid request body", details: { formErrors: [], fieldErrors: { coverageFixedMinutes: ["Number must be greater than or equal to 1"], coverageOnHoliday: ["Invalid enum value"] } } },
+    })).toBe("Revisá los campos obligatorios o inválidos: Cantidad de horas, Qué sucede si es feriado.");
+  });
+
   it("translates known internal errors instead of exposing backend wording", () => {
     expect(formatApiErrorMessage({
       error: { code: "EMPLOYEE_NOT_FOUND", message: "Employee not found" },

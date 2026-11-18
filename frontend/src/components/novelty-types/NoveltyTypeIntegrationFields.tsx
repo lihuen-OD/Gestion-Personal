@@ -1,7 +1,12 @@
 import type { NoveltyType } from "../../types/noveltyType.types";
-import { finnegansValueUnitDescriptions, finnegansValueUnitLabels, finnegansValueUnits } from "./NoveltyTypeFields";
+import { issueFor, type NoveltyTypeIssue } from "../../utils/noveltyTypeCoverage";
+import { finnegansValueUnitDescriptions, finnegansValueUnitLabels, finnegansValueUnits, TextAreaField } from "./NoveltyTypeFields";
 
-export function NoveltyTypeFinnegansTab({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
+// Etapa 7: sección "Integración y otras opciones" (Finnegans + observaciones
+// internas). La lógica de Finnegans no cambia en esta etapa (es la etapa 9).
+export function NoveltyTypeIntegrationFields({ item, setItem, issues, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; issues?: NoveltyTypeIssue[]; disabled?: boolean }) {
+  const linkError = issueFor(issues, "finnegansLink");
+  const unitError = issueFor(issues, "finnegansValueUnit");
   const toggleExports = (exportsToFinnegans: boolean) => {
     setItem({ ...item, rules: { ...item.rules, exportsToFinnegans } });
   };
@@ -29,13 +34,32 @@ export function NoveltyTypeFinnegansTab({ item, setItem, disabled }: { item: Nov
             <option value="">Seleccioná una unidad</option>
             {finnegansValueUnits.map((unit) => <option key={unit} value={unit}>{finnegansValueUnitLabels[unit]}</option>)}
           </select>
-          {item.rules.finnegansValueUnit ? <small>{finnegansValueUnitDescriptions[item.rules.finnegansValueUnit]}</small> : null}
         </label>
+        {item.rules.finnegansValueUnit ? <small className="field-hint finnegans-unit-hint">{finnegansValueUnitDescriptions[item.rules.finnegansValueUnit]}</small> : null}
+        {linkError ? <small className="field-error form-wide" role="alert">{linkError}</small> : null}
         <label className="mini-check">
           <input type="checkbox" disabled={disabled} checked={item.rules.finnegansRequiresValidity} onChange={(event) => setItem({ ...item, rules: { ...item.rules, finnegansRequiresValidity: event.target.checked } })} />
           <span>Requiere vigencia (fecha desde y fecha hasta obligatorias para exportar)</span>
         </label>
       </div>
     ) : null}
+    {unitError ? <p className="field-error" role="alert">{unitError}</p> : null}
+
+    {item.coverage.mode === "MANUAL_MINUTES" ? null : (
+      <div className="novelty-legacy-hours">
+        <span className="novelty-legacy-hours-title">Registro administrativo de horas</span>
+        <label className="catalog-rule-card">
+          <input type="checkbox" disabled={disabled} checked={item.rules.allowsHours} onChange={() => setItem({ ...item, rules: { ...item.rules, allowsHours: !item.rules.allowsHours } })} />
+          <span>
+            <b>Pedir una cantidad de horas al cargar (sólo como dato)</b>
+            <small>Capacidad anterior al cálculo de cobertura: anota una cantidad en la novedad y se usa en la exportación a Finnegans en horas. No es tiempo cubierto, no suma al total ni cambia el cálculo. Para que la novedad cubra horas, configurá «Tiempo que cubre».</small>
+          </span>
+        </label>
+      </div>
+    )}
+
+    <div className="novelty-internal-notes">
+      <TextAreaField label="Observaciones internas" value={item.notes || ""} disabled={disabled} hint="Sólo visibles en esta configuración." onChange={(notes) => setItem({ ...item, notes })} />
+    </div>
   </div>;
 }

@@ -167,20 +167,18 @@ describe("F7 — convivencia con el enrolamiento y cierre del namespace", () => 
   });
 });
 
-describe("F7 — cupo por dispositivo", () => {
-  it("un único cupo por dispositivo entre las cuatro rutas: agotarlo bloquea a ese dispositivo y no a otro", async () => {
-    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
-      const result = index % 2 === 0
-        ? await call("GET", "/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })
-        : await call("POST", "/clock/status", { authorization: credential(SHARED_QUOTA), body: { employeeId: EMPLOYEE_ID } });
-      expect(result.status).toBe(200);
+describe("§33 — cupo por dispositivo y por operación", () => {
+  it("agotar la consulta de jornada de un equipo no bloquea su búsqueda ni a otro equipo", async () => {
+    const status = (entry: typeof SHARED_QUOTA) => call("POST", "/clock/status", { authorization: credential(entry), body: { employeeId: EMPLOYEE_ID } });
+    for (let index = 0; index < env.CLOCK_STATUS_RATE_LIMIT_MAX; index += 1) {
+      expect((await status(SHARED_QUOTA)).status).toBe(200);
     }
-    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })).status).toBe(429);
-    expect((await call("POST", "/clock/status", { authorization: credential(SHARED_QUOTA), body: { employeeId: EMPLOYEE_ID } })).status).toBe(429);
-    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(OTHER_ACTIVE) })).status).toBe(200);
+    expect(await status(SHARED_QUOTA)).toMatchObject({ status: 429, error: { code: "CLOCK_STATUS_RATE_LIMITED" } });
+    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(SHARED_QUOTA) })).status).toBe(200);
+    expect((await status(OTHER_ACTIVE)).status).toBe(200);
   });
 
-  it("anuncia el cupo por dispositivo", async () => {
-    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(ACTIVE) })).rateLimit).toBe(String(env.CLOCK_RATE_LIMIT_MAX));
+  it("anuncia el cupo de la operación", async () => {
+    expect((await call("POST", "/clock/status", { authorization: credential(ACTIVE), body: { employeeId: EMPLOYEE_ID } })).rateLimit).toBe(String(env.CLOCK_STATUS_RATE_LIMIT_MAX));
   });
 });

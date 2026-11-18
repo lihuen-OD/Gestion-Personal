@@ -1,4 +1,4 @@
-import { ApprovalStatus, EmployeeStatus, Prisma } from "@prisma/client";
+import { ApprovalStatus, EmployeeStatus, Prisma, type LaborMovementType } from "@prisma/client";
 import { employeeStructureWhere, workLocationNotEndedWhere, workLocationOnDateWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closurePeriodGuard";
@@ -24,6 +24,7 @@ import type {
 } from "./employees.schemas";
 import type { employeeListSortKeys } from "./employees.schemas";
 import { accountingBreakdownSelect, countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
+import { noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
 
 const employeeOptionSelect = {
   id: true,
@@ -843,7 +844,7 @@ function createEmployeeData(input: CreateEmployeeInput) {
   return {
     legajo: input.legajo,
     legajoFinnegans: input.legajoFinnegans || null,
-    cuil: input.cuil,
+    cuil: input.cuil || null,
     dni: input.dni,
     firstName: input.firstName,
     lastName: input.lastName,
@@ -871,7 +872,7 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
   return {
     ...(input.legajo !== undefined ? { legajo: input.legajo } : {}),
     ...(input.legajoFinnegans !== undefined ? { legajoFinnegans: input.legajoFinnegans || null } : {}),
-    ...(input.cuil !== undefined ? { cuil: input.cuil } : {}),
+    ...(input.cuil !== undefined ? { cuil: input.cuil || null } : {}),
     ...(input.dni !== undefined ? { dni: input.dni } : {}),
     ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
     ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
@@ -893,6 +894,11 @@ function updateEmployeeData(input: UpdateEmployeeInput) {
     ...(input.receiptCategory !== undefined ? { receiptCategory: input.receiptCategory || null } : {}),
     ...(input.internalCategory !== undefined ? { internalCategory: input.internalCategory || null } : {}),
   };
+}
+
+function hasAddressData(address: CreateEmployeeInput["address"]): address is NonNullable<CreateEmployeeInput["address"]> {
+  if (!address) return false;
+  return Object.values(address).some((value) => (typeof value === "string" ? value.trim() !== "" : value !== null && value !== undefined));
 }
 
 function companyLinks(companyIds: string[], primaryCompanyId?: string | null) {
@@ -1267,8 +1273,8 @@ export const employeesRepository = {
         ? prisma.novelty.findMany({
             where: {
               employeeId: id,
-              fromDate: { lt: end },
-              OR: [{ toDate: null }, { toDate: { gte: start } }],
+              // toDate nulo es un único día (NOVELTY_COVERAGE_ENGINE.md §6.3).
+              ...noveltyOverlapsRangeWhere(start, end),
             },
             include: timeGridNoveltyInclude,
             orderBy: [{ fromDate: "asc" }, { createdAt: "desc" }],
@@ -1482,12 +1488,15 @@ export const employeesRepository = {
     return prisma.employee.findUniqueOrThrow({ where: { id }, select: employeeLaborAuditSelect });
   },
 
+  // El CUIL es opcional: sólo participa cuando viene informado. Un
+  // `{ cuil: undefined }` sería un filtro vacío (coincide con todos) y un
+  // `{ cuil: null }` trataría a todos los legajos sin CUIL como duplicados.
   findByUniqueFields(input: Pick<CreateEmployeeInput, "legajo" | "legajoFinnegans" | "cuil" | "dni">) {
     const uniqueFields: Prisma.EmployeeWhereInput[] = [
       { legajo: input.legajo },
-      { cuil: input.cuil },
       { dni: input.dni },
     ];
+    if (input.cuil) uniqueFields.push({ cuil: input.cuil });
     if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
     return prisma.employee.findFirst({
       where: { OR: uniqueFields },
@@ -1499,7 +1508,7 @@ export const employeesRepository = {
     const uniqueFields: Prisma.EmployeeWhereInput[] = [];
     if (input.legajo !== undefined) uniqueFields.push({ legajo: input.legajo });
     if (input.legajoFinnegans) uniqueFields.push({ legajoFinnegans: input.legajoFinnegans });
-    if (input.cuil !== undefined) uniqueFields.push({ cuil: input.cuil });
+    if (input.cuil) uniqueFields.push({ cuil: input.cuil });
     if (input.dni !== undefined) uniqueFields.push({ dni: input.dni });
     if (!uniqueFields.length) return null;
     return prisma.employee.findFirst({
@@ -1554,7 +1563,9 @@ export const employeesRepository = {
         ...(initialMovements.length ? { status: resolveLaborStatus(initialMovements) } : {}),
         createdByUserId: createdByUserId || null,
         ...(companies.length ? { companies: { createMany: { data: companies } } } : {}),
-        ...(input.address ? { address: { create: input.address } } : {}),
+        // Un domicilio sin ningún dato no se crea: el alta mínima no deja una
+        // fila EmployeeAddress vacía.
+        ...(hasAddressData(input.address) ? { address: { create: input.address } } : {}),
         ...(hourConceptIds.length
           ? { hourConcepts: { createMany: { data: hourConceptIds.map((hourConceptId) => ({ hourConceptId })) } } }
           : {}),
@@ -1707,8 +1718,18 @@ export const employeesRepository = {
   // findEmployeeDetailByIdOrThrow) es sólo lectura para dar forma a la
   // respuesta y se hace después de que la transacción cerró, para no
   // arriesgar el timeout de 5s de Prisma bajo latencia alta de Neon.
-  async createLaborMovement(employeeId: string, input: CreateLaborMovementInput, createdByUserId?: string | null) {
-    const movement = await prisma.$transaction(async (tx) => {
+  // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): `hooks.beforeWrite` toma los
+  // locks de cobertura antes de escribir y `hooks.afterWrite` recalcula la
+  // cobertura del legajo en la misma transacción, con los movimientos previos.
+  async createLaborMovement<R = undefined>(
+    employeeId: string,
+    input: CreateLaborMovementInput,
+    createdByUserId?: string | null,
+    hooks: { beforeWrite?: (tx: PrismaTransactionClient) => Promise<void>; afterWrite?: (tx: PrismaTransactionClient, previous: Array<{ type: LaborMovementType; effectiveFrom: Date }>) => Promise<R> } = {},
+  ) {
+    const { movement, after } = await prisma.$transaction(async (tx) => {
+      await hooks.beforeWrite?.(tx);
+      const previous = hooks.afterWrite ? await tx.laborMovement.findMany({ where: { employeeId }, select: { type: true, effectiveFrom: true } }) : [];
       const created = await tx.laborMovement.create({
         data: {
           employeeId,
@@ -1730,19 +1751,21 @@ export const employeesRepository = {
         data: { status: resolveLaborStatus(movements) },
       });
 
-      return created;
-    });
+      const after = hooks.afterWrite ? await hooks.afterWrite(tx, previous) : undefined;
+      return { movement: created, after };
+    }, { timeout: 30_000 });
 
     const employee = await findEmployeeDetailByIdOrThrow(employeeId);
-    return { employee, movement };
+    return { employee, movement, after };
   },
 
   findDocumentCategory(categoryId: string) {
     return prisma.documentCategory.findUnique({
       where: { id: categoryId },
       // uploadRoles (Etapa 15D.4): necesario para autorizar el upload por
-      // categoría antes de subir el archivo al storage.
-      select: { id: true, code: true, name: true, uploadRoles: true },
+      // categoría antes de subir el archivo al storage. kind: carpeta del
+      // documento en Drive (storagePathBuilder.documentDriveFolder).
+      select: { id: true, code: true, name: true, kind: true, uploadRoles: true },
     });
   },
 

@@ -12,7 +12,7 @@ const input: ClockPhotoPunchInput = {
   photo: "data:image/jpeg;base64,AAAA",
   faceValidationStatus: "VALID",
 };
-const result: ClockPunchResult = { employee: { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" }, workShift: { id: "shift-1", startAt: "2026-10-13T11:01:00.000Z" } };
+const result: ClockPunchResult = { employee: { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" }, workShift: { id: "shift-1", startAt: "2026-10-13T11:01:00.000Z" } };
 const attempt = (status: ClockAttemptState["status"], extra: Partial<ClockAttemptState> = {}): ClockAttemptState => ({ requestId: input.requestId, status, response: null, error: null, ...extra });
 const notFound = () => new ApiError("No se encontró el intento de fichada.", "CLOCK_ATTEMPT_NOT_FOUND", 404);
 

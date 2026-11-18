@@ -5,29 +5,16 @@ import { isMonthlyClosureApproved } from "../../shared/monthlyClosure/closureLoc
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { finnegansExportRepository, type FinnegansExportNovelty } from "./finnegansExport.repository";
-import { buildReadinessSummary, evaluateNoveltyReadiness, type FinnegansReadinessSummary, type FinnegansRowStatus } from "./finnegansExport.readiness";
+import { frozenFinnegansConfigOf } from "../workforce-management/closureSnapshot";
+import { calendarDateKey } from "../../shared/datetime/argentinaTime";
+import { buildReadinessSummary, type FinnegansReadinessSummary } from "./finnegansExport.readiness";
+import { buildFinnegansNoveltyExportRows, type DatasetRow, type FinnegansExportRow } from "./finnegansExport.rows";
 import { finnegansExportBatchRepository, type CreateBatchItemInput } from "./finnegansExport.batch.repository";
 import { computeExportHash } from "./finnegansExport.hash";
 import { diffBatchItems, type BatchDiffSummary } from "./finnegansExport.diff";
 import type { FinnegansExportHistoryQuery, FinnegansExportQuery, FinnegansExportRequest } from "./finnegansExport.schemas";
 
-export type FinnegansExportRow = {
-  Legajo: string;
-  Novedad: string;
-  "Centro de costo": string;
-  "Valor 1": string;
-  "Fecha Aplicación": string;
-  "Fecha desde": string;
-  "Fecha hasta": string;
-  sourceId?: string;
-  employeeId?: string;
-  employeeName?: string;
-  detail?: string;
-  // Etapa 15L.3A §30: sólo para la tabla de preview del frontend — nunca se
-  // incluye en las columnas de CSV/XLSX (`toCsv` abajo lee una lista fija de
-  // encabezados que no incluye este campo).
-  estado?: FinnegansRowStatus;
-};
+export type { FinnegansExportRow } from "./finnegansExport.rows";
 
 export type FinnegansExportResult = {
   period: string;
@@ -76,89 +63,6 @@ export type FinnegansExportHistoryDetailResult = {
   diff: BatchDiffSummary | null;
 };
 
-function formatDate(value: Date | null | undefined) {
-  if (!value) return "";
-  const day = String(value.getUTCDate()).padStart(2, "0");
-  const month = String(value.getUTCMonth() + 1).padStart(2, "0");
-  const year = value.getUTCFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-function decimalToString(value: Prisma.Decimal | null | undefined) {
-  if (!value) return "";
-  return value.toString();
-}
-
-// Etapa 15L.3A §8/§9/§10: Valor 1 depende exclusivamente de
-// NoveltyType.finnegansValueUnit — ya no hay fallback
-// quantityHours→quantityDays→"1". Sólo se usa cuando la unidad está
-// definida; si falta la cantidad correspondiente resuelve "" (la fila queda
-// igual marcada MISSING_HOURS_QUANTITY/MISSING_DAYS_QUANTITY por
-// evaluateNoveltyReadiness, que es la única fuente de verdad sobre si la
-// fila puede exportarse en forma definitiva).
-function resolveValue1(unit: FinnegansExportNovelty["noveltyType"]["finnegansValueUnit"], quantityHours: Prisma.Decimal | null, quantityDays: Prisma.Decimal | null): string {
-  if (unit === "HOURS") return decimalToString(quantityHours);
-  if (unit === "DAYS") return decimalToString(quantityDays);
-  if (unit === "UNIT") return "1";
-  return "";
-}
-
-interface DatasetRow {
-  employeeId: string;
-  row: FinnegansExportRow;
-  ready: boolean;
-  hasNonClosureBlocker: boolean;
-  reasonCodes: ReturnType<typeof evaluateNoveltyReadiness>["reasonCodes"];
-}
-
-function buildRow(item: FinnegansExportNovelty, closureApproved: boolean): DatasetRow {
-  const unit = item.noveltyType.finnegansValueUnit;
-  const requiresValidity = item.noveltyType.finnegansRequiresValidity;
-
-  const readiness = evaluateNoveltyReadiness({
-    quantityHours: item.quantityHours,
-    quantityDays: item.quantityDays,
-    toDate: item.toDate,
-    finnegansValueUnit: unit,
-    finnegansRequiresValidity: requiresValidity,
-    hasFinnegansCode: !!item.noveltyType.finnegansCode,
-    closureApproved,
-  });
-
-  const row: FinnegansExportRow = {
-    Legajo: item.employee.legajoFinnegans || item.employee.legajo,
-    Novedad: item.noveltyType.finnegansCode || "",
-    // Etapa 15L.3A §14: auditado, sin evidencia de una regla real para
-    // llenarlo — se mantiene vacío tal como hoy (ver
-    // docs/NOVEDADES_HORAS_FINNEGANS.md: "Si queda vacío, Finnegans toma el
-    // del legajo").
-    "Centro de costo": "",
-    "Valor 1": resolveValue1(unit, item.quantityHours, item.quantityDays),
-    // Etapa 15L.3A §13: sin evidencia de un comportamiento distinto, se
-    // mantiene Fecha Aplicación = fromDate, sin cambios.
-    "Fecha Aplicación": formatDate(item.fromDate),
-    // Etapa 15L.3A §11/§12: fuente única finnegansRequiresValidity. Si falta
-    // toDate con vigencia requerida, no se inventa una fecha — la fila queda
-    // bloqueada (MISSING_VALIDITY_TO_DATE) y Fecha hasta sale "" (formatDate
-    // ya es null-safe), nunca se recorta ni se reemplaza Fecha desde.
-    "Fecha desde": requiresValidity ? formatDate(item.fromDate) : "",
-    "Fecha hasta": requiresValidity ? formatDate(item.toDate) : "",
-    sourceId: item.id,
-    employeeId: item.employeeId,
-    employeeName: `${item.employee.lastName}, ${item.employee.firstName}`,
-    detail: item.noveltyType.name,
-    estado: readiness.estado,
-  };
-
-  return {
-    employeeId: item.employeeId,
-    row,
-    ready: readiness.ready,
-    hasNonClosureBlocker: readiness.reasonCodes.some((code) => code !== "CLOSURE_NOT_APPROVED"),
-    reasonCodes: readiness.reasonCodes,
-  };
-}
-
 function escapeCsv(value: string) {
   if (/[",\r\n;]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
@@ -190,15 +94,67 @@ export function toCsv(rows: FinnegansExportRow[]) {
 // en preview, para poder informarlo como blocker sin bloquear la pantalla)
 // pero sólo para los empleados que efectivamente tienen alguna novedad
 // candidata.
+/**
+ * §16.2: configuración de Finnegans de cada novedad para el período: la
+ * congelada en el snapshot del cierre del legajo (código, unidad, vigencia,
+ * nombre, si exporta, si está activo, si tiene cobertura) o, si el cierre no
+ * existe o es anterior a esa congelación (o el tipo no figura en él), la del
+ * tipo vigente. Con ella se decide si la novedad es candidata.
+ */
+function withPeriodFinnegansConfig(
+  period: string,
+  novelties: FinnegansExportNovelty[],
+  closuresByEmployeeId: ReadonlyMap<string, { snapshot?: Prisma.JsonValue | null }>,
+): FinnegansExportNovelty[] {
+  const frozenByEmployee = new Map<string, ReturnType<typeof frozenFinnegansConfigOf>>();
+  const frozenFor = (employeeId: string) => {
+    if (!frozenByEmployee.has(employeeId)) frozenByEmployee.set(employeeId, frozenFinnegansConfigOf(closuresByEmployeeId.get(employeeId)?.snapshot ?? null));
+    return frozenByEmployee.get(employeeId)!;
+  };
+  const periodStart = `${period}-01`;
+  return novelties.flatMap((item) => {
+    const frozen = frozenFor(item.employeeId)?.get(item.noveltyTypeId);
+    const noveltyType = frozen
+      ? {
+          ...item.noveltyType,
+          name: frozen.name,
+          status: frozen.status,
+          exportsToFinnegans: frozen.exportsToFinnegans,
+          finnegansCode: frozen.finnegansCode,
+          finnegansValueUnit: frozen.finnegansValueUnit,
+          finnegansRequiresValidity: frozen.finnegansRequiresValidity,
+          coverageMode: frozen.coverageMode,
+        }
+      : item.noveltyType;
+    if (noveltyType.status !== "ACTIVO" || !noveltyType.exportsToFinnegans) return [];
+    // Un rango que empezó el mes anterior sólo entra si el tipo tiene cobertura (se divide por mes).
+    const startsBeforePeriod = calendarDateKey(item.fromDate) < periodStart;
+    if (startsBeforePeriod && noveltyType.coverageMode === "NONE") return [];
+    return [{ ...item, noveltyType }];
+  });
+}
+
 async function buildDataset(period: string, employeeId?: string): Promise<{ rows: DatasetRow[]; readiness: FinnegansReadinessSummary }> {
   const novelties = await finnegansExportRepository.findExportableNovelties(period, employeeId);
   const employeeIds = Array.from(new Set(novelties.map((item) => item.employeeId)));
-  const closures = employeeIds.length ? await finnegansExportRepository.findClosuresForExport(employeeIds, period) : [];
+  // Etapa 9 de cobertura (NOVELTY_COVERAGE_ENGINE.md §16): estados diarios en
+  // lote de los legajos con novedades candidatas (las horas de los tipos con
+  // cobertura y los días en revisión de cualquier tipo).
+  const [closures, coverageByNovelty] = await Promise.all([
+    employeeIds.length ? finnegansExportRepository.findClosuresForExport(employeeIds, period) : Promise.resolve([]),
+    employeeIds.length ? finnegansExportRepository.findCoverageDaysForExport(period, employeeIds) : Promise.resolve(new Map()),
+  ]);
   const closuresByEmployeeId = new Map(closures.map((closure) => [closure.employeeId, closure]));
+  const candidates = withPeriodFinnegansConfig(period, novelties, closuresByEmployeeId);
 
-  const rows = novelties.map((item) => buildRow(item, isMonthlyClosureApproved(closuresByEmployeeId.get(item.employeeId))));
+  const rows = buildFinnegansNoveltyExportRows({
+    period,
+    novelties: candidates,
+    coverageByNovelty,
+    isClosureApproved: (id) => isMonthlyClosureApproved(closuresByEmployeeId.get(id)),
+  });
   const readiness = buildReadinessSummary(
-    rows.map((entry) => ({ employeeId: entry.employeeId, readiness: { ready: entry.ready, estado: entry.row.estado!, reasonCodes: entry.reasonCodes } })),
+    rows.map((entry) => ({ employeeId: entry.employeeId, reviewDays: entry.reviewDays, readiness: { ready: entry.ready, estado: entry.row.estado!, reasonCodes: entry.reasonCodes } })),
   );
 
   return { rows, readiness };
@@ -338,6 +294,15 @@ export const finnegansExportService = {
     const { rows, readiness } = await buildDataset(input.period, input.employeeId);
 
     if (!readiness.ready) {
+      // Etapa 9 de cobertura: una cobertura en revisión nunca sale como definitiva.
+      const reviewDays = rows.reduce((sum, entry) => sum + entry.reviewDays, 0);
+      if (reviewDays > 0) {
+        throw new AppError(
+          `No se puede generar la exportación porque hay ${reviewDays === 1 ? "1 día" : `${reviewDays} días`} de novedades pendientes de revisión.`,
+          409,
+          "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING",
+        );
+      }
       const hasDataBlocker = rows.some((entry) => entry.hasNonClosureBlocker);
       if (hasDataBlocker) {
         throw new AppError("Hay novedades que necesitan completar su configuración antes de exportar.", 409, "FINNEGANS_EXPORT_NOT_READY");

@@ -1,6 +1,6 @@
 import { apiRequest } from "./apiClient";
 import type { ListMeta } from "./listQuery";
-import { invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES, type CacheFamily } from "../cache";
+import { invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES, type CacheFamily } from "../cache";
 
 // Francos por empleado y fecha (docs/decisions/EMPLOYEE_DAY_OFF.md). Un franco
 // significa que esa persona no tiene obligación de trabajar esa fecha: las
@@ -41,7 +41,7 @@ export type SaveDayOffsResult = {
 // Un franco reinterpreta horas (grilla, resumen, dashboard, cierres) y puede
 // crear o resolver alertas con su notificación — mismo alcance que el backend
 // (EMPLOYEE_DAY_OFF.md §14).
-const DAY_OFF_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [...WORKED_TIME_DERIVED_CACHE_FAMILIES, "shift-alerts", "notifications"];
+const DAY_OFF_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [...NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES, "shift-alerts", "notifications"];
 
 export const employeeDayOffApiService = {
   // Sin caché: el modal decide a quién se le asigna franco con el estado vigente.

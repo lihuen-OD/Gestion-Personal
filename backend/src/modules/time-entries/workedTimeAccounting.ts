@@ -1,4 +1,15 @@
-import type { HourConceptBreakdownSource, HourConceptWorkTreatment, Prisma, WorkShiftSource } from "@prisma/client";
+import type {
+  ApprovalStatus,
+  HourConceptBreakdownSource,
+  HourConceptWorkTreatment,
+  NoveltyCoverageOutcome,
+  NoveltyCoverageResolution,
+  NoveltyCoverageReviewStatus,
+  NoveltyCoverageScheduleReviewReason,
+  NoveltyRealWorkCompatibility,
+  Prisma,
+  WorkShiftSource,
+} from "@prisma/client";
 import { calendarDateKey } from "../../shared/datetime/argentinaTime";
 import { AppError } from "../../shared/errors/AppError";
 
@@ -26,6 +37,15 @@ import { AppError } from "../../shared/errors/AppError";
  * jornadas cuya fecha operativa tiene franco activo no computan; lo cargado o
  * corregido por una persona sí. `applyDayOffExclusions` es la única
  * implementación de esa regla y `accountEmployeePeriods` la aplica.
+ *
+ * Cobertura de novedades (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §12):
+ * tercer componente, separado del trabajo real. Nunca entra a
+ * `totalWorkedMinutes`:
+ *   noveltyCovered  = Σ cobertura COUNTED (minutos base efectivos)
+ *   computable      = totalWorked + noveltyCovered
+ *   settlement      = … + Σ cobertura COUNTED × su multiplicador
+ * `accountNoveltyDay` es la única implementación de los estados COUNTED /
+ * INFORMATIVE / PENDING_APPROVAL / REVIEW_REQUIRED.
  */
 
 export type WorkTreatment = HourConceptWorkTreatment;
@@ -66,7 +86,89 @@ export type SettlementAccounting = {
   normalMinutes: number;
   withinBaseMinutes: number;
   additiveMinutes: number;
+  // Cobertura de novedades COUNTED × su multiplicador (NOVELTY_COVERAGE_ENGINE.md §12).
+  noveltyMinutes: number;
   totalMinutes: number;
+};
+
+// ── Cobertura de novedades ──────────────────────────────────────────────────
+
+/** Una fila de NoveltyDayCoverage con el estado de su novedad (toAccountingNoveltyCoverage). */
+export type AccountingNoveltyCoverage = {
+  employeeId: string;
+  day: number;
+  dateKey?: string;
+  noveltyId: string;
+  noveltyTypeId: string;
+  status: ApprovalStatus;
+  outcome: NoveltyCoverageOutcome;
+  scheduleReviewReason: NoveltyCoverageScheduleReviewReason | null;
+  baseMinutes: number;
+  resolvedBaseMinutes: number | null;
+  multiplier: number;
+  countsTowardTotal: boolean;
+  realWorkCompatibility: NoveltyRealWorkCompatibility;
+  expectedMinutes: number | null;
+  reviewStatus: NoveltyCoverageReviewStatus;
+  resolution: NoveltyCoverageResolution | null;
+  resolvedAgainstWorkedMinutes: number | null;
+};
+
+export type NoveltyCoverageState = "COUNTED" | "INFORMATIVE" | "PENDING_APPROVAL" | "REVIEW_REQUIRED";
+
+export type NoveltyCoverageReviewReason =
+  // Jornada o relación laboral sin resolver (0 h provisional).
+  | "SCHEDULE_UNRESOLVED"
+  // Resuelto contra otros minutos reales: el trabajo del día cambió.
+  | "RESOLUTION_OUTDATED"
+  // Tipo incompatible con trabajo real y hay trabajo ese día.
+  | "REAL_WORK_ON_INCOMPATIBLE"
+  // Tipo compatible que suma: trabajo + cobertura supera la jornada esperada.
+  | "REAL_WORK_EXCEEDS_EXPECTED"
+  // Tipo compatible que suma, con trabajo real y sin jornada esperada para validar.
+  | "REAL_WORK_WITHOUT_EXPECTED"
+  // P5: dos o más coberturas que suman, más el trabajo real del día, superan
+  // la jornada esperada conocida. Se retienen todas las implicadas.
+  | "COVERAGE_TOTAL_EXCEEDS_EXPECTED";
+
+export type NoveltyItemAccounting = {
+  noveltyId: string;
+  noveltyTypeId: string;
+  outcome: NoveltyCoverageOutcome;
+  state: NoveltyCoverageState;
+  reviewReasons: NoveltyCoverageReviewReason[];
+  // Minutos base efectivos (resueltos o calculados) y su multiplicador: lo que
+  // la novedad representa ese día, cuente o no.
+  baseMinutes: number;
+  multiplier: number;
+  settlementMinutes: number;
+  countsTowardTotal: boolean;
+};
+
+export type NoveltyDayAccounting = {
+  coveredMinutes: number;
+  settlementMinutes: number;
+  informativeMinutes: number;
+  pendingApprovalMinutes: number;
+  heldMinutes: number;
+  reviewRequired: boolean;
+  items: NoveltyItemAccounting[];
+};
+
+export type NoveltyTypeAccounting = {
+  noveltyTypeId: string;
+  coveredMinutes: number;
+  settlementMinutes: number;
+  informativeMinutes: number;
+  pendingApprovalMinutes: number;
+  heldMinutes: number;
+};
+
+export type NoveltyPeriodAccounting = Omit<NoveltyDayAccounting, "items" | "reviewRequired"> & {
+  reviewDays: number;
+  // Fechas (AAAA-MM-DD, o el día del mes si la fila no trae fecha) con revisión pendiente.
+  reviewDates: string[];
+  types: NoveltyTypeAccounting[];
 };
 
 type AccountingTotals = {
@@ -89,19 +191,27 @@ type AccountingTotals = {
   // Horas base automáticas registradas que no computan por pertenecer a una
   // jornada en franco (evidencia conservada, a revisar).
   dayOffUncountedMinutes: number;
+  // Cobertura de novedades COUNTED (minutos base, sin multiplicar). Nunca es
+  // trabajo real: no entra a totalWorkedMinutes.
+  noveltyCoveredMinutes: number;
+  // totalWorkedMinutes + noveltyCoveredMinutes.
+  computableMinutes: number;
   settlement: SettlementAccounting;
   concepts: ConceptAccounting[];
 };
 
 export type DayAccounting = AccountingTotals & {
   day: number;
-  // Mayor multiplicador de Hora Especial presente ese día (1 = sin regla).
+  // Mayor multiplicador de Hora Especial presente ese día en el trabajo real
+  // (1 = sin regla). El de la cobertura vive en novelty.items.
   multiplier: number;
+  novelty: NoveltyDayAccounting;
 };
 
 export type PeriodAccounting = AccountingTotals & {
   hasSpecialMultiplier: boolean;
   days: Record<string, DayAccounting>;
+  novelty: NoveltyPeriodAccounting;
 };
 
 const MINUTE_MS = 60_000;
@@ -138,11 +248,112 @@ export function withinBaseCoverageMinutes(breakdowns: Array<Pick<AccountingBreak
 }
 
 function emptySettlement(): SettlementAccounting {
-  return { normalMinutes: 0, withinBaseMinutes: 0, additiveMinutes: 0, totalMinutes: 0 };
+  return { normalMinutes: 0, withinBaseMinutes: 0, additiveMinutes: 0, noveltyMinutes: 0, totalMinutes: 0 };
+}
+
+function emptyNoveltyDay(): NoveltyDayAccounting {
+  return { coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewRequired: false, items: [] };
+}
+
+// Días en que la novedad no aplica (no hay nada que compatibilizar con el
+// trabajo real): franco, fin de semana excluido, sin obligación, feriado,
+// fuera de la relación laboral.
+const NOVELTY_APPLIES_OUTCOMES: ReadonlySet<NoveltyCoverageOutcome> = new Set(["COVERED", "NO_COVERAGE", "SCHEDULE_UNRESOLVED"]);
+
+/**
+ * Estado de cada cobertura de un empleado+día frente al trabajo real del día
+ * (`workedMinutes` = totalWorkedMinutes, ya sin lo que no computa por franco).
+ * Única implementación (NOVELTY_COVERAGE_ENGINE.md §12):
+ *   - RECHAZADO: se ignora (no debería tener filas; defensa).
+ *   - no APROBADO → PENDING_APPROVAL (visible, no suma, no bloquea).
+ *   - revisión → REVIEW_REQUIRED (no suma; bloquea el envío del cierre):
+ *     jornada/relación sin resolver; resolución hecha contra otros minutos
+ *     reales; tipo INCOMPATIBLE con trabajo real en un día que la novedad
+ *     cubre (nunca se suman, gana el trabajo real); tipo COMPATIBLE que suma
+ *     y supera la jornada esperada, o sin jornada esperada para validarlo.
+ *   - no suma al total → INFORMATIVE (visible).
+ *   - si no → COUNTED: suma sus minutos base y, a liquidación, × multiplicador.
+ * Segunda pasada, agregada (P5, §12.3): si dos o más coberturas quedaron
+ * COUNTED y trabajo real + su suma supera la jornada esperada conocida, todas
+ * pasan a REVIEW_REQUIRED (COVERAGE_TOTAL_EXCEEDS_EXPECTED). No se elige una
+ * por orden ni se trunca; con jornada desconocida rigen las reglas
+ * individuales. Una cobertura sola conserva el comportamiento de su tipo.
+ * Nunca trunca ni ajusta minutos en silencio.
+ */
+export function accountNoveltyDay(coverages: AccountingNoveltyCoverage[], workedMinutes: number): NoveltyDayAccounting {
+  const result = emptyNoveltyDay();
+  const evaluated: Array<{ coverage: AccountingNoveltyCoverage; baseMinutes: number; reviewReasons: NoveltyCoverageReviewReason[]; state: NoveltyCoverageState }> = [];
+  for (const coverage of coverages) {
+    if (coverage.status === "RECHAZADO") continue;
+    const baseMinutes = coverage.resolvedBaseMinutes ?? coverage.baseMinutes;
+    const resolvedForThisWork = coverage.reviewStatus === "RESOLVED" && coverage.resolvedAgainstWorkedMinutes === workedMinutes;
+    const reviewReasons: NoveltyCoverageReviewReason[] = [];
+    if (coverage.reviewStatus === "PENDING") reviewReasons.push("SCHEDULE_UNRESOLVED");
+    if (coverage.reviewStatus === "RESOLVED" && coverage.resolvedAgainstWorkedMinutes !== workedMinutes) reviewReasons.push("RESOLUTION_OUTDATED");
+    // Un ajuste manual con horas (§18) aplica aunque el cálculo automático
+    // hubiera dejado el día sin cobertura (p. ej. un feriado que no cuenta).
+    const applies = NOVELTY_APPLIES_OUTCOMES.has(coverage.outcome) || (coverage.reviewStatus === "RESOLVED" && baseMinutes > 0);
+    if (workedMinutes > 0 && applies) {
+      if (coverage.realWorkCompatibility === "INCOMPATIBLE") {
+        // Un día que la novedad cubre (o una novedad sin tiempo, p. ej. Falta
+        // sin aviso) no admite trabajo real. Sólo deja de serlo una
+        // resolución "no cubre este día" (0 min) hecha contra este trabajo.
+        if (baseMinutes > 0 || coverage.outcome === "NO_COVERAGE") reviewReasons.push("REAL_WORK_ON_INCOMPATIBLE");
+      } else if (coverage.countsTowardTotal && baseMinutes > 0 && !resolvedForThisWork) {
+        if (coverage.expectedMinutes === null) reviewReasons.push("REAL_WORK_WITHOUT_EXPECTED");
+        else if (workedMinutes + baseMinutes > coverage.expectedMinutes) reviewReasons.push("REAL_WORK_EXCEEDS_EXPECTED");
+      }
+    }
+    const state: NoveltyCoverageState =
+      coverage.status !== "APROBADO" ? "PENDING_APPROVAL" : reviewReasons.length ? "REVIEW_REQUIRED" : coverage.countsTowardTotal ? "COUNTED" : "INFORMATIVE";
+    evaluated.push({ coverage, baseMinutes, reviewReasons, state });
+  }
+
+  // P5: validación agregada de las candidatas a COUNTED contra la jornada
+  // esperada conocida. Una jornada desconocida en cualquiera de ellas no
+  // inventa un límite. Independiente del orden de las coberturas.
+  const candidates = evaluated.filter((item) => item.state === "COUNTED" && item.baseMinutes > 0);
+  if (candidates.length > 1 && candidates.every((item) => item.coverage.expectedMinutes !== null)) {
+    const expectedMinutes = Math.min(...candidates.map((item) => item.coverage.expectedMinutes!));
+    const claimedMinutes = workedMinutes + candidates.reduce((sum, item) => sum + item.baseMinutes, 0);
+    if (claimedMinutes > expectedMinutes) {
+      for (const item of candidates) {
+        item.state = "REVIEW_REQUIRED";
+        item.reviewReasons.push("COVERAGE_TOTAL_EXCEEDS_EXPECTED");
+      }
+    }
+  }
+
+  for (const { coverage, baseMinutes, reviewReasons, state } of evaluated) {
+    const settlementMinutes = Math.round(baseMinutes * coverage.multiplier);
+    if (state === "COUNTED") {
+      result.coveredMinutes += baseMinutes;
+      result.settlementMinutes += settlementMinutes;
+    } else if (state === "INFORMATIVE") {
+      result.informativeMinutes += baseMinutes;
+    } else if (state === "PENDING_APPROVAL") {
+      result.pendingApprovalMinutes += baseMinutes;
+    } else {
+      result.heldMinutes += baseMinutes;
+      result.reviewRequired = true;
+    }
+    result.items.push({
+      noveltyId: coverage.noveltyId,
+      noveltyTypeId: coverage.noveltyTypeId,
+      outcome: coverage.outcome,
+      state,
+      reviewReasons: state === "PENDING_APPROVAL" ? [] : reviewReasons,
+      baseMinutes,
+      multiplier: coverage.multiplier,
+      settlementMinutes,
+      countsTowardTotal: coverage.countsTowardTotal,
+    });
+  }
+  return result;
 }
 
 /** Contabilidad de un único empleado+día. */
-export function accountDay(day: number, baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[]): DayAccounting {
+export function accountDay(day: number, baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], noveltyCoverages: AccountingNoveltyCoverage[] = []): DayAccounting {
   const baseMinutes = baseEntries.reduce((sum, entry) => sum + entry.minutes, 0);
   const baseWeighted = baseEntries.reduce((sum, entry) => sum + entry.minutes * entry.multiplier, 0);
   // Las Horas normales residuales no tienen posición propia dentro de la
@@ -176,9 +387,13 @@ export function accountDay(day: number, baseEntries: AccountingBaseEntry[], brea
     normalMinutes: Math.round(normalResidualMinutes * baseMultiplier),
     withinBaseMinutes: sumBy("WITHIN_BASE", "settlementMinutes"),
     additiveMinutes: sumBy("ADDITIVE_TO_WORKED_TOTAL", "settlementMinutes"),
+    noveltyMinutes: 0,
     totalMinutes: 0,
   };
-  settlement.totalMinutes = settlement.normalMinutes + settlement.withinBaseMinutes + settlement.additiveMinutes;
+  const totalWorkedMinutes = baseMinutes + additiveMinutes;
+  const novelty = accountNoveltyDay(noveltyCoverages, totalWorkedMinutes);
+  settlement.noveltyMinutes = novelty.settlementMinutes;
+  settlement.totalMinutes = settlement.normalMinutes + settlement.withinBaseMinutes + settlement.additiveMinutes + settlement.noveltyMinutes;
 
   const multipliers = [...baseEntries.map((entry) => entry.multiplier), ...breakdowns.map((breakdown) => breakdown.multiplier)];
   return {
@@ -191,10 +406,13 @@ export function accountDay(day: number, baseEntries: AccountingBaseEntry[], brea
     withinBaseOverlapMinutes: Math.max(0, withinBaseMinutes - coverage),
     withinBaseExcessMinutes: Math.max(0, coverage - baseMinutes),
     additiveMinutes,
-    totalWorkedMinutes: baseMinutes + additiveMinutes,
+    totalWorkedMinutes,
     dayOffUncountedMinutes: 0,
+    noveltyCoveredMinutes: novelty.coveredMinutes,
+    computableMinutes: totalWorkedMinutes + novelty.coveredMinutes,
     settlement,
     concepts,
+    novelty,
   };
 }
 
@@ -211,12 +429,42 @@ function emptyPeriod(): PeriodAccounting {
     additiveMinutes: 0,
     totalWorkedMinutes: 0,
     dayOffUncountedMinutes: 0,
+    noveltyCoveredMinutes: 0,
+    computableMinutes: 0,
     settlement: emptySettlement(),
     concepts: [],
+    novelty: { coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewDays: 0, reviewDates: [], types: [] },
   };
 }
 
-function addDay(period: PeriodAccounting, day: DayAccounting) {
+function addNoveltyDay(period: PeriodAccounting, day: DayAccounting, dateKey: string | undefined) {
+  const totals = period.novelty;
+  totals.coveredMinutes += day.novelty.coveredMinutes;
+  totals.settlementMinutes += day.novelty.settlementMinutes;
+  totals.informativeMinutes += day.novelty.informativeMinutes;
+  totals.pendingApprovalMinutes += day.novelty.pendingApprovalMinutes;
+  totals.heldMinutes += day.novelty.heldMinutes;
+  if (day.novelty.reviewRequired) {
+    totals.reviewDays += 1;
+    totals.reviewDates.push(dateKey ?? String(day.day));
+  }
+  if (day.novelty.settlementMinutes !== day.novelty.coveredMinutes) period.hasSpecialMultiplier = true;
+  for (const item of day.novelty.items) {
+    let type = totals.types.find((candidate) => candidate.noveltyTypeId === item.noveltyTypeId);
+    if (!type) {
+      type = { noveltyTypeId: item.noveltyTypeId, coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0 };
+      totals.types.push(type);
+    }
+    if (item.state === "COUNTED") {
+      type.coveredMinutes += item.baseMinutes;
+      type.settlementMinutes += item.settlementMinutes;
+    } else if (item.state === "INFORMATIVE") type.informativeMinutes += item.baseMinutes;
+    else if (item.state === "PENDING_APPROVAL") type.pendingApprovalMinutes += item.baseMinutes;
+    else type.heldMinutes += item.baseMinutes;
+  }
+}
+
+function addDay(period: PeriodAccounting, day: DayAccounting, dateKeyOfDay?: string) {
   period.days[String(day.day)] = day;
   period.hasSpecialMultiplier ||= day.multiplier > 1;
   period.baseMinutes += day.baseMinutes;
@@ -228,10 +476,14 @@ function addDay(period: PeriodAccounting, day: DayAccounting) {
   period.additiveMinutes += day.additiveMinutes;
   period.totalWorkedMinutes += day.totalWorkedMinutes;
   period.dayOffUncountedMinutes += day.dayOffUncountedMinutes;
+  period.noveltyCoveredMinutes += day.noveltyCoveredMinutes;
+  period.computableMinutes += day.computableMinutes;
   period.settlement.normalMinutes += day.settlement.normalMinutes;
   period.settlement.withinBaseMinutes += day.settlement.withinBaseMinutes;
   period.settlement.additiveMinutes += day.settlement.additiveMinutes;
+  period.settlement.noveltyMinutes += day.settlement.noveltyMinutes;
   period.settlement.totalMinutes += day.settlement.totalMinutes;
+  addNoveltyDay(period, day, dateKeyOfDay);
   for (const concept of day.concepts) {
     const current = period.concepts.find((item) => item.hourConceptId === concept.hourConceptId);
     if (current) {
@@ -326,27 +578,38 @@ export function applyDayOffExclusions(baseEntries: AccountingBaseEntry[], breakd
  * accountDay. Los empleados sin filas no aparecen en el Map — usar
  * `emptyPeriodAccounting()` como default.
  */
-export function accountEmployeePeriods(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING) {
+export function accountEmployeePeriods(
+  baseEntries: AccountingBaseEntry[],
+  breakdowns: AccountingBreakdown[],
+  dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING,
+  noveltyCoverages: AccountingNoveltyCoverage[] = [],
+) {
   const applied = applyDayOffExclusions(baseEntries, breakdowns, dayOffs);
-  type Bucket = { base: AccountingBaseEntry[]; breakdowns: AccountingBreakdown[]; uncounted: number };
+  type Bucket = { base: AccountingBaseEntry[]; breakdowns: AccountingBreakdown[]; uncounted: number; coverages: AccountingNoveltyCoverage[]; dateKey?: string };
   const grouped = new Map<string, Map<number, Bucket>>();
   const bucket = (employeeId: string, day: number) => {
     const days = grouped.get(employeeId) ?? new Map<number, Bucket>();
     grouped.set(employeeId, days);
-    const current = days.get(day) ?? { base: [], breakdowns: [], uncounted: 0 };
+    const current = days.get(day) ?? { base: [], breakdowns: [], uncounted: 0, coverages: [] };
     days.set(day, current);
     return current;
   };
   for (const entry of applied.baseEntries) bucket(entry.employeeId, entry.day).base.push(entry);
   for (const breakdown of applied.breakdowns) bucket(breakdown.employeeId, breakdown.day).breakdowns.push(breakdown);
   for (const item of applied.uncountedBase) bucket(item.employeeId, item.day).uncounted += item.minutes;
+  for (const coverage of noveltyCoverages) {
+    if (coverage.status === "RECHAZADO") continue;
+    const target = bucket(coverage.employeeId, coverage.day);
+    target.coverages.push(coverage);
+    target.dateKey ??= coverage.dateKey;
+  }
 
   const result = new Map<string, PeriodAccounting>();
   for (const [employeeId, days] of grouped) {
     const period = emptyPeriod();
     for (const day of [...days.keys()].sort((a, b) => a - b)) {
       const rows = days.get(day)!;
-      addDay(period, { ...accountDay(day, rows.base, rows.breakdowns), dayOffUncountedMinutes: rows.uncounted });
+      addDay(period, { ...accountDay(day, rows.base, rows.breakdowns, rows.coverages), dayOffUncountedMinutes: rows.uncounted }, rows.dateKey);
     }
     result.set(employeeId, period);
   }
@@ -358,11 +621,20 @@ export function emptyPeriodAccounting(): PeriodAccounting {
 }
 
 /** Contabilidad de un único empleado (detalle por legajo, cierre). */
-export function accountEmployeePeriod(baseEntries: AccountingBaseEntry[], breakdowns: AccountingBreakdown[], dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING) {
-  const employeeIds = new Set([...baseEntries.map((entry) => entry.employeeId), ...breakdowns.map((breakdown) => breakdown.employeeId)]);
+export function accountEmployeePeriod(
+  baseEntries: AccountingBaseEntry[],
+  breakdowns: AccountingBreakdown[],
+  dayOffs: DayOffAccountingIndex = EMPTY_DAY_OFF_ACCOUNTING,
+  noveltyCoverages: AccountingNoveltyCoverage[] = [],
+) {
+  const employeeIds = new Set([
+    ...baseEntries.map((entry) => entry.employeeId),
+    ...breakdowns.map((breakdown) => breakdown.employeeId),
+    ...noveltyCoverages.map((coverage) => coverage.employeeId),
+  ]);
   if (employeeIds.size > 1) throw new Error("accountEmployeePeriod recibe filas de un único empleado");
   const [employeeId] = employeeIds;
-  return (employeeId ? accountEmployeePeriods(baseEntries, breakdowns, dayOffs).get(employeeId) : undefined) ?? emptyPeriod();
+  return (employeeId ? accountEmployeePeriods(baseEntries, breakdowns, dayOffs, noveltyCoverages).get(employeeId) : undefined) ?? emptyPeriod();
 }
 
 // ── Adaptadores desde Prisma ────────────────────────────────────────────────
@@ -436,6 +708,53 @@ export function toAccountingBreakdown(breakdown: {
     ...(breakdown.date ? { dateKey: calendarDateKey(breakdown.date) } : {}),
     automatic: breakdown.source === "AUTOMATIC",
     workShiftId: breakdown.workShiftId ?? null,
+  };
+}
+
+/**
+ * Fila de NoveltyDayCoverage + estado de su novedad para la contabilidad
+ * (NOVELTY_COVERAGE_ENGINE.md §12). Consumidores: grilla por legajo, grilla de
+ * período, resumen, export de horas y cierre.
+ */
+export const accountingNoveltyCoverageSelect = {
+  employeeId: true,
+  day: true,
+  date: true,
+  noveltyId: true,
+  noveltyTypeId: true,
+  outcome: true,
+  scheduleReviewReason: true,
+  baseMinutes: true,
+  resolvedBaseMinutes: true,
+  appliedMultiplier: true,
+  countsTowardTotal: true,
+  realWorkCompatibility: true,
+  expectedMinutes: true,
+  reviewStatus: true,
+  resolution: true,
+  resolvedAgainstWorkedMinutes: true,
+  novelty: { select: { status: true } },
+} satisfies Prisma.NoveltyDayCoverageSelect;
+
+export function toAccountingNoveltyCoverage(row: Prisma.NoveltyDayCoverageGetPayload<{ select: typeof accountingNoveltyCoverageSelect }>): AccountingNoveltyCoverage {
+  return {
+    employeeId: row.employeeId,
+    day: row.day,
+    dateKey: calendarDateKey(row.date),
+    noveltyId: row.noveltyId,
+    noveltyTypeId: row.noveltyTypeId,
+    status: row.novelty.status,
+    outcome: row.outcome,
+    scheduleReviewReason: row.scheduleReviewReason,
+    baseMinutes: row.baseMinutes,
+    resolvedBaseMinutes: row.resolvedBaseMinutes,
+    multiplier: Number(row.appliedMultiplier ?? 1) || 1,
+    countsTowardTotal: row.countsTowardTotal,
+    realWorkCompatibility: row.realWorkCompatibility,
+    expectedMinutes: row.expectedMinutes,
+    reviewStatus: row.reviewStatus,
+    resolution: row.resolution,
+    resolvedAgainstWorkedMinutes: row.resolvedAgainstWorkedMinutes,
   };
 }
 

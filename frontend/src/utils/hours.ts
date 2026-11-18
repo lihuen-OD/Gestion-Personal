@@ -66,3 +66,24 @@ export function formatCompactDurationMinutes(totalMinutes: number | null | undef
 export function formatDecimalHoursDuration(hours: number | string | null | undefined): string {
   return formatDurationMinutes(hoursDecimalToMinutes(hours));
 }
+
+/**
+ * Duración de una jornada escrita como HH:mm (00:01 a 24:00) -> minutos.
+ * Devuelve null si el texto no es una duración válida de un día. Es la
+ * entrada canónica de cantidades horarias de Novedades (resolución manual
+ * de cobertura, cantidad fija de un Tipo de Novedad): nunca pedir minutos
+ * crudos ni horas decimales.
+ */
+export function parseDayDurationInput(value: string): number | null {
+  const match = /^(\d{1,2}):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  const total = Number(match[1]) * 60 + Number(match[2]);
+  return total >= 1 && total <= 1440 ? total : null;
+}
+
+/** Inversa de `parseDayDurationInput`: 240 -> "04:00", 1440 -> "24:00". */
+export function formatDayDurationInput(totalMinutes: number | null | undefined): string {
+  if (totalMinutes == null || !Number.isFinite(totalMinutes) || totalMinutes < 0) return "";
+  const rounded = Math.round(totalMinutes);
+  return `${String(Math.floor(rounded / 60)).padStart(2, "0")}:${String(rounded % 60).padStart(2, "0")}`;
+}

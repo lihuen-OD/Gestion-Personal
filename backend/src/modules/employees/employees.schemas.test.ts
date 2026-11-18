@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { employeeTimeGridQuerySchema } from "./employees.schemas";
+import { createEmployeeSchema, employeeTimeGridQuerySchema, updateEmployeeSchema } from "./employees.schemas";
 
 /**
  * Etapa 14I.9 — regresión del bug encontrado en 14I.8: `z.coerce.boolean()`
@@ -46,5 +46,66 @@ describe("employeeTimeGridQuerySchema.includeDetails — Etapa 14I.9", () => {
   it("`period` sigue exigiendo el formato YYYY-MM, sin cambios por este fix", () => {
     expect(employeeTimeGridQuerySchema.safeParse({ period: "2026-9", includeDetails: "false" }).success).toBe(false);
     expect(employeeTimeGridQuerySchema.safeParse({ period: "2026-09", includeDetails: "false" }).success).toBe(true);
+  });
+});
+
+// Alta mínima de legajo: sólo legajo, DNI, nombre y apellido son obligatorios.
+describe("createEmployeeSchema — alta mínima", () => {
+  const minimal = { legajo: "0001", dni: "12345678", firstName: "Juan", lastName: "Perez" };
+
+  it("acepta sólo legajo, DNI, nombre y apellido, sin inventar datos", () => {
+    const parsed = createEmployeeSchema.parse(minimal);
+    expect(parsed).toMatchObject({ ...minimal, status: "ACTIVO", companyIds: [] });
+    expect(parsed.cuil).toBeUndefined();
+    expect(parsed.birthDate).toBeUndefined();
+    expect(parsed.gender).toBeUndefined();
+    expect(parsed.nationality).toBeUndefined();
+    expect(parsed.positionId).toBeUndefined();
+    expect(parsed.costCenterId).toBeUndefined();
+    expect(parsed.initialLaborMovement).toBeUndefined();
+    expect(parsed.address).toBeUndefined();
+  });
+
+  it("acepta CUIL, nacimiento, sexo y nacionalidad en null y los conserva null (nacimiento no se convierte en 1970-01-01)", () => {
+    const parsed = createEmployeeSchema.parse({ ...minimal, cuil: null, birthDate: null, gender: null, nationality: null });
+    expect(parsed).toMatchObject({ cuil: null, birthDate: null, gender: null, nationality: null });
+  });
+
+  it("sigue exigiendo legajo, DNI, nombre y apellido", () => {
+    for (const field of ["legajo", "dni", "firstName", "lastName"] as const) {
+      const { [field]: _omitted, ...rest } = minimal;
+      expect(createEmployeeSchema.safeParse(rest).success).toBe(false);
+    }
+  });
+
+  it("cuando vienen informados, mantiene las validaciones existentes", () => {
+    expect(createEmployeeSchema.safeParse({ ...minimal, cuil: "123" }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, cuil: "x".repeat(31) }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, birthDate: "no-es-fecha" }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, gender: "" }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, gender: "x".repeat(41) }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, nationality: "" }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, nationality: "x".repeat(81) }).success).toBe(false);
+    const full = createEmployeeSchema.parse({ ...minimal, cuil: "20-12345678-9", birthDate: "1990-05-10", gender: "Masculino", nationality: "Argentina" });
+    expect(full).toMatchObject({ cuil: "20-12345678-9", gender: "Masculino", nationality: "Argentina" });
+    expect(full.birthDate).toEqual(new Date("1990-05-10"));
+  });
+
+  it("con fecha de alta, el movimiento inicial sigue exigiendo un motivo válido", () => {
+    expect(createEmployeeSchema.safeParse({ ...minimal, initialLaborMovement: { type: "ALTA", effectiveFrom: "2026-11-01" } }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, initialLaborMovement: { type: "ALTA", effectiveFrom: "2026-11-01", reason: "" } }).success).toBe(false);
+    expect(createEmployeeSchema.safeParse({ ...minimal, initialLaborMovement: { type: "ALTA", effectiveFrom: "2026-11-01", reason: "Reingreso" } }).success).toBe(true);
+  });
+});
+
+describe("updateEmployeeSchema — completar o vaciar datos opcionales", () => {
+  it("birthDate null queda null (antes `z.coerce.date()` lo convertía en 1970-01-01)", () => {
+    expect(updateEmployeeSchema.parse({ birthDate: null }).birthDate).toBeNull();
+  });
+
+  it("acepta vaciar CUIL, sexo y nacionalidad, y completarlos después con las mismas validaciones", () => {
+    expect(updateEmployeeSchema.parse({ cuil: null, gender: null, nationality: null })).toMatchObject({ cuil: null, gender: null, nationality: null });
+    expect(updateEmployeeSchema.safeParse({ cuil: "123" }).success).toBe(false);
+    expect(updateEmployeeSchema.parse({ cuil: "20-12345678-9" }).cuil).toBe("20-12345678-9");
   });
 });

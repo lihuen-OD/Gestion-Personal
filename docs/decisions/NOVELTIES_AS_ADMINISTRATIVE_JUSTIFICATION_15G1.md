@@ -1,5 +1,7 @@
 # Etapa 15G.1 — Novedades como justificación administrativa (fichador/carga horaria son la fuente de verdad)
 
+> **Reemplazado parcialmente (2026-11-13) por [`NOVELTY_COVERAGE_ENGINE.md`](NOVELTY_COVERAGE_ENGINE.md).** Una novedad puede registrar tiempo cubierto según la configuración de su tipo, en una tabla propia y separada del trabajo real. Siguen vigentes §2.1–§2.5: una novedad nunca crea, modifica ni pone en 0 un `TimeEntry`, y el bloqueo de nueva carga sólo aplica a novedades APROBADAS. Quedan reemplazados §1 ("nunca recalcula horas"), §2.6 (cierres), §2.7 ("100% informativo"), §2.8 y §3–§4 (Llegada tarde y descuentos). Desde la etapa 4 del motor (rama `feat/novelties-coverage-engine`), la cobertura de una novedad APROBADA que suma entra al total computable y a la equivalencia para liquidación. El total trabajado sigue siendo sólo trabajo real (ver §12 del documento nuevo).
+
 > Este documento **reemplaza** a una versión previa de esta misma etapa
 > (`docs/decisions/NOVELTY_TIME_EFFECTS_SAFETY_15G1.md`, ya eliminada) que
 > dejaba un mecanismo de "efecto horario seguro" — una novedad `APROBADO`

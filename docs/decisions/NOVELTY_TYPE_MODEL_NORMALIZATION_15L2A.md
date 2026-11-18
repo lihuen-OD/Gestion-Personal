@@ -1,5 +1,7 @@
 # Etapa 15L.2A — Normalización aditiva del modelo de Tipos de Novedad
 
+> **Reemplazado parcialmente (2026-11-13) por [`NOVELTY_COVERAGE_ENGINE.md`](NOVELTY_COVERAGE_ENGINE.md).** Sigue vigente que Novedades nunca crea, modifica ni pone en 0 un `TimeEntry` (§8, §19). Se reemplaza la consecuencia "una novedad no tiene ningún efecto horario": el tipo puede configurar cobertura horaria, que se registra aparte del trabajo real.
+
 ## 1. Motivo
 
 Las Etapas 15L (auditoría Novedades/Exportación Finnegans) y 15L.1 (auditoría

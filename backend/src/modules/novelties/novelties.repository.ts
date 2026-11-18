@@ -1,8 +1,9 @@
 import { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
-import type { CreateNoveltyInput, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
+import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
+import { noveltyOverlapsRangeWhere } from "./novelties.dateRange";
 
 const noveltyListOrderBy: SortOrderByMap<(typeof noveltyListSortKeys)[number], Prisma.NoveltyOrderByWithRelationInput> = {
   legajo: (order) => [{ employee: { legajo: order } }],
@@ -27,23 +28,27 @@ const noveltyInclude = {
       finnegansCode: true,
       finnegansName: true,
       approvalRoles: true,
+      // Motor de cobertura (etapa 3): el guard de cierres necesita saber si
+      // el tipo registra tiempo.
+      coverageMode: true,
+      coverageCountsTowardTotal: true,
+      // §17: el detalle de un día muestra el valor configurado del tipo.
+      coverageFixedMinutes: true,
+      // §18: quién puede ajustar un día de cobertura.
+      allowedLoadRoles: true,
     },
   },
   targetHourConcept: { select: { id: true, name: true } },
   documents: { select: { fileName: true }, orderBy: { createdAt: "desc" }, take: 1 },
 } satisfies Prisma.NoveltyInclude;
 
-// Etapa 15M.15: intersección real de [fromDate, effectiveToDate] contra el
-// mes completo del período, mismo criterio de negocio que
+// Etapa 15M.15: intersección real de [fromDate, toDate ?? fromDate] contra el
+// mes completo del período, mismo criterio que
 // `novelties.dateRange.ts::noveltyCoversDay` (generalizado de "cubre este
-// día" a "toca este mes") en vez de inventar uno nuevo:
-// - toDate cerrado: interseca si fromDate < fin de mes Y toDate >= inicio.
-// - toDate null Y el tipo permite rango (`allowsDateRange`): novedad
-//   vigente abierta -- sigue "activa" en cualquier mes posterior a que
-//   empezó, sin límite de fin.
-// - toDate null Y el tipo NO permite rango: no es una novedad abierta, es
-//   de un único día (mismo criterio que `noveltyCoversDay`) -- sólo
-//   interseca el mes de esa fecha exacta.
+// día" a "toca este mes"). Etapa 3 de cobertura
+// (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §6.3): `toDate` nulo es siempre
+// un único día, también en tipos que admiten rango — sólo toca el mes de
+// `fromDate`; nunca es una novedad "vigente abierta".
 // A propósito NO es la misma regla que `finnegansExport.repository.ts`
 // (Etapa 15L.3B.1: un período "dueño" único por `fromDate`, sin
 // intersección, para no exportar la misma fila dos veces). Son dos
@@ -51,13 +56,7 @@ const noveltyInclude = {
 // docs/PROJECT_UI_CONTEXT.md "Novedades por período".
 function periodIntersectionWhere(period: string): Prisma.NoveltyWhereInput {
   const { start, end } = periodCalendarBounds(period);
-  return {
-    OR: [
-      { fromDate: { lt: end }, toDate: { not: null, gte: start } },
-      { fromDate: { lt: end }, toDate: null, noveltyType: { allowsDateRange: true } },
-      { fromDate: { gte: start, lt: end }, toDate: null, noveltyType: { allowsDateRange: false } },
-    ],
-  };
+  return noveltyOverlapsRangeWhere(start, end);
 }
 
 function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput): Prisma.NoveltyWhereInput {
@@ -107,7 +106,60 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
   return { AND: conditions };
 }
 
+async function createManyWithin(tx: PrismaTransactionClient, input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
+  const created = await Promise.all(
+    input.employeeIds.map((employeeId) =>
+      tx.novelty.create({
+        data: {
+          employeeId,
+          noveltyTypeId: input.noveltyTypeId,
+          status,
+          fromDate: input.fromDate,
+          toDate: input.toDate || null,
+          quantityHours: input.quantityHours || null,
+          quantityDays: input.quantityDays || null,
+          quantityMinutes: input.quantityMinutes ?? null,
+          observation: input.observation || null,
+          targetHourConceptId: input.targetHourConceptId || null,
+          createdByUserId: createdByUserId || null,
+        },
+        select: { id: true },
+      }),
+    ),
+  );
+
+  return tx.novelty.findMany({
+    where: {
+      id: { in: created.map((item) => item.id) },
+    },
+    include: noveltyInclude,
+    orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }],
+  });
+}
+
 export const noveltiesRepository = {
+  /**
+   * Categoría documental de las novedades (mismo criterio que usaba la
+   * pantalla): activa, con alcance NOVEDAD; si hay varias, la de tipo NOVEDAD.
+   */
+  async findNoveltyDocumentCategory() {
+    const categories = await prisma.documentCategory.findMany({
+      where: { status: "ACTIVO", scopes: { array_contains: "NOVEDAD" } },
+      select: { id: true, code: true, name: true, kind: true, uploadRoles: true },
+      orderBy: { code: "asc" },
+    });
+    return categories.find((category) => category.kind === "NOVEDAD") ?? categories[0] ?? null;
+  },
+
+  findEmployeeIdentities(employeeIds: string[]) {
+    return prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, legajo: true, firstName: true, lastName: true } });
+  },
+
+  /** Documentos de las novedades, dentro de la transacción del alta. */
+  createDocumentsWithin(tx: PrismaTransactionClient, rows: Prisma.EmployeeDocumentUncheckedCreateInput[]) {
+    return Promise.all(rows.map((data) => tx.employeeDocument.create({ data, select: { id: true, employeeId: true, noveltyId: true, fileName: true } })));
+  },
+
   findMany(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const where = buildWhere(query, employeeAccessWhere);
     const skip = (query.page - 1) * query.take;
@@ -128,15 +180,16 @@ export const noveltiesRepository = {
     ]);
   },
 
-  findById(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput = {}) {
-    return prisma.novelty.findFirst({
+  // `db` permite leer dentro de la transacción de una mutación (etapa 3).
+  findById(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput = {}, db: PrismaTransactionClient = prisma) {
+    return db.novelty.findFirst({
       where: { id, employee: employeeAccessWhere },
       include: noveltyInclude,
     });
   },
 
-  findNoveltyType(id: string) {
-    return prisma.noveltyType.findUnique({ where: { id } });
+  findNoveltyType(id: string, db: PrismaTransactionClient = prisma) {
+    return db.noveltyType.findUnique({ where: { id } });
   },
 
   countEmployees(ids: string[], employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -153,42 +206,20 @@ export const noveltiesRepository = {
   // TimeEntry desde acá. La transacción se mantiene sólo para la creación
   // atómica de varias filas `Novelty` (alta masiva por legajo) + su lectura
   // final, nada más.
-  createMany(input: CreateNoveltyInput, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
-    return prisma.$transaction(async (tx) => {
-      const created = await Promise.all(
-        input.employeeIds.map((employeeId) =>
-          tx.novelty.create({
-            data: {
-              employeeId,
-              noveltyTypeId: input.noveltyTypeId,
-              status,
-              fromDate: input.fromDate,
-              toDate: input.toDate || null,
-              quantityHours: input.quantityHours || null,
-              quantityDays: input.quantityDays || null,
-              observation: input.observation || null,
-              targetHourConceptId: input.targetHourConceptId || null,
-              createdByUserId: createdByUserId || null,
-            },
-            select: { id: true },
-          }),
-        ),
-      );
-
-      return tx.novelty.findMany({
-        where: {
-          id: { in: created.map((item) => item.id) },
-        },
-        include: noveltyInclude,
-        orderBy: [{ employee: { lastName: "asc" } }, { employee: { firstName: "asc" } }],
-      });
-    });
+  // Etapa 3 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md): con `db`, crea dentro
+  // de la transacción del servicio, que en la misma operación genera la
+  // cobertura diaria (NoveltyDayCoverage) — nunca TimeEntry. Sin `db`, abre su
+  // propia transacción como antes.
+  createMany(input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null, db: PrismaTransactionClient | null = null) {
+    if (!db) return prisma.$transaction((tx) => createManyWithin(tx, input, status, createdByUserId));
+    return createManyWithin(db, input, status, createdByUserId);
   },
+
 
   // Etapa 15G.1: aprobar sólo cambia `status`/auditoría — nunca crea ni
   // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
-  approve(id: string, approvedByUserId: string) {
-    return prisma.novelty.update({
+  approve(id: string, approvedByUserId: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.update({
       where: { id },
       data: {
         status: "APROBADO",
@@ -222,8 +253,8 @@ export const noveltiesRepository = {
     });
   },
 
-  reject(id: string) {
-    return prisma.novelty.update({
+  reject(id: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.update({
       where: { id },
       data: {
         status: "RECHAZADO",
@@ -235,7 +266,8 @@ export const noveltiesRepository = {
     });
   },
 
-  remove(id: string) {
-    return prisma.novelty.delete({ where: { id } });
+  // NoveltyDayCoverage cae por Cascade (dato derivado de la novedad).
+  remove(id: string, db: PrismaTransactionClient = prisma) {
+    return db.novelty.delete({ where: { id } });
   },
 };

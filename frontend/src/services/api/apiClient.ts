@@ -41,6 +41,7 @@ const fieldLabels: Record<string, string> = {
   positionId: "Puesto",
   employeeId: "Empleado",
   employeeIds: "Empleados",
+  supervisedUserIds: "Responsables de carga supervisados",
   companyId: "Empresa",
   recurrenceType: "Tipo de recurrencia",
   weekdays: "Días de la semana",
@@ -66,6 +67,19 @@ const fieldLabels: Record<string, string> = {
   openShiftOverflowAction: "Acción ante jornada excedida",
   alertOnOutOfShift: "Alerta fuera de turno",
   description: "Descripción",
+  // Tipos de Novedad (motor de cobertura, docs/decisions/NOVELTY_COVERAGE_ENGINE.md §14).
+  coverageMode: "Tiempo que cubre",
+  coverageFixedMinutes: "Cantidad de horas",
+  coverageDayRule: "Días que puede cubrir",
+  coverageWeekdays: "Días de la semana",
+  coverageOnDayOff: "Qué sucede si tiene franco",
+  coverageOnHoliday: "Qué sucede si es feriado",
+  coverageAppliesSpecialHours: "Reglas de domingos y feriados",
+  coverageCountsTowardTotal: "Suma al total",
+  realWorkCompatibility: "Convivencia con horas trabajadas",
+  requiresObservation: "Observación obligatoria",
+  allowsDateRange: "Carga para varios días",
+  allowsHours: "Horas al cargar",
 };
 
 const errorMessagesByCode: Record<string, string> = {
@@ -116,6 +130,10 @@ const errorMessagesByCode: Record<string, string> = {
   NOVELTY_DELETE_HAS_DOCUMENTS: "La novedad tiene documentación asociada y debe conservarse para mantener la trazabilidad.",
   NOVELTY_DELETE_HAS_TIME_IMPACT: "La novedad ya generó movimientos horarios y no se puede eliminar. Debe corregirse mediante una anulación.",
   NOVELTY_DELETE_EXPORTABLE_APPROVED: "La novedad está aprobada y puede haber sido informada externamente. Debe conservarse o anularse.",
+  NOVELTY_COVERAGE_DAY_NOT_FOUND: "No encontramos ese día dentro de la cobertura de la novedad.",
+  NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW: "Ese día ya no requiere una resolución manual. Actualizá la pantalla.",
+  NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED: "La resolución elegida no es válida para este conflicto. Corregí las horas o gestioná la novedad.",
+  NOVELTY_COVERAGE_EXCEEDS_EXPECTED: "El trabajo registrado más la cobertura superaría la jornada esperada.",
   // Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md):
   // NOVELTY_DUPLICATE y NOVELTY_OVERLAP se dejan deliberadamente afuera de
   // este mapa. El backend ya arma, para estos dos códigos, un mensaje
@@ -143,6 +161,11 @@ const errorMessagesByCode: Record<string, string> = {
   SHIFT_ALERT_NOT_FOUND: "No encontramos la alerta solicitada.",
   SHIFT_ALERT_ALREADY_RESOLVED: "La alerta ya fue resuelta.",
   EMAIL_ALREADY_EXISTS: "El email ya está asociado a otro usuario.",
+  EMPLOYEE_ALREADY_LINKED_TO_USER: "Este empleado ya está vinculado a otro usuario.",
+  USER_EMPLOYEE_NOT_FOUND: "El empleado seleccionado ya no existe. Recargá la pantalla e intentá nuevamente.",
+  USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE: "Sólo un usuario Nivel 2 - Supervisión / Gestión puede tener responsables de carga supervisados.",
+  USER_SUPERVISION_CONCURRENT_UPDATE: "Los responsables de carga se modificaron en paralelo. Recargá la pantalla e intentá nuevamente.",
+  USER_RELATED_RECORD_NOT_FOUND: "Alguno de los datos seleccionados ya no existe. Recargá la pantalla e intentá nuevamente.",
   USER_NOT_FOUND: "No encontramos el usuario solicitado.",
   CLOCK_DEVICE_PAIRING_NOT_FOUND: "El código no existe o venció. Generá uno nuevo desde el fichador.",
   CLOCK_DEVICE_ACTIVATION_CONFLICT: "La solicitud ya no está pendiente o el código venció.",
@@ -183,9 +206,25 @@ function humanizeField(field: string) {
   return fieldLabels[field] || field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+// Un mensaje con códigos o valores internos (NOVELTY_TYPE_..., EXPECTED_SCHEDULE)
+// o con estructura JSON nunca se muestra tal cual.
+const TECHNICAL_TOKEN = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|[{}[\]]/;
+
 function isInternalMessage(message: string) {
-  return /\b(backend|api|storage|cloudinary|google drive|not found|invalid|missing|required|already exists|unexpected server error|permission to|only (draft|entries|pending|rrhh|supervision))\b/i.test(message);
+  return TECHNICAL_TOKEN.test(message)
+    || /\b(backend|api|storage|cloudinary|google drive|not found|invalid|missing|required|already exists|unexpected server error|permission to|only (draft|entries|pending|rrhh|supervision))\b/i.test(message);
 }
+
+// Sólo se usan cuando el mensaje del backend no es apto para mostrarse: el
+// backend ya explica estos rechazos en lenguaje de negocio y ese texto es más
+// específico que cualquier genérico (por eso no van en errorMessagesByCode).
+const fallbackMessagesByCode: Record<string, string> = {
+  USER_SUPERVISION_INVALID_TARGET: "Revisá los responsables de carga seleccionados: sólo se pueden supervisar usuarios Nivel 3 - Administrativo de Carga Horaria.",
+  NOVELTY_TYPE_COVERAGE_CONFIG_INVALID: "La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.",
+  NOVELTY_TYPE_HOURS_DAYS_CONFLICT: "Si al cargar la novedad se indican horas, la unidad de Valor 1 no puede ser \"Días\".",
+  NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED: "Para exportar a Finnegans completá el código y el nombre Finnegans.",
+  NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUIRED: "Para exportar a Finnegans elegí la unidad de Valor 1.",
+};
 
 export function formatApiErrorMessage(payload: ApiErrorPayload) {
   const error = payload.error;
@@ -198,6 +237,7 @@ export function formatApiErrorMessage(payload: ApiErrorPayload) {
   const rawMessage = error?.message && !isInternalMessage(error.message) ? error.message : undefined;
   return (error?.code && errorMessagesByCode[error.code])
     || rawMessage
+    || (error?.code && fallbackMessagesByCode[error.code])
     || "No pudimos completar la operación. Intentá nuevamente.";
 }
 

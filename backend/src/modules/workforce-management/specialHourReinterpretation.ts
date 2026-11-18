@@ -5,6 +5,7 @@ import { employeePeriodKey, findProtectedClosurePeriods } from "../../shared/mon
 import { evaluateSpecialHourRulesForEmployees, SpecialHourScopeHistoryMissingError } from "../time-entries/timeEntries.repository";
 import { buildActiveDatesByRule, ruleMatchesDate, specialHourApplicationRows, type DoubleHourRuleForMatching } from "./doubleHourRuleMatching";
 import { findClosuresForEmployeePeriods, rebuildClosureSnapshots, type ClosureSnapshotRecalculation, type RebuiltClosureSnapshot } from "./closureSnapshot";
+import { rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage, type NoveltyCoverageRecalculation } from "../novelties/noveltyCoverageRecalculation";
 
 /**
  * Una regla de Hora Especial (feriado, domingo, ...) es una regla vigente
@@ -49,6 +50,9 @@ export type SpecialHourReinterpretation = {
   // `missingHistory`: filas de ese período cuyo resultado no se puede evaluar
   // por falta de historia (no se sabe si diferirían).
   protectedPeriods: Array<{ employeeId: string; period: string; status: string; timeEntries: number; breakdowns: number; segments: number; missingHistory: number }>;
+  // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13): cobertura de novedades
+  // recalculada por el mismo cambio de regla (sólo reinterpretaciones de regla).
+  noveltyCoverage?: NoveltyCoverageRecalculation;
   // Detalle antes → después (backup/reporte de una reconciliación).
   changes: {
     timeEntries: Array<{ id: string; employeeId: string; date: string; from: number; to: number }>;
@@ -111,16 +115,41 @@ function emptyReinterpretation(): SpecialHourReinterpretation {
   return { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
 }
 
-/** Cambio de una regla: las fechas que matchea antes o después del cambio. */
+/**
+ * Cambio de una regla: las fechas que matchea antes o después del cambio.
+ * Etapa 5: en la misma transacción recalcula también la cobertura de
+ * novedades de esas fechas (mismo motor de Horas Especiales). Una regla que
+ * no es FERIADO sólo cambia el multiplicador: alcanza a los tipos que lo
+ * aplican; un FERIADO también cambia la obligación y la política de feriado,
+ * así que alcanza a todo tipo con tiempo. La cobertura se recalcula ANTES de
+ * reinterpretar las horas: los snapshots que reconstruye la reinterpretación
+ * ya la incluyen, y después sólo se reconstruyen los pares que faltan. Quien
+ * llama toma antes el lock global de cobertura (lockNoveltyCoverageGlobally).
+ */
 export async function reinterpretSpecialHours(
   db: Db,
-  states: { before: RuleCalendar | null; after: RuleCalendar | null },
+  states: { before: (RuleCalendar & { kind?: string }) | null; after: (RuleCalendar & { kind?: string }) | null },
   recalculation: { doubleHourRuleId: string; doubleHourRuleName: string },
 ): Promise<SpecialHourReinterpretation> {
-  const rules = [states.before, states.after].filter((rule): rule is RuleCalendar => rule !== null);
+  const rules = [states.before, states.after].filter((rule): rule is RuleCalendar & { kind?: string } => rule !== null);
   const window = affectedWindow(rules);
   if (!window) return emptyReinterpretation();
-  return reinterpretWindow(db, window, touchedByRule(rules), { reason: "SPECIAL_HOUR_RULE_CHANGED", ...recalculation });
+  const touched = touchedByRule(rules);
+  const coverageReason = { source: "SPECIAL_HOUR_RULE_CHANGED" as const, label: `cambio de la regla ${recalculation.doubleHourRuleName}` };
+  const noveltyCoverage = await recalculateNoveltyCoverage(
+    db,
+    {
+      from: window.from,
+      to: window.to,
+      onlySpecialHourTypes: rules.every((rule) => rule.kind !== undefined && rule.kind !== "FERIADO"),
+      touchesDate: (dateKey) => touched(new Date(`${dateKey}T00:00:00.000Z`)),
+    },
+    coverageReason,
+    { rebuildSnapshots: false },
+  );
+  const result = await reinterpretWindow(db, window, touched, { reason: "SPECIAL_HOUR_RULE_CHANGED", ...recalculation });
+  noveltyCoverage.rebuiltClosures = await rebuildNoveltyCoverageSnapshots(db, noveltyCoverage.changedPairs, coverageReason, result.rebuiltClosures);
+  return { ...result, noveltyCoverage };
 }
 
 /**

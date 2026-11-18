@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 // F3 — PWA del fichador contra el build real. El API siempre está mockeado;
 // "offline" corta toda la red del navegador (también el API mockeado), así
 // que lo único que puede responder es el precache del service worker.
-const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const employee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
 async function mockApi(page: Page) {
   await page.route("http://127.0.0.1:59999/**", (route) => {
@@ -64,7 +64,7 @@ test("sin red: la app abre, bloquea la fichada con un estado claro, el 404 sigue
   await waitForServiceWorkerControl(page);
 
   // Empleado elegido con red; después se corta todo (incluido el API mockeado).
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
+  await page.getByLabel("Buscar por nombre, apellido o DNI").fill("Gomez");
   await page.getByRole("button", { name: /Gomez, Ana/ }).click();
   await expect(page.getByRole("button", { name: /Marcar ingreso/ })).toBeEnabled();
   await page.unrouteAll();

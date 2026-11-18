@@ -25,8 +25,8 @@ vi.mock("../components/time-clock/FaceCaptureModal", () => ({
   ),
 }));
 
-const ANA: ClockEmployee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
-const BETO: ClockEmployee = { id: "employee-2", legajo: "200", dniSuffix: "789", firstName: "Beto", lastName: "Paz", name: "Paz, Beto" };
+const ANA: ClockEmployee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const BETO: ClockEmployee = { id: "employee-2", dni: "28987654", firstName: "Beto", lastName: "Paz", name: "Paz, Beto" };
 type Status = Awaited<ReturnType<typeof timeClockApiService.status>>;
 type Pending = { employeeId: string; resolve: (value: Status) => void; reject: (error: unknown) => void };
 
@@ -46,7 +46,7 @@ const rejectStatus = async (employeeId: string, error: unknown = new ApiError("E
 
 const personShown = () => document.querySelector(".kiosk-person h2")?.textContent ?? null;
 const action = () => screen.getByRole("button", { name: /^Marcar/ });
-const searchInput = () => screen.getByLabelText("Buscar por nombre o apellido");
+const searchInput = () => screen.getByLabelText("Buscar por nombre, apellido o DNI");
 
 async function select(employee: ClockEmployee) {
   fireEvent.change(searchInput(), { target: { value: employee.lastName } });
@@ -75,12 +75,12 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await select(BETO);
     await resolveStatus(ANA, true);
 
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
     expect(action()).toBeDisabled();
 
     await resolveStatus(BETO);
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled();
   });
 
@@ -92,7 +92,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await resolveStatus(BETO);
     await resolveStatus(ANA, true);
 
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Marcar salida" })).not.toBeInTheDocument();
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
@@ -106,7 +106,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await rejectStatus(BETO.id);
     await resolveStatus(ANA, true);
 
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.getByText("No pudimos consultar tu jornada")).toBeInTheDocument();
     expect(action()).toBeDisabled();
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
@@ -120,7 +120,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await resolveStatus(BETO);
     await rejectStatus(ANA.id);
 
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -138,7 +138,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
 
     fireEvent.click(betoRow);
     await waitFor(() => expect(personShown()).not.toBeNull());
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
     expect(action()).toBeDisabled();
   });
@@ -164,7 +164,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await resolveStatus(ANA, true); // el refresco silencioso de A, ya con el kiosco reiniciado
     fireEvent.click(betoRow);
     await waitFor(() => expect(personShown()).not.toBeNull());
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
     expect(action()).toBeDisabled();
   }, 10_000);
@@ -181,7 +181,7 @@ describe("F6-01 — una respuesta de estado vieja nunca se aplica a otra selecci
     await select(BETO);
     await resolveStatus(ANA, true); // el refresco silencioso de A
 
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
     expect(screen.queryByText("Jornada abierta")).not.toBeInTheDocument();
     expect(action()).toBeDisabled();
     await resolveStatus(BETO);
@@ -195,7 +195,7 @@ describe("F6-02 — sin estado confirmado no hay acción", () => {
     await select(ANA);
     await rejectStatus(ANA.id);
 
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     expect(screen.getByText("No pudimos consultar tu jornada")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("El servicio no está disponible en este momento.");
     expect(action()).toBeDisabled();
@@ -238,7 +238,7 @@ describe("F6-01 — cámara y envío con una sola identidad", () => {
 
     await resolveStatus(BETO);
     fireEvent.click(screen.getByRole("button", { name: "Marcar ingreso" }));
-    expect(await screen.findByTestId("capture-employee")).toHaveTextContent("Beto Paz · Legajo 200");
+    expect(await screen.findByTestId("capture-employee")).toHaveTextContent("Paz Beto · DNI 28987654");
   });
 
   it("11. el envío usa el employeeId de quien inició la fichada; con la cámara abierta no se puede cambiar de empleado", async () => {
@@ -255,13 +255,13 @@ describe("F6-01 — cámara y envío con una sola identidad", () => {
     const changeButton = screen.getByRole("button", { name: "Cambiar empleado" });
     expect(changeButton).toBeDisabled();
     fireEvent.click(changeButton);
-    expect(personShown()).toBe("Beto Paz");
+    expect(personShown()).toBe("Paz Beto");
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar captura" }));
     await waitFor(() => expect(timeClockApiService.photoPunch).toHaveBeenCalledTimes(1));
     const [sent] = vi.mocked(timeClockApiService.photoPunch).mock.calls[0]!;
     expect(sent).toMatchObject({ employeeId: BETO.id, punchType: "IN" });
-    expect(await screen.findByText("Beto Paz")).toBeInTheDocument();
+    expect(await screen.findByText("Paz Beto")).toBeInTheDocument();
   });
 
   it("13. elegir a alguien con una búsqueda todavía en vuelo no deja el kiosco ocupado al volver al inicio", async () => {
@@ -273,7 +273,7 @@ describe("F6-01 — cámara y envío con una sola identidad", () => {
     fireEvent.change(searchInput(), { target: { value: "Gome" } });
     await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Gome"));
     fireEvent.click(anaRow);
-    await waitFor(() => expect(personShown()).toBe("Ana Gomez"));
+    await waitFor(() => expect(personShown()).toBe("Gomez Ana"));
     await act(async () => { finishSearch([ANA]); });
     change();
     expect(kioskActivity.isIdle()).toBe(true);

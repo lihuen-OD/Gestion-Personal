@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { notifyUsers } from "../workforce-management/workforce.service";
+import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { createShiftAlert, evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "./workShiftEvaluationRunner";
 
 /**
@@ -1067,6 +1067,19 @@ describe("createShiftAlert — eventAt de la notificación (docs/decisions/NOTIF
       expect.objectContaining({ entityType: "ShiftAlert", entityId: "alert-1", eventAt: first }),
       expect.objectContaining({ entityType: "ShiftAlert", entityId: "alert-1", eventAt: second }),
     ]);
+  });
+});
+
+describe("createShiftAlert — destinatarios (RRHH + responsables + Nivel 2 heredados)", () => {
+  it("ALERTA_FICHADA: resuelve los destinatarios en la fecha del hecho (actualAt) y con la transacción del paso, y notifica exactamente a ese conjunto", async () => {
+    const actualAt = new Date("2026-11-10T11:20:00.000Z");
+    const stepTx = { shiftAlert: { upsert: vi.fn().mockResolvedValue({ id: "alert-7" }) } };
+    vi.mocked(attendanceRecipients).mockResolvedValueOnce(["rrhh", "joaquin", "eugenia"]);
+
+    await createShiftAlert({ employeeId: "employee-1", workShiftId: "shift-1", type: "INGRESO_TARDE", actualAt, db: stepTx as never });
+
+    expect(attendanceRecipients).toHaveBeenCalledWith("employee-1", actualAt, stepTx);
+    expect(notifyUsers).toHaveBeenCalledWith(["rrhh", "joaquin", "eugenia"], expect.objectContaining({ type: "ALERTA_FICHADA", entityType: "ShiftAlert", entityId: "alert-7", eventAt: actualAt }), stepTx);
   });
 });
 

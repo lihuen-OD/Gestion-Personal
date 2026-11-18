@@ -8,6 +8,7 @@ vi.mock("./finnegansExport.repository", () => ({
   finnegansExportRepository: {
     findExportableNovelties: vi.fn(),
     findClosuresForExport: vi.fn(),
+    findCoverageDaysForExport: vi.fn(),
   },
 }));
 
@@ -46,10 +47,12 @@ function novelty(overrides: {
   finnegansRequiresValidity?: boolean;
   finnegansCode?: string | null;
   noveltyTypeName?: string;
+  coverageMode?: "NONE" | "FIXED_MINUTES" | "MANUAL_MINUTES" | "EXPECTED_SCHEDULE";
 } = {}) {
   return {
     id: overrides.id || "novelty-1",
     employeeId: overrides.employeeId || "employee-1",
+    noveltyTypeId: "type-1",
     fromDate: overrides.fromDate || new Date("2026-09-05"),
     toDate: overrides.toDate === undefined ? new Date("2026-09-06") : overrides.toDate,
     quantityHours: overrides.quantityHours === undefined ? null : overrides.quantityHours,
@@ -63,10 +66,14 @@ function novelty(overrides: {
       costCenter: null,
     },
     noveltyType: {
+      id: "type-1",
+      status: "ACTIVO",
+      exportsToFinnegans: true,
       name: overrides.noveltyTypeName || "Vacaciones",
       finnegansValueUnit: overrides.finnegansValueUnit === undefined ? "UNIT" : overrides.finnegansValueUnit,
       finnegansRequiresValidity: overrides.finnegansRequiresValidity ?? false,
       finnegansCode: overrides.finnegansCode === undefined ? "VAC" : overrides.finnegansCode,
+      coverageMode: overrides.coverageMode ?? "NONE",
     },
   } as unknown as Awaited<ReturnType<typeof finnegansExportRepository.findExportableNovelties>>[number];
 }
@@ -117,6 +124,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   repo.findExportableNovelties.mockResolvedValue([]);
   repo.findClosuresForExport.mockResolvedValue([]);
+  repo.findCoverageDaysForExport.mockResolvedValue(new Map());
   batchRepo.findByIdempotencyKey.mockResolvedValue(null);
   batchRepo.hasAnyBatch.mockResolvedValue(false);
   batchRepo.createBatchWithItems.mockResolvedValue(batchFixture());
@@ -135,7 +143,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 
   it("informa cierre pendiente como blocker pero NO tira error — la pantalla sigue siendo consultable", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansRequiresValidity: false })]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO", snapshot: null }]);
 
     const result = await finnegansExportService.getPreview({ period: "2026-09" });
 
@@ -146,7 +154,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 
   it("nunca audita y nunca crea batch — el GET de preview no debe quedar registrado como exportación realizada (test N)", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await finnegansExportService.getPreview({ period: "2026-09" });
 
@@ -156,7 +164,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 
   it("incluye hash y lastExport=null cuando el período nunca fue exportado", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.findLatestForPeriod.mockResolvedValue(null);
 
     const result = await finnegansExportService.getPreview({ period: "2026-09" });
@@ -167,7 +175,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 
   it("lastExport.sameAsCurrent=true cuando el hash actual coincide con el del último batch", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     const preview = await finnegansExportService.getPreview({ period: "2026-09" });
     batchRepo.findLatestForPeriod.mockResolvedValue(batchFixture({ hash: preview.hash }));
 
@@ -178,7 +186,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 
   it("lastExport.sameAsCurrent=false cuando el hash actual difiere del último batch", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.findLatestForPeriod.mockResolvedValue(batchFixture({ hash: "otro-hash-distinto" }));
 
     const result = await finnegansExportService.getPreview({ period: "2026-09" });
@@ -190,7 +198,7 @@ describe("finnegansExportService.getPreview — Etapa 15L.3A/15L.4", () => {
 describe("finnegansExportService.exportDefinitive — selección y readiness (sin regresión sobre 15L.3A)", () => {
   it("todo listo: exporta, crea batch y audita EXPORT/FinnegansExport", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansValueUnit: "UNIT" })]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     const result = await finnegansExportService.exportDefinitive(requestInput(), { userId: "user-1" });
 
@@ -202,7 +210,7 @@ describe("finnegansExportService.exportDefinitive — selección y readiness (si
 
   it("sin código Finnegans configurado: bloquea con FINNEGANS_EXPORT_NOT_READY, sin crear batch (test M)", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: null })]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({
       statusCode: 409,
@@ -214,7 +222,7 @@ describe("finnegansExportService.exportDefinitive — selección y readiness (si
 
   it("cierre no aprobado: bloquea con FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED, sin crear batch (test L)", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO", snapshot: null }]);
 
     await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({
       statusCode: 409,
@@ -244,7 +252,7 @@ describe("finnegansExportService.exportDefinitive — Valor 1 DAYS usa la cantid
         toDate: new Date("2026-08-02"),
       }),
     ]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     const result = await finnegansExportService.exportDefinitive(requestInput({ period: "2026-07" }));
 
@@ -257,7 +265,7 @@ describe("finnegansExportService.exportDefinitive — Valor 1 DAYS usa la cantid
 describe("finnegansExportService.exportDefinitive — versionado (tests A/B/D)", () => {
   it("A. primera exportación de un período: crea v1", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(false);
     batchRepo.createBatchWithItems.mockResolvedValue(batchFixture({ version: 1, previousBatchId: null }));
 
@@ -269,7 +277,7 @@ describe("finnegansExportService.exportDefinitive — versionado (tests A/B/D)",
 
   it("B. segunda exportación voluntaria (con motivo): crea v2", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(true);
     batchRepo.createBatchWithItems.mockResolvedValue(batchFixture({ version: 2, previousBatchId: "batch-1", reason: "Se corrigió una licencia" }));
 
@@ -282,7 +290,7 @@ describe("finnegansExportService.exportDefinitive — versionado (tests A/B/D)",
 
   it("D. previousBatchId apunta exactamente al batch anterior inmediato", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(true);
 
     await finnegansExportService.exportDefinitive(requestInput({ reexportReason: "corrección", idempotencyKey: "idem-2" }));
@@ -297,7 +305,7 @@ describe("finnegansExportService.exportDefinitive — versionado (tests A/B/D)",
 describe("finnegansExportService.exportDefinitive — motivo de reexportación (test C)", () => {
   it("primera exportación: no exige motivo", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(false);
 
     await expect(finnegansExportService.exportDefinitive(requestInput())).resolves.toBeDefined();
@@ -305,7 +313,7 @@ describe("finnegansExportService.exportDefinitive — motivo de reexportación (
 
   it("reexportación sin motivo: 400 FINNEGANS_EXPORT_REASON_REQUIRED, sin crear batch", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(true);
 
     await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({
@@ -317,7 +325,7 @@ describe("finnegansExportService.exportDefinitive — motivo de reexportación (
 
   it("reexportación con motivo: permite exportar", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(true);
 
     await expect(finnegansExportService.exportDefinitive(requestInput({ reexportReason: "Corrección de licencia" }))).resolves.toBeDefined();
@@ -338,7 +346,7 @@ describe("finnegansExportService.exportDefinitive — snapshot (test E)", () => 
     repo.findExportableNovelties.mockResolvedValue([
       novelty({ legajo: "100", legajoFinnegans: "00042", finnegansRequiresValidity: true, fromDate: new Date("2026-09-05"), toDate: new Date("2026-09-10") }),
     ]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await finnegansExportService.exportDefinitive(requestInput());
 
@@ -362,7 +370,7 @@ describe("finnegansExportService.exportDefinitive — snapshot (test E)", () => 
 describe("finnegansExportService.exportDefinitive — hash (tests G/H/I, integración con el service)", () => {
   it("el hash pasado a createBatchWithItems es el mismo que devuelve computeExportHash sobre el dataset", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await finnegansExportService.exportDefinitive(requestInput());
 
@@ -397,7 +405,7 @@ describe("finnegansExportService.exportDefinitive — idempotencia (tests J/K)",
 
   it("K. una nueva reexportación voluntaria (idempotencyKey distinta) sí crea una versión nueva", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
     batchRepo.hasAnyBatch.mockResolvedValue(true);
     batchRepo.findByIdempotencyKey.mockResolvedValue(null);
 
@@ -410,7 +418,7 @@ describe("finnegansExportService.exportDefinitive — idempotencia (tests J/K)",
 describe("finnegansExportService.exportDefinitive — formato (tests O/P)", () => {
   it("O. format=CSV se guarda en el batch", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await finnegansExportService.exportDefinitive(requestInput({ format: "CSV" }));
 
@@ -419,7 +427,7 @@ describe("finnegansExportService.exportDefinitive — formato (tests O/P)", () =
 
   it("P. format=XLSX se guarda en el batch", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     await finnegansExportService.exportDefinitive(requestInput({ format: "XLSX" }));
 
@@ -491,7 +499,7 @@ describe("finnegansExportService — sin UUIDs en mensajes visibles (test S)", (
   it("el mensaje de motivo obligatorio no contiene ids", async () => {
     batchRepo.hasAnyBatch.mockResolvedValue(true);
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
 
     try {
       await finnegansExportService.exportDefinitive(requestInput());
@@ -503,7 +511,7 @@ describe("finnegansExportService — sin UUIDs en mensajes visibles (test S)", (
 
   it("el mensaje de cierre pendiente no contiene ids", async () => {
     repo.findExportableNovelties.mockResolvedValue([novelty()]);
-    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO" }]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "ABIERTO", snapshot: null }]);
 
     try {
       await finnegansExportService.exportDefinitive(requestInput());
@@ -530,5 +538,153 @@ describe("toCsv — Etapa 15L.3A §27", () => {
     ]);
     const [header] = csv.split("\r\n");
     expect(header).toBe("Legajo;Novedad;Centro de costo;Valor 1;Fecha Aplicación;Fecha desde;Fecha hasta");
+  });
+});
+
+// Etapa 9 de cobertura (NOVELTY_COVERAGE_ENGINE.md §16): una cobertura en
+// revisión nunca sale como definitiva, aunque el cierre esté aprobado.
+describe("finnegansExportService — cobertura en revisión", () => {
+  beforeEach(() => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ coverageMode: "EXPECTED_SCHEDULE", finnegansValueUnit: "HOURS", noveltyTypeName: "Vacaciones" })]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }] as never);
+    repo.findCoverageDaysForExport.mockResolvedValue(new Map([["novelty-1", [
+      { dateKey: "2026-09-05", state: "REVIEW_REQUIRED", baseMinutes: 480 },
+      { dateKey: "2026-09-06", state: "REVIEW_REQUIRED", baseMinutes: 0 },
+    ]]]) as never);
+  });
+
+  it("la exportación definitiva se rechaza con un mensaje de negocio y no crea lote", async () => {
+    await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({
+      statusCode: 409,
+      code: "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING",
+      message: "No se puede generar la exportación porque hay 2 días de novedades pendientes de revisión.",
+    });
+    expect(batchRepo.createBatchWithItems).not.toHaveBeenCalled();
+    expect(repo.findCoverageDaysForExport).toHaveBeenCalledWith("2026-09", ["employee-1"]);
+  });
+
+  it("la vista previa lo informa sin bloquear la pantalla", async () => {
+    const preview = await finnegansExportService.getPreview({ period: "2026-09" });
+    expect(preview.readiness).toMatchObject({ ready: false, blockedRows: 1, reasons: ["2 días de novedades pendientes de revisión"] });
+    expect(preview.rows[0]).toMatchObject({ "Valor 1": "", estado: "REVISION_PENDIENTE" });
+  });
+
+  it("una novedad sin cobertura (Falta sin aviso) con un día en revisión también bloquea", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ noveltyTypeName: "Falta sin aviso" })]);
+    repo.findCoverageDaysForExport.mockResolvedValue(new Map([["novelty-1", [{ dateKey: "2026-09-05", state: "REVIEW_REQUIRED", baseMinutes: 0 }]]]) as never);
+    await expect(finnegansExportService.exportDefinitive(requestInput())).rejects.toMatchObject({ code: "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING", message: "No se puede generar la exportación porque hay 1 día de novedades pendientes de revisión." });
+    expect(batchRepo.createBatchWithItems).not.toHaveBeenCalled();
+  });
+
+  it("sin candidatas no consulta la cobertura; con candidatas, una sola consulta en lote", async () => {
+    repo.findExportableNovelties.mockResolvedValue([]);
+    await finnegansExportService.getPreview({ period: "2026-09" });
+    expect(repo.findCoverageDaysForExport).not.toHaveBeenCalled();
+    repo.findExportableNovelties.mockResolvedValue([novelty(), novelty({ id: "novelty-2", employeeId: "employee-2" })]);
+    await finnegansExportService.getPreview({ period: "2026-09" });
+    expect(repo.findCoverageDaysForExport).toHaveBeenCalledTimes(1);
+    expect(repo.findCoverageDaysForExport).toHaveBeenCalledWith("2026-09", ["employee-1", "employee-2"]);
+  });
+});
+
+// Reproducibilidad (NOVELTY_COVERAGE_ENGINE.md §16): una versión guarda sus
+// filas finales; reintentarla o consultarla nunca vuelve a leer el Tipo.
+describe("finnegansExportService — una versión generada no depende del Tipo vigente", () => {
+  it("cambiar código, unidad y nombre del Tipo no altera la versión: el reintento y el historial devuelven las mismas filas", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansValueUnit: "HOURS", quantityHours: decimal("4"), finnegansCode: "TB", noveltyTypeName: "Trámite bancario" })]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: null }]);
+    const first = await finnegansExportService.exportDefinitive(requestInput({ idempotencyKey: "idem-v1" }));
+    const storedItems = batchRepo.createBatchWithItems.mock.calls[0]![0].items;
+    const stored = { ...batchFixture({ idempotencyKey: "idem-v1", rowCount: storedItems.length }), items: storedItems.map((item, index) => ({ id: `item-${index}`, batchId: "batch-1", createdAt: new Date(), ...item })) };
+
+    // El Tipo cambia después: otro código, otra unidad, otro nombre.
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansValueUnit: "DAYS", quantityDays: decimal("1"), finnegansCode: "NUEVO", noveltyTypeName: "Renombrado" })]);
+    batchRepo.findByIdempotencyKey.mockResolvedValue(stored as never);
+    batchRepo.findByIdWithItems.mockResolvedValue(stored as never);
+
+    const retry = await finnegansExportService.exportDefinitive(requestInput({ idempotencyKey: "idem-v1" }));
+    const detail = await finnegansExportService.getHistoryDetail("batch-1");
+    const visible = (rows: typeof first.rows) => rows.map(({ Legajo, Novedad, "Centro de costo": costCenter, "Valor 1": value1, "Fecha Aplicación": applicationDate, "Fecha desde": from, "Fecha hasta": to, detail: name }) => ({ Legajo, Novedad, costCenter, value1, applicationDate, from, to, name }));
+
+    expect(visible(retry.rows)).toEqual(visible(first.rows));
+    expect(visible(detail.rows)).toEqual(visible(first.rows));
+    expect(retry.rows[0]).toMatchObject({ Novedad: "TB", "Valor 1": "4", detail: "Trámite bancario" });
+    expect(retry.batch.version).toBe(first.batch.version);
+    expect(batchRepo.createBatchWithItems).toHaveBeenCalledTimes(1);
+    expect(repo.findExportableNovelties).toHaveBeenCalledTimes(1);
+  });
+});
+
+// §16.2: la configuración de Finnegans de un período es la congelada en el
+// snapshot del cierre; un cierre anterior a esa congelación usa el tipo vigente.
+describe("finnegansExportService — configuración del período (snapshot del cierre)", () => {
+  const frozenSnapshot = (types: Array<Record<string, unknown>>) => ({ finnegans: { model: "FINNEGANS_CONFIG_V1", types } });
+  const frozenType = (overrides: Record<string, unknown> = {}) => ({
+    noveltyTypeId: "type-1", name: "Trámite bancario", status: "ACTIVO", exportsToFinnegans: true,
+    finnegansCode: "TB", finnegansValueUnit: "HOURS", finnegansRequiresValidity: false, coverageMode: "NONE", ...overrides,
+  });
+
+  it("usa el código, la unidad y el nombre congelados aunque el tipo vigente cambió", async () => {
+    // Vigente: NUEVO en días; congelado al cerrar: TB en horas.
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: "NUEVO", finnegansValueUnit: "DAYS", quantityHours: decimal("4"), quantityDays: decimal("1"), noveltyTypeName: "Renombrado" })]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType()]) }] as never);
+
+    const result = await finnegansExportService.exportDefinitive(requestInput());
+    const preview = await finnegansExportService.getPreview({ period: "2026-09" });
+
+    expect(result.rows[0]).toMatchObject({ Novedad: "TB", "Valor 1": "4", detail: "Trámite bancario" });
+    // La vista previa usa la misma fuente: el mismo hash que la versión generada.
+    expect(preview.rows[0]).toMatchObject({ Novedad: "TB", "Valor 1": "4" });
+    expect(preview.hash).toBe(batchRepo.createBatchWithItems.mock.calls[0]![0].hash);
+  });
+
+  it("si el tipo cambia después de exportar, la vista previa no lo marca como cambio", async () => {
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType()]) }] as never);
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: "TB", finnegansValueUnit: "HOURS", quantityHours: decimal("4"), noveltyTypeName: "Trámite bancario" })]);
+    const exported = await finnegansExportService.getPreview({ period: "2026-09" });
+    batchRepo.findLatestForPeriod.mockResolvedValue({ ...batchFixture({ hash: exported.hash }) } as never);
+
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: "NUEVO", finnegansValueUnit: "DAYS", quantityHours: decimal("4"), quantityDays: decimal("1"), noveltyTypeName: "Renombrado" })]);
+    const preview = await finnegansExportService.getPreview({ period: "2026-09" });
+
+    expect(preview.lastExport).toMatchObject({ sameAsCurrent: true });
+  });
+
+  it("cierre histórico sin configuración congelada: usa el tipo vigente (comportamiento anterior)", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: "NUEVO", finnegansValueUnit: "DAYS", quantityDays: decimal("2") })]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: { accounting: { model: "WORKED_TIME_ACCOUNTING_V2" } } }] as never);
+    const preview = await finnegansExportService.getPreview({ period: "2026-09" });
+    expect(preview.rows[0]).toMatchObject({ Novedad: "NUEVO", "Valor 1": "2" });
+  });
+
+  it("un tipo que no figura en el snapshot (p. ej. una corrección posterior) usa el tipo vigente", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty({ finnegansCode: "VIGENTE", finnegansValueUnit: "UNIT" })]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType({ noveltyTypeId: "otro-tipo" })]) }] as never);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows[0]).toMatchObject({ Novedad: "VIGENTE" });
+  });
+
+  it("si al cerrar el tipo no exportaba (o estaba inactivo), no se exporta aunque hoy sí", async () => {
+    repo.findExportableNovelties.mockResolvedValue([novelty()]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType({ exportsToFinnegans: false })]) }] as never);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows).toEqual([]);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType({ status: "INACTIVO" })]) }] as never);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows).toEqual([]);
+  });
+
+  it("al revés: si hoy el tipo no exporta pero al cerrar sí, el período se exporta igual", async () => {
+    const current = novelty({ finnegansValueUnit: "UNIT" });
+    repo.findExportableNovelties.mockResolvedValue([{ ...current, noveltyType: { ...current.noveltyType, exportsToFinnegans: false, status: "INACTIVO" } }] as never);
+    repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO", snapshot: frozenSnapshot([frozenType({ finnegansValueUnit: "UNIT" })]) }] as never);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows).toEqual([expect.objectContaining({ Novedad: "TB", "Valor 1": "1" })]);
+  });
+
+  it("pertenencia mensual: un rango del mes anterior sólo entra si el tipo (efectivo) tiene cobertura", async () => {
+    const crossMonth = { fromDate: new Date("2026-08-30"), toDate: new Date("2026-09-02") };
+    repo.findExportableNovelties.mockResolvedValue([novelty({ ...crossMonth, finnegansValueUnit: "DAYS", quantityDays: decimal("4") })]);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows).toEqual([]);
+
+    repo.findExportableNovelties.mockResolvedValue([novelty({ ...crossMonth, finnegansValueUnit: "DAYS", coverageMode: "EXPECTED_SCHEDULE" })]);
+    repo.findCoverageDaysForExport.mockResolvedValue(new Map([["novelty-1", [{ dateKey: "2026-09-01", state: "COUNTED", baseMinutes: 480 }, { dateKey: "2026-09-02", state: "COUNTED", baseMinutes: 480 }]]]) as never);
+    expect((await finnegansExportService.getPreview({ period: "2026-09" })).rows).toEqual([expect.objectContaining({ "Valor 1": "2", "Fecha Aplicación": "01/09/2026" })]);
   });
 });

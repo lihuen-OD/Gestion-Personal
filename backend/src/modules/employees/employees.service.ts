@@ -1,3 +1,8 @@
+import { randomBytes } from "node:crypto";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { auditNoveltyCoverageRecalculation, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { laborMovementAffectedWindow } from "./laborRelation";
+import { loadNoveltyCoverageForAccounting, noveltyCoverageRowsView, noveltyDayItemsView, type LoadedNoveltyCoverage, type NoveltyDayItemView } from "../novelties/noveltyCoverageAccounting";
 import { Prisma } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
@@ -5,6 +10,7 @@ import { AppError } from "../../shared/errors/AppError";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { storageService } from "../../shared/storage/storage.service";
 import { storagePathBuilder } from "../../shared/storage/storagePathBuilder";
+import { extensionFromMimeType, fileExtension } from "../../shared/storage/storageValidation";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { canAccessDocumentCategory } from "../../shared/security/documentCategoryAccess";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -163,6 +169,8 @@ export function buildEmployeeTimeGrid(
   breakdowns: TimeGridBreakdown[],
   dayOffs: DayOffAccounting = emptyDayOffAccounting(),
   period?: string,
+  // Cobertura de novedades del período (NOVELTY_COVERAGE_ENGINE.md §12).
+  coverage: LoadedNoveltyCoverage = { coverages: [], types: new Map() },
 ) {
   if (!normalConcept) {
     throw new AppError("Canonical normal hour concept not found", 500, "NORMAL_HOUR_CONCEPT_NOT_FOUND");
@@ -170,7 +178,7 @@ export function buildEmployeeTimeGrid(
 
   // Horas base = TimeEntry NORMAL_BASE APROBADO/EN_REVISION (criterio vigente).
   const baseEntries = entries.filter((entry) => entry.hourConcept.systemRole === "NORMAL_BASE" && ["APROBADO", "EN_REVISION"].includes(entry.status));
-  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+  const accounting = accountEmployeePeriod(baseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
 
   const dayOffsByDay: Record<string, TimeGridDayOff> = {};
   if (period) {
@@ -235,10 +243,23 @@ export function buildEmployeeTimeGrid(
     .sort((a, b) => treatmentOrder(a.concept) - treatmentOrder(b.concept) || a.index - b.index)
     .map(({ concept }) => toRow(concept, "ADDITIONAL", minutesByConcept.get(concept.id) ?? {}, enabledIds.has(concept.id)));
 
+  // Novedades (aditivo): una fila por tipo con cobertura o información en el
+  // período, y cada novedad del día con su estado. Las cifras salen de la
+  // contabilidad (accounting.days[day].novelty), nunca de sumar acá.
+  const noveltiesByDay: Record<string, NoveltyDayItemView[]> = {};
+  for (const [day, dayAccounting] of Object.entries(accounting.days)) {
+    if (dayAccounting.novelty.items.length) noveltiesByDay[day] = noveltyDayItemsView(dayAccounting.novelty.items, coverage.types);
+  }
+
   return {
     rows: [toRow(normalConcept, "NORMAL_BASE", normalMinutesByDay, true), ...additionalRows],
     accounting,
+    // Trabajo real (sin cambios). La cobertura y el total computable van aparte.
     totalWorkedMinutes: accounting.totalWorkedMinutes,
+    noveltyCoveredMinutes: accounting.noveltyCoveredMinutes,
+    computableMinutes: accounting.computableMinutes,
+    noveltyCoverageRows: noveltyCoverageRowsView(accounting, coverage.types),
+    noveltiesByDay,
     specialHoursByDay,
     dayOffsByDay,
   };
@@ -700,9 +721,11 @@ export const employeesService = {
     const { start, end } = periodCalendarBounds(query.period);
     // El índice de francos no depende del alcance: si el legajo es ajeno,
     // findTimeGrid devuelve null y se descarta.
-    const [grid, dayOffs] = await Promise.all([
+    const [grid, dayOffs, coverage] = await Promise.all([
       employeesRepository.findTimeGrid(id, query, employeeAccessWhere(user)),
       loadDayOffAccounting({ employeeIds: [id], from: start, to: end }),
+      // Cobertura de novedades: 1 consulta (NOVELTY_COVERAGE_ENGINE.md §12).
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeIds: [id] }),
     ]);
     if (!grid) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
     const timeGrid = buildEmployeeTimeGrid(
@@ -712,6 +735,7 @@ export const employeesService = {
       grid.breakdowns,
       dayOffs,
       query.period,
+      coverage,
     );
     return redactPiiForRole({ ...grid, ...timeGrid }, user);
   },
@@ -1125,7 +1149,17 @@ export const employeesService = {
 
   async createLaborMovement(id: string, input: CreateLaborMovementInput, audit?: AuditContext) {
     const before = await employeesRepository.findLaborAuditSnapshot(id);
-    const { employee, movement } = await execute(() => employeesRepository.createLaborMovement(id, input, audit?.userId));
+    // Etapa 5 (NOVELTY_COVERAGE_ENGINE.md §13.2): un ALTA o una BAJA cambia
+    // la relación laboral de un rango de fechas; la cobertura de novedades del
+    // legajo en ese rango se recalcula en la misma transacción.
+    const { employee, movement, after: coverage } = await execute(() => employeesRepository.createLaborMovement(id, input, audit?.userId, {
+      beforeWrite: (tx) => lockEmployeeCoverage(tx, [id]),
+      afterWrite: (tx, previous) => recalculateNoveltyCoverage(
+        tx,
+        { employeeIds: [id], ...laborMovementAffectedWindow(previous, { type: input.type, effectiveFrom: input.effectiveFrom }) },
+        { source: "LABOR_MOVEMENT_CHANGED", label: `${input.type === "ALTA" ? "alta" : "baja"} del legajo ${before.legajo} desde el ${formatArgentinaDate(input.effectiveFrom)}` },
+      ),
+    }));
     await auditService.register({
       ...audit,
       action: "UPDATE",
@@ -1135,6 +1169,7 @@ export const employeesService = {
       before: { status: before.status, laborMovements: before.laborMovements } as Prisma.InputJsonValue,
       after: { status: employee.status, movement } as Prisma.InputJsonValue,
     });
+    if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     return employee;
   },
 
@@ -1153,11 +1188,25 @@ export const employeesService = {
 
     const before = await employeesService.getById(id, user);
     const documentType = category.code || category.name;
+    // Ruta humana en Drive (Legajos/<legajo - Nombre Apellido>/<categoría>/)
+    // con datos básicos del legajo — nunca puesto ni estructura
+    // organizacional. El nombre original se conserva en originalFileName y en
+    // EmployeeDocument.fileName.
+    const location = storagePathBuilder.employeeDocument({
+      employeeId: id,
+      employee: before,
+      category,
+      uploadedAt: new Date(),
+      extension: fileExtension(input.fileName) || extensionFromMimeType(input.fileMimeType),
+      uniqueSuffix: randomBytes(3).toString("hex"),
+    });
     const storageFile = await storageService.uploadManaged({
       buffer: bufferFromBase64(input.fileBase64),
       fileName: input.fileName,
+      storedFileName: location.fileName,
       mimeType: input.fileMimeType,
-      folderSegments: storagePathBuilder.employeeDocument(before.legajo, documentType),
+      folderSegments: location.folderSegments,
+      driveFolders: location.driveFolders,
       module: "LEGAJOS",
       entityType: "EMPLOYEE_DOCUMENT",
       entityId: id,

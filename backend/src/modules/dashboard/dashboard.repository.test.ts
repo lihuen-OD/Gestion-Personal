@@ -10,6 +10,7 @@ vi.mock("../../shared/prisma/client", () => ({
     employee: { groupBy: vi.fn() },
     // Francos (EMPLOYEE_DAY_OFF.md §7): sin francos en el período no se resta nada.
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+    novelty: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -90,5 +91,18 @@ describe("countTotalAndActive — colapsa countTotal+countActive en 1 groupBy (E
     expect(mockedPrisma.employee.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({ where: {} }),
     );
+  });
+});
+
+// Etapa 4 de cobertura (NOVELTY_COVERAGE_ENGINE.md §6.3): toDate nulo es un
+// único día — una ausencia de un día de un mes anterior ya no se cuenta en
+// todos los meses siguientes.
+describe("findPeriodAbsenceDateRanges — toDate nulo es un único día", () => {
+  it("sólo trae novedades sin fecha hasta cuya fecha cae en el período", async () => {
+    await dashboardRepository.findPeriodAbsenceDateRanges("2026-11", {});
+    const where = (prisma as unknown as { novelty: { findMany: Mock } }).novelty.findMany.mock.calls[0]![0].where;
+    const start = new Date("2026-11-01T00:00:00.000Z");
+    expect(where.fromDate).toEqual({ lt: new Date("2026-12-01T00:00:00.000Z") });
+    expect(where.OR).toEqual([{ toDate: { gte: start } }, { toDate: null, fromDate: { gte: start } }]);
   });
 });

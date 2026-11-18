@@ -10,4 +10,6 @@ import { pendingQuerySchema } from "./pending.schemas";
 export const pendingRouter = Router();
 
 pendingRouter.use(requireAuth);
-pendingRouter.get("/", requireAnyRole([roles.rrhh, roles.supervision, roles.cargaHoraria]), validateQuery(pendingQuerySchema), asyncHandler(pendingController.list));
+// 2026-11-17: el único consumidor es la Bandeja de revisión (/pendientes),
+// que no existe para Nivel 3. Carga de horas usa /time-entries, no este endpoint.
+pendingRouter.get("/", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(pendingQuerySchema), asyncHandler(pendingController.list));

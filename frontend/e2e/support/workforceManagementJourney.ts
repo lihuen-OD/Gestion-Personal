@@ -8,9 +8,9 @@
  * política de sanitización que todo el resto de los journeys — un solo
  * lugar).
  *
- * A diferencia de 14D.1 (un módulo, varias pestañas), Gestión horaria son 10
+ * A diferencia de 14D.1 (un módulo, varias pestañas), Gestión horaria son 9 (A. Inicio se retiró el 2026-11-17)
  * submódulos con rutas propias — acá `zone` y `submodule` son el mismo valor
- * por diseño (cada zona A-J del pedido ES un submódulo completo, no una
+ * por diseño (cada zona B-J del pedido ES un submódulo completo, no una
  * subsección de uno solo). Se mantienen ambos campos porque la Parte 5 del
  * pedido los pide explícitamente por separado.
  *
@@ -306,18 +306,7 @@ export type SubmoduleInventoryRow = {
 };
 
 export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
-  {
-    submodule: "A. Inicio",
-    route: "/gestion-horaria",
-    page: "HourlyManagementHomePage.tsx",
-    services: "timeEntryApiService.ts",
-    initialEndpoints: "GET /time-entries/home-summary",
-    frontendCache: "No",
-    backendCache: "No",
-    writesData: "No",
-    safeToMeasure: "Sí",
-    observation: "KPIs son <Link> sin fetch propio — no disparan requests adicionales.",
-  },
+
   {
     submodule: "B. Asistencia",
     route: "/asistencia",
@@ -453,8 +442,6 @@ export type CoverageMatrixRow = {
 export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "Login", submodule: "Login", action: "Login (acceso rápido RRHH)", route: "/", component: "LoginPage.tsx", expectedEndpoint: "POST /auth/login (vía loginAs)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Mismo mecanismo que 14D.1/14F.1 — acceso rápido demo Nivel 1, sin credenciales reales." },
 
-  { zone: "A. Inicio", submodule: "A. Inicio", action: "Entrar a Inicio (Gestión horaria)", route: "/gestion-horaria", component: "HourlyManagementHomePage.tsx", expectedEndpoint: "GET /time-entries/home-summary", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
-  { zone: "A. Inicio", submodule: "A. Inicio", action: "Ver KPIs/resumen de Inicio", route: "/gestion-horaria", component: "HourlyManagementHomePage.tsx (.stat-grid)", expectedEndpoint: "sin endpoint propio", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Los StatLink son <Link>, no disparan un request nuevo — se confirma que no hay una llamada extra oculta." },
 
   { zone: "B. Asistencia", submodule: "B. Asistencia", action: "Entrar a Asistencia (carga inicial del día)", route: "/asistencia", component: "AttendancePage.tsx", expectedEndpoint: "GET /time-entries/attendance?date=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "B. Asistencia", submodule: "B. Asistencia", action: "Cambiar fecha del día", route: "/asistencia", component: "AttendancePage.tsx (input date)", expectedEndpoint: "GET /time-entries/attendance?date=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
@@ -594,7 +581,7 @@ export function buildMarkdownReport(rawRun: WorkforceJourneyRun): string {
   lines.push("## 1. Resumen ejecutivo");
   lines.push("");
   lines.push(
-    `Recorrido macro de los 10 submódulos de Gestión horaria: ${summary.coveredActions}/${summary.totalActions} acciones cubiertas, ${summary.skippedActions} salteadas (${summary.writesSkipped} de ellas por ser de escritura, con motivo documentado cada una), ${summary.httpErrors} respuestas HTTP >= 400, ${summary.consoleErrors} errores de consola. ${summary.verySlowActions} acción(es) en rango Crítico (> ${run.slowThresholdMs}ms) y ${summary.slowActions} en rango Lento (${run.mediumThresholdMs}-${run.slowThresholdMs}ms). Cero escrituras ejecutadas — modo \`${run.mode}\` en todo el recorrido.`,
+    `Recorrido macro de los 9 submódulos de Gestión horaria: ${summary.coveredActions}/${summary.totalActions} acciones cubiertas, ${summary.skippedActions} salteadas (${summary.writesSkipped} de ellas por ser de escritura, con motivo documentado cada una), ${summary.httpErrors} respuestas HTTP >= 400, ${summary.consoleErrors} errores de consola. ${summary.verySlowActions} acción(es) en rango Crítico (> ${run.slowThresholdMs}ms) y ${summary.slowActions} en rango Lento (${run.mediumThresholdMs}-${run.slowThresholdMs}ms). Cero escrituras ejecutadas — modo \`${run.mode}\` en todo el recorrido.`,
   );
   lines.push("");
 

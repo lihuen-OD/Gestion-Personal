@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -15,16 +15,49 @@ import { X } from "lucide-react";
 // `position: fixed`. Sin este portal, `.modal-backdrop` (fixed, pensado
 // para cubrir todo el viewport) quedaría contenido dentro de `.page-wrap`
 // en vez de cubrir sidebar/topbar.
-export function Modal({ title, subtitle, close, children, closeDisabled = false }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean }) {
+export function Modal({ title, subtitle, close, children, closeDisabled = false, size = "default" }: { title: string; subtitle?: string; close: () => void; children: ReactNode; closeDisabled?: boolean; size?: "default" | "wide" }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useLayoutEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const preferred = dialogRef.current?.querySelector<HTMLElement>("[data-modal-initial-focus]");
+    (preferred || closeButtonRef.current)?.focus();
+    return () => {
+      previouslyFocused?.focus();
+    };
+  }, []);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape" && !closeDisabled) {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")];
+    if (!focusable.length) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return createPortal(
     <div className="modal-backdrop">
-      <div className="modal">
+      <div ref={dialogRef} className={size === "wide" ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}>
         <div className="modal-head">
           <div className="modal-head-text">
-            <h3>{title}</h3>
+            <h3 id={titleId}>{title}</h3>
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
-          <button className="icon-button" onClick={close} disabled={closeDisabled} aria-label="Cerrar"><X /></button>
+          <button ref={closeButtonRef} className="icon-button" onClick={close} disabled={closeDisabled} aria-label="Cerrar"><X /></button>
         </div>
         <div className="modal-body">{children}</div>
       </div>

@@ -9,14 +9,19 @@ import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
 import { userApiService } from "./userApiService";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type { TimeGridDayOff } from "./employeeDayOffApiService";
-import type { PeriodAccounting } from "../../types/workedTimeAccounting.types";
+import type { NoveltyCoverageItem, NoveltyCoverageState, NoveltyTypeAccounting, PeriodAccounting } from "../../types/workedTimeAccounting.types";
 import { currentCacheScope } from "../cache/cacheKey";
 import { calculateLaborStatus, resolveCurrentLaborPeriod } from "../employeeStatusService";
 import type { Employee, EmployeeStatus, LaborMovement, Novelty, TimeEntry } from "../../types";
 import type { HourConcept } from "../../types/hourConcept.types";
 import type { NoveltyType } from "../../types/noveltyType.types";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 type ApiEmployeeStatus = "ACTIVO" | "INACTIVO";
 type ApiNamedNode = { id: string; name: string };
@@ -158,7 +163,21 @@ type ApiTimeGridResponse = {
     attendanceIssues: number;
     specialHoursByDay?: Record<string, ApiTimeGridSpecialHourDay>;
     dayOffsByDay?: Record<string, TimeGridDayOff>;
+    totalWorkedMinutes: number;
+    noveltyCoveredMinutes: number;
+    computableMinutes: number;
+    noveltyCoverageRows: NoveltyCoverageRow[];
+    noveltiesByDay: Record<string, NoveltyCoverageItem[]>;
   };
+};
+
+export type NoveltyCoverageRow = {
+  noveltyType: { id: string; code: string; name: string; uiColor: string };
+  countsTowardTotal: boolean;
+  minutesByDay: Record<string, number>;
+  settlementMinutesByDay: Record<string, number>;
+  stateByDay: Record<string, NoveltyCoverageState>;
+  totals: NoveltyTypeAccounting;
 };
 
 // Filas de la grilla por legajo (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md):
@@ -187,6 +206,11 @@ export type EmployeeTimeGrid = {
   specialHoursByDay: Record<string, ApiTimeGridSpecialHourDay>;
   // Francos ACTIVOS por día (docs/decisions/EMPLOYEE_DAY_OFF.md §15).
   dayOffsByDay: Record<string, TimeGridDayOff>;
+  totalWorkedMinutes: number;
+  noveltyCoveredMinutes: number;
+  computableMinutes: number;
+  noveltyCoverageRows: NoveltyCoverageRow[];
+  noveltiesByDay: Record<string, NoveltyCoverageItem[]>;
 };
 
 export type ManualHourConceptBreakdownInput = {
@@ -307,7 +331,9 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     birthDate: dateOnly(item.birthDate),
     gender: item.gender || "",
     civilStatus: item.civilStatus || "",
-    nationality: item.nationality || "Argentina",
+    // Sin nacionalidad informada queda vacía: un valor por defecto acá se
+    // persistiría en el próximo guardado del legajo.
+    nationality: item.nationality || "",
     phone: item.phone || "",
     mobile: item.mobile || "",
     email: item.email || "",
@@ -444,10 +470,17 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
   const relations = await resolveRelations(employee);
   const shouldSendAllRelations = mode === "create";
   const createHourConcepts = mode === "create" && employee.enabledHours?.length ? await hourConceptsPayload(employee) : { hourConceptIds: [] };
+  const address = addressPayload(employee);
+  // En el alta, un domicilio sin ningún dato no se envía (no se crea un
+  // EmployeeAddress vacío). En la edición se envía siempre, como antes.
+  const sendAddress = mode === "update" || Object.values(address).some((value) => value !== null);
+  // Sin fecha de alta no hay movimiento inicial; con fecha, el motivo es el
+  // elegido en el formulario (nunca uno por defecto).
+  const startDate = employee.startDate?.trim();
   return {
     legajo: employee.legajoInterno || employee.legajo,
     legajoFinnegans: employee.legajoFinnegans || null,
-    cuil: employee.cuil,
+    cuil: employee.cuil?.trim() || null,
     dni: employee.dni,
     firstName: employee.firstName,
     lastName: employee.lastName,
@@ -477,26 +510,16 @@ async function mapEmployeeToApi(employee: Employee, mode: "create" | "update" = 
           primaryCompanyId: relations.primaryCompanyId || null,
         }
       : {}),
-    address: {
-      province: employee.province || employee.domicilio?.provinciaNombre || null,
-      department: employee.department || employee.domicilio?.departamentoNombre || null,
-      city: employee.city || employee.domicilio?.localidadNombre || null,
-      street: employee.addressStreet || employee.domicilio?.calle || null,
-      streetNumber: employee.addressNumber || employee.domicilio?.numero || null,
-      postalCode: employee.zip || employee.domicilio?.codigoPostal || null,
-      latitude: employee.domicilio?.ubicacionMapa?.lat ?? employee.locationMap?.lat ?? null,
-      longitude: employee.domicilio?.ubicacionMapa?.lng ?? employee.locationMap?.lng ?? null,
-      mapLabel: employee.domicilio?.ubicacionMapa?.label || employee.locationMap?.label || employee.mapLocation || null,
-    },
+    ...(sendAddress ? { address } : {}),
     ...(mode === "create" && createHourConcepts.hourConceptIds.length
       ? { hourConceptIds: createHourConcepts.hourConceptIds }
       : {}),
-    ...(mode === "create" && employee.startDate
+    ...(mode === "create" && startDate
       ? {
           initialLaborMovement: {
             type: "ALTA",
-            effectiveFrom: employee.startDate,
-            reason: employee.laborMovements?.[0]?.reason || "Alta inicial",
+            effectiveFrom: startDate,
+            reason: employee.laborMovements?.[0]?.reason,
             observation: employee.laborMovements?.[0]?.observation || null,
           },
         }
@@ -619,7 +642,7 @@ async function syncEmployeeExtras(
         body: {
           type: "ALTA",
           effectiveFrom: employee.startDate,
-          reason: employee.laborMovements?.[0]?.reason || "Alta inicial",
+          reason: employee.laborMovements?.[0]?.reason,
           observation: employee.laborMovements?.[0]?.observation || null,
         },
       }),
@@ -819,6 +842,11 @@ export const employeeApiService = {
       attendanceIssues: response.data.attendanceIssues || 0,
       specialHoursByDay: response.data.specialHoursByDay || {},
       dayOffsByDay: response.data.dayOffsByDay || {},
+      totalWorkedMinutes: response.data.totalWorkedMinutes,
+      noveltyCoveredMinutes: response.data.noveltyCoveredMinutes,
+      computableMinutes: response.data.computableMinutes,
+      noveltyCoverageRows: response.data.noveltyCoverageRows || [],
+      noveltiesByDay: response.data.noveltiesByDay || {},
     };
   },
   async saveManualHourConceptBreakdown(employeeId: string, input: ManualHourConceptBreakdownInput) {
@@ -903,7 +931,8 @@ export const employeeApiService = {
       method: "PATCH",
       body: { ...(await mapEmployeeToApi(employee, "update")), ...(options.laborChange ? { laborChange: options.laborChange } : {}) },
     });
-    await invalidateEmployeeDependentCaches("employee updated");
+    // Un cambio de datos laborales desde una fecha puede reinterpretar la cobertura de novedades (alcance de reglas).
+    await Promise.all([invalidateEmployeeDependentCaches("employee updated"), invalidateNoveltyCoverageDerivedCaches("employee updated")]);
     // El PATCH confirma y audita los campos modificables. La pantalla ya tiene
     // el overview completo; conservarlo evita pedir o reconstruir relaciones
     // que este guardado general no modifica.
@@ -949,7 +978,7 @@ export const employeeApiService = {
       method: "POST",
       body: input,
     });
-    await invalidateEmployeeDependentCaches("employee labor movement created");
+    await Promise.all([invalidateEmployeeDependentCaches("employee labor movement created"), invalidateNoveltyCoverageDerivedCaches("employee labor movement created")]);
     return mapEmployeeFromApi(response.data);
   },
   async syncLaborStatuses() {

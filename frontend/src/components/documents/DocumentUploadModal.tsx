@@ -13,27 +13,7 @@ import { documentCategoryScopeLabels } from "../../utils/documentCategoryLabels"
 import { EmployeeRemoteSelector } from "../employees/EmployeeRemoteSelector";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
-
-const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-]);
-const MAX_DOCUMENT_SIZE_MB = 10;
-
-function fileToBase64(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
+import { DOCUMENT_FILE_ACCEPT, documentFileProblem, fileToBase64 } from "../../utils/documentFile";
 
 export function DocumentUploadModal({
   employees,
@@ -165,19 +145,14 @@ export function DocumentUploadModal({
                 Adjuntar documento
                 <input
                   type="file"
-                  accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx"
+                  accept={DOCUMENT_FILE_ACCEPT}
                   onChange={(event) => {
                     const picked = event.target.files?.[0] || null;
-                    if (picked && !ALLOWED_DOCUMENT_MIME_TYPES.has(picked.type)) {
+                    const problem = picked ? documentFileProblem(picked) : null;
+                    if (problem) {
                       setFile(null);
                       event.target.value = "";
-                      setError("Formato de archivo no permitido. Usá imagen, PDF, Word o Excel.");
-                      return;
-                    }
-                    if (picked && picked.size > MAX_DOCUMENT_SIZE_MB * 1024 * 1024) {
-                      setFile(null);
-                      event.target.value = "";
-                      setError(`El archivo supera el máximo permitido de ${MAX_DOCUMENT_SIZE_MB} MB.`);
+                      setError(problem);
                       return;
                     }
                     setFile(picked);

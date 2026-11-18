@@ -63,9 +63,36 @@ const messagesByCode: Record<string, string> = {
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
 };
 
+// §33: cupos de solicitudes del backend (modules/clock/clockRateLimits.ts).
+// Distinguen un límite de búsquedas (la jornada y la fichada siguen
+// funcionando) de un límite del equipo o de la red. Nunca se reintenta solo:
+// la persona vuelve a intentar cuando termina la espera.
+const SEARCH_RATE_LIMIT = "CLOCK_SEARCH_RATE_LIMITED";
+const DEVICE_RATE_LIMITS = new Set(["CLOCK_STATUS_RATE_LIMITED", "CLOCK_PUNCH_RATE_LIMITED", "CLOCK_ATTEMPT_RATE_LIMITED", "CLOCK_DEVICE_RATE_LIMITED"]);
+
+/** "45 segundos", "1 minuto", "4 minutos": la espera redondeada hacia arriba. */
+export function formatWait(seconds: number) {
+  if (seconds < 60) return `${seconds} ${seconds === 1 ? "segundo" : "segundos"}`;
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} ${minutes === 1 ? "minuto" : "minutos"}`;
+}
+
+function rateLimitMessage(code: string | undefined, retryAfterSeconds: number | undefined): string | undefined {
+  const wait = retryAfterSeconds && retryAfterSeconds > 0 ? formatWait(retryAfterSeconds) : "unos minutos";
+  if (code === SEARCH_RATE_LIMIT) return `Se hicieron muchas búsquedas seguidas en este equipo. Esperá ${wait} y volvé a buscar.`;
+  if (code && DEVICE_RATE_LIMITS.has(code)) return `Este equipo alcanzó el límite de operaciones. Esperá ${wait} y volvé a intentar. Si se repite, avisá a RRHH.`;
+  if (code === "CLOCK_NETWORK_RATE_LIMITED") return `Hay demasiadas operaciones desde esta red. Esperá ${wait} y volvé a intentar. Si se repite, avisá a RRHH.`;
+  if (code === "CLOCK_AUTH_RATE_LIMITED") return `Este dispositivo tuvo demasiados intentos de autorización rechazados. Esperá ${wait} y avisá a RRHH.`;
+  return undefined;
+}
+
 export function formatClockErrorMessage(status: number, payload: ApiErrorPayload) {
   const code = payload.error?.code;
   if (code && messagesByCode[code]) return messagesByCode[code];
+  if (status === 429) {
+    const message = rateLimitMessage(code, publicRetryAfterSeconds(payload.error?.retryAfterSeconds));
+    if (message) return message;
+  }
   if (status === 429) return "Hay demasiados intentos seguidos desde este dispositivo. Esperá unos minutos y volvé a intentar.";
   if (code?.startsWith("CLOCK_") && payload.error?.message) return payload.error.message;
   if (status >= 500) return "El servicio no está disponible en este momento. Intentá nuevamente en unos minutos.";

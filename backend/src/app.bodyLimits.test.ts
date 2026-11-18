@@ -8,6 +8,7 @@ import { env } from "./config/env";
 import { authService } from "./modules/auth/auth.service";
 import { clockDevicesRepository } from "./modules/clock-devices/clockDevices.repository";
 import { employeesService } from "./modules/employees/employees.service";
+import { noveltiesService } from "./modules/novelties/novelties.service";
 import { timeEntriesService } from "./modules/time-entries/timeEntries.service";
 import { CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES, DEFAULT_JSON_BODY_LIMIT_BYTES, EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES } from "./shared/http/bodyLimits";
 import { generateClockDeviceSecret, hashClockDeviceSecret } from "./shared/security/clockDeviceCredentials";
@@ -31,6 +32,10 @@ vi.mock("./modules/time-entries/timeEntries.service", async (importOriginal) => 
 vi.mock("./modules/employees/employees.service", async (importOriginal) => {
   const original = await importOriginal<typeof import("./modules/employees/employees.service")>();
   return { ...original, employeesService: { ...original.employeesService, createDocument: vi.fn() } };
+});
+vi.mock("./modules/novelties/novelties.service", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./modules/novelties/novelties.service")>();
+  return { ...original, noveltiesService: { ...original.noveltiesService, create: vi.fn(), createWithDocument: vi.fn() } };
 });
 vi.mock("./modules/auth/auth.service", async (importOriginal) => {
   const original = await importOriginal<typeof import("./modules/auth/auth.service")>();
@@ -67,6 +72,7 @@ beforeEach(() => {
   vi.mocked(timeEntriesService.clockStatusByEmployee).mockResolvedValue({ employee: { id: EMPLOYEE_ID }, openShift: null } as never);
   vi.mocked(timeEntriesService.clockPhotoPunchIdempotent).mockResolvedValue({ workShift: { id: "shift-1" } } as never);
   vi.mocked(employeesService.createDocument).mockResolvedValue({ id: EMPLOYEE_ID } as never);
+  vi.mocked(noveltiesService.createWithDocument).mockResolvedValue([] as never);
   vi.mocked(authService.getCurrentUser).mockResolvedValue({ id: USER_ID, email: "rrhh@example.com", role: "NIVEL_1_RRHH", status: "ACTIVO" } as never);
 });
 
@@ -223,5 +229,29 @@ describe("F11 — POST /api/employees/:id/documents: 36 MiB, parseado después d
   it("Content-Length por encima de 36 MiB → 413", async () => {
     expect(await rawRequest({ path: `/employees/${EMPLOYEE_ID}/documents`, authorization: userAuthorization, declaredLength: EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES + 1 })).toMatchObject({ status: 413, code: "PAYLOAD_TOO_LARGE" });
     expect(employeesService.createDocument).not.toHaveBeenCalled();
+  });
+});
+
+// Etapa 8 de cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §15.1).
+describe("POST /api/novelties/with-document: mismo límite que un documento, parseado después de auth y rol", () => {
+  const noveltyBody = (bytes: number) => JSON.stringify({
+    employeeIds: [EMPLOYEE_ID], noveltyTypeId: EMPLOYEE_ID, fromDate: "2026-11-16",
+    document: { fileName: "certificado.pdf", fileMimeType: "application/pdf", fileSizeBytes: bytes, fileBase64: "A".repeat(bytes) },
+  });
+
+  it("un documento de 2 MB (> 1 MiB) llega al servicio", async () => {
+    expect((await rawRequest({ path: "/novelties/with-document", authorization: userAuthorization, body: noveltyBody(2 * MIB) })).status).toBe(201);
+    expect(noveltiesService.createWithDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it("sin sesión, el body no se parsea: un JSON inválido de 2 MB recibe 401", async () => {
+    expect(await rawRequest({ path: "/novelties/with-document", body: `{${"A".repeat(2 * MIB)}` })).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+  });
+
+  it("el alta sin documento sigue limitada a 1 MiB", async () => {
+    // Mismo patrón que los demás 413: se declara el tamaño sin enviar el cuerpo
+    // (el servidor responde y cierra antes de leerlo; enviarlo vuelve el test intermitente).
+    expect(await rawRequest({ path: "/novelties", authorization: userAuthorization, declaredLength: DEFAULT_JSON_BODY_LIMIT_BYTES + 1 })).toMatchObject({ status: 413, code: "PAYLOAD_TOO_LARGE" });
+    expect(noveltiesService.create).not.toHaveBeenCalled();
   });
 });

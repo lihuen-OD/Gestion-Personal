@@ -30,6 +30,24 @@ describe("apiClient del fichador — errores para la persona que ficha", () => {
     await expect(apiRequest("/clock/employees?search=go")).rejects.toMatchObject({ status: 429, message: expect.stringMatching(/demasiados intentos/) });
   });
 
+  it.each([
+    ["CLOCK_SEARCH_RATE_LIMITED", 45, "Se hicieron muchas búsquedas seguidas en este equipo. Esperá 45 segundos y volvé a buscar."],
+    ["CLOCK_STATUS_RATE_LIMITED", 61, "Este equipo alcanzó el límite de operaciones. Esperá 2 minutos y volvé a intentar. Si se repite, avisá a RRHH."],
+    ["CLOCK_PUNCH_RATE_LIMITED", 60, "Este equipo alcanzó el límite de operaciones. Esperá 1 minuto y volvé a intentar. Si se repite, avisá a RRHH."],
+    ["CLOCK_ATTEMPT_RATE_LIMITED", 1, "Este equipo alcanzó el límite de operaciones. Esperá 1 segundo y volvé a intentar. Si se repite, avisá a RRHH."],
+    ["CLOCK_DEVICE_RATE_LIMITED", 300, "Este equipo alcanzó el límite de operaciones. Esperá 5 minutos y volvé a intentar. Si se repite, avisá a RRHH."],
+    ["CLOCK_NETWORK_RATE_LIMITED", 120, "Hay demasiadas operaciones desde esta red. Esperá 2 minutos y volvé a intentar. Si se repite, avisá a RRHH."],
+    ["CLOCK_AUTH_RATE_LIMITED", 900, "Este dispositivo tuvo demasiados intentos de autorización rechazados. Esperá 15 minutos y avisá a RRHH."],
+  ])("§33: 429 %s distingue el cupo y conserva la espera (%i s)", async (code, retryAfterSeconds, message) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(429, { error: { code, message: "texto del backend", retryAfterSeconds } })));
+    await expect(apiRequest("/clock/status")).rejects.toMatchObject({ status: 429, code, message, retryAfterSeconds });
+  });
+
+  it("§33: 429 con código pero sin espera válida: pide esperar unos minutos", () => {
+    expect(formatClockErrorMessage(429, { error: { code: "CLOCK_SEARCH_RATE_LIMITED", retryAfterSeconds: "x" } })).toBe("Se hicieron muchas búsquedas seguidas en este equipo. Esperá unos minutos y volvé a buscar.");
+    expect(formatClockErrorMessage(429, { error: { code: "RATE_LIMITED_OTRO" } })).toMatch(/demasiados intentos/);
+  });
+
   it("409 de negocio CLOCK_*: usa el mensaje del backend (ya escrito para el kiosco)", () => {
     expect(formatClockErrorMessage(409, { error: { code: "CLOCK_ALREADY_OPEN", message: "Ya existe un ingreso abierto para este empleado." } })).toBe("Ya existe un ingreso abierto para este empleado.");
   });

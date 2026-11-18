@@ -1,16 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NoveltyModal } from "./NoveltyModal";
 import { ApiError } from "../../services/api/apiClient";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import { noveltyTypeApiService } from "../../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../../services/api/hourConceptApiService";
-import type { Employee } from "../../types";
+import type { NoveltyCoveragePreview, NoveltyCoveragePreviewDay } from "../../services/api/noveltyApiService";
+import type { Employee, Novelty } from "../../types";
 import type { NoveltyType } from "../../types/noveltyType.types";
+import { defaultNoveltyTypeCoverage } from "../../utils/noveltyTypeCoverage";
 
 vi.mock("../../services/api/noveltyApiService", () => ({
-  noveltyApiService: { create: vi.fn() },
+  noveltyApiService: { create: vi.fn(), createWithDocument: vi.fn(), previewCoverage: vi.fn() },
 }));
 vi.mock("../../services/api/noveltyTypeApiService", () => ({
   noveltyTypeApiService: { getAll: vi.fn() },
@@ -123,7 +125,9 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
     finnegansCode: null,
@@ -136,456 +140,449 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
   };
 }
 
-const llegadaTardeType = buildNoveltyType({
-  id: "type-llegada-tarde",
-  code: "NOV-LLEGADA-TARDE",
-  name: "Llegada tarde",
-  rules: {
-    exportsToFinnegans: false,
-    requiresApproval: false,
-    requiresDocumentation: false,
-    allowsHours: true,
-    timeEntryBehavior: "NO_BLOQUEA",
-    allowsDateRange: false,
-    finnegansValueUnit: "HOURS",
-    finnegansRequiresValidity: false,
-  },
+
+// Etapa 8 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §15): los cinco tipos de
+// validación son sólo configuraciones; el formulario nunca mira el nombre.
+const baseRules = buildNoveltyType().rules;
+const base = defaultNoveltyTypeCoverage();
+const tramite = buildNoveltyType({
+  id: "type-tramite", code: "TB", name: "Trámite bancario",
+  rules: { ...baseRules, allowsDateRange: false },
+  coverage: { ...base, mode: "FIXED_MINUTES", fixedMinutes: 240, onDayOff: "NO_COVERAGE", onHoliday: "NO_COVERAGE", countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" },
 });
+const vacaciones = buildNoveltyType({
+  id: "type-vacaciones", code: "VAC", name: "Vacaciones",
+  coverage: { ...base, mode: "EXPECTED_SCHEDULE", dayRule: "WORK_OBLIGATION", appliesSpecialHours: true, countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" },
+});
+const maternidad = buildNoveltyType({
+  id: "type-maternidad", code: "MAT", name: "Maternidad",
+  coverage: { ...base, mode: "FIXED_MINUTES", fixedMinutes: 480, dayRule: "SELECTED_WEEKDAYS", weekdays: [1, 2, 3, 4, 5], onDayOff: "COVER", onHoliday: "NO_COVERAGE", countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" },
+});
+const llegadaTarde = buildNoveltyType({
+  id: "type-llegada", code: "LLT", name: "Llegada tarde",
+  rules: { ...baseRules, requiresApproval: false, allowsDateRange: false, allowsHours: true },
+  coverage: { ...base, mode: "MANUAL_MINUTES" },
+});
+const faltaSinAviso = buildNoveltyType({
+  id: "type-falta", code: "FSA", name: "Falta sin aviso",
+  coverage: { ...base, realWorkCompatibility: "INCOMPATIBLE" },
+});
+
+function previewDay(date: string, overrides: Partial<NoveltyCoveragePreviewDay> = {}): NoveltyCoveragePreviewDay {
+  return {
+    date, outcome: "COVERED", scheduleReviewReason: null, reviewStatus: "NOT_REQUIRED", label: "Cubre", expectedMinutes: 480, baseMinutes: 480,
+    resolution: null, resolvedBaseMinutes: null, effectiveBaseMinutes: 480, multiplier: 1, computedMinutes: 480, countsTowardTotal: true,
+    workedMinutes: 0, stateWhenApproved: "COUNTED", reviewReasons: [], ...overrides,
+  };
+}
+
+function previewOf(days: NoveltyCoveragePreviewDay[], initialStatus: NoveltyCoveragePreview["initialStatus"] = "APROBADO"): NoveltyCoveragePreview {
+  return {
+    noveltyType: { id: "type", code: "T", name: "Tipo" },
+    initialStatus,
+    employees: [{ employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" }, days, totals: { days: days.length, coveredDays: 0, pendingReviewDays: 0, baseMinutes: 0, computedMinutes: 0 } }],
+  };
+}
+
+function renderModal(types: NoveltyType[], props: Partial<Parameters<typeof NoveltyModal>[0]> = {}) {
+  vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue(types);
+  const saved = vi.fn();
+  render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={saved} initialFromDate="2026-11-16" {...props} />);
+  return { saved };
+}
+
+async function chooseType(name: string) {
+  await userEvent.selectOptions(await screen.findByRole("combobox", { name: "Tipo de novedad" }), name);
+}
+
+const createdNovelties = [{ id: "nov-1", employeeId: "employee-1" }] as Novelty[];
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(hourConceptApiService.getAll).mockResolvedValue([]);
   authAs("Nivel 1 - RRHH");
+  vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([previewDay("2026-11-16")]));
+  vi.mocked(noveltyApiService.create).mockResolvedValue(createdNovelties);
+  vi.mocked(noveltyApiService.createWithDocument).mockResolvedValue(createdNovelties);
 });
 
-describe("NoveltyModal — Etapa 15G.2 (precarga desde alerta)", () => {
-  it("precarga fecha, cantidad de horas y observación cuando se pasan como props", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
+describe("NoveltyModal — Etapa 8: adaptación según el Tipo", () => {
+  it("Trámite bancario: 4 h fijas, sin duración ni fecha hasta; preview 4 h y conflicto con trabajo real", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([
+      previewDay("2026-11-16", { baseMinutes: 240, effectiveBaseMinutes: 240, computedMinutes: 240, workedMinutes: 300, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] }),
+    ]));
+    renderModal([tramite]);
 
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={vi.fn()}
-        initialFromDate="2026-08-20"
-        initialQuantityHours={2}
-        initialObservation="Generado desde alerta de fichador (Llegada tarde, alerta alert-1)."
-        suggestedNoveltyTypeCode="NOV-LLEGADA-TARDE"
-        contextNote="Se precargaron los datos detectados por la alerta."
-      />,
-    );
-
-    await screen.findByText("Llegada tarde");
-
-    expect(screen.getByLabelText("Desde")).toHaveValue("2026-08-20");
-    expect(screen.getByLabelText("Cantidad de horas")).toHaveValue(2);
-    expect(screen.getByText("Generado desde alerta de fichador (Llegada tarde, alerta alert-1).")).toBeInTheDocument();
-  });
-
-  it("la observación precargada es visible y editable aunque el tipo no exija documentación (Llegada tarde no la exige)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={vi.fn()}
-        initialObservation="Generado desde alerta de fichador."
-        contextNote="Se precargaron los datos detectados por la alerta."
-      />,
-    );
-
-    await screen.findByText("Llegada tarde");
-    const textarea = screen.getByLabelText("Observación") as HTMLTextAreaElement;
-    expect(textarea).toHaveValue("Generado desde alerta de fichador.");
-
-    await userEvent.clear(textarea);
-    await userEvent.type(textarea, "Corregido por el usuario");
-    expect(textarea).toHaveValue("Corregido por el usuario");
-  });
-
-  it("preselecciona el tipo sugerido por código cuando existe entre los tipos activos", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType({ id: "type-vac", code: "NOV-VACACIONES", name: "Vacaciones" }), llegadaTardeType]);
-
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={vi.fn()}
-        suggestedNoveltyTypeCode="NOV-LLEGADA-TARDE"
-      />,
-    );
-
-    await waitFor(() => expect(screen.getByLabelText("Tipo de novedad")).toHaveValue("type-llegada-tarde"));
-  });
-
-  it("si el código sugerido no existe entre los tipos activos, cae al primer tipo activo sin romper (no regresión)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType({ id: "type-vac", code: "NOV-VACACIONES", name: "Vacaciones" })]);
-
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={vi.fn()}
-        suggestedNoveltyTypeCode="NOV-CODIGO-INEXISTENTE"
-      />,
-    );
-
-    await waitFor(() => expect(screen.getByLabelText("Tipo de novedad")).toHaveValue("type-vac"));
-  });
-
-  it("sin ningún prop de precarga, se comporta exactamente igual que la carga manual (sin regresión)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
-    expect(screen.getByLabelText("Cantidad de horas")).toHaveValue(1);
-    expect(screen.queryByText(/Se precargaron los datos/)).not.toBeInTheDocument();
-  });
-
-  it("muestra el contextNote cuando se pasa (aviso de que los datos vienen de una alerta)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={vi.fn()}
-        contextNote="Se precargaron los datos detectados por la alerta. Revisá el tipo y la observación antes de guardar."
-      />,
-    );
-
-    expect(await screen.findByText(/Se precargaron los datos detectados por la alerta/)).toBeInTheDocument();
-  });
-
-  it("guardar sigue usando el flujo normal de creación de novedades (noveltyApiService.create), con los valores precargados", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
-    const saved = vi.fn();
-
-    render(
-      <NoveltyModal
-        employees={[buildEmployee()]}
-        close={vi.fn()}
-        saved={saved}
-        initialFromDate="2026-08-20"
-        initialQuantityHours={2}
-        initialObservation="Generado desde alerta de fichador."
-        suggestedNoveltyTypeCode="NOV-LLEGADA-TARDE"
-      />,
-    );
-
-    await screen.findByText("Llegada tarde");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        employeeIds: ["employee-1"],
-        noveltyTypeId: "type-llegada-tarde",
-        fromDate: "2026-08-20",
-        quantityHours: 2,
-        observation: "Generado desde alerta de fichador.",
-      }),
-    ));
-    expect(saved).toHaveBeenCalledWith([{ id: "novelty-created" }]);
-  });
-
-  // Ajuste posterior (evitar over-fetching, docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md):
-  // confirma en el propio componente -- no sólo en las páginas que lo
-  // montan -- que un solo empleado con nada más que id/legajo/nombre/
-  // apellido (el subconjunto mínimo que ya trae una alerta) alcanza para
-  // que el modal funcione de punta a punta, sin necesitar el resto de los
-  // ~45 campos de Employee.
-  it("funciona con un empleado mínimo (id/legajo/firstName/lastName), sin el resto de los campos de Employee", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
-    const minimalEmployee = { id: "employee-9", legajo: "900", firstName: "Luz", lastName: "Perez" } as Employee;
-
-    render(<NoveltyModal employees={[minimalEmployee]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
-    expect(screen.getByText("900 · Perez, Luz")).toBeInTheDocument();
+    expect(await screen.findByText("Este tipo cubre 4 h por día según su configuración.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Fecha *")).toHaveValue("2026-11-16");
+    expect(screen.queryByLabelText(/Hasta/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Duración/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/Cubre: 4 h/)).toBeInTheDocument();
+    expect(screen.getByText("Trabajo registrado: 5 h")).toBeInTheDocument();
+    expect(screen.getByText(/Existe trabajo registrado en este día y este tipo de novedad no puede coexistir con horas trabajadas/)).toBeInTheDocument();
+    expect(noveltyApiService.previewCoverage).toHaveBeenCalledWith({ employeeIds: ["employee-1"], noveltyTypeId: "type-tramite", fromDate: "2026-11-16", toDate: null, quantityHours: null }, expect.anything());
 
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ toDate: null, quantityHours: null, quantityDays: null })));
+  });
 
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ employeeIds: ["employee-9"] }),
-    ));
+  it("Vacaciones: rango opcional y vista previa por día (domingo ×2, franco, feriado no convocado, sin jornada)", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([
+      previewDay("2026-11-16"),
+      previewDay("2026-11-17", { outcome: "DAY_OFF", label: "Franco", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0 }),
+      previewDay("2026-11-20", { outcome: "HOLIDAY_NOT_CONVOKED", label: "Feriado sin convocatoria", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0 }),
+      previewDay("2026-11-22", { multiplier: 2, computedMinutes: 960 }),
+      previewDay("2026-11-23", { outcome: "SCHEDULE_UNRESOLVED", scheduleReviewReason: "EXPECTED_MINUTES_UNKNOWN", reviewStatus: "PENDING", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["SCHEDULE_UNRESOLVED"] }),
+    ], "PENDIENTE"));
+    renderModal([vacaciones]);
+
+    expect(await screen.findByText("Las horas se calcularán según la jornada que debía cumplir la persona.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hasta (opcional)")).toHaveValue("");
+    await userEvent.type(screen.getByLabelText("Hasta (opcional)"), "2026-11-23");
+
+    const panel = screen.getByRole("region", { name: "Vista previa de cobertura" });
+    await within(panel).findByText("Lunes 16/11");
+    expect(within(panel).getByText("Franco")).toBeInTheDocument();
+    expect(within(panel).getByText("Feriado · No convocado")).toBeInTheDocument();
+    expect(within(panel).getByText("Cubre: 8 h · Multiplicador ×2 · Liquidación: 16 h")).toBeInTheDocument();
+    expect(within(panel).getByText("Requiere revisión")).toBeInTheDocument();
+    expect(within(panel).getByText("No se pudo determinar la jornada.")).toBeInTheDocument();
+    expect(within(panel).getByText("Cobertura provisional: 0 h")).toBeInTheDocument();
+    expect(within(panel).getByText("Estas horas se muestran como vista previa. No sumarán hasta que la novedad sea aprobada.")).toBeInTheDocument();
+    // Resumen agregado sólo con lo calculado por el backend.
+    expect(within(panel).getByText("Computables").nextSibling).toHaveTextContent("16 h");
+    expect(within(panel).getByText("Para liquidación").nextSibling).toHaveTextContent("24 h");
+    expect(within(panel).getByText("Requieren revisión").nextSibling).toHaveTextContent("1 día");
+    expect(panel.textContent).not.toMatch(/SCHEDULE_UNRESOLVED|EXPECTED_MINUTES_UNKNOWN|DAY_OFF|HOLIDAY_NOT_CONVOKED/);
+    expect(noveltyApiService.previewCoverage).toHaveBeenLastCalledWith(expect.objectContaining({ toDate: "2026-11-23" }), expect.anything());
+  });
+
+  it("Maternidad: 8 h fijas, fin de semana fuera y política de feriado tal como la resolvió el backend", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([
+      previewDay("2026-11-20", { outcome: "HOLIDAY_EXCLUDED", label: "Feriado: no cuenta", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0 }),
+      previewDay("2026-11-21", { outcome: "WEEKDAY_NOT_INCLUDED", label: "Día no incluido", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0 }),
+    ]));
+    renderModal([maternidad]);
+
+    expect(await screen.findByText("Este tipo cubre 8 h por día según su configuración.")).toBeInTheDocument();
+    expect(await screen.findByText("Feriado · No cuenta")).toBeInTheDocument();
+    expect(screen.getByText("Día no incluido")).toBeInTheDocument();
+  });
+
+  it("Llegada tarde: pide duración HH:mm, es informativa y envía la cantidad una sola vez", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([
+      previewDay("2026-11-16", { baseMinutes: 90, effectiveBaseMinutes: 90, computedMinutes: 90, countsTowardTotal: false, stateWhenApproved: "INFORMATIVE" }),
+    ]));
+    renderModal([llegadaTarde]);
+
+    const duration = await screen.findByLabelText("Duración *");
+    expect(screen.queryByLabelText(/Cantidad de horas informativa/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Hasta/)).not.toBeInTheDocument();
+    expect(screen.getByText("Completá la fecha y la duración para ver cómo quedará la novedad.")).toBeInTheDocument();
+    await userEvent.type(duration, "01:30");
+
+    expect(await screen.findByText("Duración: 1 h 30 min · No suma al total")).toBeInTheDocument();
+    expect(screen.getByText("Informativa", { selector: ".novelty-preview-day-title" })).toBeInTheDocument();
+    expect(noveltyApiService.previewCoverage).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 1.5 }), expect.anything());
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 1.5, quantityDays: null, toDate: null })));
+  });
+
+  it("Falta sin aviso: sin horas; con trabajo registrado avisa que deberá revisarse", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockResolvedValue(previewOf([
+      previewDay("2026-11-16", { outcome: "NO_COVERAGE", label: "No registra tiempo", baseMinutes: 0, effectiveBaseMinutes: 0, computedMinutes: 0, countsTowardTotal: false, expectedMinutes: null, workedMinutes: 480, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] }),
+    ]));
+    renderModal([faltaSinAviso]);
+
+    await screen.findByLabelText("Observación");
+    expect(screen.queryByLabelText(/Duración|Cantidad de horas/)).not.toBeInTheDocument();
+    expect(await screen.findByText("Sin horas de cobertura")).toBeInTheDocument();
+    expect(screen.getByText("Existe trabajo registrado en la fecha. La novedad deberá revisarse.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: null })));
+  });
+
+  it("registro heredado: con allowsHours fuera de la cantidad manual, la cantidad es sólo informativa", async () => {
+    const legacy = buildNoveltyType({ id: "type-legacy", name: "Licencia con horas", rules: { ...baseRules, allowsHours: true } });
+    renderModal([legacy]);
+
+    const hours = await screen.findByLabelText("Cantidad de horas informativa");
+    expect(screen.getByText("Este valor es sólo un dato adicional. No cubre horas ni suma al total.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Duración/)).not.toBeInTheDocument();
+    await userEvent.type(hours, "2");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 2 })));
+    expect(noveltyApiService.previewCoverage).not.toHaveBeenCalledWith(expect.objectContaining({ quantityHours: 2 }), expect.anything());
+  });
+
+  it("cambiar de tipo adapta el formulario, limpia lo que no aplica y recalcula la vista previa", async () => {
+    renderModal([llegadaTarde, vacaciones]);
+    await userEvent.type(await screen.findByLabelText("Duración *"), "01:00");
+    await waitFor(() => expect(noveltyApiService.previewCoverage).toHaveBeenCalledWith(expect.objectContaining({ noveltyTypeId: "type-llegada" }), expect.anything()));
+
+    await chooseType("Vacaciones");
+
+    expect(screen.queryByLabelText(/Duración/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Hasta (opcional)")).toBeInTheDocument();
+    await waitFor(() => expect(noveltyApiService.previewCoverage).toHaveBeenLastCalledWith(expect.objectContaining({ noveltyTypeId: "type-vacaciones", quantityHours: null }), expect.anything()));
+    expect(screen.queryByText("TB")).not.toBeInTheDocument();
   });
 });
 
-// Etapa 15G.3 (docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md): el
-// backend ya arma un mensaje humano y especifico (tipo + legajo, sin ids
-// tecnicos) para NOVELTY_DUPLICATE/NOVELTY_OVERLAP -- estos tests
-// confirman que el modal lo muestra tal cual, sin reimplementar la regla
-// de duplicado/solapamiento en el frontend (sólo refleja lo que el
-// backend ya decidió) y sin romper el manejo de errores existente para
-// otros codigos.
-describe("NoveltyModal — Etapa 15G.3 (conflicto de duplicado/solapamiento)", () => {
-  it("NOVELTY_DUPLICATE: muestra el mensaje especifico del backend (tipo + legajo), no el generico", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockRejectedValue(
-      new ApiError('Ya existe una novedad "Llegada tarde" para el legajo 100 en la fecha seleccionada.', "NOVELTY_DUPLICATE", 409),
-    );
+describe("NoveltyModal — Etapa 8: fechas", () => {
+  it("Hasta vacío es un solo día (toDate null), nunca un rango abierto", async () => {
+    renderModal([vacaciones]);
+    await screen.findByLabelText("Hasta (opcional)");
+    expect(screen.getByText("Si la dejás vacía, la novedad vale sólo para la fecha desde.")).toBeInTheDocument();
 
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    expect(await screen.findByText('Ya existe una novedad "Llegada tarde" para el legajo 100 en la fecha seleccionada.')).toBeInTheDocument();
-    expect(screen.queryByText("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.")).not.toBeInTheDocument();
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ fromDate: "2026-11-16", toDate: null })));
   });
 
-  it("NOVELTY_OVERLAP: muestra el mensaje especifico del backend, sin ningun id/UUID tecnico visible", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockRejectedValue(
-      new ApiError('Ya existe una novedad "Llegada tarde" para el legajo 100 que se superpone con el rango de fechas seleccionado.', "NOVELTY_OVERLAP", 409),
-    );
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
+  it("Hasta anterior a Desde se marca y no se envía ni se pide vista previa", async () => {
+    renderModal([vacaciones]);
+    await userEvent.type(await screen.findByLabelText("Hasta (opcional)"), "2026-11-10");
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
 
-    const message = await screen.findByText(/se superpone con el rango de fechas/);
-    expect(message).toBeInTheDocument();
-    expect(message.textContent?.toLowerCase()).not.toMatch(/\buuid\b|employee-1|type-llegada-tarde/);
+    const to = screen.getByLabelText("Hasta (opcional)");
+    expect(to).toHaveAttribute("aria-invalid", "true");
+    expect(to).toHaveAccessibleDescription(/La fecha hasta no puede ser anterior a la fecha desde./);
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+    expect(noveltyApiService.previewCoverage).not.toHaveBeenCalledWith(expect.objectContaining({ toDate: "2026-11-10" }), expect.anything());
   });
 
-  it("otros codigos de error siguen mostrando el mensaje generico existente (sin regresion)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockRejectedValue(
-      new ApiError("El tipo de novedad no está disponible.", "NOVELTY_TYPE_NOT_AVAILABLE", 400),
-    );
+  it("si el tipo exige vigencia, Hasta es obligatoria", async () => {
+    renderModal([buildNoveltyType({ id: "type-vig", name: "Con vigencia", rules: { ...baseRules, finnegansRequiresValidity: true } })]);
+    await screen.findByLabelText("Hasta *");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    expect(screen.getByText("Este tipo de novedad exige indicar la fecha hasta.")).toBeInTheDocument();
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+  });
+});
 
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
+describe("NoveltyModal — Etapa 8: observación, documentación y aprobación", () => {
+  it("observación obligatoria: marca el campo, asocia el error y lleva el foco", async () => {
+    renderModal([buildNoveltyType({ id: "type-obs", name: "Con observación", rules: { ...baseRules, requiresObservation: true } })], { initialObservation: undefined });
+    const observation = await screen.findByLabelText("Observación *");
 
-    await screen.findByText("Llegada tarde");
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
 
+    expect(observation).toHaveFocus();
+    expect(observation).toHaveAttribute("aria-invalid", "true");
+    expect(observation).toHaveAccessibleDescription("Escribí la observación: este tipo de novedad la exige.");
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+    await userEvent.type(observation, "Detalle");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ observation: "Detalle" })));
+  });
+
+  it("observación opcional: se puede escribir y no es obligatoria", async () => {
+    renderModal([vacaciones]);
+    expect(await screen.findByLabelText("Observación")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ observation: null })));
+  });
+
+  // Etapa 8 (§15.1): novedad y documento viajan en un único pedido; el backend garantiza la regla.
+  const conCertificado = buildNoveltyType({ id: "type-doc", name: "Con certificado", rules: { ...baseRules, requiresDocumentation: true } });
+
+  it("documentación obligatoria sin archivo: no envía nada", async () => {
+    renderModal([conCertificado]);
+    await screen.findByLabelText("Documentación *");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    expect(screen.getByText("Adjuntá la documentación: este tipo de novedad la exige.")).toBeInTheDocument();
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+    expect(noveltyApiService.createWithDocument).not.toHaveBeenCalled();
+  });
+
+  it("documentación obligatoria con archivo: un solo pedido con la novedad y su documento", async () => {
+    const { saved } = renderModal([conCertificado]);
+    const file = new File(["%PDF"], "certificado.pdf", { type: "application/pdf" });
+    await userEvent.upload(await screen.findByLabelText("Documentación *"), file);
+    await userEvent.type(screen.getByLabelText("Observación"), "Certificado médico");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await waitFor(() => expect(noveltyApiService.createWithDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ employeeIds: ["employee-1"], noveltyTypeId: "type-doc", observation: "Certificado médico" }), file, "Certificado médico",
+    ));
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+    expect(saved).toHaveBeenCalledWith(createdNovelties);
+  });
+
+  it("si el documento no se guarda, se informa que la novedad no se creó; reintentar no duplica", async () => {
+    vi.mocked(noveltyApiService.createWithDocument).mockRejectedValueOnce(
+      new ApiError("No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.", "NOVELTY_DOCUMENT_UPLOAD_FAILED", 502),
+    );
+    const { saved } = renderModal([conCertificado]);
+    await userEvent.upload(await screen.findByLabelText("Documentación *"), new File(["x"], "c.pdf", { type: "application/pdf" }));
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    expect(await screen.findByText("No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.")).toBeInTheDocument();
+    expect(saved).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Guardar novedad" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(saved).toHaveBeenCalledTimes(1));
+    // El primer intento no creó nada (el backend compensa): sólo el segundo crea.
+    expect(noveltyApiService.createWithDocument).toHaveBeenCalledTimes(2);
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
+  });
+
+  it("documentación opcional: no se pide archivo y el alta es la de siempre", async () => {
+    renderModal([vacaciones]);
+    await screen.findByLabelText("Observación");
+    expect(screen.queryByLabelText(/Documentación/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalled());
+    expect(noveltyApiService.createWithDocument).not.toHaveBeenCalled();
+  });
+
+  it("aprobación: para otros roles queda pendiente y no suma; RRHH la crea aprobada", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    renderModal([buildNoveltyType({ ...vacaciones, allowedLoadRoles: ["Nivel 2 - Supervisión / Gestión"] })]);
+    expect(await screen.findByText("Esta novedad quedará pendiente hasta ser aprobada. Mientras esté pendiente será visible, pero no sumará al total.")).toBeInTheDocument();
+  });
+
+  it("aprobación: RRHH ve que queda aprobada al guardar", async () => {
+    renderModal([vacaciones]);
+    expect(await screen.findByText("Este tipo requiere aprobación. Como RRHH, la novedad queda aprobada al guardarla.")).toBeInTheDocument();
+  });
+});
+
+describe("NoveltyModal — Etapa 8: vista previa", () => {
+  it("muestra 'calculando' y luego el resultado", async () => {
+    let resolve!: (value: NoveltyCoveragePreview) => void;
+    vi.mocked(noveltyApiService.previewCoverage).mockReturnValue(new Promise((done) => { resolve = done; }));
+    renderModal([tramite]);
+
+    expect(await screen.findByText("Calculando vista previa…")).toBeInTheDocument();
+    resolve(previewOf([previewDay("2026-11-16", { baseMinutes: 240, effectiveBaseMinutes: 240, computedMinutes: 240 })]));
+    expect(await screen.findByText("Cubre: 4 h · Liquidación: 4 h")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Vista previa actualizada: 1 día.");
+  });
+
+  it("si falla, informa sin bloquear el guardado y permite reintentar", async () => {
+    vi.mocked(noveltyApiService.previewCoverage).mockRejectedValueOnce(new Error("network"));
+    renderModal([tramite]);
+
+    expect(await screen.findByText("No pudimos calcular la vista previa. Intentá nuevamente.", { selector: ".novelty-preview-error p" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No pudimos calcular la vista previa.");
+    await userEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(await screen.findByText(/Cubre: 8 h/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalled());
+  });
+});
+
+describe("NoveltyModal — Etapa 8: errores del backend en lenguaje de negocio", () => {
+  it("período cerrado", async () => {
+    vi.mocked(noveltyApiService.create).mockRejectedValue(new ApiError("El período ya fue enviado a cierre.", "PERIOD_CLOSED", 409));
+    renderModal([tramite]);
+    await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    expect(await screen.findByText("No se puede cargar esta novedad porque el período ya está cerrado. Pedile a RRHH que la corrija si hace falta.")).toBeInTheDocument();
+  });
+
+  it("RRHH en período enviado a cierre: pide el motivo y lo envía", async () => {
+    vi.mocked(noveltyApiService.create).mockRejectedValueOnce(new ApiError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", "NOVELTY_CORRECTION_REASON_REQUIRED", 400));
+    renderModal([tramite]);
+    await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+
+    await userEvent.type(await screen.findByLabelText("Motivo de la corrección *"), "Carga tardía autorizada");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenLastCalledWith(expect.objectContaining({ correctionReason: "Carga tardía autorizada" })));
+  });
+
+  it("duplicado y solapamiento: se muestra el mensaje específico del backend", async () => {
+    vi.mocked(noveltyApiService.create).mockRejectedValue(new ApiError('Ya existe una novedad "Trámite bancario" para el legajo 100 en la fecha seleccionada.', "NOVELTY_DUPLICATE", 409));
+    renderModal([tramite]);
+    await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    expect(await screen.findByText('Ya existe una novedad "Trámite bancario" para el legajo 100 en la fecha seleccionada.')).toBeInTheDocument();
+  });
+
+  it("un error sin mensaje apto muestra el genérico", async () => {
+    vi.mocked(noveltyApiService.create).mockRejectedValue(new Error("TypeError: failed"));
+    renderModal([tramite]);
+    await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
     expect(await screen.findByText("No pudimos guardar la novedad. Revisá los datos e intentá nuevamente.")).toBeInTheDocument();
   });
 });
 
-// Etapa 15L.2B.1 (corrección puntual, docs/decisions/
-// NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md): allowsHours decide qué
-// cantidad se envía -- decisión operativa de la novedad, siempre respetada
-// sin importar finnegansValueUnit (que sólo describe cómo Finnegans va a
-// interpretar esa cantidad al exportar, un tema del exportador). No
-// modifica TimeEntry -- quantityHours/quantityDays son sólo metadato.
-describe("NoveltyModal — Etapa 15L.2B.1 (allowsHours decide la cantidad, independiente de finnegansValueUnit)", () => {
-  it("allowsHours=true envía quantityHours sin importar finnegansValueUnit=null", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+describe("NoveltyModal — Etapa 15G.2 (precarga desde alerta)", () => {
+  it("una cantidad sugerida va a la duración del tipo manual y la observación queda editable", async () => {
+    renderModal([llegadaTarde], { initialFromDate: "2026-08-20", initialQuantityHours: 2, initialObservation: "Ingreso 10:00", suggestedNoveltyTypeCode: "LLT", contextNote: "Precargado desde una alerta." });
 
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
-    ));
+    expect(await screen.findByLabelText("Duración *")).toHaveValue("02:00");
+    expect(screen.getByLabelText("Fecha *")).toHaveValue("2026-08-20");
+    expect(screen.getByLabelText("Observación")).toHaveValue("Ingreso 10:00");
+    expect(screen.getByText("Precargado desde una alerta.")).toBeInTheDocument();
   });
 
-  it("allowsHours=true + finnegansValueUnit=UNIT igual envía quantityHours (no se descarta en silencio)", async () => {
-    const type = buildNoveltyType({
-      id: "type-hours-unit",
-      code: "NOV-HOURS-UNIT",
-      name: "HorasUnidad",
-      rules: { ...buildNoveltyType().rules, allowsHours: true, finnegansValueUnit: "UNIT" },
-    });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
+  it("funciona con un empleado mínimo (id/legajo/nombre/apellido)", async () => {
+    const minimal = { id: "employee-9", legajo: "900", firstName: "Min", lastName: "Imo" } as Employee;
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([tramite]);
+    render(<NoveltyModal employees={[minimal]} close={vi.fn()} saved={vi.fn()} initialFromDate="2026-11-16" />);
 
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("HorasUnidad");
+    expect(await screen.findByText(/900 · /)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
-    ));
-  });
-
-  it("allowsHours=true + finnegansValueUnit=DAYS igual envía quantityHours", async () => {
-    const type = buildNoveltyType({
-      id: "type-hours-days",
-      code: "NOV-HOURS-DAYS",
-      name: "HorasDias",
-      rules: { ...buildNoveltyType().rules, allowsHours: true, finnegansValueUnit: "DAYS" },
-    });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("HorasDias");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ quantityHours: expect.any(Number), quantityDays: null }),
-    ));
-  });
-
-  // Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cierra
-  // el gap que dejaba abierto 15L.2C -- antes el frontend calculaba y
-  // enviaba un quantityDays (recortado al mes de fromDate, bug real) sin
-  // importar si el tipo lo necesitaba. Ahora nunca se envía ninguno: el
-  // backend es la única autoridad y lo recalcula siempre sobre el rango
-  // real completo, sin importar finnegansValueUnit.
-  it("allowsHours=false: nunca envía quantityDays calculado (el backend lo recalcula), sin importar finnegansValueUnit=UNIT", async () => {
-    const type = buildNoveltyType({
-      id: "type-sancion",
-      code: "NOV-SANCION",
-      name: "Sancion",
-      rules: { ...buildNoveltyType().rules, allowsHours: false, finnegansValueUnit: "UNIT" },
-    });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "novelty-created" } as never]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Sancion");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ quantityHours: null, quantityDays: null }),
-    ));
-  });
-
-  it("allowsHours=false + finnegansValueUnit=HOURS: el input de horas ni siquiera se muestra (combinación imposible desde este formulario, documentada para 15L.2C)", async () => {
-    const type = buildNoveltyType({
-      id: "type-hours-export-no-capture",
-      code: "NOV-HOURS-EXPORT",
-      name: "SoloExportaHoras",
-      rules: { ...buildNoveltyType().rules, allowsHours: false, finnegansValueUnit: "HOURS" },
-    });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("SoloExportaHoras");
-    expect(screen.queryByLabelText("Cantidad de horas")).not.toBeInTheDocument();
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ["employee-9"] })));
   });
 });
 
-// Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md §11/§20):
-// previsualización de "Cantidad de días" -- nunca se envía como el dato
-// definitivo (eso lo decide el backend), pero le muestra a RRHH un número
-// coherente con lo que el backend va a calcular, sobre el rango real
-// completo (nunca recortado al mes de fromDate, el bug que tenía la lógica
-// duplicada antes de esta etapa).
-describe("NoveltyModal — Etapa 15L.5 (previsualización de Cantidad de días)", () => {
-  it("DAYS: no hay ningún input manual de cantidad de días -- sólo texto de previsualización", async () => {
-    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Suspension");
-    expect(screen.queryByLabelText("Cantidad de días")).not.toBeInTheDocument();
-    expect(screen.getByText(/Cantidad de días:/)).toBeInTheDocument();
-  });
-
-  it("HOURS: sigue mostrando el input manual de cantidad de horas (sin cambios)", async () => {
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([llegadaTardeType]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Llegada tarde");
-    expect(screen.getByLabelText("Cantidad de horas")).toBeInTheDocument();
-    expect(screen.queryByText(/Cantidad de días:/)).not.toBeInTheDocument();
-  });
-
-  it("mismo día (Desde = Hasta): previsualiza 1 día", async () => {
-    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-    await screen.findByText("Suspension");
-
-    expect(screen.getByText("Cantidad de días: 1")).toBeInTheDocument();
-  });
-
-  it("cross-month 30/07 → 02/08: previsualiza 4 días, no sólo los del mes de Desde", async () => {
-    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-    await screen.findByText("Suspension");
-
-    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-07-30" } });
-    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-08-02" } });
-
-    expect(screen.getByText("Cantidad de días: 4")).toBeInTheDocument();
-  });
-
-  it("cambio de año 31/12 → 02/01: previsualiza 3 días", async () => {
-    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-    await screen.findByText("Suspension");
-
-    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-12-31" } });
-    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2027-01-02" } });
-
-    expect(screen.getByText("Cantidad de días: 3")).toBeInTheDocument();
-  });
-
-  it("cambiar cualquiera de las dos fechas actualiza la previsualización", async () => {
-    const type = buildNoveltyType({ id: "type-dias", code: "NOV-DIAS", name: "Suspension", rules: { ...buildNoveltyType().rules, allowsHours: false } });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-    await screen.findByText("Suspension");
-    expect(screen.getByText("Cantidad de días: 1")).toBeInTheDocument();
-
-    // "Desde" arranca en la fecha de hoy: se fija explícitamente para que el
-    // test no dependa del día en que corre (antes fallaba después del 5/9/2026).
-    fireEvent.change(screen.getByLabelText("Desde"), { target: { value: "2026-09-01" } });
-    fireEvent.change(screen.getByLabelText("Hasta"), { target: { value: "2026-09-05" } });
-    expect(screen.getByText(/Cantidad de días: \d+/)).toBeInTheDocument();
-    expect(screen.queryByText("Cantidad de días: 1")).not.toBeInTheDocument();
-  });
-});
-
-// Etapa 15L.2B, punto 25: filtra el catálogo por allowedLoadRoles del
-// usuario actual -- RRHH mantiene autoridad global (mismo criterio que
-// assertCanLoad en el backend).
 describe("NoveltyModal — Etapa 15L.2B (filtro por allowedLoadRoles)", () => {
   it("un rol no-RRHH sólo ve los tipos que puede cargar", async () => {
     authAs("Nivel 2 - Supervisión / Gestión");
-    const loadable = buildNoveltyType({ id: "type-loadable", code: "NOV-LOADABLE", name: "Cargable", allowedLoadRoles: ["Nivel 2 - Supervisión / Gestión"] });
-    const notLoadable = buildNoveltyType({ id: "type-not-loadable", code: "NOV-NOLOAD", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([loadable, notLoadable]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Cargable");
+    renderModal([
+      buildNoveltyType({ id: "type-loadable", name: "Cargable", allowedLoadRoles: ["Nivel 2 - Supervisión / Gestión"] }),
+      buildNoveltyType({ id: "type-not-loadable", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] }),
+    ]);
+    await screen.findAllByText("Cargable");
     expect(screen.queryByText("Solo RRHH")).not.toBeInTheDocument();
   });
 
   it("RRHH ve todos los tipos activos sin importar allowedLoadRoles", async () => {
-    authAs("Nivel 1 - RRHH");
-    const rrhhOnly = buildNoveltyType({ id: "type-rrhh-only", code: "NOV-RRHH", name: "Solo RRHH", allowedLoadRoles: [] });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([rrhhOnly]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
-    await screen.findByText("Solo RRHH");
+    renderModal([buildNoveltyType({ id: "type-rrhh-only", name: "Solo RRHH", allowedLoadRoles: [] })]);
+    expect((await screen.findAllByText("Solo RRHH")).length).toBeGreaterThan(0);
   });
 
   it("si ningún tipo cargable, muestra un mensaje distinto al de catálogo vacío", async () => {
     authAs("Nivel 3 - Administrativo de Carga Horaria");
-    const rrhhOnly = buildNoveltyType({ id: "type-rrhh-only", code: "NOV-RRHH", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] });
-    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([rrhhOnly]);
-
-    render(<NoveltyModal employees={[buildEmployee()]} close={vi.fn()} saved={vi.fn()} />);
-
+    renderModal([buildNoveltyType({ id: "type-rrhh-only", name: "Solo RRHH", allowedLoadRoles: ["Nivel 1 - RRHH"] })]);
     expect(await screen.findByText("Tu rol no tiene tipos de novedad habilitados para cargar.")).toBeInTheDocument();
+  });
+});
+
+describe("NoveltyModal — límite de personas con documentación (ADR §15.1)", () => {
+  const people = (count: number) => Array.from({ length: count }, (_, index) => buildEmployee({ id: `employee-${index + 1}`, legajo: String(100 + index) }));
+  const conCertificado = buildNoveltyType({ id: "type-doc", name: "Con certificado", rules: { ...baseRules, requiresDocumentation: true } });
+
+  it("26 personas con documentación: lo avisa enseguida, explica el motivo y no envía nada", async () => {
+    renderModal([conCertificado], { employees: people(26) });
+    await userEvent.upload(await screen.findByLabelText("Documentación *"), new File(["x"], "c.pdf", { type: "application/pdf" }));
+
+    expect(screen.getByText("Con documentación podés cargar la novedad para hasta 25 personas por vez. Dividí la carga en grupos más pequeños.")).toBeInTheDocument();
+    expect(screen.getByText(/se guarda una copia del archivo en el legajo de cada persona/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    expect(noveltyApiService.createWithDocument).not.toHaveBeenCalled();
+  });
+
+  it("25 personas con documentación: se envía", async () => {
+    renderModal([conCertificado], { employees: people(25) });
+    await userEvent.upload(await screen.findByLabelText("Documentación *"), new File(["x"], "c.pdf", { type: "application/pdf" }));
+    expect(screen.queryByText(/Dividí la carga en grupos más pequeños/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.createWithDocument).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: people(25).map((item) => item.id) }), expect.any(File), null));
+  });
+
+  it("sin documentación, 26 personas siguen permitidas (máximo 250)", async () => {
+    renderModal([vacaciones], { employees: people(26) });
+    await screen.findByLabelText("Observación");
+    expect(screen.queryByText(/personas por vez/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: people(26).map((item) => item.id) })));
   });
 });

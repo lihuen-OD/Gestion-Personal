@@ -238,6 +238,46 @@ describe.skipIf(!url)("F7 — /api/clock contra PostgreSQL local (cooldown y con
     expect(await m.prisma.auditLog.count()).toBe(before);
   });
 
+  // Plan §32: búsqueda por nombre, apellido o DNI contra PostgreSQL real (ILIKE / LIKE) y
+  // contrato { id, dni, firstName, lastName, name } sin legajo. Dispositivo propio: no
+  // consume el cupo por dispositivo de los demás tests.
+  it("§32 — busca por nombre, apellido, ambos o DNI desde 2 dígitos (con o sin puntos); sólo ACTIVO, sin legajo", async () => {
+    const credentials = await import("../../shared/security/clockDeviceCredentials");
+    const secret = credentials.generateClockDeviceSecret();
+    const created = await m.prisma.clockDevice.create({ data: { name: "TEST IT DNI", status: "ACTIVE", tokenHash: credentials.hashClockDeviceSecret(secret), activatedAt: new Date() } });
+    const device: Device = { id: created.id, secret, name: created.name! };
+    const juan = await m.prisma.employee.create({ data: { legajo: "IT-DNI-1", cuil: "20-DNI-1", dni: "32456789", firstName: "Juancito", lastName: "Perezoso" } });
+    const dotted = await m.prisma.employee.create({ data: { legajo: "IT-DNI-2", cuil: "20-DNI-2", dni: "30.555.666", firstName: "Bruno", lastName: "Diazdni" } });
+    await m.prisma.employee.create({ data: { legajo: "IT-DNI-3", cuil: "20-DNI-3", dni: "32456000", firstName: "Juancita", lastName: "Perezoso", status: "INACTIVO" } });
+    const ids = async (search: string) => {
+      const result = await call("GET", `/clock/employees?search=${encodeURIComponent(search)}`, device);
+      expect(result.status).toBe(200);
+      return (result.data as unknown as Array<{ id: string }>).map((employee) => employee.id);
+    };
+
+    expect(await ids("juancito")).toEqual([juan.id]);
+    expect(await ids("PEREZOSO")).toEqual([juan.id]);
+    expect(await ids("Perezoso Juancito")).toEqual([juan.id]);
+    expect(await ids("32456789")).toEqual([juan.id]);
+    expect(await ids("32.456.789")).toEqual([juan.id]);
+    expect(await ids("6789")).toEqual([juan.id]);
+    // Mismo mínimo que nombre y apellido: desde 2 dígitos, progresivo.
+    expect(await ids("32")).toEqual([juan.id]); // 32456000 coincide pero está INACTIVO
+    expect(await ids("324")).toEqual([juan.id]);
+    expect(await ids("30")).toEqual([dotted.id]); // guardado "30.555.666"
+    // DNI guardado con puntos: progresivo ignorando separadores (SQL real, sin tocar el dato).
+    for (const term of ["305", "3055", "30555", "30555666", "30.555", "30.555.666", "555666"]) {
+      expect(await ids(term), term).toEqual([dotted.id]);
+    }
+    expect((await m.prisma.employee.findUniqueOrThrow({ where: { id: dotted.id } })).dni).toBe("30.555.666");
+    expect(await ids("30555666")).toEqual([dotted.id]);
+    expect(await ids("32456000")).toEqual([]); // su único dueño está INACTIVO
+    expect(await ids("IT-DNI-1")).toEqual([]); // nunca por legajo
+
+    const full = await call("GET", "/clock/employees?search=32456789", device);
+    expect(full.data).toEqual([{ id: juan.id, dni: "32456789", firstName: "Juancito", lastName: "Perezoso", name: "Perezoso, Juancito" }]);
+  });
+
   it("fuera de la ventana la fichada sigue según el estado de la jornada (salida real KIOSK)", async () => {
     m.env.CLOCK_PUNCH_COOLDOWN_SECONDS = 2;
     try {

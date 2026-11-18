@@ -59,6 +59,94 @@ enum NoveltyTimeEntryBehavior {
   BLOQUEA_NUEVA_CARGA
 }
 
+// Motor de cobertura horaria de Novedades (docs/decisions/NOVELTY_COVERAGE_ENGINE.md).
+// Una novedad puede registrar tiempo cubierto, pero nunca escribe TimeEntry:
+// la cobertura vive en NoveltyDayCoverage y la contabilidad la suma como un
+// componente separado del trabajo real. Ninguna regla se infiere por nombre,
+// código ni kind del tipo.
+//   NONE: no registra tiempo.
+//   FIXED_MINUTES: cantidad fija por día cubierto (coverageFixedMinutes).
+//   MANUAL_MINUTES: la indica quien carga la novedad (Novelty.quantityMinutes).
+//   EXPECTED_SCHEDULE: la jornada que el empleado tenía que cumplir.
+enum NoveltyCoverageMode {
+  NONE
+  FIXED_MINUTES
+  MANUAL_MINUTES
+  EXPECTED_SCHEDULE
+}
+
+// Qué días del rango cuenta la novedad.
+//   EVERY_DAY / SELECTED_WEEKDAYS: calendario puro (con política explícita de
+//   franco y feriado).
+//   WORK_OBLIGATION: sólo los días en que el empleado tenía obligación laboral
+//   (turno, franco y convocatoria a feriado deciden).
+enum NoveltyCoverageDayRule {
+  EVERY_DAY
+  SELECTED_WEEKDAYS
+  WORK_OBLIGATION
+}
+
+enum NoveltyCoverageDayOffPolicy {
+  NO_COVERAGE
+  COVER
+}
+
+// ONLY_IF_CONVOKED: cubre sólo si existe HolidayWorkAssignment ACTIVA de esa
+// persona y fecha.
+enum NoveltyCoverageHolidayPolicy {
+  NO_COVERAGE
+  COVER
+  ONLY_IF_CONVOKED
+}
+
+// Si puede existir trabajo real (fichada/carga) el mismo día. INCOMPATIBLE:
+// si aparece, el día queda para revisar y la cobertura no suma.
+enum NoveltyRealWorkCompatibility {
+  COMPATIBLE
+  INCOMPATIBLE
+}
+
+enum NoveltyCoverageOutcome {
+  COVERED
+  NO_COVERAGE
+  WEEKDAY_NOT_INCLUDED
+  NO_WORK_OBLIGATION
+  HOLIDAY_NOT_CONVOKED
+  HOLIDAY_EXCLUDED
+  DAY_OFF
+  SCHEDULE_UNRESOLVED
+  // Etapa 3: fuera de la relación laboral conocida (antes del ALTA o desde la
+  // BAJA, LaborMovement). 0 h confirmado; distinto de NO_WORK_OBLIGATION.
+  OUTSIDE_EMPLOYMENT
+}
+
+// Por qué no se pudo resolver la jornada de un día (0 h provisional, nunca
+// equivalente a 0 h confirmado).
+enum NoveltyCoverageScheduleReviewReason {
+  SCHEDULE_MISSING
+  FLEXIBLE_REGIME_NO_ASSIGNMENT
+  REGIME_WITHOUT_SCHEDULE
+  EXPECTED_MINUTES_UNKNOWN
+  // Etapa 3: varios turnos del mismo día con horarios superpuestos.
+  SHIFT_ASSIGNMENTS_OVERLAP
+  // Etapa 3: sin historia de altas/bajas suficiente para saber si había
+  // relación laboral ese día (p. ej. legajo sin ningún ALTA registrado).
+  EMPLOYMENT_HISTORY_UNRESOLVED
+}
+
+enum NoveltyCoverageReviewStatus {
+  NOT_REQUIRED
+  PENDING
+  RESOLVED
+}
+
+// No existe una resolución que acepte trabajo real y cobertura incompatibles a
+// la vez: hay que decidir qué evidencia vale.
+enum NoveltyCoverageResolution {
+  CONFIRMED_ZERO
+  SET_BASE_MINUTES
+}
+
 // Etapa 15L.2A: unidad real de "Valor 1" para la exportacion Finnegans.
 // null = no determinado todavia (no se infiere DAYS/UNIT sin evidencia).
 enum FinnegansValueUnit {
@@ -429,6 +517,7 @@ model User {
   holidayWorkAssignmentsUpdated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentUpdatedBy")
   employeeDayOffsCreated             EmployeeDayOff[]               @relation("EmployeeDayOffCreatedBy")
   employeeDayOffsUpdated             EmployeeDayOff[]               @relation("EmployeeDayOffUpdatedBy")
+  noveltyCoverageDaysResolved        NoveltyDayCoverage[]           @relation("NoveltyDayCoverageResolvedBy")
   shiftAlertsResolved               ShiftAlert[]
   doubleHourRulesCreated             DoubleHourRule[]
   attendancePunchesReviewed          AttendancePunch[]
@@ -447,9 +536,32 @@ model User {
   employeeLegacySectorPeriodsCreated EmployeeLegacySectorPeriod[]   @relation("EmployeeLegacySectorPeriodCreatedBy")
   employeeEmployerPeriodsCreated     EmployeeEmployerPeriod[]       @relation("EmployeeEmployerPeriodCreatedBy")
   positionOrgScopePeriodsCreated     PositionOrgScopePeriod[]       @relation("PositionOrgScopePeriodCreatedBy")
+  // Jerarquía de alcance Nivel 2 → Nivel 3 (UserSupervisionAssignment).
+  supervisionsAsSupervisor           UserSupervisionAssignment[]    @relation("UserSupervisionSupervisor")
+  supervisionsAsSupervised           UserSupervisionAssignment[]    @relation("UserSupervisionSupervised")
 
   @@index([role])
   @@index([status])
+}
+
+// Un usuario Nivel 2 (supervisor) hereda, de forma dinámica, el alcance de
+// cada Nivel 3 (supervisado) que tiene asignado: los legajos con un
+// EmployeeAssignment TIME_RESPONSIBLE vigente de ese Nivel 3
+// (employees/employeeAccess.ts). No copia asignaciones. Los roles de ambos
+// extremos los valida users.service.ts (cross-table, no expresable como
+// CHECK); employeeAccessWhere además exige rol Nivel 3 al supervisado.
+// Restrict: un usuario con relaciones no se borra físicamente.
+model UserSupervisionAssignment {
+  id               String   @id @default(uuid())
+  supervisorUserId String
+  supervisedUserId String
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  supervisor User @relation("UserSupervisionSupervisor", fields: [supervisorUserId], references: [id], onDelete: Restrict)
+  supervised User @relation("UserSupervisionSupervised", fields: [supervisedUserId], references: [id], onDelete: Restrict)
+
+  @@unique([supervisorUserId, supervisedUserId])
+  @@index([supervisedUserId])
 }
 
 model Company {
@@ -876,7 +988,7 @@ model Employee {
   id                String         @id @default(uuid())
   legajo            String         @unique
   legajoFinnegans   String?
-  cuil              String         @unique
+  cuil              String?        @unique
   dni               String         @unique
   firstName         String
   lastName          String
@@ -913,6 +1025,7 @@ model Employee {
   fieldHistory              EmployeeFieldHistory[]
   blockHistory              EmployeeBlockHistory[]
   novelties                 Novelty[]
+  noveltyCoverageDays       NoveltyDayCoverage[]
   timeEntries               TimeEntry[]
   clockPunchPostProcessJobs ClockPunchPostProcessJob[]
   hourConceptBreakdowns     HourConceptBreakdown[]
@@ -1412,39 +1525,59 @@ model EmployeeBlockHistory {
 // finnegansName), 1:1 físico, junto a finnegansValueUnit/
 // finnegansRequiresValidity (Etapa 15L.2A).
 model NoveltyType {
-  id                        String                   @id @default(uuid())
-  code                      String                   @unique
-  name                      String
-  uiColor                   String
-  kind                      NoveltyTypeKind
-  status                    RecordStatus             @default(ACTIVO)
-  description               String?
+  id                          String                        @id @default(uuid())
+  code                        String                        @unique
+  name                        String
+  uiColor                     String
+  kind                        NoveltyTypeKind
+  status                      RecordStatus                  @default(ACTIVO)
+  description                 String?
   /// Etapa 15L.2A: observaciones internas editables desde el catalogo.
-  notes                     String?
-  exportsToFinnegans        Boolean                  @default(false)
-  requiresApproval          Boolean                  @default(true)
-  requiresDocumentation     Boolean                  @default(false)
-  allowsHours               Boolean                  @default(false)
-  allowsDateRange           Boolean                  @default(true)
+  notes                       String?
+  exportsToFinnegans          Boolean                       @default(false)
+  requiresApproval            Boolean                       @default(true)
+  requiresDocumentation       Boolean                       @default(false)
+  allowsHours                 Boolean                       @default(false)
+  allowsDateRange             Boolean                       @default(true)
   /// Etapa 15L.2A: fuente de verdad del comportamiento en carga horaria
   /// (findBlockingNovelty, time-entries).
-  timeEntryBehavior         NoveltyTimeEntryBehavior @default(NO_BLOQUEA)
+  timeEntryBehavior           NoveltyTimeEntryBehavior      @default(NO_BLOQUEA)
   /// Etapa 15L.2A: unidad real de "Valor 1" para exportacion Finnegans.
   /// null = todavia no determinado (no se infiere DAYS/UNIT sin evidencia).
-  finnegansValueUnit        FinnegansValueUnit?
+  finnegansValueUnit          FinnegansValueUnit?
   /// Etapa 15L.2A: exige fecha desde/hasta en la exportacion Finnegans.
-  finnegansRequiresValidity Boolean                  @default(false)
+  finnegansRequiresValidity   Boolean                       @default(false)
   /// Etapa 15L.6: reemplaza FinnegansNoveltyLink.code (1:1 fisico, migrado
   /// desde el unico vinculo activo real de cada tipo).
-  finnegansCode             String?
+  finnegansCode               String?
   /// Etapa 15L.6: reemplaza FinnegansNoveltyLink.name.
-  finnegansName             String?
-  allowedLoadRoles          Json                     @default("[]")
-  approvalRoles             Json                     @default("[]")
-  createdAt                 DateTime                 @default(now()) @db.Timestamptz(3)
-  updatedAt                 DateTime                 @updatedAt @db.Timestamptz(3)
+  finnegansName               String?
+  allowedLoadRoles            Json                          @default("[]")
+  approvalRoles               Json                          @default("[]")
+  /// Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md). La
+  /// coherencia entre estos campos la exige el backend y el CHECK
+  /// "NoveltyType_coverage_config_check".
+  coverageMode                NoveltyCoverageMode           @default(NONE)
+  /// Sólo FIXED_MINUTES: 1..1440.
+  coverageFixedMinutes        Int?
+  coverageDayRule             NoveltyCoverageDayRule        @default(EVERY_DAY)
+  /// Sólo SELECTED_WEEKDAYS: 0 = domingo .. 6 = sábado (igual que ShiftAssignment.weekdays).
+  coverageWeekdays            Int[]                         @default([])
+  /// Sólo reglas por calendario con cobertura (obligatorio y sin default funcional).
+  coverageOnDayOff            NoveltyCoverageDayOffPolicy?
+  /// Sólo reglas por calendario con cobertura (obligatorio y sin default funcional).
+  coverageOnHoliday           NoveltyCoverageHolidayPolicy?
+  /// Aplica el multiplicador de Horas Especiales vigente (motor único).
+  coverageAppliesSpecialHours Boolean                       @default(false)
+  /// Si la cobertura suma al total computable del día.
+  coverageCountsTowardTotal   Boolean                       @default(false)
+  realWorkCompatibility       NoveltyRealWorkCompatibility  @default(COMPATIBLE)
+  requiresObservation         Boolean                       @default(false)
+  createdAt                   DateTime                      @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime                      @updatedAt @db.Timestamptz(3)
 
-  novelties Novelty[]
+  novelties    Novelty[]
+  coverageDays NoveltyDayCoverage[]
 
   @@index([status])
 }
@@ -1458,6 +1591,8 @@ model Novelty {
   toDate              DateTime?      @db.Date
   quantityHours       Decimal?       @db.Decimal(8, 2)
   quantityDays        Decimal?       @db.Decimal(8, 2)
+  /// Cantidad canónica de tipos MANUAL_MINUTES (docs/decisions/NOVELTY_COVERAGE_ENGINE.md).
+  quantityMinutes     Int?
   observation         String?
   targetHourConceptId String?
   createdByUserId     String?
@@ -1477,6 +1612,7 @@ model Novelty {
   // snapshot exportado debe sobrevivir aunque esta Novelty se borre (hard
   // delete, ver novelties.repository.ts::remove).
   finnegansExportBatchItems FinnegansExportBatchItem[]
+  coverageDays              NoveltyDayCoverage[]
 
   @@index([employeeId, fromDate])
   @@index([employeeId, status, fromDate])
@@ -1484,6 +1620,60 @@ model Novelty {
   @@index([fromDate, toDate])
   @@index([noveltyTypeId])
   @@index([status])
+}
+
+// Resultado diario derivado del motor de cobertura: una fila por novedad no
+// rechazada y fecha del rango, de cualquier modo (NONE incluido, 0 min), para
+// que grilla y contabilidad tengan una única fuente "qué novedad cae en qué
+// día" (docs/decisions/NOVELTY_COVERAGE_ENGINE.md). No es trabajo real: nunca
+// se suma a TimeEntry. computedMinutes no se persiste: es
+// (resolvedBaseMinutes ?? baseMinutes) × appliedMultiplier, derivado al leer.
+// countsTowardTotal y realWorkCompatibility son snapshot de la configuración
+// del tipo al calcular. Cascade desde Novelty: es dato derivado; la historia
+// queda en AuditLog y en los snapshots de cierre.
+model NoveltyDayCoverage {
+  id                           String                               @id @default(uuid())
+  noveltyId                    String
+  employeeId                   String
+  noveltyTypeId                String
+  date                         DateTime                             @db.Date
+  period                       String
+  day                          Int
+  outcome                      NoveltyCoverageOutcome
+  scheduleReviewReason         NoveltyCoverageScheduleReviewReason?
+  // Jornada esperada resuelta para la fecha (null = desconocida).
+  expectedMinutes              Int?
+  // Minutos base calculados por el motor (0 provisional si SCHEDULE_UNRESOLVED).
+  baseMinutes                  Int
+  appliedMultiplier            Decimal                              @default(1) @db.Decimal(4, 2)
+  countsTowardTotal            Boolean
+  realWorkCompatibility        NoveltyRealWorkCompatibility
+  shiftTemplateId              String?
+  reviewStatus                 NoveltyCoverageReviewStatus          @default(NOT_REQUIRED)
+  resolution                   NoveltyCoverageResolution?
+  resolvedBaseMinutes          Int?
+  // Minutos reales del día al resolver: si cambian, el día vuelve a revisión.
+  resolvedAgainstWorkedMinutes Int?
+  resolvedByUserId             String?
+  resolvedAt                   DateTime?                            @db.Timestamptz(3)
+  resolutionNote               String?
+  calculatedAt                 DateTime                             @db.Timestamptz(3)
+  createdAt                    DateTime                             @default(now()) @db.Timestamptz(3)
+  updatedAt                    DateTime                             @updatedAt @db.Timestamptz(3)
+
+  novelty       Novelty        @relation(fields: [noveltyId], references: [id], onDelete: Cascade)
+  employee      Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  noveltyType   NoveltyType    @relation(fields: [noveltyTypeId], references: [id], onDelete: Restrict)
+  shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id], onDelete: SetNull)
+  resolvedBy    User?          @relation("NoveltyDayCoverageResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([noveltyId, date])
+  @@index([employeeId, period])
+  @@index([employeeId, date])
+  @@index([period, reviewStatus])
+  @@index([noveltyTypeId])
+  @@index([shiftTemplateId])
+  @@index([resolvedByUserId])
 }
 
 // Etapa 15L.4 (docs/decisions/FINNEGANS_EXPORT_HISTORY_IDEMPOTENCY_15L4.md):
@@ -1776,6 +1966,7 @@ model ShiftTemplate {
   workShifts                    WorkShift[]
   assignments                   ShiftAssignment[]
   holidayWorkAssignments        HolidayWorkAssignment[]
+  noveltyCoverageDays           NoveltyDayCoverage[]
   createdBy                     User?                   @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy                     User?                   @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 

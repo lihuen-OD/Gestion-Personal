@@ -1,5 +1,10 @@
 import { apiRequest } from "./apiClient";
-import { cachePolicies, cachedData, invalidateCacheFamily, WORKED_TIME_DERIVED_CACHE_FAMILIES } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 export type MonthlyClosure = {
   id: string;
@@ -164,7 +169,7 @@ export type DoubleHourRuleCalendarDay = {
 // grillas, cierres): además de la configuración, se invalidan todas las
 // familias que muestran contabilidad de horas (WORKED_TIME_ACCOUNTING_MODEL.md §15).
 async function invalidateDoubleHourRuleDependentCaches(reason: string) {
-  await Promise.all(["workforce-config" as const, ...WORKED_TIME_DERIVED_CACHE_FAMILIES].map((family) => invalidateCacheFamily(family, reason)));
+  await Promise.all([invalidateCacheFamily("workforce-config", reason), invalidateNoveltyCoverageDerivedCaches(reason)]);
 }
 
 export const workforceApiService = {
@@ -298,12 +303,12 @@ export const workforceApiService = {
   },
   async updateShiftTemplate(id: string, input: Partial<ShiftTemplateInput>) {
     const result = await apiRequest<{ data: ShiftTemplate }>(`/workforce/shift-templates/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "shift template updated");
+    await Promise.all([invalidateCacheFamily("workforce-config", "shift template updated"), invalidateNoveltyCoverageDerivedCaches("shift template updated")]);
     return result;
   },
   async removeShiftTemplate(id: string) {
     const result = await apiRequest<{ data: { mode: "DELETED" | "INACTIVATED"; id?: string; item?: ShiftTemplate; relatedWorkShifts: number } }>(`/workforce/shift-templates/${id}`, { method: "DELETE" }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "shift template removed");
+    await Promise.all([invalidateCacheFamily("workforce-config", "shift template removed"), invalidateNoveltyCoverageDerivedCaches("shift template removed")]);
     return result;
   },
   // Etapa 14H.3: mismo criterio que shiftTemplates() arriba.

@@ -1,22 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MonthlyHoursReviewGrid } from "./MonthlyHoursReviewGrid";
-import type { Novelty } from "../../types";
 import { dayAccounting, periodAccounting, timeGridFixture } from "../../test/workedTimeAccountingFixtures";
-
-function buildNovelty(overrides: Partial<Novelty> = {}): Novelty {
-  return {
-    id: "novelty-1",
-    employeeId: "employee-1",
-    type: "Vacaciones",
-    from: "2026-08-04",
-    to: "2026-08-04",
-    quantity: "1 día",
-    status: "Aprobado",
-    createdBy: "Sistema",
-    ...overrides,
-  };
-}
 
 function rowNamed(name: string) {
   const row = screen.getAllByRole("row").find((item) => within(item).queryByText(name, { selector: "b" }));
@@ -165,10 +150,44 @@ describe("MonthlyHoursReviewGrid — modelo de tiempo trabajado", () => {
     expect(within(rowNamed("Horas base")).getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("muestra un indicador cuando hay novedades asociadas al día", () => {
-    const grid = timeGridFixture(undefined, { novelties: [buildNovelty()] });
+  it("muestra la cobertura resuelta como fila de novedad, sin reintroducir el indicador legacy", () => {
+    const coverageItem = { noveltyId: "novelty-1", noveltyTypeId: "type-vac", code: "VAC", label: "Vacaciones", uiColor: "teal", minutes: 480, settlementMinutes: 480, state: "COUNTED" as const, countsTowardTotal: true, reviewRequired: false, reviewReasons: [] };
+    const grid = timeGridFixture(undefined, {
+      noveltyCoverageRows: [{ noveltyType: { id: "type-vac", code: "VAC", name: "Vacaciones", uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": 480 }, settlementMinutesByDay: { "4": 480 }, stateByDay: { "4": "COUNTED" }, totals: { noveltyTypeId: "type-vac", coveredMinutes: 480, settlementMinutes: 480, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0 } }],
+      noveltiesByDay: { "4": [coverageItem] },
+    });
     const { container } = render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
-    expect(container.querySelector(".alert-dot.purple")).toBeInTheDocument();
+    expect(rowNamed("Vacaciones")).toHaveTextContent("Computa");
+    expect(within(rowNamed("Vacaciones")).getByTitle("Vacaciones: Computa")).toHaveClass("novelty-color-teal", "is-counted");
+    expect(container.querySelector(".alert-dot.purple")).not.toBeInTheDocument();
+  });
+
+  it("P5: Vacaciones 7 h + Trámite 3 h sobre jornada 7 h → las dos en «Revisar» y el total válido, nunca 10 h", () => {
+    const day = dayAccounting(4, { base: 0, sereno: 0, colectivo: 0 });
+    const held = (id: string, code: string, label: string, minutes: number) => ({ noveltyId: id, noveltyTypeId: `type-${id}`, code, label, uiColor: "teal", minutes, settlementMinutes: minutes, state: "REVIEW_REQUIRED" as const, countsTowardTotal: true, reviewRequired: true, reviewReasons: ["COVERAGE_TOTAL_EXCEEDS_EXPECTED" as const] });
+    const row = (id: string, code: string, name: string, minutes: number) => ({ noveltyType: { id: `type-${id}`, code, name, uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": minutes }, settlementMinutesByDay: { "4": minutes }, stateByDay: { "4": "REVIEW_REQUIRED" as const }, totals: { noveltyTypeId: `type-${id}`, coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: minutes } });
+    const grid = timeGridFixture([day], {
+      noveltyCoverageRows: [row("vac", "VAC", "Vacaciones", 420), row("tra", "TB", "Trámite bancario", 180)],
+      noveltiesByDay: { "4": [held("vac", "VAC", "Vacaciones", 420), held("tra", "TB", "Trámite bancario", 180)] },
+    });
+    grid.accounting = periodAccounting([day]);
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" />);
+    expect(rowNamed("Vacaciones")).toHaveTextContent("Revisar");
+    expect(rowNamed("Trámite bancario")).toHaveTextContent("Revisar");
+    expect(lastCell(rowNamed("Vacaciones"))).toHaveTextContent("a revisar");
+    expect(lastCell(rowNamed("Total para liquidación"))).not.toHaveTextContent(/10h|7h|3h/);
+  });
+
+  it("§17: una celda de novedad que computa es clickeable para ver su detalle", async () => {
+    const coverageItem = { noveltyId: "novelty-1", noveltyTypeId: "type-vac", code: "VAC", label: "Vacaciones", uiColor: "teal", minutes: 480, settlementMinutes: 480, state: "COUNTED" as const, countsTowardTotal: true, reviewRequired: false, reviewReasons: [] };
+    const grid = timeGridFixture(undefined, {
+      noveltyCoverageRows: [{ noveltyType: { id: "type-vac", code: "VAC", name: "Vacaciones", uiColor: "teal" }, countsTowardTotal: true, minutesByDay: { "4": 480 }, settlementMinutesByDay: { "4": 480 }, stateByDay: { "4": "COUNTED" }, totals: { noveltyTypeId: "type-vac", coveredMinutes: 480, settlementMinutes: 480, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0 } }],
+      noveltiesByDay: { "4": [coverageItem] },
+    });
+    const onReviewNovelty = vi.fn();
+    render(<MonthlyHoursReviewGrid grid={grid} period="2026-08" onReviewNovelty={onReviewNovelty} />);
+    screen.getByRole("button", { name: "Vacaciones, día 4: ver detalle de la cobertura" }).click();
+    expect(onReviewNovelty).toHaveBeenCalledWith(coverageItem, 4);
   });
 
   it("es read-only: no expone ningún botón dentro de la grilla", () => {

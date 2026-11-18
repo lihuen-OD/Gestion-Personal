@@ -1,8 +1,11 @@
 import type { RequestHandler } from "express";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
-import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
-import { clearNoveltiesReadCaches, noveltiesListCache } from "./novelties.cache";
+// Etapa 4 (NOVELTY_COVERAGE_ENGINE.md §12): una novedad aprobada ya cambia
+// totales (cobertura), así que sus mutaciones limpian todas las cachés que
+// exponen la contabilidad de horas (grillas, resumen, dashboard, cierres).
+import { noveltiesListCache } from "./novelties.cache";
+import { clearNoveltyCoverageReadCaches } from "./noveltyCoverageReadCaches";
 import type { ListNoveltiesQuery } from "./novelties.schemas";
 import { noveltiesService } from "./novelties.service";
 
@@ -22,34 +25,53 @@ export const noveltiesController = {
 
   create: (async (req, res) => {
     const items = await noveltiesService.create(req.body, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearTimeEntriesReadCaches();
+    clearNoveltyCoverageReadCaches();
+    res.status(201).json({ data: items });
+  }) satisfies RequestHandler,
+
+  createWithDocument: (async (req, res) => {
+    const items = await noveltiesService.createWithDocument(req.body, req.user!, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
     res.status(201).json({ data: items });
   }) satisfies RequestHandler,
 
   approve: (async (req, res) => {
-    const item = await noveltiesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearTimeEntriesReadCaches();
+    const item = await noveltiesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   approveMany: (async (req, res) => {
     const items = await noveltiesService.approveMany(req.body.ids, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches(); clearTimeEntriesReadCaches(); res.json({ data: items });
+    clearNoveltyCoverageReadCaches(); res.json({ data: items });
   }) satisfies RequestHandler,
 
   reject: (async (req, res) => {
     const item = await noveltiesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearTimeEntriesReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   remove: (async (req, res) => {
-    const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req));
-    clearNoveltiesReadCaches();
-    clearTimeEntriesReadCaches();
+    const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
+    clearNoveltyCoverageReadCaches();
     res.json({ data: result });
+  }) satisfies RequestHandler,
+
+  // ── Cobertura (etapa 3, docs/decisions/NOVELTY_COVERAGE_ENGINE.md) ──────
+  // Vista previa: no escribe nada ni se cachea (depende de turnos, francos,
+  // reglas y relación laboral vigentes).
+  previewCoverage: (async (req, res) => {
+    res.json({ data: await noveltiesService.previewCoverage(req.body, req.user!) });
+  }) satisfies RequestHandler,
+
+  getCoverage: (async (req, res) => {
+    res.json({ data: await noveltiesService.getCoverage(requireParam(req, "id"), req.user!) });
+  }) satisfies RequestHandler,
+
+  resolveCoverageDay: (async (req, res) => {
+    const day = await noveltiesService.resolveCoverageDay(requireParam(req, "id"), requireParam(req, "date"), req.body, req.user!, requestAuditContext(req));
+    clearNoveltyCoverageReadCaches();
+    res.json({ data: day });
   }) satisfies RequestHandler,
 };

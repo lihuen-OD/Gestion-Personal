@@ -1,5 +1,10 @@
 import { apiRequest } from "./apiClient";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
+
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 export type ShiftAssignmentStatus = "HABILITADO" | "DESHABILITADO";
 
@@ -57,17 +62,17 @@ export const shiftAssignmentApiService = {
   },
   async assign(input: { employeeIds: string[]; shiftTemplateId: string; observation?: string | null } & ShiftAssignmentVigencyInput) {
     const result = await apiRequest<{ data: ShiftAssignment[] }>("/shifts/assignments", { method: "POST", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "shift assignment created");
+    await Promise.all([invalidateCacheFamily("workforce-config", "shift assignment created"), invalidateNoveltyCoverageDerivedCaches("shift assignment created")]);
     return result;
   },
   async update(id: string, input: { status?: ShiftAssignmentStatus; observation?: string | null } & Partial<ShiftAssignmentVigencyInput>) {
     const result = await apiRequest<{ data: ShiftAssignment }>(`/shifts/assignments/${id}`, { method: "PATCH", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "shift assignment updated");
+    await Promise.all([invalidateCacheFamily("workforce-config", "shift assignment updated"), invalidateNoveltyCoverageDerivedCaches("shift assignment updated")]);
     return result;
   },
   async remove(id: string) {
     const result = await apiRequest<{ data: { id: string } }>(`/shifts/assignments/${id}`, { method: "DELETE" }).then((response) => response.data);
-    await invalidateCacheFamily("workforce-config", "shift assignment removed");
+    await Promise.all([invalidateCacheFamily("workforce-config", "shift assignment removed"), invalidateNoveltyCoverageDerivedCaches("shift assignment removed")]);
     return result;
   },
 };

@@ -191,11 +191,11 @@ describe("buildSubmoduleRollup", () => {
       run({
         actions: [
           action({ zone: "J. Exportación", submodule: "J. Exportación" }),
-          action({ zone: "A. Inicio", submodule: "A. Inicio" }),
+          action({ zone: "B. Asistencia", submodule: "B. Asistencia" }),
         ],
       }),
     );
-    expect(rollup.map((r) => r.zone)).toEqual(["J. Exportación", "A. Inicio"]);
+    expect(rollup.map((r) => r.zone)).toEqual(["J. Exportación", "B. Asistencia"]);
   });
 
   it("cuenta cubiertas/salteadas y calcula la peor duración por zona", () => {
@@ -326,26 +326,30 @@ describe("buildMarkdownReport", () => {
     const markdown = buildMarkdownReport(
       run({
         actions: [
-          action({ zone: "A. Inicio", submodule: "A. Inicio" }),
+          action({ zone: "B. Asistencia", submodule: "B. Asistencia" }),
           action({ zone: "J. Exportación", submodule: "J. Exportación" }),
         ],
       }),
     );
-    expect(markdown).toContain("A. Inicio");
+    expect(markdown).toContain("B. Asistencia");
     expect(markdown).toContain("J. Exportación");
   });
 });
 
 describe("matrices de documentación (Parte 2 del pedido)", () => {
-  it("SUBMODULE_INVENTORY cubre los 10 submódulos A-J, ninguno inventado fuera de la navegación real", () => {
-    expect(SUBMODULE_INVENTORY).toHaveLength(10);
+  // 2026-11-17: "A. Inicio" (/gestion-horaria) se retiró del sistema; las
+  // letras B-J se conservan para que los reportes históricos sigan comparables.
+  it("SUBMODULE_INVENTORY cubre los 9 submódulos B-J, ninguno inventado fuera de la navegación real", () => {
+    expect(SUBMODULE_INVENTORY).toHaveLength(9);
     const letters = SUBMODULE_INVENTORY.map((row) => row.submodule[0]);
-    expect(letters).toEqual(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]);
+    expect(letters).toEqual(["B", "C", "D", "E", "F", "G", "H", "I", "J"]);
+    expect(SUBMODULE_INVENTORY.map((row) => row.route)).not.toContain("/gestion-horaria");
   });
 
-  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 10 zonas A-J más Login", () => {
+  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 9 zonas B-J más Login", () => {
     const zones = new Set(COVERAGE_MATRIX.map((row) => row.zone));
-    for (const letter of ["Login", "A. Inicio", "B. Asistencia", "C. Alertas de turnos", "D. Carga de horas", "E. Cierres mensuales", "F. Bandeja de revisión", "G. Novedades", "H. Notificaciones", "I. Fichador", "J. Exportación"]) {
+    expect(zones.has("A. Inicio")).toBe(false);
+    for (const letter of ["Login", "B. Asistencia", "C. Alertas de turnos", "D. Carga de horas", "E. Cierres mensuales", "F. Bandeja de revisión", "G. Novedades", "H. Notificaciones", "I. Fichador", "J. Exportación"]) {
       expect(zones.has(letter)).toBe(true);
     }
   });

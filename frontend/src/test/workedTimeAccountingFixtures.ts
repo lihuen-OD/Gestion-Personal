@@ -31,13 +31,18 @@ export function dayAccounting(day: number, { base = 8, sereno = 3, colectivo = 1
     withinBaseExcessMinutes: Math.max(0, sereno - base) * H,
     additiveMinutes: colectivo * H,
     totalWorkedMinutes: (base + colectivo) * H,
+    noveltyCoveredMinutes: 0,
+    computableMinutes: (base + colectivo) * H,
+    dayOffUncountedMinutes: 0,
     settlement: {
       normalMinutes: residual * H * multiplier,
       withinBaseMinutes: sereno * H * multiplier,
       additiveMinutes: colectivo * H * multiplier,
+      noveltyMinutes: 0,
       totalMinutes: (residual + sereno + colectivo) * H * multiplier,
     },
     concepts,
+    novelty: { coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewRequired: false, items: [] },
   };
 }
 
@@ -55,16 +60,21 @@ export function periodAccounting(days: DayAccounting[]): PeriodAccounting {
     withinBaseExcessMinutes: sum((day) => day.withinBaseExcessMinutes),
     additiveMinutes: sum((day) => day.additiveMinutes),
     totalWorkedMinutes: sum((day) => day.totalWorkedMinutes),
+    dayOffUncountedMinutes: sum((day) => day.dayOffUncountedMinutes ?? 0),
+    noveltyCoveredMinutes: sum((day) => day.noveltyCoveredMinutes),
+    computableMinutes: sum((day) => day.computableMinutes),
     settlement: {
       normalMinutes: sum((day) => day.settlement.normalMinutes),
       withinBaseMinutes: sum((day) => day.settlement.withinBaseMinutes),
       additiveMinutes: sum((day) => day.settlement.additiveMinutes),
+      noveltyMinutes: sum((day) => day.settlement.noveltyMinutes),
       totalMinutes: sum((day) => day.settlement.totalMinutes),
     },
     concepts: conceptIds.map((id) => {
       const matching = days.flatMap((day) => day.concepts.filter((concept) => concept.hourConceptId === id));
       return { hourConceptId: id, treatment: matching[0]!.treatment, realMinutes: matching.reduce((t, c) => t + c.realMinutes, 0), settlementMinutes: matching.reduce((t, c) => t + c.settlementMinutes, 0) };
     }),
+    novelty: { coveredMinutes: 0, settlementMinutes: 0, informativeMinutes: 0, pendingApprovalMinutes: 0, heldMinutes: 0, reviewDays: 0, reviewDates: [], types: [] },
   };
 }
 
@@ -95,6 +105,11 @@ export function timeGridFixture(days: DayAccounting[] = [dayAccounting(4)], over
     attendanceIssues: 0,
     specialHoursByDay: Object.fromEntries(days.filter((day) => day.multiplier > 1).map((day) => [String(day.day), { multiplier: day.multiplier, ruleNames: ["Domingos"], conflict: false }])),
     dayOffsByDay: {},
+    totalWorkedMinutes: accounting.totalWorkedMinutes,
+    noveltyCoveredMinutes: accounting.noveltyCoveredMinutes,
+    computableMinutes: accounting.computableMinutes,
+    noveltyCoverageRows: [],
+    noveltiesByDay: {},
     ...overrides,
   };
 }

@@ -14,6 +14,7 @@ import type { Employee, Novelty } from "../types";
 import type { NoveltyType } from "../types/noveltyType.types";
 import type { EmployeeTimeGrid } from "../services/api/employeeApiService";
 import { dayAccounting, timeGridFixture } from "../test/workedTimeAccountingFixtures";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -43,7 +44,7 @@ vi.mock("../services/api/employeeApiService", async (importOriginal) => {
 
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyApiService")>();
-  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, getAll: vi.fn().mockResolvedValue([]), create: vi.fn() } };
+  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, getAll: vi.fn().mockResolvedValue([]), create: vi.fn(), createWithDocument: vi.fn(), previewCoverage: vi.fn().mockReturnValue(new Promise(() => undefined)) } };
 });
 
 vi.mock("../services/api/noveltyTypeApiService", async (importOriginal) => {
@@ -576,7 +577,8 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(composition).toHaveTextContent("Sereno3 h");
     expect(composition).toHaveTextContent("Horas adicionales");
     expect(composition).toHaveTextContent("Colectivo1 h");
-    expect(composition).toHaveTextContent("Total trabajado9 h");
+    expect(composition).toHaveTextContent("Total computableTrabajo real + cobertura válida9 h");
+    expect(composition).toHaveTextContent("Total trabajado real9 h");
     expect(totalCellText(rowFor("Horas normales"))).toBe("5h");
     expect(totalCellText(rowFor("Total para liquidación"))).toBe("9h");
     expect(screen.queryByText("Equivalencia para liquidación")).not.toBeInTheDocument();
@@ -594,7 +596,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(composition).toHaveTextContent("Sereno3 h6 h");
     expect(composition).toHaveTextContent("Colectivo1 h2 h");
     // El resumen conserva la equivalencia total como control...
-    expect(composition).toHaveTextContent("Total trabajado · Equivalencia9 h18 h");
+    expect(composition).toHaveTextContent("Total computableTrabajo real + cobertura válida9 h18 h");
     // ...pero la grilla se lee por concepto: cada fila dice cuánto liquidar (§17).
     expect(totalCellText(rowFor("Horas normales"))).toBe("10h5h reales");
     expect(totalCellText(rowFor("Sereno"))).toBe("6h3h reales");
@@ -747,7 +749,9 @@ function buildHourlyNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyTy
       allowsDateRange: false,
       finnegansValueUnit: "HOURS",
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: ["Nivel 1 - RRHH"],
     approvalRoles: ["Nivel 1 - RRHH"],
     finnegansCode: null,
@@ -777,23 +781,13 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
   });
 
   it("distingue una detección existente de una novedad seleccionada", async () => {
-    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
-    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
-      buildBlockingNovelty({
-        type: "Llegada tarde",
-        from: "2026-08-01",
-        to: "2026-08-01",
-        quantity: "1h",
-        timeEntryBehavior: "NO_BLOQUEA",
-        targetHourConceptName: "Hora normal",
-      }),
-    ]);
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid([], { noveltiesByDay: { "1": [{ noveltyId: "novelty-1", noveltyTypeId: "type-late", code: "NOV-LLEGADA-TARDE", label: "Llegada tarde", uiColor: "amber", minutes: 60, settlementMinutes: 60, state: "COUNTED", countsTowardTotal: true, reviewRequired: false, reviewReasons: [] }] } }));
     await openNormalDayOne();
     expect(screen.getByLabelText("Tipo de novedad")).toHaveValue("");
     expect(screen.getByText("Detección del sistema")).toBeInTheDocument();
-    expect(screen.getByText("Duración estimada: 1h")).toBeInTheDocument();
-    expect(screen.getByText(/no queda asociada automáticamente/i)).toBeInTheDocument();
-    expect(document.querySelector(".context-novelty-card .cell-novelty-pill")).not.toBeInTheDocument();
+    expect(screen.getByText("Llegada tarde")).toBeInTheDocument();
+    expect(screen.getByText("1h")).toBeInTheDocument();
+    expect(screen.getByText(/provienen de la cobertura diaria/i)).toBeInTheDocument();
   });
 
   it("muestra la novedad aplicada y permite volver a Sin novedad", async () => {
@@ -805,7 +799,8 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
     const selector = await screen.findByLabelText("Tipo de novedad");
     await user.selectOptions(selector, "type-late");
     expect(screen.getByText("Novedad asociada", { selector: ".hour-novelty-eyebrow" })).toBeInTheDocument();
-    expect(screen.getByText("Duración: 1h")).toBeInTheDocument();
+    // Etapa 8: los campos dependen del Tipo (acá, registro heredado de horas, sólo informativo).
+    expect(screen.getByLabelText("Cantidad de horas informativa")).toBeInTheDocument();
     expect(screen.getByText(/Se asociará únicamente a esta fila/i)).toBeInTheDocument();
 
     await user.selectOptions(selector, "");
@@ -821,11 +816,147 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
     ]);
     await openNormalDayOne();
     await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
-    const noveltyHoursInput = screen.getAllByLabelText("Cantidad de horas")[1]!;
-    await user.clear(noveltyHoursInput);
-    await user.type(noveltyHoursInput, "26.8667");
-    expect(screen.getByText("26h 52m", { exact: false })).toBeInTheDocument();
     expect(screen.getByText(/justificación administrativa pendiente/i, { selector: ".hour-novelty-state b" })).toBeInTheDocument();
+  });
+});
+
+// Las horas manuales no heredan la sugerencia de carga normal al asociar una
+// novedad: la cobertura sale sólo de la configuración del Tipo.
+describe("EmployeeHoursPage — horas manuales al asociar una novedad", () => {
+  const bankType = () => buildHourlyNoveltyType({ id: "type-bank", code: "NOV-TRAMITE", name: "Trámite bancario", coverage: { ...defaultNoveltyTypeCoverage(), mode: "FIXED_MINUTES", fixedMinutes: 240 } });
+
+  async function openNormalDayOneWithTypes(grid = buildGrid()) {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(grid);
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([bankType(), buildHourlyNoveltyType()]);
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await screen.findByText(/Cargar Horas base/i);
+    const selector = await screen.findByLabelText("Tipo de novedad");
+    await screen.findByRole("option", { name: "Trámite bancario" });
+    return { user, selector, hoursInput: screen.getByLabelText("Cantidad de horas") };
+  }
+
+  it("una fila con 8 h sugeridas pasa a 0 h al seleccionar una novedad", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    expect(hoursInput).toHaveValue(8);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(0);
+  });
+
+  it("una carga existente con 8 h reales conserva sus horas al seleccionar una novedad", async () => {
+    const grid = buildGrid([], { entries: [{ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Borrador", conceptId: "normal", origin: "MANUAL" }] });
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes(grid);
+    expect(hoursInput).toHaveValue(8);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(8);
+  });
+
+  it("no pisa horas que el usuario editó antes de elegir la novedad, aunque coincidan con la sugerencia", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.clear(hoursInput);
+    await user.type(hoursInput, "8");
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(8);
+  });
+
+  it("respeta las horas que el usuario carga explícitamente después de elegir la novedad", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.clear(hoursInput);
+    await user.type(hoursInput, "3");
+    expect(hoursInput).toHaveValue(3);
+    // Cambiar de novedad no pisa un valor cargado por el usuario.
+    await user.selectOptions(selector, "type-late");
+    expect(hoursInput).toHaveValue(3);
+  });
+
+  it("cambiar entre novedades no reintroduce las 8 h sugeridas", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.selectOptions(selector, "type-late");
+    expect(hoursInput).toHaveValue(0);
+    await user.selectOptions(selector, "type-bank");
+    expect(hoursInput).toHaveValue(0);
+  });
+
+  it("quitar la novedad no restaura la sugerencia: el campo conserva su valor actual (comportamiento existente)", async () => {
+    const { user, selector, hoursInput } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.selectOptions(selector, "");
+    expect(hoursInput).toHaveValue(0);
+    // La sugerencia se recalcula sólo al reabrir la celda (openCell).
+    await user.click(screen.getByRole("button", { name: /Cancelar/i }));
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    expect(await screen.findByLabelText("Cantidad de horas")).toHaveValue(8);
+  });
+
+  it("guardar sin tocar las horas después de elegir la novedad no crea horas manuales accidentales", async () => {
+    vi.mocked(noveltyApiService.create).mockClear();
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 0, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "nov-1", employeeId: "employee-1" } as never]);
+    const { user, selector } = await openNormalDayOneWithTypes();
+    await user.selectOptions(selector, "type-bank");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+    expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ conceptId: "normal", hours: 0 }), { knownExistingId: null });
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({ noveltyTypeId: "type-bank" })));
+  });
+});
+
+// Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): la novedad de la grilla usa los
+// mismos campos, validación y payload que el alta de novedades.
+describe("EmployeeHoursPage — novedad asociada a una hora (Etapa 8)", () => {
+  it("valida los datos de la novedad antes de guardar la hora y envía el payload del tipo", async () => {
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([
+      buildHourlyNoveltyType({ rules: { ...buildHourlyNoveltyType().rules, requiresObservation: true }, coverage: { ...defaultNoveltyTypeCoverage(), mode: "MANUAL_MINUTES" } }),
+    ]);
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.create).mockResolvedValue([{ id: "nov-1", employeeId: "employee-1" } as never]);
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    expect(screen.getByText("Faltan datos de la novedad. Revisá los campos marcados.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Duración *")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Observación *")).toHaveAttribute("aria-invalid", "true");
+    expect(timeEntryApiService.save).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Duración *"), "00:45");
+    await user.type(screen.getByLabelText("Observación *"), "Ingresó 8:45");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(noveltyApiService.create).toHaveBeenCalledWith(expect.objectContaining({
+      employeeIds: ["employee-1"], noveltyTypeId: "type-late", toDate: null, quantityHours: 0.75, quantityDays: null, observation: "Ingresó 8:45",
+    })));
+  });
+});
+
+describe("EmployeeHoursPage — novedad con documentación obligatoria (Etapa 8 §15.1)", () => {
+  it("envía la novedad y su documento en un solo pedido; si falla, avisa que la novedad no se guardó", async () => {
+    vi.mocked(noveltyApiService.create).mockClear();
+    const user = userEvent.setup();
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildHourlyNoveltyType({ rules: { ...buildHourlyNoveltyType().rules, allowsHours: false, requiresDocumentation: true } })]);
+    vi.mocked(timeEntryApiService.save).mockResolvedValue({ id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal" });
+    vi.mocked(noveltyApiService.createWithDocument).mockRejectedValueOnce(new ApiError("No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.", "NOVELTY_DOCUMENT_UPLOAD_FAILED", 502));
+    renderPage();
+    await waitForGridLoaded();
+    await user.click(within(rowFor("Horas base")).getAllByRole("button")[0]!);
+    await user.selectOptions(await screen.findByLabelText("Tipo de novedad"), "type-late");
+    const file = new File(["%PDF"], "certificado.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Documentación *"), file);
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(await screen.findByText("La hora se guardó, pero la novedad no: No pudimos guardar la documentación, así que la novedad no se creó. Intentá nuevamente.")).toBeInTheDocument();
+    expect(noveltyApiService.createWithDocument).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ["employee-1"], noveltyTypeId: "type-late" }), file, null);
+    expect(noveltyApiService.create).not.toHaveBeenCalled();
   });
 });
 
@@ -833,23 +964,22 @@ describe("EmployeeHoursPage — estado de novedad en el modal (Etapa 15M.10)", (
 // isBlocked/conceptNovelties usan timeEntryBehavior como única fuente.
 describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etapa 15L.2C)", () => {
   it("timeEntryBehavior=BLOQUEA_NUEVA_CARGA bloquea la celda de Hora normal ese día", async () => {
-    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
-    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
-      buildBlockingNovelty({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }),
-    ]);
+    const type = buildHourlyNoveltyType({ id: "type-suspension", rules: { ...buildHourlyNoveltyType().rules, timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } });
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid([], { noveltiesByDay: { "5": [{ noveltyId: "novelty-1", noveltyTypeId: type.id, code: type.code, label: "Suspensión", uiColor: "red", minutes: 0, settlementMinutes: 0, state: "COUNTED", countsTowardTotal: true, reviewRequired: false, reviewReasons: [] }] } }));
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
     renderPage();
     await waitForGridLoaded();
 
-    const day5 = within(rowFor("Horas base")).getByTitle("0 h · Suspensión");
+    const day5 = await waitFor(() => within(rowFor("Horas base")).getAllByRole("button")[4]!);
+    await waitFor(() => expect(day5.className).toContain("blocked"));
     expect(day5.className).toContain("blocked");
     expect(within(day5).getByText("0m")).toBeInTheDocument();
   });
 
   it("timeEntryBehavior=NO_BLOQUEA no bloquea la celda", async () => {
-    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid());
-    vi.mocked(noveltyApiService.getAll).mockResolvedValue([
-      buildBlockingNovelty({ timeEntryBehavior: "NO_BLOQUEA" }),
-    ]);
+    const type = buildHourlyNoveltyType({ id: "type-suspension", rules: { ...buildHourlyNoveltyType().rules, timeEntryBehavior: "NO_BLOQUEA" } });
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid([], { noveltiesByDay: { "5": [{ noveltyId: "novelty-1", noveltyTypeId: type.id, code: type.code, label: "Suspensión", uiColor: "red", minutes: 0, settlementMinutes: 0, state: "INFORMATIVE", countsTowardTotal: false, reviewRequired: false, reviewReasons: [] }] } }));
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([type]);
     renderPage();
     await waitForGridLoaded();
 
@@ -859,6 +989,28 @@ describe("EmployeeHoursPage — bloqueo por novedad vía timeEntryBehavior (Etap
     const day5 = within(rowFor("Horas base")).getAllByRole("button")[4]!;
     expect(day5.className).not.toContain("blocked");
     expect(within(day5).getByText("+")).toBeInTheDocument();
+  });
+
+  it("mantiene el bloqueo con la novedad canónica si falla el catálogo y no expande el rango en frontend", async () => {
+    const blockingNovelty: Novelty = {
+      id: "novelty-1", employeeId: "employee-1", noveltyTypeId: "type-suspension", type: "Suspensión",
+      from: "2026-08-01", to: "2026-08-31", quantity: "31 días", status: "Aprobado", createdBy: "Sistema",
+      timeEntryBehavior: "BLOQUEA_NUEVA_CARGA",
+    };
+    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildGrid([], { noveltiesByDay: {
+      "5": [{ noveltyId: "novelty-1", noveltyTypeId: "type-suspension", code: "SUS", label: "Suspensión", uiColor: "red", minutes: 0, settlementMinutes: 0, state: "COUNTED", countsTowardTotal: true, reviewRequired: false, reviewReasons: [] }],
+    } }));
+    vi.mocked(noveltyApiService.getAll).mockResolvedValue([blockingNovelty]);
+    vi.mocked(noveltyTypeApiService.getAll).mockRejectedValue(new Error("catalog unavailable"));
+
+    renderPage();
+    await waitForGridLoaded();
+    await waitFor(() => expect(noveltyApiService.getAll).toHaveBeenCalledWith({ employeeId: "employee-1", period: "2026-08" }));
+
+    const buttons = within(rowFor("Horas base")).getAllByRole("button");
+    await waitFor(() => expect(buttons[4]).toHaveClass("blocked"));
+    expect(buttons[3]).not.toHaveClass("blocked");
+    expect(within(buttons[4]!).getByText("0m")).toBeInTheDocument();
   });
 });
 

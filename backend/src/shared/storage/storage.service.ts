@@ -138,12 +138,14 @@ export const storageService = {
       purpose: input.purpose,
     });
 
-    const fileName = safeFileName(input.fileName);
+    // El nombre guardado puede diferir del original (nombre humano de un
+    // documento); el original se conserva en StorageFile.originalFileName.
+    const fileName = safeFileName(input.storedFileName || input.fileName);
     const selectedProvider = uploadProviderFor(input.module);
     const uploadStartedAt = performance.now();
     let uploaded: StorageObjectResult;
     try {
-      const { telemetryRequestId: _telemetryRequestId, ...providerInput } = input;
+      const { telemetryRequestId: _telemetryRequestId, storedFileName: _storedFileName, ...providerInput } = input;
       uploaded = await selectedProvider.upload({ ...providerInput, fileName });
       if (input.telemetryRequestId) clockPunchMetric({ requestId: input.telemetryRequestId, phase: "primary_upload", durationMs: performance.now() - uploadStartedAt, bytes: input.buffer?.length, provider: uploaded.provider, result: "success" });
     } catch (error) {

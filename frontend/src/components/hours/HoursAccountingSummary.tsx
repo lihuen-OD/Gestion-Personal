@@ -80,12 +80,30 @@ export function HoursAccountingSummary({
               <ConceptRows concepts={additive} names={names} showSettlement={showSettlement} />
             </>
           ) : null}
+          {(accounting.novelty?.coveredMinutes ?? 0) > 0 || (accounting.novelty?.informativeMinutes ?? 0) > 0 || (accounting.novelty?.pendingApprovalMinutes ?? 0) > 0 || (accounting.novelty?.heldMinutes ?? 0) > 0 ? (
+            <>
+              <tr className="is-group"><th scope="rowgroup" colSpan={columnCount}>Cobertura por novedades</th></tr>
+              <tr className="is-child">
+                <th scope="row">Cobertura que computa<span className="table-sub">Aprobada y sin revisiones pendientes</span></th>
+                <td>{formatDurationMinutes(accounting.noveltyCoveredMinutes ?? 0)}</td>
+                {showSettlement ? <td>{formatDurationMinutes(accounting.settlement.noveltyMinutes ?? 0)}</td> : null}
+              </tr>
+              {(accounting.novelty?.informativeMinutes ?? 0) > 0 ? <tr className="is-child is-muted"><th scope="row">Novedades informativas<span className="table-sub">Visibles, no suman</span></th><td>{formatDurationMinutes(accounting.novelty.informativeMinutes)}</td>{showSettlement ? <td>—</td> : null}</tr> : null}
+              {(accounting.novelty?.pendingApprovalMinutes ?? 0) > 0 ? <tr className="is-child is-muted"><th scope="row">Pendientes de aprobación<span className="table-sub">No suman todavía</span></th><td>{formatDurationMinutes(accounting.novelty.pendingApprovalMinutes)}</td>{showSettlement ? <td>—</td> : null}</tr> : null}
+              {(accounting.novelty?.heldMinutes ?? 0) > 0 ? <tr className="is-child is-warning"><th scope="row">Cobertura retenida<span className="table-sub">Requiere revisión</span></th><td>{formatDurationMinutes(accounting.novelty.heldMinutes)}</td>{showSettlement ? <td>—</td> : null}</tr> : null}
+            </>
+          ) : null}
         </tbody>
         <tfoot>
-          <tr>
-            <th scope="row">{showSettlement ? "Total trabajado · Equivalencia" : "Total trabajado"}</th>
-            <td>{formatDurationMinutes(accounting.totalWorkedMinutes)}</td>
+          <tr className="hours-computable-total">
+            <th scope="row">Total computable<span className="table-sub">Trabajo real + cobertura válida</span></th>
+            <td>{formatDurationMinutes(accounting.computableMinutes ?? accounting.totalWorkedMinutes)}</td>
             {showSettlement ? <td>{formatDurationMinutes(accounting.settlement.totalMinutes)}</td> : null}
+          </tr>
+          <tr>
+            <th scope="row">Total trabajado real</th>
+            <td>{formatDurationMinutes(accounting.totalWorkedMinutes)}</td>
+            {showSettlement ? <td>{formatDurationMinutes(accounting.settlement.totalMinutes - (accounting.settlement.noveltyMinutes ?? 0))}</td> : null}
           </tr>
         </tfoot>
       </table>

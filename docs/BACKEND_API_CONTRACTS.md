@@ -31,6 +31,7 @@ El body JSON se limita por ruta (`backend/src/shared/http/bodyLimits.ts`):
 | Todas las demás | 1 MiB | Antes del routing (parser global) |
 | `POST /api/clock/photo-punch` | 6 MiB | Después del límite por IP, `requireClockDevice()` y el límite por dispositivo |
 | `POST /api/employees/:id/documents` | 36 MiB | Después de `requireAuth` y del rol |
+| `POST /api/novelties/with-document` | 36 MiB | Después de `requireAuth` y del rol |
 
 Un `Content-Length` declarado por encima del límite de su ruta se rechaza
 antes de leer el body (y se cierra la conexión); un body chunked lo corta el
@@ -44,7 +45,7 @@ y nunca 500:
 | 400 | `INVALID_REQUEST_BODY` | Body que no coincide con su `Content-Length` o request interrumpida |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Codificación o charset del body no soportados |
 
-En las dos rutas de body grande, un request sin credencial responde 401 sin
+En las rutas de body grande, un request sin credencial responde 401 sin
 que su body se lea. `JSON_BODY_LIMIT` ya no existe.
 
 Los listados grandes pueden incluir metadatos de paginación sin cambiar `data`:
@@ -209,7 +210,7 @@ NIVEL_3_CARGA_HORARIA
 Regla general:
 
 - `NIVEL_1_RRHH`: alcance global.
-- `NIVEL_2_SUPERVISION`: alcance por legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente para el usuario (misma regla que Nivel 3, `backend/src/modules/employees/employeeAccess.ts`). **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
+- `NIVEL_2_SUPERVISION` (desde 2026-11-17): unión de (A) los legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado al propio usuario (compatibilidad con datos anteriores) y (B) los legajos con `TIME_RESPONSIBLE` vigente de cada usuario Nivel 3 que supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). Es dinámico: no copia asignaciones; un legajo agregado o quitado a ese Nivel 3 entra o sale del alcance del Nivel 2 sin editarlo. Una sola query (`some` anidados), sin duplicados; el supervisado debe seguir siendo Nivel 3 y estar `ACTIVO` (inactivarlo no borra la relación: el Nivel 2 deja de heredar sus legajos y los recupera si se lo reactiva; `PATCH /api/users/:id` invalida las cachés de alcance en el acto). Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
 - `NIVEL_3_CARGA_HORARIA`: alcance por legajos asignados como responsable de carga horaria.
 
 ## Legajos
@@ -292,7 +293,7 @@ Reglas:
 GET /api/employees/org-chart
 ```
 
-Endpoint optimizado para alimentar el organigrama sin traer el detalle completo del legajo.
+Endpoint optimizado para alimentar el organigrama sin traer el detalle completo del legajo. Sólo Nivel 1 (desde 2026-11-17 Organigramas es exclusivo de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`).
 
 Query:
 
@@ -363,6 +364,12 @@ Además del contrato operativo histórico (`employee`, `entries`, novedades y ca
 - `totalWorkedMinutes`: total real = Horas base + conceptos `ADDITIVE_TO_WORKED_TOTAL` (nunca + `WITHIN_BASE`);
 - `specialHoursByDay[day]`: `{ multiplier, ruleNames, conflict }` sólo para días con multiplicador > 1 (indicador visual; las horas del día viven en `accounting.days`).
 - `dayOffsByDay[day]` (desde 2026-11-03, `docs/decisions/EMPLOYEE_DAY_OFF.md`): `{ status: "ACTIVO", notes, activityShifts, activityMinutes }` sólo para días con franco activo. `activity*` es lo que registró el fichador en las jornadas de esa fecha operativa (evidencia); lo que computa está en `accounting.days[day]`. `accounting` (días y período) suma `dayOffUncountedMinutes`: Horas base automáticas que no computan por pertenecer a una jornada en franco.
+- **Cobertura de novedades** (desde la etapa 4, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12, aditivo): `totalWorkedMinutes` sigue siendo sólo trabajo real.
+  - `noveltyCoveredMinutes` (cobertura que cuenta) y `computableMinutes` (trabajo real + cobertura).
+  - `accounting` agrega `noveltyCoveredMinutes`, `computableMinutes`, `settlement.noveltyMinutes` (ya incluido en `settlement.totalMinutes`) y `novelty`. Por día: `{ coveredMinutes, settlementMinutes, informativeMinutes, pendingApprovalMinutes, heldMinutes, reviewRequired, items[] }`; por período: lo mismo más `reviewDays`, `reviewDates` y `types[]`.
+  - `noveltiesByDay[day]`: `[{ noveltyId, noveltyTypeId, code, label, uiColor, minutes, settlementMinutes, state, countsTowardTotal, reviewRequired, reviewReasons }]`, con `state` `COUNTED`, `INFORMATIVE`, `PENDING_APPROVAL` o `REVIEW_REQUIRED`.
+  - `noveltyCoverageRows[]`: una fila por tipo de novedad del período, `{ noveltyType { id, code, name, uiColor }, countsTowardTotal, minutesByDay, settlementMinutesByDay, stateByDay, totals }`.
+  - `novelties` (con `includeDetails`): `toDate` nulo es un único día; una novedad de un mes anterior sin fecha hasta ya no aparece.
 
 Desde 2026-10-02 ya no existen `specialHourAdditionalMinutes`, `specialHourLiquidableTotalMinutes` ni `additionalMinutes`/`liquidableTotalMinutes` por día (duplicaban los conceptos dentro de la jornada). Los conceptos `AUTOMATIC` son de sólo lectura; los `MANUAL` y `BOTH` admiten la operación manual documentada a continuación.
 
@@ -434,6 +441,12 @@ POST /api/employees
 ```
 
 Uso actual: `NIVEL_1_RRHH`.
+
+Alta mínima (migración `20261113120000_make_employee_cuil_optional`):
+- Obligatorios: `legajo`, `dni`, `firstName`, `lastName`. Opcionales y nullable: `cuil`, `birthDate`, `gender`, `nationality`, además de puesto, centro de costo, empresas, domicilio y el resto de los datos. Si vienen informados conservan sus validaciones (CUIL 6–30 caracteres, fecha válida, longitudes).
+- Unicidad (`409 EMPLOYEE_ALREADY_EXISTS`): legajo, DNI, Legajo Finnegans si se informa y CUIL **sólo si se informa**. Varios legajos pueden no tener CUIL (`Employee.cuil` es `NULL`; el índice único se conserva). Lo mismo en `PATCH /api/employees/:id`.
+- `initialLaborMovement` es opcional; con él, el motivo (`reason`) es obligatorio. Sin él no se crea movimiento laboral y el legajo queda en el `status` enviado (por defecto `ACTIVO`).
+- Un `address` sin ningún dato no crea domicilio.
 
 A6 (`docs/decisions/ORG_LOCATION_REORGANIZATION.md` §15):
 - `positionId`, si se envía, debe ser un puesto `ACTIVO` con al menos un alcance organizacional (`PositionOrgScope`). Si no: `400 EMPLOYEE_POSITION_INVALID`, `409 EMPLOYEE_POSITION_INACTIVE` o `409 EMPLOYEE_POSITION_PENDING_SCOPE`.
@@ -617,6 +630,8 @@ Body:
 
 `EmployeeAssignment.role` (`String?`, in `schema.prisma`) still exists in the schema and in `employeeAssignmentSchema` as an optional/nullable field, but it is legacy: it has no consumer anywhere in permissions, access scoping (`employeeAccess.ts`), notifications (`workforce.service.ts`), or hour calculation. The frontend stopped sending it from the "Responsable de carga horaria actual" modal (2026-09-15) — a user's real role/level is `User.role` (`RoleName`), managed only from Usuarios/Roles, and the assignment must never redefine or duplicate it. The column and the schema field were kept as-is (not migrated away) because old rows may still carry a value and dropping it was not required to fix the UI confusion; do not read it for any authorization decision.
 
+Es el único write path de `EmployeeAssignment` (además del seed). Un `TIME_RESPONSIBLE` agregado o quitado cambia el alcance del responsable directo y el de todo Nivel 2 que lo supervise: después del commit se llama `invalidateEmployeeScopeCaches()` (`backend/src/modules/employees/employeeScopeCaches.ts`), que limpia todas las cachés de lectura backend cuya respuesta sale de `employeeAccessWhere` (Legajos, Horas/asistencia, Novedades, Documentos, Alertas, resumen de Turnos, Cierres/correcciones, Dashboard). El cambio de alcance es visible en la siguiente consulta, sin esperar TTL. Pendientes, Francos y Feriados no tienen caché backend; las cachés globales y las de notificaciones no se tocan.
+
 ### Horas especiales habilitadas
 
 ```txt
@@ -708,6 +723,7 @@ Notas:
 - `fileBase64` permite enviar el archivo desde frontend sin depender de multipart.
 - F11: esta ruta acepta un body de hasta 36 MiB (archivo de hasta 25 MiB en base64) y lo parsea recién después de `requireAuth` y del rol; el resto de la API, 1 MiB (ver "Tamaño del body y errores de body").
 - Qué provider recibe el archivo lo decide el backend internamente (Etapa 15D.2, `docs/decisions/STORAGE_UPLOAD_POLICY_15D2.md`): `DOCUMENT_STORAGE_PROVIDER` para documentos de legajo, con fallback a `DEFAULT_STORAGE_PROVIDER` y luego a `STORAGE_PROVIDER` si no están configuradas — no es un valor que el cliente pueda elegir.
+- Organización en Google Drive (`docs/decisions/F12_PERF_3_4.md`, "Layout humano en Drive"): `Legajos/<legajo> - <Nombre> <Apellido>/<carpeta por categoría>/AAAA-MM-DD_<Tipo>_<Nombre-Apellido>_<sufijo>.<ext>`. Sólo usa legajo, nombre y apellido (nunca puesto ni estructura organizacional). El nombre original enviado en `fileName` se conserva en `EmployeeDocument.fileName` y `StorageFile.originalFileName`, y es el nombre de descarga.
 - `storageKey` sigue disponible para integraciones futuras donde el archivo ya venga subido por otro canal.
 - Rol (Etapa 15D.4, `docs/decisions/DOCUMENT_CATEGORY_AUTHORIZATION_15D4.md`): `NIVEL_1_RRHH`/`NIVEL_2_SUPERVISION`/`NIVEL_3_CARGA_HORARIA` pueden llegar a la ruta; la autorización real es por categoría — RRHH siempre puede, los demás sólo si `categoryId` referencia una categoría existente cuyo `uploadRoles` incluye su rol **y** el legajo está dentro de su alcance (`employeeAccessWhere`). `categoryId` inexistente responde `404 DOCUMENT_CATEGORY_NOT_FOUND`; sin permiso de categoría responde `403 DOCUMENT_UPLOAD_FORBIDDEN` — ambos antes de tocar storage, para no dejar un archivo huérfano subido.
 
@@ -901,6 +917,19 @@ status
 take
 page
 ```
+
+Uso: `NIVEL_1_RRHH`. Cuerpo de `POST`/`PATCH` (además de `name`, `email`, `role`, `status`, `companyId`, `employeeId`; `password` sólo en el alta — en la edición la contraseña se cambia por `POST /:id/reset-password`):
+
+```txt
+supervisedUserIds?: uuid[]   // sólo Nivel 2; lista completa, sin repetidos (máx. 200)
+```
+
+- `supervisedUserIds` reemplaza la lista de Nivel 3 supervisados; omitirlo la conserva. Sólo la acepta un usuario cuyo rol final sea `NIVEL_2_SUPERVISION` (otro rol con lista no vacía → `400 USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE`). Cada id debe ser un usuario existente con rol `NIVEL_3_CARGA_HORARIA` y distinto del propio (si no → `400 USER_SUPERVISION_INVALID_TARGET`). Repetidos → `400 VALIDATION_ERROR`.
+- Cambio de rol: quien deja de ser Nivel 2 deja de supervisar a todos; quien deja de ser Nivel 3 deja de estar supervisado. Ocurre en la misma transacción que la edición y se audita.
+- Usuario, relaciones y auditoría se escriben en una sola transacción (`entity: "UserSupervisionAssignment"`, `entityId` = Nivel 2, descripción con nombres y emails de los agregados/quitados).
+- `employeeId` ("Empleado vinculado") identifica a la persona de la cuenta; **no** define alcance. Es único: si ya pertenece a otro usuario → `409 EMPLOYEE_ALREADY_LINKED_TO_USER` ("Este empleado ya está vinculado a otro usuario."), validado antes de escribir; el P2002 de una carrera se mapea al mismo error. Empleado inexistente → `400 USER_EMPLOYEE_NOT_FOUND`. Email repetido → `409 EMAIL_ALREADY_EXISTS`.
+- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`.
+- Alta y edición llaman `invalidateEmployeeScopeCaches()` (el mismo helper que `PUT /api/employees/:id/assignments`), porque rol y supervisión cambian el alcance de otros usuarios: visible en la siguiente consulta, sin esperar TTL. `reset-password` no cambia alcance y no lo llama.
 
 ### Parametros de auditoria
 
@@ -1125,6 +1154,40 @@ NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED` / `NOVELTY_TYPE_FINNEGANS_VALUE_UNIT_REQUI
 NOVELTY_TYPE_HOURS_DAYS_CONFLICT`, Etapa 15L.5) — estructuralmente inviable,
 ese tipo nunca tendría `quantityDays` para exportar.
 
+**Color (`uiColor`, paleta fija de 22, 2026-11-16):** `blue`, `orange`,
+`violet`, `emerald`, `red`, `cyan`, `fuchsia`, `yellow`, `pine`, `pink`,
+`indigo`, `lime`, `brown`, `sky`, `tangerine`, `purple`, `green`, `rose`,
+`slate`, `amber`, `magenta`, `teal` (los 15 nombres anteriores siguen
+valiendo). En el alta es opcional: sin color, el backend elige el primero de la
+paleta que ningún tipo usa o, si están todos en uso, el menos repetido
+(`novelty-types/noveltyTypeColors.ts`). Nunca depende del nombre ni del código
+y no limita la cantidad de tipos: los colores pueden repetirse.
+
+**Cobertura horaria** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`, etapa 1,
+aditivo): `POST`/`PATCH` aceptan y todas las lecturas devuelven:
+
+```json
+{
+  "coverageMode": "FIXED_MINUTES",
+  "coverageFixedMinutes": 480,
+  "coverageDayRule": "WORK_OBLIGATION",
+  "coverageWeekdays": [],
+  "coverageOnDayOff": null,
+  "coverageOnHoliday": null,
+  "coverageAppliesSpecialHours": true,
+  "coverageCountsTowardTotal": true,
+  "realWorkCompatibility": "INCOMPATIBLE",
+  "requiresObservation": false
+}
+```
+
+- `coverageMode`: `NONE` (default) · `FIXED_MINUTES` · `MANUAL_MINUTES` · `EXPECTED_SCHEDULE`.
+- `coverageDayRule`: `EVERY_DAY` (default) · `SELECTED_WEEKDAYS` · `WORK_OBLIGATION`. `coverageWeekdays`: 0 = domingo … 6 = sábado; el backend los devuelve sin repetidos y ordenados.
+- `coverageOnDayOff`: `NO_COVERAGE` · `COVER`. `coverageOnHoliday`: `NO_COVERAGE` · `COVER` · `ONLY_IF_CONVOKED`. Sin default: obligatorios con `FIXED_MINUTES` + `EVERY_DAY`/`SELECTED_WEEKDAYS`, y `null` en cualquier otro caso.
+- `realWorkCompatibility`: `COMPATIBLE` (default) · `INCOMPATIBLE`. `coverageAppliesSpecialHours`, `coverageCountsTowardTotal` y `requiresObservation` default `false`.
+- Configuración incoherente → `400 NOVELTY_TYPE_COVERAGE_CONFIG_INVALID` con el motivo en lenguaje de negocio. En `PATCH` se valida la fila resultante (actual + patch); un `PATCH` sin campos de cobertura conserva la configuración actual.
+- En la etapa 1 esta configuración todavía no produce cobertura ni cambia ningún total.
+
 ### Puestos
 
 ```txt
@@ -1135,6 +1198,8 @@ POST /api/positions
 PATCH /api/positions/:id
 DELETE /api/positions/:id
 ```
+
+Roles: `GET /api/positions`, `GET /api/positions/:id` y `GET /api/positions/:id/employees` son sólo Nivel 1 desde 2026-11-17 (el módulo Puestos y Horario laboral son exclusivos de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`). `GET /api/positions/options` sigue abierto a cualquier usuario autenticado porque lo consumen los selects de Legajos. Las escrituras siguen siendo sólo Nivel 1.
 
 Archivo (A8-1): listado y opciones excluyen puestos archivados; `PATCH`/`DELETE` de un archivado → `409 POSITION_ARCHIVED`; un nodo archivado no puede ser alcance nuevo (`409 POSITION_SCOPE_ARCHIVED`). Ver "Registros archivados" en Estructura organizacional.
 
@@ -1193,7 +1258,7 @@ take
 page
 ```
 
-`from`/`to` filtran únicamente por `fromDate` (sin intersección de rango) — sin caller real hoy. `period` (Etapa 15M.15, `"YYYY-MM"`) es distinto: selecciona por intersección real de vigencia contra el mes completo, mismo criterio de negocio que `novelties.dateRange.ts::noveltyCoversDay` generalizado de "cubre este día" a "toca este mes" — no el mismo criterio que usa `finnegans-export` (Etapa 15L.3B.1, dueño único por `fromDate`, sin intersección, para no exportar la misma fila dos veces). Con `toDate` cargado: interseca si el rango `[fromDate, toDate]` toca el mes. Sin `toDate`: si `NoveltyType.allowsDateRange=true` la novedad se considera vigente abierta y aparece en el mes de inicio y en todos los posteriores; si `allowsDateRange=false` es una novedad de un único día y sólo aparece en el mes de `fromDate`. Usado por `NoveltiesPage.tsx` (filtro server-side, se combina por AND con `search`/`status`/etc., nunca OR).
+`from`/`to` filtran únicamente por `fromDate` (sin intersección de rango) — sin caller real hoy. `period` (Etapa 15M.15, `"YYYY-MM"`) es distinto: selecciona por intersección real de vigencia contra el mes completo, mismo criterio de negocio que `novelties.dateRange.ts::noveltyCoversDay` generalizado de "cubre este día" a "toca este mes" — no el mismo criterio que usa `finnegans-export` (Etapa 15L.3B.1, dueño único por `fromDate`, sin intersección, para no exportar la misma fila dos veces). Con `toDate` cargado: interseca si el rango `[fromDate, toDate]` toca el mes. Sin `toDate` la novedad es de un único día (`fromDate`) para cualquier tipo, también si `allowsDateRange=true`, y sólo aparece en el mes de `fromDate` (`novelties.dateRange.ts::noveltyOverlapsRangeWhere`, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.9; antes de esa etapa un tipo con rango se trataba como vigente abierto). Usado por `NoveltiesPage.tsx` (filtro server-side, se combina por AND con `search`/`status`/etc., nunca OR).
 
 Las pantallas de listado deben usar los datos de empleado incluidos en cada novedad cuando alcance para mostrar legajo/persona. No deben pedir todos los legajos solo para resolver nombres.
 
@@ -1220,9 +1285,22 @@ Body:
 
 Reglas:
 
-- Si quien crea es RRHH, la novedad nace `APROBADO` directo; cualquier otro rol la deja `PENDIENTE` (el campo `NoveltyType.requiresApproval` se persiste pero no controla este flujo — es decorativo).
+- Si quien crea es RRHH, la novedad nace `APROBADO` directo. Para cualquier otro rol decide `NoveltyType.requiresApproval` (Etapa 15L.2A): `false` la crea `APROBADO`; `true` la deja `PENDIENTE`.
 - Valida si el tipo permite horas o fecha hasta.
 - Valida vigencia cuando corresponde.
+- **Cobertura horaria, etapa 1** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md`): en un tipo `coverageMode=MANUAL_MINUTES` el backend deriva `quantityMinutes = round(quantityHours × 60)` (el cliente no lo envía) y rechaza más de 24 h en el día (`400 NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY`). En cualquier otro tipo `quantityMinutes` es `null`. Las lecturas de novedades devuelven `quantityMinutes`.
+- **Cobertura horaria, etapa 3** (ADR §6). Crear una novedad genera, en la misma transacción, su cobertura diaria (`NoveltyDayCoverage`): una fila por día de toda novedad no rechazada, nunca un `TimeEntry`. Todavía no suma a ningún total.
+  - Validaciones nuevas:
+    - `400 NOVELTY_MANUAL_QUANTITY_REQUIRED`: tipo de cantidad manual sin `quantityHours`.
+    - `400 NOVELTY_COVERAGE_RANGE_TOO_LONG`: más de 366 días.
+    - `400 NOVELTY_COVERAGE_TOO_LARGE`: más de 20 000 días-legajo.
+    - `400 NOVELTY_OBSERVATION_REQUIRED`: el tipo exige observación.
+  - Fechas: `toDate` nulo es siempre un único día (`fromDate`), también en tipos que admiten rango; nunca un rango abierto. Lo mismo vale para el bloqueo de nueva carga en `/api/time-entries`.
+  - Historia laboral faltante para una regla con alcance → `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING`, y no se crea nada.
+  - Período ya enviado a cierre, en un tipo que registra tiempo:
+    - otro rol → `409 PERIOD_CLOSED`;
+    - RRHH sin motivo → `400 NOVELTY_CORRECTION_REASON_REQUIRED`;
+    - RRHH con `correctionReason` (5 a 600 caracteres, campo opcional del body) → corrige y lo audita.
 - **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`): crear una novedad **nunca** crea ni modifica `TimeEntry` — esto aplica sin importar `status` (`PENDIENTE`/`APROBADO`), rol de quien crea, ni `timeEntryBehavior` del tipo. El fichador y la carga horaria manual (`/api/time-entries`) son la única fuente de verdad de horas reales; Novedades es justificación administrativa.
 - **Etapa 15G.3** (`docs/decisions/NOVELTY_OVERLAP_DUPLICATE_RULES_15G3.md`): rechaza (409) crear una novedad del **mismo `noveltyTypeId`** para el **mismo empleado** cuando su rango de fechas (`fromDate`/`toDate`, `toDate` nulo tratado como igual a `fromDate`) coincide o se superpone con una novedad ya activa (cualquier `status` salvo `RECHAZADO`):
   - `NOVELTY_DUPLICATE` — el rango coincide exactamente con el existente.
@@ -1230,6 +1308,32 @@ Reglas:
   - En carga masiva (`employeeIds` con más de un legajo), si **cualquiera** tiene un conflicto se rechaza el lote completo — no crea parcialmente al resto.
   - El mensaje (`error.message`) identifica el tipo de novedad y el/los legajo(s) en conflicto (p. ej. `Ya existe una novedad "Vacaciones" para el legajo 100 que se superpone con el rango de fechas seleccionado.`) — nunca un id/UUID técnico.
   - **No** evalúa compatibilidad entre `NoveltyType` distintos (dos tipos diferentes pueden seguir superponiéndose sin bloqueo) — ver el documento de decisión para el alcance exacto.
+- **Cobertura horaria, etapa 8** (ADR §15.1): un tipo con `requiresDocumentation=true` se rechaza en esta ruta con `400 NOVELTY_DOCUMENTATION_REQUIRED` (se crea con `POST /api/novelties/with-document`). Los tipos sin documentación obligatoria no cambian.
+
+### Crear con documento (etapa 8)
+
+```txt
+POST /api/novelties/with-document
+```
+
+Mismos roles, body y reglas que `POST /api/novelties`, más `document`, con los mismos campos y límites que un documento de legajo (`POST /api/employees/:id/documents`). El body (hasta 36 MiB) se parsea recién después de `requireAuth` y del rol.
+
+```json
+{
+  "employeeIds": ["uuid"],
+  "noveltyTypeId": "uuid",
+  "fromDate": "2026-11-23",
+  "toDate": null,
+  "observation": "Certificado médico",
+  "document": { "fileName": "certificado.pdf", "fileMimeType": "application/pdf", "fileSizeBytes": 48213, "fileBase64": "...", "notes": "opcional" }
+}
+```
+
+- Hasta **25 personas** por alta con documento (`400 NOVELTY_DOCUMENT_TOO_MANY_EMPLOYEES`, validado antes de cualquier lectura o subida); sin documento, `POST /api/novelties` sigue admitiendo 250.
+- Antes de tocar el storage valida lo mismo que el alta (alcance, tipo, rol de carga, solapamiento) más la categoría documental de novedades (activa, alcance `NOVEDAD`; `409 NOVELTY_DOCUMENT_CATEGORY_MISSING` si no hay) y su permiso de subida (`403 DOCUMENT_UPLOAD_FORBIDDEN`).
+- Sube una copia del archivo por legajo (cada documento vive en la carpeta de su legajo) y después crea, en una transacción, novedades, cobertura, `StorageFile` y `EmployeeDocument` (con `noveltyId`, estado `VIGENTE`).
+- Si una subida falla, borra las anteriores y responde `502 NOVELTY_DOCUMENT_UPLOAD_FAILED` (un archivo inválido responde su `4xx` de validación). Si la transacción falla, borra los archivos subidos y responde el error del alta. Nunca queda una novedad sin su documento; si el borrado compensatorio falla, el archivo queda huérfano en el storage, sin filas, y se registra como error crítico.
+- Respuesta: igual que `POST /api/novelties`.
 
 ### Aprobar / rechazar
 
@@ -1248,6 +1352,96 @@ Rechazo:
 
 **Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
 
+**Etapa 3:** `approve` y `reject` respetan el alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y el guard de cierres de un tipo que registra tiempo. `approve` acepta un body opcional `{ "correctionReason": "..." }` para la corrección de RRHH; en `reject`, el motivo del rechazo vale como motivo de corrección. Rechazar elimina la cobertura diaria derivada.
+
+Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). **Etapa 3:** es atómica (una transacción): si una novedad del lote no se puede aprobar, no se aprueba ninguna. Un período protegido rechaza el lote, porque no lleva motivo de corrección.
+
+### Eliminar
+
+```txt
+DELETE /api/novelties/:id
+```
+
+Sólo RRHH. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
+
+### Cobertura diaria (etapa 3, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §6)
+
+```txt
+POST /api/novelties/coverage-preview
+GET  /api/novelties/:id/coverage
+POST /api/novelties/:id/coverage-days/:date/resolution
+```
+
+Roles operativos (RRHH, Supervisión, Carga horaria). Los tres respetan el alcance del legajo.
+
+**Vista previa:** el mismo motor que la persistencia, sin escribir. Mismos permisos que la carga (roles de carga del tipo, alcance). Body:
+
+```json
+{ "employeeIds": ["uuid"], "noveltyTypeId": "uuid", "fromDate": "2026-11-16", "toDate": "2026-11-22", "quantityHours": null }
+```
+
+`employeeIds`: 1 a 50. `quantityHours` sólo para cantidad manual (≤ 24). Respuesta:
+
+```json
+{
+  "noveltyType": { "id": "uuid", "code": "VAC", "name": "Vacaciones" },
+  "initialStatus": "PENDIENTE",
+  "employees": [{
+    "employee": { "id": "uuid", "legajo": "101", "firstName": "Ana", "lastName": "Pérez" },
+    "days": [{
+      "date": "2026-11-22", "outcome": "COVERED", "scheduleReviewReason": null, "reviewStatus": "NOT_REQUIRED",
+      "label": "Cubre", "expectedMinutes": 480, "baseMinutes": 480, "resolution": null, "resolvedBaseMinutes": null,
+      "effectiveBaseMinutes": 480, "multiplier": 2, "computedMinutes": 960, "countsTowardTotal": true,
+      "workedMinutes": 0, "stateWhenApproved": "COUNTED", "reviewReasons": []
+    }],
+    "totals": { "days": 7, "coveredDays": 5, "pendingReviewDays": 0, "baseMinutes": 2400, "computedMinutes": 2880 }
+  }]
+}
+```
+
+**Etapa 8 (aditivo, `NOVELTY_COVERAGE_ENGINE.md` §15):** `initialStatus` es el estado con que se crearía la novedad (`APROBADO` para RRHH o si el tipo no requiere aprobación; si no, `PENDIENTE`, mismo criterio que el alta). Por día, `workedMinutes` es el trabajo real ya registrado (mismo criterio que la grilla por legajo) y `stateWhenApproved` / `reviewReasons` son el resultado de `accountNoveltyDay` evaluando la novedad como aprobada: `COUNTED`, `INFORMATIVE` o `REVIEW_REQUIRED` con sus motivos (`REAL_WORK_ON_INCOMPATIBLE`, `REAL_WORK_EXCEEDS_EXPECTED`, `REAL_WORK_WITHOUT_EXPECTED`, `SCHEDULE_UNRESOLVED`). Sigue sin escribir nada; una novedad con conflicto se puede guardar igual y queda para revisión. La vista previa evalúa la novedad sola: no anticipa `COVERAGE_TOTAL_EXCEEDS_EXPECTED` (P5) contra otras novedades ya cargadas ese día; lo marca la contabilidad al guardarla.
+
+- `outcome`: `COVERED`, `NO_COVERAGE`, `WEEKDAY_NOT_INCLUDED`, `NO_WORK_OBLIGATION`, `HOLIDAY_NOT_CONVOKED`, `HOLIDAY_EXCLUDED`, `DAY_OFF`, `OUTSIDE_EMPLOYMENT` o `SCHEDULE_UNRESOLVED` (0 h provisional, a revisar; `scheduleReviewReason` dice por qué).
+- `label` es el texto legible para mostrar.
+- `computedMinutes` = minutos base efectivos (los resueltos, si hay resolución) × `multiplier`.
+- Errores: los mismos `400`/`409` de validación que la carga.
+
+**Consulta:** las filas persistidas con la misma forma por día, más `shiftTemplate { code, name }`, `resolvedBy` (nombre), `resolvedAt` y `resolutionNote`, y `totals`. Desde §17 (aditivo), `novelty` incluye `quantityMinutes` y `noveltyType.coverageMode` / `noveltyType.coverageFixedMinutes`, para mostrar el valor configurado en el detalle del día. Desde §18 (aditivo), la respuesta incluye `canAdjust` (el usuario puede ajustar días: RRHH o un rol de carga del tipo) y `noveltyType.allowedLoadRoles` en las novedades.
+
+**Resolución** de un día en revisión (`:date` = `AAAA-MM-DD`). Body:
+
+```json
+{ "resolution": "SET_BASE_MINUTES", "baseMinutes": 480, "note": "Trabajaba domingos de 8 h", "correctionReason": null }
+```
+
+- `resolution`: `CONFIRMED_ZERO` (sin `baseMinutes`), `SET_BASE_MINUTES` (`baseMinutes` 1..1440) o `RESTORE_AUTOMATIC` (sin `baseMinutes`; deshace una resolución manual y recalcula el día; sin resolución previa → `409 NOVELTY_COVERAGE_DAY_NOT_RESOLVED`). `note` es obligatoria (5 a 600).
+- **Desde §19 del ADR:** el ajuste admite cualquier valor entre 0 y el máximo del día (`FIXED_MINUTES` → `coverageFixedMinutes`; `MANUAL_MINUTES` → la cantidad cargada; `EXPECTED_SCHEDULE` → la jornada conocida, sin tope propio si es desconocida; `NONE` → nada). Fuera de rango → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`.
+- **§18 (histórico, ampliado por §19):** cualquier día con fila de cobertura admite un ajuste, sólo a 0 h o al valor del tipo: `FIXED_MINUTES` → `coverageFixedMinutes`; `MANUAL_MINUTES` → la cantidad cargada; `EXPECTED_SCHEDULE` → la jornada conocida del día (horas libres sólo con la jornada sin resolver). Otro valor → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. Con trabajo real incompatible o si el valor deja el día por encima de la jornada con otras coberturas (P5) → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`; con trabajo compatible que supera la jornada → `400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`. Tipo `NONE` → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. El ajuste prevalece en los recálculos hasta `RESTORE_AUTOMATIC`.
+- **§17 (histórico):** un día `COVERED`, esté o no en revisión, admite sólo `CONFIRMED_ZERO` (excepción administrativa); `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. Un día `SCHEDULE_UNRESOLVED` admite `SET_BASE_MINUTES` libre sólo en tipos `EXPECTED_SCHEDULE`; en `FIXED_MINUTES` sólo igual a `coverageFixedMinutes`.
+- Días `SCHEDULE_UNRESOLVED`, incluida la corrección de una resolución anterior.
+- Desde la etapa 4, también un día `COVERED` en conflicto con el trabajo real (ADR §12.4):
+  - tipo incompatible: sólo `CONFIRMED_ZERO`; `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`;
+  - tipo compatible: `SET_BASE_MINUTES` con trabajo + minutos ≤ jornada esperada (`400 NOVELTY_COVERAGE_EXCEEDS_EXPECTED`).
+- Desde la auditoría de la etapa 10 (P5, ADR §12.4), un día `COVERED` cuyas coberturas, sumadas con el trabajo real, superan la jornada esperada (`COVERAGE_TOTAL_EXCEEDS_EXPECTED`): sólo `CONFIRMED_ZERO` sobre una de ellas; `SET_BASE_MINUTES` → `400 NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED`. El día se evalúa con todas las coberturas no rechazadas de la persona, igual que la grilla.
+- Otro día → `409 NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW`. Día fuera de la novedad → `404 NOVELTY_COVERAGE_DAY_NOT_FOUND`; novedad rechazada → `409 NOVELTY_COVERAGE_REJECTED`.
+- Roles de carga del tipo (o RRHH). Aplica el multiplicador del motor de Horas Especiales sobre los minutos resueltos y guarda los minutos reales del día.
+- Mismo guard de cierres que la carga.
+
+### Recálculo automático de la cobertura (etapa 5, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §13)
+
+Sin endpoints nuevos ni cambios de forma en las respuestas. Estos endpoints recalculan la cobertura de novedades alcanzada **en su misma transacción** (si el recálculo falla, el cambio no se guarda) y limpian las cachés derivadas:
+
+- `POST /api/employees/:id/labor-movements` (ALTA/BAJA) y `PATCH /api/employees/:id` con cambio de datos laborales;
+- `PATCH /api/positions/:id` con cambio de alcance y las eliminaciones controladas que retiran datos laborales;
+- `POST/PATCH/DELETE /api/shifts/assignments` (asignaciones de turno; ahora transaccionales);
+- `PATCH /api/workforce/shift-templates/:id` (horario, minutos o estado) y `DELETE` cuando la plantilla se inactiva;
+- `POST/PATCH /api/employees/:employeeId/work-regimes` (asignación, edición y cierre de vigencia) y `PATCH /api/work-regimes/:id` cuando cambia el tipo (ahora transaccionales);
+- `PUT /api/employee-day-offs` (francos) y `PUT /api/shifts/holiday-work/assignments` (convocatorias a feriado);
+- alta, edición, inactivación y eliminación de reglas de Horas Especiales (`/api/workforce/double-hour-rules`);
+- `PATCH /api/novelty-types/:id` cuando cambia un campo de cobertura.
+
+Errores nuevos posibles en esos endpoints: `409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING` si una regla con alcance necesita historia laboral que falta para un día de un período abierto con cobertura que aplica multiplicadores (mismo código y criterio que la reinterpretación de horas). Los períodos enviados o aprobados nunca se reinterpretan: el cambio se guarda y la auditoría informa los períodos no tocados. Los snapshots de cierres no protegidos se reconstruyen con `recalculation.reason = "NOVELTY_COVERAGE_CHANGED"`.
+
 ### Fichador (`clock`, F7)
 
 Módulo `backend/src/modules/clock/` (F7 de `docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md`, §26): capa de transporte del kiosco sobre el núcleo de fichada de `time-entries` (no tiene servicio propio). Monta el namespace del dispositivo `/api/clock/*`: el enrolamiento de `clock-devices` (`/device/*`, ver "Dispositivos de fichada"), el heartbeat (F9) y las cuatro rutas operativas.
@@ -1263,7 +1457,9 @@ GET  /api/clock/attempts/:requestId?employeeId=
 
 Semántica de `source` (F7.1): `AttendancePunch.source` = canal de **esa** fichada; `WorkShift.source` = canal que **originó** la jornada (nunca se reescribe); `TimeEntry.source` = `WorkShift.source`. Toda fichada nueva es `KIOSK`. `PUBLIC_CLOCK_PHOTO` queda como valor histórico (fichadas del alias y del fichador de F6): una jornada histórica `PUBLIC_CLOCK_PHOTO` todavía abierta y cerrada por `/api/clock` queda con salida `KIOSK` y jornada y horas `PUBLIC_CLOCK_PHOTO`; en un rollover, la jornada vieja y su `TimeEntry` de 0 h conservan su source y la nueva es `KIOSK`. El `source` lo decide el servidor, nunca el cliente: cualquier `source` o `deviceId` del body se descarta (el schema no los acepta). Las fichadas históricas no se reescriben (no hay backfill).
 
-Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). `photo-punch` parsea su body (hasta 6 MiB) recién después de esas guardas (ver "Tamaño del body y errores de body"). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas (§33): tope por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`, sólo tráfico sin credencial ya verificada), cupo de credenciales rechazadas por IP y credencial (`CLOCK_AUTH_FAILURE_RATE_LIMIT_MAX` cada 15 min), `requireClockDevice()`, cupo propio de la operación por dispositivo autenticado, y recién después validación del body.
+
+**Fichador — cupos y 429 (§33).** Cupos por dispositivo y por operación, en ventanas de `CLOCK_RATE_LIMIT_WINDOW_MS` (5 min): búsqueda `CLOCK_SEARCH_RATE_LIMIT_MAX` (450) más `CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX` (1800/h), jornada `CLOCK_STATUS_RATE_LIMIT_MAX` (100), fichada `CLOCK_PUNCH_RATE_LIMIT_MAX` (60), intentos `CLOCK_ATTEMPT_RATE_LIMIT_MAX` (120). Agotar uno no afecta a los otros ni a otro dispositivo. Las seis rutas exactas `GET /clock/employees`, `POST /clock/status`, `POST /clock/photo-punch`, `GET /clock/attempts/:requestId`, `POST /clock/heartbeat` y `GET /clock/device/status` no cuentan en el limitador global de la API (`RATE_LIMIT_MAX`); toda otra ruta, incluidas las desconocidas bajo `/api/clock/*`, el enrolamiento y el mantenimiento, sí. Un cupo agotado responde `429` con header `Retry-After` y body `{ "error": { "code", "message", "retryAfterSeconds" } }`; códigos: `CLOCK_SEARCH_RATE_LIMITED`, `CLOCK_STATUS_RATE_LIMITED`, `CLOCK_PUNCH_RATE_LIMITED`, `CLOCK_ATTEMPT_RATE_LIMITED`, `CLOCK_DEVICE_RATE_LIMITED` (heartbeat, estado, mantenimiento), `CLOCK_NETWORK_RATE_LIMITED` (tope por IP), `CLOCK_AUTH_RATE_LIMITED` (credencial rechazada repetidamente) y `CLOCK_ENROLLMENT_RATE_LIMITED` (registro y refresh). Un `429` en `photo-punch` es definitivo: la fichada no se procesó; el cliente no reintenta solo. No requieren `requireAuth` (y un JWT no las abre). `photo-punch` parsea su body (hasta 6 MiB) recién después de esas guardas (ver "Tamaño del body y errores de body"). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
 
 Errores de dispositivo y de fichada:
 
@@ -1294,7 +1490,9 @@ Errores de dispositivo y de fichada:
 
 Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Provincia › Zona · Establecimiento` cuando hay provincia y `Zona · Establecimiento` cuando no la hay. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
-Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
+Contrato de empleado en las cuatro respuestas (plan §32, vigente): `{ id, dni, firstName, lastName, name }` — `dni` es el DNI completo tal como está guardado; el legajo no se devuelve (sigue siendo interno: auditoría, storage, Drive). `dni` sólo es `null` al leer un intento guardado con el contrato anterior. Reemplaza el contrato F0 `{ id, legajo, dniSuffix, firstName, lastName, name }` (`dniSuffix` = últimos 3 dígitos), retirado en §32.
+
+Búsqueda `GET /api/clock/employees?search=` (2 a 80 caracteres): sólo empleados `ACTIVO`, máximo 12, orden apellido/nombre. Coincide por nombre, por apellido, por varias palabras repartidas entre nombre y apellido (en cualquier orden) o por DNI. El DNI se compara contra `Employee.dni` **ignorando separadores** (`regexp_replace(dni, '[^0-9]', '', 'g') LIKE '%<dígitos>%'`, SQL parametrizado; el dato guardado no se modifica) sólo si el término es numérico (dígitos con puntos, espacios o guiones) y tiene al menos 2 dígitos (`CLOCK_SEARCH_MIN_LENGTH`, el mismo mínimo que nombre y apellido): `32`, `324`, `3240`, `32401`, `32401118` y `32.401.118` encuentran tanto `32.401.118` como `32401118`. Nunca busca por legajo. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
 ```json
 {
@@ -1309,7 +1507,7 @@ Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, fi
 }
 ```
 
-Evidencia (F12-PERF-3/4, `docs/decisions/F12_PERF_3_4.md`): la foto se sube al primary de `PUNCH_PHOTO_STORAGE_PROVIDER` antes de la transacción, en la key `attendance/<año>/<mes>/<deviceId>/<requestId>.<ext>`. Su `StorageFile`, y con primary `neon_object_storage` su `StorageArchiveJob` hacia Google Drive, se escriben en la misma transacción que la fichada. Una fichada no confirmada no deja filas y su objeto se compensa. Google Drive nunca está en el camino del `201`. `thumbnail` se sigue validando, pero ya no se guarda.
+Evidencia (F12-PERF-3/4, `docs/decisions/F12_PERF_3_4.md`): la foto se sube al primary de `PUNCH_PHOTO_STORAGE_PROVIDER` antes de la transacción, en la key `attendance/<año>/<mes>/<deviceId>/<requestId>.<ext>`. Su `StorageFile`, y con primary `neon_object_storage` su `StorageArchiveJob` hacia Google Drive, se escriben en la misma transacción que la fichada; la copia en Drive va a `Fichadas/<AAAA>/<MM - Mes>/<DD>/<legajo - Nombre Apellido>/AAAA-MM-DD_HH-mm_<INGRESO|SALIDA>_<requestId corto>.<ext>` (hora argentina). Una fichada no confirmada no deja filas y su objeto se compensa. Google Drive nunca está en el camino del `201`. `thumbnail` se sigue validando, pero ya no se guarda.
 
 Post-proceso (PERF-5D, `docs/decisions/F12_PERF_5.md`): el `201` confirma fichada, jornada, `TimeEntry` y `TimeSegment` (con evidencia, auditoría e intento `COMPLETED`). Lo derivado ya no se calcula antes de responder: alertas de turno (`ShiftAlert`) y sus avisos (`SystemNotification`), la adopción del turno del ingreso (`WorkShift.shiftTemplateId`), el aviso `FALTA_SALIDA` y la resolución de `POSIBLE_OLVIDO_SALIDA` del rollover, y los desgloses automáticos de Motor B (`HourConceptBreakdown`). Ese trabajo queda en un job `ClockPunchPostProcessJob` (`ENTRY` / `ROLLOVER_ENTRY` / `EXIT`) escrito en la misma transacción que la fichada, y aparece segundos después. Una fichada nunca se confirma sin su job: si el job no se puede escribir, la fichada se revierte entera. Un fallo del post-proceso nunca invalida la fichada: el job reintenta con backoff y, agotado, queda `FAILED` (con `lastErrorCode`/`lastErrorMessage` y log `CLOCK_POSTPROCESS_FAILED`). La respuesta del endpoint no cambia.
 
@@ -1404,6 +1602,8 @@ POST /api/time-entries/:id/return
 ```txt
 GET /api/pending
 ```
+
+Roles: sólo Nivel 1 y Nivel 2 (desde 2026-11-17 su único consumidor es la Bandeja de revisión, `/pendientes`, que no existe para Nivel 3; Nivel 3 → `403 FORBIDDEN`). Carga de horas usa `/api/time-entries`, que no cambia.
 
 Query:
 
@@ -1527,6 +1727,8 @@ Response:
     "pendingEmployees": 28,
     "reviewEmployees": 12,
     "countableHours": 1540,
+    "coveredHours": 96,
+    "computableHours": 1636,
     "coverage": 75
   }
 }
@@ -1538,6 +1740,7 @@ Reglas:
 - Debe usarse para KPI cards del modulo Horas.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
 - `countableHours` ("Total trabajado" en la UI) = Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + horas de conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO). Nunca suma conceptos `WITHIN_BASE` (ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`).
+- Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo: `coveredHours` = cobertura de novedades que cuenta (APROBADA, suma, sin revisión) y `computableHours` = `countableHours` + `coveredHours`. `countableHours` no cambia: sigue siendo trabajo real.
 
 ### Personas del periodo para tabla
 
@@ -1589,6 +1792,10 @@ Reglas:
 - Calcula total y estado solo para los empleados visibles.
 - Debe usarse para la tabla principal de Horas en lugar de descargar todos los legajos y todas las cargas del periodo.
 - Desde 2026-10-02 `summary = { incidents, status, accounting, dailyBreakdown }` (el JSON de ejemplo de arriba es anterior). `accounting` es el `PeriodAccounting` del legajo (ver time-grid) con `days`; Horas base = `TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION y conceptos = `HourConceptBreakdown` sin RECHAZADO. `dailyBreakdown[]` = `{ day, novelty, specialHourRuleNames, specialHourConflict }` sólo para días con horas o novedad. Ya no existen `total`, `normal`, `special`, `specialHourAdditionalHours` ni `specialHourLiquidableTotal`. La vista "Por persona" (`GET /time-entries?view=byEmployee`) devuelve `summary = { status, accounting (sin days), specialHourRuleNames, specialHourConflict }`. Desde 2026-11-03 `dailyBreakdown[]` también lleva `dayOff: { notes, activityShifts, activityMinutes } | null` e incluye los días con franco aunque no tengan horas; la contabilidad de la grilla, "Por persona", el export, el resumen y el dashboard excluyen las horas automáticas de jornadas en franco (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7). Desde 2026-11-04 `dailyBreakdown[].novelty = { label, uiColor, noveltyTypeId } | null`: `label` une los nombres de todas las novedades que cubren el día; `uiColor` y `noveltyTypeId` sólo vienen si los comparten todas (si no, `null`, y la grilla usa un estilo neutro propio; nunca se elige una por orden de consulta). `uiColor` es el valor guardado y puede ser un color histórico inválido: el cliente lo resuelve igual que el catálogo (fallback determinístico por id del tipo). Con franco y novedad el mismo día vienen ambos.
+- Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo:
+  - `accounting` incluye la cobertura de novedades (ver time-grid).
+  - Cada `dailyBreakdown[]` agrega `totalWorkedMinutes`, `noveltyCoveredMinutes`, `computableMinutes` y `novelties[]` (misma forma que `noveltiesByDay` del time-grid), e incluye los días que sólo tienen cobertura.
+  - `novelty` se conserva por compatibilidad. `toDate` nulo es un único día: la marca ya no se extiende a los días siguientes.
 
 ## Exportaciones
 
@@ -1626,8 +1833,18 @@ lastExport              FinnegansExportBatchSummary & { sameAsCurrent: boolean }
 ```
 
 Cada fila trae, además de las columnas de abajo, un campo `estado`
-(`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`CIERRE_PENDIENTE`) — sólo
+(`LISTO`/`FALTA_CANTIDAD`/`FALTA_CONFIGURACION`/`REVISION_PENDIENTE`/`CIERRE_PENDIENTE`) — sólo
 para la UI de preview, nunca se exporta en el CSV/XLSX.
+
+**Etapa 9 de cobertura** (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §16):
+
+- Novedad de un tipo **con cobertura** (`coverageMode` distinto de `NONE`): una fila por novedad y **mes**. Entra en cada mes que alcanza su rango (no sólo en el de `fromDate`); `Fecha Aplicación` (y la vigencia, si el tipo la exige) es la porción del mes. Valor 1:
+  - `HOURS`: suma de la base efectiva (resoluciones manuales incluidas) de sus días del mes que cuentan o son informativos, **sin multiplicador**. Nunca `quantityHours`. Sin horas en el mes → sin fila.
+  - `DAYS`: días corridos de la porción del mes.
+  - `UNIT`: `1`, sólo en el mes de `fromDate`.
+  - Un día en revisión deja la fila en `REVISION_PENDIENTE` (sin valor); sin cobertura calculada, `FALTA_CANTIDAD`.
+- Novedad de un tipo **sin cobertura**: sin cambios (15L.3A/15L.3B.1/15L.5).
+- **Configuración del período (§16.2):** preview y exportación definitiva usan, por novedad, la configuración de Finnegans congelada en el snapshot del cierre del legajo (código, unidad, vigencia, nombre, si exporta, si está activo, si tiene cobertura). Si el cierre no existe, es anterior a esa congelación o no incluye el tipo, usan el tipo vigente. Un cambio posterior del tipo no altera el período ni aparece como "cambio desde la última exportación".
 
 ### Finnegans novedades — exportación definitiva (Etapa 15L.4)
 
@@ -1650,7 +1867,10 @@ Reemplaza al GET sin `preview` y a `GET .../novelties.csv` de 15L.3A
 }
 ```
 
-Revalida todo desde cero: exige que el cierre mensual de cada empleado
+Revalida todo desde cero: si hay días de cobertura en revisión responde
+`409 FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING` ("No se puede generar la
+exportación porque hay N días de novedades pendientes de revisión.", con
+precedencia sobre los demás); exige que el cierre mensual de cada empleado
 incluido esté `APROBADO` (si no, `409 FINNEGANS_MONTHLY_CLOSURE_NOT_APPROVED`),
 que cada fila esté completamente lista (si no, `409 FINNEGANS_EXPORT_NOT_READY`
 — con precedencia sobre el de cierre si ambos aplican), y que venga motivo
@@ -1729,10 +1949,13 @@ CUIL | Apellido | Nombre | Legajo | Empresa | Centro de costo
 Horas base
 Horas normales
 <Concepto> (horas reales)            -- una por concepto con horas en el período (dentro de la jornada primero)
-Total trabajado                      -- Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL
+Total trabajado                      -- Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL (sólo trabajo real)
+Cubierto por novedades               -- etapa 4: sólo si alguien tiene cobertura que cuenta
+Total computable                     -- etapa 4: Total trabajado + Cubierto por novedades
 Horas normales (para liquidación)
 <Concepto> (para liquidación)        -- una por concepto
-Equivalencia para liquidación        -- suma de los componentes anteriores
+Novedades (para liquidación)         -- etapa 4: cobertura × multiplicador
+Equivalencia para liquidación        -- suma de los componentes anteriores (incluye novedades)
 Reglas de horas especiales aplicadas
 Conflicto de reglas
 Estado
@@ -1871,7 +2094,7 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. |
+| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. Etapa 9 de cobertura (§16.2): el snapshot agrega `finnegans = { model: "FINNEGANS_CONFIG_V1", types[] }` con la configuración de Finnegans de los tipos con novedades del legajo en el período (`noveltyTypeId`, `name`, `status`, `exportsToFinnegans`, `finnegansCode`, `finnegansValueUnit`, `finnegansRequiresValidity`, `coverageMode`); una reconstrucción del snapshot la conserva y nunca la agrega a un snapshot anterior. |
 | POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
@@ -1903,6 +2126,16 @@ Sólo para 4 valores de `entityType` llega además un `employee` ya resuelto (`{
 - `AttendanceInactivityIncident` (**"no asistió"**, `type: "SIN_ACTIVIDAD_REGISTRADA"` — agregado en la Etapa 15G.2, docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md; antes de esta etapa este `entityType` no traía `employee`).
 
 El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `employee`. El enriquecimiento sólo consulta el entityId de la página actual (nunca recorre todo el histórico) y usa un `select` mínimo — no dispara ningún fetch de legajo completo.
+
+#### Destinatarios de las notificaciones operativas del legajo (desde 2026-11-17)
+
+`ALERTA_FICHADA` (todas las alertas de turno/fichada, incluida `ACTIVIDAD_EN_FRANCO`), `FALTA_SALIDA`, `FALTA_INGRESO` y `SIN_ACTIVIDAD_REGISTRADA` se crean, por legajo, para la unión deduplicada de:
+
+- **RRHH:** usuarios `ACTIVO` con rol `NIVEL_1_RRHH`.
+- **Responsables directos:** usuarios `ACTIVO` (cualquier rol) con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente sobre el legajo. Vigente = mismo criterio que el alcance (`activeTimeResponsibleWhere` en `employeeAccess.ts`): `status` nulo/`ACTIVO`/`Activo`, `effectiveFrom` nulo o ≤ fecha, `effectiveTo` nulo o ≥ fecha (inclusivos).
+- **Supervisores Nivel 2 heredados:** por cada responsable directo `NIVEL_3_CARGA_HORARIA` `ACTIVO`, los usuarios `NIVEL_2_SUPERVISION` `ACTIVO` que lo supervisan (`UserSupervisionAssignment`). Roles y estados de ambos lados se verifican al resolver: una relación desfasada no concede el aviso. `EmployeeAssignment.role` nunca se usa.
+
+Cada usuario recibe una sola fila por evento aunque llegue por varias vías. La vigencia se evalúa en la fecha del hecho, no en la de procesamiento: `ShiftAlert.actualAt` (alertas), inicio de la jornada (`FALTA_SALIDA`) y fecha operativa del incidente (`FALTA_INGRESO` / `SIN_ACTIVIDAD_REGISTRADA`). El cambio aplica a eventos nuevos: no hay backfill de notificaciones anteriores. Fuente única: `backend/src/modules/workforce-management/employeeNotificationRecipients.ts` (resolución en batch, a lo sumo 3 consultas por lote). El resto de las notificaciones (`NOVEDAD_PENDIENTE`, `CIERRE_MENSUAL`, `CORRECCION_HORARIA`) siguen siendo sólo para RRHH.
 
 #### Horas Especiales (`/double-hour-rules*`) — Etapa 8B (extendido en 12B)
 
@@ -1958,7 +2191,7 @@ Body de `POST`/`PATCH` (todos los campos de scope y `dates` son opcionales; `upd
 
 ### Dashboard (`dashboard`, montado en `/api/dashboard`)
 
-`GET /` (requiere auth) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` ("Horas cargadas") es el total trabajado real del período: Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO); nunca suma conceptos `WITHIN_BASE` (base 8 + Sereno 3 + Colectivo 1 → 9, no 8 ni 12). Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`.
+`GET /metrics` (sólo Nivel 1 desde 2026-11-17: Dashboard y Reportes de Gestión son exclusivos de RRHH; Nivel 2 y Nivel 3 → `403 FORBIDDEN`) — métricas agregadas del home (empleados, altas/bajas, novedades, pendientes de carga horaria, alertas documentales, etc.). Cacheado ~30s en backend, ver `backend/src/modules/dashboard/dashboard.cache.ts`. El KPI `loadedHours` ("Horas cargadas") es el total trabajado real del período: Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO); nunca suma conceptos `WITHIN_BASE` (base 8 + Sereno 3 + Colectivo 1 → 9, no 8 ni 12). Ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`.
 
 ### Storage (`storage`, montado en `/api/storage`)
 
@@ -1995,18 +2228,16 @@ Rutas públicas, con rate limit independiente:
 | GET | `/api/clock/maintenance/session` | idem + `X-Clock-Maintenance-Session: <token>` | Diagnóstico del equipo y segundos restantes: `{ expiresAt, expiresInSeconds, device, serverTime }`. Sesión inválida o vencida → `401 CLOCK_MAINTENANCE_SESSION_INVALID` |
 | DELETE | `/api/clock/maintenance/session` | idem | Cierra la sesión de ese token. Siempre `204` (idempotente) |
 
-Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
-min`; además hay un máximo operativo de 20 solicitudes pendientes. La
+Rate limits (§33 del plan del fichador): registro `5/10 min` y refresh `10/10
+min` por IP; estado (`GET /clock/device/status`) `60/5 min` por dispositivo
+autenticado; además hay un máximo operativo de 20 solicitudes pendientes. La
 resolución RRHH usa `10/5 min`, separada de las anteriores. El heartbeat (F9)
-tiene dos límites propios, que nunca consumen el cupo de fichadas:
-
-- por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`);
-- `10/5 min` por dispositivo ya autenticado.
-
-El modo mantenimiento también tiene limitadores propios: por IP antes de
-autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `10/15 min` por dispositivo para canjear
-códigos y `30/5 min` por dispositivo para leer o cerrar la sesión. Además, 5
-intentos fallidos anulan el código vigente; ese contador vive en la base.
+tiene su propio cupo, `10/5 min` por dispositivo ya autenticado, que nunca
+consume el de las fichadas. El modo mantenimiento también: `10/15 min` por
+dispositivo para canjear códigos y `30/5 min` para leer o cerrar la sesión;
+además, 5 intentos fallidos anulan el código vigente (contador en la base).
+Estado, heartbeat y mantenimiento pasan antes por las mismas capas previas a
+autenticar que las rutas operativas (ver "Fichador — cupos y 429").
 
 Rutas RRHH (`Bearer` JWT + Nivel 1):
 

@@ -43,7 +43,8 @@ const rrhhUser = { id: "user-1", role: "NIVEL_1_RRHH" } as unknown as Express.Au
 
 beforeEach(() => {
   vi.clearAllMocks();
-  repo.findById.mockResolvedValue({ id: "employee-1", legajo: "100", documents: [] });
+  // Alta mínima: sólo legajo, nombre y apellido (sin puesto, empresa ni estructura).
+  repo.findById.mockResolvedValue({ id: "employee-1", legajo: "100", firstName: "Juan", lastName: "Perez", documents: [] });
   // uploadRoles no importa para RRHH (superadmin documental, Etapa 15D.4) —
   // se deja vacío a propósito para probar que igual pasa.
   repo.findDocumentCategory.mockResolvedValue({ id: input.categoryId, code: "CONTRATO", name: "Contrato", uploadRoles: [] });
@@ -84,6 +85,45 @@ describe("employee document storage", () => {
       "user-1",
     );
     expect(audit.register).toHaveBeenCalled();
+  });
+
+  it("guarda con ruta y nombre humanos en Drive, conserva el nombre original y no usa storage-sistema", async () => {
+    vi.useFakeTimers();
+    // 13/11/2026 23:30 hora argentina (14/11 02:30 UTC): la fecha del nombre es la argentina.
+    vi.setSystemTime(new Date("2026-11-14T02:30:00.000Z"));
+    repo.findDocumentCategory.mockResolvedValue({ id: input.categoryId, code: "DOC-001", name: "DNI", kind: "PERSONAL", uploadRoles: [] });
+    try {
+      await employeesService.createDocument("employee-1", { ...input, fileName: "IMG_3728.pdf" }, rrhhUser, { userId: "user-1" });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const uploaded = storage.uploadManaged.mock.calls[0]![0];
+    expect(uploaded.fileName).toBe("IMG_3728.pdf");
+    expect(uploaded.storedFileName).toMatch(/^2026-11-13_DNI_Juan-Perez_[0-9a-f]{6}\.pdf$/);
+    expect(uploaded.driveFolders).toEqual([
+      { name: "Legajos" },
+      { name: "100 - Juan Perez", appProperties: { employeeId: "employee-1" } },
+      { name: "Documentos personales" },
+    ]);
+    expect(uploaded.folderSegments).toEqual(["legajos", "employee-1", "documentos-personales"]);
+    expect(JSON.stringify(uploaded)).not.toContain("storage-sistema");
+    // EmployeeDocument.fileName sigue siendo el nombre original (descargas).
+    expect(repo.createDocument).toHaveBeenCalledWith("employee-1", expect.objectContaining({ fileName: "IMG_3728.pdf" }), "user-1");
+  });
+
+  it("dos subidas iguales del mismo tipo y día no comparten nombre", async () => {
+    await employeesService.createDocument("employee-1", input, rrhhUser);
+    await employeesService.createDocument("employee-1", input, rrhhUser);
+
+    const [first, second] = storage.uploadManaged.mock.calls.map(([call]) => call.storedFileName as string);
+    expect(first).not.toBe(second);
+  });
+
+  it("sin extensión en el nombre original usa la del MIME", async () => {
+    await employeesService.createDocument("employee-1", { ...input, fileName: "escaneo" }, rrhhUser);
+
+    expect(storage.uploadManaged.mock.calls[0]![0].storedFileName).toMatch(/\.pdf$/);
   });
 });
 

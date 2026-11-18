@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { roles } from "../../shared/security/roles";
 import { clearDashboardMetricsCache } from "./dashboard.cache";
@@ -332,11 +333,11 @@ describe("dashboardService.metrics — RBAC/scope real pasado a las queries (Eta
   });
 
   it("Supervisión: accessWhere scopeado (TIME_RESPONSIBLE + userId propio) llega igual a las queries", async () => {
-    await dashboardService.metrics({}, user(roles.supervision, { id: "sup-42" }));
+    const supervisor = user(roles.supervision, { id: "sup-42" });
+    await dashboardService.metrics({}, supervisor);
 
-    const expectedWhere = expect.objectContaining({
-      assignments: { some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "sup-42" }) },
-    });
+    // El alcance es el de la fuente canónica (incluye los Nivel 3 supervisados).
+    const expectedWhere = expect.objectContaining(employeeAccessWhere(supervisor));
     expect(repo.countTransported).toHaveBeenCalledWith(expectedWhere);
     expect(repo.countMissingTimeResponsible).toHaveBeenCalledWith(expectedWhere);
   });

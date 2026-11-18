@@ -10,6 +10,28 @@ import { roles } from "../../shared/security/roles";
 import { NOTIFICATION_ORDER_BY, parseNotificationCursor } from "./notificationListing";
 import type { ListNotificationsQuery } from "./workforce.schemas";
 
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
+
 /**
  * Trazabilidad de autoria (2026-08-18): cierra el hueco de auditoria en el
  * flujo de cierres/correcciones (antes ninguna de estas 6 funciones llamaba
@@ -23,9 +45,14 @@ vi.mock("../../shared/prisma/client", () => ({
     hourConceptBreakdown: { findMany: vi.fn().mockResolvedValue([]) },
     // Francos (EMPLOYEE_DAY_OFF.md §7): el snapshot del cierre los aplica; sin francos por default.
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
+    noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
+    novelty: { findMany: vi.fn().mockResolvedValue([]) },
     monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    // Etapa 5: quién usa la plantilla (recálculo de cobertura al inactivarla).
+    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     sector: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     company: { findMany: vi.fn().mockResolvedValue([]) },
@@ -141,7 +168,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     }));
     const snapshot = mockedPrisma.monthlyTimeClosure.upsert.mock.calls[0]![0].create.snapshot;
     expect(snapshot.accounting).toMatchObject({
-      model: "WORKED_TIME_ACCOUNTING_V1",
+      model: "WORKED_TIME_ACCOUNTING_V2",
       baseMinutes: 480,
       normalResidualMinutes: 300,
       withinBaseMinutes: 180,
@@ -480,6 +507,9 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
 
     await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED", relatedWorkShifts: 2 });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
+    // Etapa 5: inactivar deja de definir jornada → lock global + recálculo de quienes la usan (acá nadie).
+    expect(lockNoveltyCoverageGlobally).toHaveBeenCalled();
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(expect.anything(), { employeeIds: [] }, expect.objectContaining({ source: "SHIFT_TEMPLATE_CHANGED" }));
   });
 
   it("una convocatoria de feriado también es historia: inactiva en vez de dejar su referencia en NULL, y audita dentro de la transacción", async () => {

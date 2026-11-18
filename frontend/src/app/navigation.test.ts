@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flattenNavigation, navByLevel, navigationForRole } from "./navigation";
+import { flattenNavigation, homePathForLevel, navByLevel, navigationForRole } from "./navigation";
 
 // Etapa 15M.17 (docs/PROJECT_UI_CONTEXT.md "Un único acceso principal por
 // módulo operativo"): "Exportación" es el acceso operativo del sidebar
@@ -39,5 +39,57 @@ describe("navigation — sin el fichador viejo del admin", () => {
     for (const items of Object.values(navByLevel)) {
       expect(flattenNavigation(items).map((item) => item.href)).not.toContain("/fichador");
     }
+  });
+});
+
+// 2026-11-17: se retiró "Inicio" de Gestión horaria y Nivel 2 perdió
+// Dashboard, Puestos, Organigramas y Reportes de Gestión.
+const labelsFor = (role: Parameters<typeof navigationForRole>[0]) => flattenNavigation(navigationForRole(role)).map((item) => item.label);
+const hourlyItemsFor = (role: Parameters<typeof navigationForRole>[0]) => {
+  const hourly = navigationForRole(role).find((item) => item.type === "group" && item.label === "Gestión horaria");
+  return hourly?.type === "group" ? hourly.items.map((item) => `${item.label} ${item.href}`) : [];
+};
+
+describe("navigation — accesos por nivel (2026-11-17)", () => {
+  it("ningún nivel ofrece 'Inicio' ni /gestion-horaria", () => {
+    for (const items of Object.values(navByLevel)) {
+      const links = flattenNavigation(items);
+      expect(links.map((item) => item.label)).not.toContain("Inicio");
+      expect(links.map((item) => item.href)).not.toContain("/gestion-horaria");
+    }
+  });
+
+  it("Nivel 1 conserva todos sus módulos, en el mismo orden", () => {
+    expect(navigationForRole("Nivel 1 - RRHH").map((item) => item.label)).toEqual([
+      "Dashboard", "Legajos", "Puestos", "Gestión horaria", "Gestión Documental", "Organigramas", "Usuarios y Roles", "Configuración", "Auditoría",
+    ]);
+    expect(hourlyItemsFor("Nivel 1 - RRHH")).toEqual([
+      "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
+      "Bandeja de revisión /pendientes", "Novedades /novedades", "Notificaciones /notificaciones", "Exportación /configuracion/liquidacion",
+    ]);
+  });
+
+  it("Nivel 2 sólo ve Gestión horaria y Legajos de mi área", () => {
+    expect(navigationForRole("Nivel 2 - Supervisión / Gestión").map((item) => item.label)).toEqual(["Gestión horaria", "Legajos de mi área"]);
+    const labels = labelsFor("Nivel 2 - Supervisión / Gestión");
+    for (const removed of ["Dashboard", "Puestos", "Organigramas", "Reportes de Gestión"]) expect(labels).not.toContain(removed);
+    expect(hourlyItemsFor("Nivel 2 - Supervisión / Gestión")).toEqual([
+      "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
+      "Bandeja de revisión /pendientes", "Novedades /novedades", "Notificaciones /notificaciones",
+    ]);
+  });
+
+  it("Nivel 3 conserva sus submódulos de Gestión horaria", () => {
+    expect(navigationForRole("Nivel 3 - Administrativo de Carga Horaria").map((item) => item.label)).toEqual(["Gestión horaria"]);
+    expect(hourlyItemsFor("Nivel 3 - Administrativo de Carga Horaria")).toEqual([
+      "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
+      "Novedades horarias /novedades", "Notificaciones /notificaciones",
+    ]);
+  });
+
+  it("la pantalla inicial es el Dashboard sólo para Nivel 1; Nivel 2 y 3 van a Asistencia", () => {
+    expect(homePathForLevel(1)).toBe("/");
+    expect(homePathForLevel(2)).toBe("/asistencia");
+    expect(homePathForLevel(3)).toBe("/asistencia");
   });
 });

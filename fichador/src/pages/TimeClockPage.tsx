@@ -20,9 +20,10 @@ import { EmployeeSearch, MIN_SEARCH_LENGTH, type SearchState } from "../features
 import { EmployeeStatus, type ShiftView } from "../features/clock/EmployeeStatus";
 import { CooldownNotice, DockNotice, PunchDock } from "../features/clock/PunchDock";
 import { PunchResult } from "../features/clock/PunchResult";
-import { employeeFullName } from "../features/clock/employeeLabels";
+import { employeeDisplayName, employeeIdentity } from "../features/clock/employeeLabels";
 import { useOnlineStatus } from "../features/clock/useOnlineStatus";
 import { useIdleTimeout } from "../features/clock/useIdleTimeout";
+import { createEmployeeSearchCache } from "../features/clock/employeeSearchCache";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -35,7 +36,7 @@ export const SUCCESS_RESET_MS = 3_500;
  * Etapa 6B-3 (P2): sin interacción real, una búsqueda o un empleado elegido
  * vuelven solos al inicio. Una fichada típica (buscar, elegir, leer el estado,
  * tocar la acción) lleva 10–20 s: 45 s dejan margen para leer sin dejar a la
- * vista nombre, legajo y jornada de alguien que ya se fue.
+ * vista nombre, DNI y jornada de alguien que ya se fue.
  */
 export const KIOSK_IDLE_MS = 45_000;
 /**
@@ -143,6 +144,9 @@ export function TimeClockPage() {
   const alive = useRef(true);
   // Contador de consultas de estado (una por pedido, incluidos los refrescos).
   const statusSeq = useRef(0);
+  // §33: búsquedas ya respondidas, sólo en memoria y sólo para la persona que
+  // está buscando: se vacía al volver al inicio o al limpiar la selección.
+  const [searchCache] = useState(createEmployeeSearchCache);
   // Etapa 6B-2: destino del foco al cerrar la cámara si "Marcar…" quedó
   // deshabilitado (p. ej. por la espera entre fichadas).
   const panelRef = useRef<HTMLElement>(null);
@@ -162,17 +166,44 @@ export function TimeClockPage() {
   useEffect(() => {
     let cancelled = false;
     const query = search.trim();
-    if (query.length < 2 || selected) {
+    if (query.length < MIN_SEARCH_LENGTH || selected) {
       setMatches([]);
       // Una búsqueda que quedó en vuelo (cancelada) no deja "buscando" colgado.
       setLoading(false);
       return undefined;
     }
+    // §33: un resultado que ya se conoce con certeza (la misma consulta, o una
+    // más específica que otra completa) se muestra en el acto, sin consultar
+    // al backend ni esperar el debounce (features/clock/employeeSearchCache.ts).
+    const cache = searchCache;
+    const showKnown = (items: ClockEmployee[]) => {
+      setMatches(items);
+      setSearchedFor(query);
+      setError("");
+      setLoading(false);
+    };
+    const known = cache.lookup(query);
+    if (known) {
+      showKnown(known);
+      return undefined;
+    }
     const timer = window.setTimeout(async () => {
+      // Pudo haber llegado, durante el debounce, la respuesta de una consulta
+      // anterior que alcanza para ésta.
+      const arrived = cache.lookup(query);
+      if (arrived) {
+        showKnown(arrived);
+        return;
+      }
       setLoading(true);
       setError("");
+      const generation = cache.generation();
       try {
         const items = await timeClockApiService.searchEmployees(query);
+        // Se guarda aunque la búsqueda ya haya cambiado: sigue siendo la
+        // respuesta cierta de ESA consulta (salvo que el kiosco se haya
+        // reiniciado mientras tanto, ver generation).
+        cache.store(query, items, generation);
         if (!cancelled) {
           setMatches(items);
           setSearchedFor(query);
@@ -187,7 +218,7 @@ export function TimeClockPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [search, selected]);
+  }, [search, selected, searchCache]);
 
   // F3: una actualización de la app sólo se aplica con el kiosco ocioso
   // (src/pwa/kioskUpdates.ts): nunca con un empleado elegido, una búsqueda
@@ -199,6 +230,7 @@ export function TimeClockPage() {
   }, [search, selected, punch, loading, view]);
 
   const resetKiosk = useCallback(() => {
+    searchCache.clear();
     setSelected(undefined);
     setStatusQuery(null);
     setSearch("");
@@ -209,7 +241,7 @@ export function TimeClockPage() {
     setPunch(null);
     intentLock.current = false;
     submitLock.current = false;
-  }, []);
+  }, [searchCache]);
 
   // Etapa 6B-3 (P2): kiosco abandonado. Dos plazos que nunca corren a la vez:
   // - pantalla principal (búsqueda, selección, avisos), sin intención de fichar en curso;
@@ -317,6 +349,7 @@ export function TimeClockPage() {
 
   const clearEmployee = () => {
     if (punch) return;
+    searchCache.clear();
     setSelected(undefined);
     setStatusQuery(null);
     setView(null);
@@ -476,7 +509,7 @@ export function TimeClockPage() {
     return (
       <PunchResult
         punchType={success.punchType}
-        employeeName={employeeFullName(success.employee)}
+        employeeName={employeeDisplayName(success.employee)}
         at={success.at}
         previousOpenShiftAt={success.previousOpenShiftAt}
       />
@@ -575,7 +608,7 @@ export function TimeClockPage() {
             onCancel={cancelCapture}
             onInterrupted={cameraInterrupted}
             onConfirm={(capture) => void confirmPhotoPunch(capture)}
-            employeeLabel={`${employeeFullName(punch.employee)} · Legajo ${punch.employee.legajo}`}
+            employeeLabel={[employeeDisplayName(punch.employee), employeeIdentity(punch.employee)].filter(Boolean).join(" · ")}
             now={now}
             returnFocus={() => panelRef.current}
           />

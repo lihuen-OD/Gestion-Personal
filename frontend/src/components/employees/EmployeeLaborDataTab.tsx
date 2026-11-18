@@ -7,6 +7,7 @@ import { LaborStatusCard } from "./LaborStatusCard";
 import { EmployeePositionField, MultiCompanyField } from "./LaborTrackedFields";
 import { SalaryRangeValidationCard } from "./EmployeeLaborFields";
 import { PositionScopeCard } from "./PositionScopeCard";
+import { roleLevel } from "../../utils/roles";
 import { usePositionOptions } from "./options/positionOptions";
 import { EmployeeWorkLocationsPanel } from "./workLocations/EmployeeWorkLocationsPanel";
 
@@ -54,7 +55,7 @@ export function EmployeeLaborDataTab({ employee, user, editable, onSaved, costCe
       <p className="eyebrow tracked-grid-label">PUESTO Y ALCANCE ORGANIZACIONAL</p>
       <div className="tracked-grid position-scope-grid">
         <EmployeePositionField employee={employee} canEdit={editable} user={user} onSaved={onSaved} />
-        <PositionScopeCard position={position} hasPositionId={Boolean(employee.positionId)} />
+        <PositionScopeCard position={position} hasPositionId={Boolean(employee.positionId)} canOpenPosition={roleLevel(user.role) === 1} />
       </div>
 
       <p className="eyebrow tracked-grid-label">UBICACIONES DE TRABAJO</p>

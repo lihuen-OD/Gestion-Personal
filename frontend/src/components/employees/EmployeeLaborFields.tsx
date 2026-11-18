@@ -63,7 +63,7 @@ export function CompanyMultiCreateField({
 
   return (
     <div className="form-wide">
-      <small>Empresa empleadora *</small>
+      <small>Empresa empleadora</small>
       <div className="check-grid inline">
         {companyNames.map((company) => (
           <label className="check-card" key={company}>

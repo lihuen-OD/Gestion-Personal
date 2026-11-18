@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+
+type Db = PrismaTransactionClient;
 import type { ListShiftAssignmentsQuery } from "./shiftAssignment.schemas";
 
 const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true, status: true } as const;
@@ -34,8 +36,8 @@ export const shiftAssignmentRepository = {
     });
   },
 
-  findById(id: string) {
-    return prisma.shiftAssignment.findUnique({
+  findById(id: string, db: Db = prisma) {
+    return db.shiftAssignment.findUnique({
       where: { id },
       include: { employee: { select: employeeSelect }, shiftTemplate: { select: shiftTemplateSelect } },
     });
@@ -49,12 +51,12 @@ export const shiftAssignmentRepository = {
     });
   },
 
-  findExisting(employeeId: string, shiftTemplateId: string) {
-    return prisma.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } });
+  findExisting(employeeId: string, shiftTemplateId: string, db: Db = prisma) {
+    return db.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } });
   },
 
-  create(employeeId: string, shiftTemplateId: string, data: ShiftAssignmentVigencyData, userId: string | null) {
-    return prisma.shiftAssignment.create({
+  create(employeeId: string, shiftTemplateId: string, data: ShiftAssignmentVigencyData, userId: string | null, db: Db = prisma) {
+    return db.shiftAssignment.create({
       data: {
         employeeId,
         shiftTemplateId,
@@ -73,8 +75,8 @@ export const shiftAssignmentRepository = {
   // RRHH está diciendo "desde ahora, con esta vigencia/días" — por eso
   // reEnable pisa effectiveFrom/effectiveTo/weekdays con los valores nuevos
   // en vez de conservar los de la vigencia anterior (ya vencida/cerrada).
-  reEnable(id: string, data: ShiftAssignmentVigencyData, userId: string | null) {
-    return prisma.shiftAssignment.update({
+  reEnable(id: string, data: ShiftAssignmentVigencyData, userId: string | null, db: Db = prisma) {
+    return db.shiftAssignment.update({
       where: { id },
       data: {
         status: "HABILITADO",
@@ -99,15 +101,15 @@ export const shiftAssignmentRepository = {
     });
   },
 
-  update(id: string, data: Prisma.ShiftAssignmentUpdateInput) {
-    return prisma.shiftAssignment.update({
+  update(id: string, data: Prisma.ShiftAssignmentUpdateInput, db: Db = prisma) {
+    return db.shiftAssignment.update({
       where: { id },
       data,
       include: { employee: { select: employeeSelect }, shiftTemplate: { select: shiftTemplateSelect } },
     });
   },
 
-  remove(id: string) {
-    return prisma.shiftAssignment.delete({ where: { id } });
+  remove(id: string, db: Db = prisma) {
+    return db.shiftAssignment.delete({ where: { id } });
   },
 };

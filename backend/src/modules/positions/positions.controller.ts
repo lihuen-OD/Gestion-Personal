@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
@@ -49,6 +50,7 @@ export const positionsController = {
   update: (async (req, res) => {
     const item = await positionsService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
     positionOptionsCache.clear();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
@@ -66,6 +68,7 @@ export const positionsController = {
     try {
       const result = await positionsDeletion.execute(requireParam(req, "id"), req.body, requestAuditContext(req));
       positionOptionsCache.clear();
+      clearNoveltyCoverageReadCaches();
       res.json({ data: result });
     } catch (error) {
       const conflict = deletionConflictResponse(error);

@@ -13,6 +13,8 @@ vi.mock("../../shared/prisma/client", () => ({
     novelty: { findMany: vi.fn() },
     attendanceInactivityIncident: { createMany: vi.fn(), findMany: vi.fn() },
     user: { findMany: vi.fn() },
+    employeeAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    userSupervisionAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
 }));
@@ -34,6 +36,8 @@ const mockedPrisma = prisma as unknown as {
   novelty: { findMany: Mock };
   attendanceInactivityIncident: { createMany: Mock; findMany: Mock };
   user: { findMany: Mock };
+  employeeAssignment: { findMany: Mock };
+  userSupervisionAssignment: { findMany: Mock };
   $transaction: Mock;
 };
 const mockedObligation = resolveWorkObligationCandidates as unknown as Mock;
@@ -129,6 +133,24 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     expect(result).toEqual({ date: dateKey, detected: 0, notified: 0 });
   });
 
+  // Etapa 4 de cobertura (NOVELTY_COVERAGE_ENGINE.md §6.3): toDate nulo es un
+  // único día. Una novedad de un día anterior (aunque su tipo admita rango) ya
+  // no exime los días siguientes.
+  it("una novedad de un día anterior con toDate nulo no exime: el día sigue generando incidente", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1")] });
+    const dayBefore = new Date(operationalDate.getTime() - 86_400_000);
+    mockedPrisma.novelty.findMany.mockResolvedValue([{ employeeId: "employee-1", fromDate: dayBefore, toDate: null }]);
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow() }]);
+
+    await detectAttendanceInactivity(dateKey);
+
+    expect(mockedPrisma.novelty.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ OR: [{ toDate: { gte: operationalDate } }, { toDate: null, fromDate: operationalDate }] }) }),
+    );
+    expect(mockedPrisma.employee.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { in: ["employee-1"] } }) }));
+  });
+
   // Etapa 15M.19D §17: "verificar comportamiento definido realmente por el
   // sistema, no inventar una política nueva" -- la política vigente (sin
   // cambios desde antes de 15M.18) es que sólo RECHAZADO no exime: se
@@ -186,7 +208,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
 
   it("no toca ninguna tabla de liquidación (el mock de Prisma sólo expone los modelos de asistencia/inactividad)", () => {
     expect(Object.keys(mockedPrisma).sort()).toEqual(
-      ["$transaction", "attendanceInactivityIncident", "attendancePunch", "employee", "novelty", "timeEntry", "user", "workShift"].sort(),
+      ["$transaction", "attendanceInactivityIncident", "attendancePunch", "employee", "employeeAssignment", "novelty", "timeEntry", "user", "userSupervisionAssignment", "workShift"].sort(),
     );
   });
 
@@ -228,6 +250,38 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
 
       expect(capturedNotification?.message).toBe("Pérez, Juan · Legajo 100 no registra actividad para el 27/08/2026.");
     });
+  });
+
+  it("SIN_ACTIVIDAD_REGISTRADA: destinatarios en batch = RRHH + responsable Nivel 3 + Nivel 2 que lo supervisa, vigencia evaluada en la fecha operativa", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1"), obligationCandidate("employee-2")] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow(), employeeRow({ id: "employee-2" })]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([
+      { id: "incident-1", employeeId: "employee-1", employee: employeeRow() },
+      { id: "incident-2", employeeId: "employee-2", employee: employeeRow({ id: "employee-2" }) },
+    ]);
+    mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
+    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "joaquin", user: { role: "NIVEL_3_CARGA_HORARIA" } }]);
+    mockedPrisma.userSupervisionAssignment.findMany.mockResolvedValueOnce([{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }]);
+    const recipientsByIncident: Record<string, string[]> = {};
+    const tx = {
+      systemNotification: { createMany: vi.fn((args: { data: Array<{ recipientUserId: string; entityId: string; type: string }> }) => {
+        for (const row of args.data) (recipientsByIncident[row.entityId] ??= []).push(row.recipientUserId);
+        expect(args.data.every((row) => row.type === "SIN_ACTIVIDAD_REGISTRADA")).toBe(true);
+      }) },
+      attendanceInactivityIncident: { update: vi.fn() },
+    };
+    mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    const result = await detectAttendanceInactivity(dateKey);
+
+    expect(recipientsByIncident).toEqual({ "incident-1": ["user-rrhh", "joaquin", "eugenia"], "incident-2": ["user-rrhh"] });
+    expect(result.notified).toBe(4);
+    // Una consulta de asignaciones para todos los incidentes (sin N+1), con la fecha operativa.
+    expect(mockedPrisma.employeeAssignment.findMany).toHaveBeenCalledTimes(1);
+    const where = mockedPrisma.employeeAssignment.findMany.mock.calls[0]![0].where;
+    expect(where.AND[1]).toEqual({ employeeId: { in: ["employee-1", "employee-2"] } });
+    expect(JSON.stringify(where.AND[0])).toContain(operationalDate.toISOString());
+    expect(mockedPrisma.user.findMany).toHaveBeenCalledTimes(1);
   });
 
   // docs/decisions/NOTIFICATIONS_EVENT_ORDER.md: la notificación nace con la

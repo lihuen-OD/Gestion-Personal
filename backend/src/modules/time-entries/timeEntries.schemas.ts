@@ -105,8 +105,11 @@ export const createWorkShiftSchema = workShiftBaseSchema.extend({
   path: ["employeeId"],
 });
 
+/** Mínimo de caracteres de la búsqueda del fichador: único para nombre, apellido y DNI. */
+export const CLOCK_SEARCH_MIN_LENGTH = 2;
+
 export const clockEmployeeSearchQuerySchema = z.object({
-  search: z.string().trim().min(2).max(80),
+  search: z.string().trim().min(CLOCK_SEARCH_MIN_LENGTH).max(80),
 });
 
 export const clockByEmployeeSchema = z.object({

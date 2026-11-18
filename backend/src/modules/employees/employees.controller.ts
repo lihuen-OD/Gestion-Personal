@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { createTtlCache } from "../../shared/cache/ttlCache";
 import { requireParam } from "../../shared/http/params";
@@ -8,6 +9,7 @@ import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptio
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
 import { employeeWorkLocationsService } from "./employeeWorkLocations.service";
+import { invalidateEmployeeScopeCaches } from "./employeeScopeCaches";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
 const employeeTimeGridCache = createTtlCache<unknown>(60_000);
@@ -189,6 +191,7 @@ export const employeesController = {
   update: (async (req, res) => {
     const employee = await employeesService.update(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.json({ data: employee });
   }) satisfies RequestHandler,
 
@@ -212,7 +215,9 @@ export const employeesController = {
 
   replaceAssignments: (async (req, res) => {
     const employee = await employeesService.replaceAssignments(requireParam(req, "id"), req.body, requestAuditContext(req));
-    clearEmployeeReadCaches();
+    // Un TIME_RESPONSIBLE agregado o quitado cambia el alcance del responsable
+    // y de todo Nivel 2 que lo supervise: visible ya, sin esperar TTL.
+    invalidateEmployeeScopeCaches();
     res.json({ data: employee });
   }) satisfies RequestHandler,
 
@@ -225,6 +230,7 @@ export const employeesController = {
   createLaborMovement: (async (req, res) => {
     const employee = await employeesService.createLaborMovement(requireParam(req, "id"), req.body, requestAuditContext(req));
     clearEmployeeReadCaches();
+    clearNoveltyCoverageReadCaches();
     res.status(201).json({ data: employee });
   }) satisfies RequestHandler,
 

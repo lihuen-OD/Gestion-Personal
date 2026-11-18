@@ -21,12 +21,12 @@ vi.mock("../components/time-clock/FaceCaptureModal", () => ({
   ),
 }));
 
-const ANA: ClockEmployee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
-const BETO: ClockEmployee = { id: "employee-2", legajo: "200", dniSuffix: "789", firstName: "Beto", lastName: "Paz", name: "Paz, Beto" };
+const ANA: ClockEmployee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const BETO: ClockEmployee = { id: "employee-2", dni: "28987654", firstName: "Beto", lastName: "Paz", name: "Paz, Beto" };
 const COOLDOWN_TEXT = "Ya registraste una fichada hace unos segundos.";
 
 async function select(employee: ClockEmployee) {
-  fireEvent.change(screen.getByLabelText("Buscar por nombre o apellido"), { target: { value: employee.lastName } });
+  fireEvent.change(screen.getByLabelText("Buscar por nombre, apellido o DNI"), { target: { value: employee.lastName } });
   fireEvent.click(await screen.findByRole("button", { name: new RegExp(employee.name) }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled());
 }
@@ -54,7 +54,7 @@ describe("F6-10 — la espera entre fichadas pertenece al legajo", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cambiar empleado" }));
     await select(BETO);
     expect(screen.queryByText(COOLDOWN_TEXT)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Ana|Legajo 100/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ana|30123456|Legajo/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Cambiar empleado" }));
     await select(ANA);

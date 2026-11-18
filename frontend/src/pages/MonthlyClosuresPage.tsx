@@ -3,7 +3,7 @@ import { Check, CheckCheck, Eye, RotateCcw, Send, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { workforceApiService, type MonthlyClosure, type TimeCorrection } from "../services/api/workforceApiService";
-import { getUserErrorMessage } from "../services/api/apiClient";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import type { Employee } from "../types";
 import { roleLevel } from "../utils/roles";
 import { monthlyClosureStatusText as statusText, monthlyClosureStatusTone as statusTone } from "../utils/monthlyClosureStatus";
@@ -19,6 +19,14 @@ import { EmptyState } from "../components/ui/EmptyState";
 import { MonthlyClosureReviewPanel } from "../components/hours/MonthlyClosureReviewPanel";
 import { requestText } from "../services/appDialog";
 
+function pendingCoverageFallbackMessage(error: ApiError) {
+  const message = error.message.trim();
+  const looksTechnical = /\b409\b|CLOSURE_[A-Z_]+|[{}]|\"error\"\s*:/i.test(message);
+  return message && !looksTechnical
+    ? message
+    : "No se puede completar el cierre porque hay novedades con días pendientes de revisión. Abrí la revisión de horas, resolvé esos días y volvé a intentar.";
+}
+
 export function MonthlyClosuresPage() {
   const { user } = useAuth();
   const isRrhh = roleLevel(user!.role) === 1;
@@ -30,6 +38,7 @@ export function MonthlyClosuresPage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [pendingCoverageReview, setPendingCoverageReview] = useState<Array<{ employeeId: string; reviewDays: number; reviewDates: string[] }>>([]);
   // Etapa 15K: sólo dispara la carga lazy de time-grid de ESTE empleado al
   // abrir el panel — no toca `closures`/`rows`, no dispara ningún fetch por
   // fila del listado.
@@ -77,14 +86,21 @@ export function MonthlyClosuresPage() {
   const pendingCorrections = corrections;
 
   const execute = async (operation: () => Promise<unknown>) => {
-    setWorking(true); setError("");
-    try { await operation(); await load(); } catch (reason) { setError(getUserErrorMessage(reason, "No se pudo completar la acción.")); }
+    setWorking(true); setError(""); setPendingCoverageReview([]);
+    try { await operation(); await load(); } catch (reason) {
+      if (reason instanceof ApiError && reason.code === "CLOSURE_HAS_PENDING_NOVELTY_REVIEW") {
+        const details = (reason.payload as { error?: { details?: { employees?: Array<{ employeeId: string; reviewDays: number; reviewDates: string[] }> } } } | undefined)?.error?.details?.employees;
+        setPendingCoverageReview(Array.isArray(details) ? details : []);
+        setError(Array.isArray(details) ? "No se puede enviar el cierre: hay novedades con cobertura pendiente de revisión." : pendingCoverageFallbackMessage(reason));
+      } else setError(getUserErrorMessage(reason, "No se pudo completar la acción."));
+    }
     finally { setWorking(false); }
   };
 
   return <>
     <PageHeader eyebrow="GESTIÓN HORARIA" title="Cierres mensuales" description="Nivel 2 y 3 consolidan sus legajos; RH controla y aprueba el cierre final del período." />
     {error ? <div className="form-error">{error}</div> : null}
+    {pendingCoverageReview.length ? <div className="closure-coverage-review-error" role="alert"><b>Legajos y días que requieren revisión</b><ul>{pendingCoverageReview.map((item) => { const row = rows.find((candidate) => candidate.employeeId === item.employeeId); return <li key={item.employeeId}><span><b>{row ? `${row.employee.legajo} · ${row.employee.lastName}, ${row.employee.firstName}` : "Legajo no disponible en el listado actual"}</b><small>{item.reviewDates.map(formatCalendarDate).join(" · ")}</small></span>{row ? <button type="button" className="table-link" onClick={() => setReviewing(row)}>Revisar horas</button> : null}</li>; })}</ul></div> : null}
     <Section title="Estado del período" subtitle="El cierre se realiza por legajo y conserva un historial auditable." action={<label className="field compact-field"><span>Período</span><input type="month" value={period} onChange={(event) => setPeriod(event.target.value)} /></label>}>
       {loading ? <LoadingState text="Cargando cierres..." /> : <>
         <div className="bulk-toolbar">

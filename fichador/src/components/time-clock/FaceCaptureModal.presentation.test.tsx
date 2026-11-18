@@ -48,10 +48,10 @@ describe("FaceCaptureModal — presentación (Etapa 3)", () => {
   it("encabezado con la persona; el visor indica el tipo de fichada y la hora Argentina", () => {
     setMediaDevices({ getUserMedia: () => new Promise(() => {}) });
     // 15:30:05 UTC = 12:30 en Argentina.
-    render(<FaceCaptureModal punchType="OUT" onCancel={vi.fn()} onConfirm={vi.fn()} employeeLabel="Ana Gómez · Legajo 100" now={new Date("2026-11-06T15:30:05.000Z")} />);
+    render(<FaceCaptureModal punchType="OUT" onCancel={vi.fn()} onConfirm={vi.fn()} employeeLabel="Gómez Ana · DNI 30123456" now={new Date("2026-11-06T15:30:05.000Z")} />);
 
     expect(screen.getByRole("dialog", { name: "Confirmar fichada con foto" })).toBeInTheDocument();
-    expect(screen.getByText("Ana Gómez · Legajo 100")).toBeInTheDocument();
+    expect(screen.getByText("Gómez Ana · DNI 30123456")).toBeInTheDocument();
     expect(screen.getByText("Salida")).toBeInTheDocument();
     expect(screen.getByText("12:30")).toBeInTheDocument();
     expect(confirmButton()).toHaveTextContent("Confirmar salida");

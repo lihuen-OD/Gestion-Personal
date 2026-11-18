@@ -69,6 +69,8 @@ Resultado: Horas normales 5 + Sereno 3 + Colectivo 1 = **9 h trabajadas** (no 8,
 
 **Etapa 15G.1** (`docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md`, decisión funcional final): el fichador y la carga horaria manual son la única fuente de verdad de horas reales; Novedades es justificación administrativa. Una novedad **nunca** crea ni modifica un `TimeEntry`, en ningún estado (ni `PENDIENTE` ni `APROBADO`) ni para ningún tipo. Si una novedad `APROBADA` bloquea la carga horaria (`NoveltyType.timeEntryBehavior = BLOQUEA_NUEVA_CARGA`, única fuente desde la Etapa 15L.6, `docs/decisions/NOVELTY_TYPE_LEGACY_REMOVAL_15L6.md`), su único efecto es impedir que se cargue manualmente una hora **nueva** ese día — no genera ningún registro de 0 horas por sí misma. La app no calcula descuento ni sueldo.
 
+> **Reemplazado parcialmente (2026-11-13) por [`decisions/NOVELTY_COVERAGE_ENGINE.md`](decisions/NOVELTY_COVERAGE_ENGINE.md).** Un Tipo de Novedad puede configurar cobertura horaria (por ejemplo, Trámite bancario 4 h, Vacaciones la jornada que tenía que cumplir × el multiplicador del día, Llegada tarde 1 h informativa que no suma). La cobertura se registra aparte del trabajo real y nunca escribe un `TimeEntry`. Desde la etapa 4 del motor, la cobertura APROBADA que suma entra al total computable y a la equivalencia para liquidación de las grillas, el resumen, el export de horas y el cierre. El "Total trabajado" sigue siendo sólo trabajo real. Desde la etapa 9, Finnegans exporta los tipos con cobertura desde la cobertura diaria (ver más abajo).
+
 ## Exportación Finnegans
 
 > Reconfirmado el 2026-10-02 (`docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md` §11): `finnegans-export` lee sólo `Novelty`, el cierre mensual y su historial de lotes — no consume `TimeEntry` ni `HourConceptBreakdown`, así que el modelo de tiempo trabajado no lo modificó. El export de horas para liquidación es `GET /api/time-entries/export`.
@@ -97,10 +99,19 @@ Columnas de exportación (CSV/XLSX, sin cambios desde la Etapa 15L.3A):
 | Legajo | Texto. Conserva ceros adelante. |
 | Novedad | Código Finnegans, no nombre interno. |
 | Centro de costo | Opcional. Si queda vacío, Finnegans toma el del legajo. |
-| Valor 1 | Depende exclusivamente de `NoveltyType.finnegansValueUnit` (horas/días/unidad) — sin ningún fallback entre cantidades. |
+| Valor 1 | Depende de `NoveltyType.finnegansValueUnit` (horas/días/unidad) — sin ningún fallback entre cantidades. En un tipo con cobertura horaria, las horas salen de la cobertura diaria (base, sin multiplicador) y no de `quantityHours`; ver abajo. |
 | Fecha Aplicación | Fecha de aplicación de la transacción (`fromDate`). |
 | Fecha desde | Vacía salvo que el tipo exija vigencia (`finnegansRequiresValidity`). |
 | Fecha hasta | Vacía salvo que el tipo exija vigencia; si falta, la fila queda bloqueada en vez de exportarse con la celda vacía. |
+
+**Tipos con cobertura horaria** (Etapa 9 del motor de cobertura,
+`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §16): la novedad se exporta por
+mes, con los días de su rango que caen en cada mes. En horas, Valor 1 es la
+base cubierta (lo que la novedad representa, con resoluciones manuales),
+**sin** el multiplicador de domingos/feriados: el multiplicador lo aplica
+Finnegans con su concepto. En días, los días corridos de la porción del mes.
+Un día de cobertura en revisión bloquea la exportación definitiva. Los tipos
+sin cobertura siguen igual que antes.
 
 **`quantityDays`/`quantityHours`** (Etapa 15L.5,
 `docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md`): el backend es la
@@ -169,6 +180,6 @@ horaria para mostrar la novedad en pantalla.
 - Horas normales siempre aparece y determina por sí sola el total trabajado.
 - Las horas especiales son desgloses aditivos y no se suman al total trabajado.
 - Las novedades se registran separadas de las horas.
-- Suspensión y vacaciones pueden bloquear el día y registrar 0 horas.
+- Suspensión y vacaciones pueden bloquear la carga de horas nuevas del día (`timeEntryBehavior`); el tiempo que cubre una novedad lo define la configuración de cobertura de su tipo (`decisions/NOVELTY_COVERAGE_ENGINE.md`), nunca un registro de 0 horas.
 - Exportación Finnegans no calcula sueldos.
 - La exportación **definitiva** de Finnegans sólo contiene registros con código exportable y configuración completa; la **preview** puede mostrar además novedades candidatas que todavía no están completamente configuradas, señalándolas como tales.

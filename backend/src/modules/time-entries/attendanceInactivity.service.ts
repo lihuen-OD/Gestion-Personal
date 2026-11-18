@@ -5,6 +5,7 @@ import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
 import { calendarDayEventAt } from "../workforce-management/notificationListing";
+import { resolveEmployeeNotificationRecipientsBatch } from "../workforce-management/employeeNotificationRecipients";
 
 export function previousOperationalDateKey(value = new Date()) {
   const { year, month, day } = argentinaDateParts(value);
@@ -122,9 +123,9 @@ export async function findEmployeeIdsWithMatchingEntryEvidence(candidates: WorkO
 /**
  * Etapa 15M.19B: qué empleados quedan exceptuados por una novedad vigente
  * — extraído del `where` de novedades que antes vivía inline en
- * `detectAttendanceInactivity` (Etapa 15L.2C: `allowsDateRange` decide si
- * una novedad open-ended cubre días posteriores a `fromDate`, mismo criterio
- * que `noveltyCoversDay`). Misma política de siempre, sin cambios: cualquier
+ * `detectAttendanceInactivity`. Fechas: `toDate` nulo es un único día
+ * (`fromDate`), nunca un rango abierto (NOVELTY_COVERAGE_ENGINE.md §6.3,
+ * `noveltyCoversDay`). Misma política de estado de siempre: cualquier
  * estado distinto de RECHAZADO exime presencia — usar exactamente este
  * criterio en cualquier llamador nuevo, nunca una política paralela (ver
  * docs/decisions/MISSING_EXPECTED_ENTRY_15M19B.md §Novedades).
@@ -136,11 +137,11 @@ export async function findEmployeeIdsExcludedByNovelty(employeeIds: string[], op
       employeeId: { in: employeeIds },
       status: { not: "RECHAZADO" },
       fromDate: { lte: operationalDate },
-      OR: [{ toDate: null }, { toDate: { gte: operationalDate } }],
+      OR: [{ toDate: { gte: operationalDate } }, { toDate: null, fromDate: operationalDate }],
     },
-    select: { employeeId: true, fromDate: true, toDate: true, noveltyType: { select: { allowsDateRange: true } } },
+    select: { employeeId: true, fromDate: true, toDate: true },
   });
-  return new Set(novelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, operationalDate)).map((novelty) => novelty.employeeId));
+  return new Set(novelties.filter((novelty) => noveltyCoversDay(novelty, operationalDate)).map((novelty) => novelty.employeeId));
 }
 
 export interface InactivityCandidate {
@@ -148,7 +149,6 @@ export interface InactivityCandidate {
   legajo: string;
   firstName: string;
   lastName: string;
-  assignments: { userId: string | null }[];
 }
 
 export interface PersistInactivityResult {
@@ -156,17 +156,11 @@ export interface PersistInactivityResult {
   notified: number;
 }
 
-const TIME_RESPONSIBLE_SELECT = {
-  where: { type: "TIME_RESPONSIBLE" as const, userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
-  select: { userId: true },
-};
-
 export const INACTIVITY_CANDIDATE_SELECT = {
   id: true,
   legajo: true,
   firstName: true,
   lastName: true,
-  assignments: TIME_RESPONSIBLE_SELECT,
 } as const;
 
 /**
@@ -206,14 +200,15 @@ export async function persistAndNotifyInactivityIncidents(
     where: { operationalDate, notifiedAt: null, employeeId: { in: candidates.map((employee) => employee.id) } },
     include: { employee: { select: INACTIVITY_CANDIDATE_SELECT } },
   });
-  const rrhh = await prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } });
+  // Destinatarios en batch (RRHH + responsables directos + Nivel 2
+  // heredados), vigencia evaluada en la fecha operativa del incidente — no en
+  // el día en que corre el chequeo (un catch-up de días anteriores usa los
+  // responsables de ese día).
+  const recipientsByEmployee = await resolveEmployeeNotificationRecipientsBatch(pendingNotification.map((incident) => incident.employeeId), dateKey);
   let notified = 0;
 
   for (const incident of pendingNotification) {
-    const recipients = Array.from(new Set([
-      ...rrhh.map((user) => user.id),
-      ...incident.employee.assignments.flatMap((assignment) => (assignment.userId ? [assignment.userId] : [])),
-    ]));
+    const recipients = recipientsByEmployee.get(incident.employeeId) ?? [];
     await prisma.$transaction(async (tx) => {
       if (recipients.length) {
         await tx.systemNotification.createMany({

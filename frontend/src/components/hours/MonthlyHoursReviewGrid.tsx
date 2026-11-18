@@ -1,5 +1,5 @@
 import type { EmployeeTimeGrid, EmployeeTimeGridRow } from "../../services/api/employeeApiService";
-import type { Novelty } from "../../types";
+import type { NoveltyCoverageItem } from "../../types/workedTimeAccounting.types";
 import { timeGridRowLabel, timeGridRowSubtitle } from "../../utils/employeeHoursGrid";
 import { formatCompactDurationMinutes, formatDurationMinutes } from "../../utils/hours";
 import { getMonthDays, getWeekdayAbbr } from "../../utils/period";
@@ -9,26 +9,14 @@ import { conceptDayAmount, conceptPeriodAmount } from "../../utils/workedTimeAcc
 import { amountDescription, amountMinutes, SettlementTotalCell, SpecialHourDot } from "./SettlementAmount";
 import { DayOffMark, dayOffDescription } from "./DayOffMark";
 
-// Mismo criterio de asociación día↔novedad que EmployeeHoursPage.tsx
-// (dayNovelties, no exportado ahí) — se repite acá en vez de tocar esa
-// pantalla (Etapa 15K, fuera de alcance) o de mover la lógica a un util
-// compartido para un solo consumidor nuevo.
-function noveltiesForDay(novelties: Novelty[], day: number): Novelty[] {
-  return novelties.filter((novelty) => {
-    const fromDay = Number(novelty.from.slice(8, 10));
-    const toDay = Number((novelty.to || novelty.from).slice(8, 10));
-    return day >= fromDay && day <= toDay;
-  });
-}
-
 // Etapa 15K: presentacional puro — recibe la grilla ya cargada (misma fuente
 // que EmployeeHoursPage, GET /employees/:id/time-grid) y sólo la muestra.
 // No llama APIs, no edita horas, no abre modales, no conoce roles. Las
 // secciones (Horas base / Distribución de la jornada / Horas adicionales /
 // totales) son las mismas que el detalle por legajo
 // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
-export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGrid; period: string }) {
-  if (!grid.rows.length) {
+export function MonthlyHoursReviewGrid({ grid, period, onReviewNovelty }: { grid: EmployeeTimeGrid; period: string; onReviewNovelty?: (item: NoveltyCoverageItem, day: number) => void }) {
+  if (!grid.rows.length && !grid.noveltyCoverageRows.length) {
     return <EmptyState text="No hay horas registradas para este período." size="compact" />;
   }
 
@@ -47,22 +35,19 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
           const daySpecialHour = grid.specialHoursByDay[String(day)];
           // Horas base: siempre tiempo real registrado, sin indicador de Hora
           // Especial. Cada concepto: lo que se liquida ese día (calculado por
-          // el backend), con el real en el indicador. La novedad sólo se asocia a las Horas base,
-          // mismo criterio que EmployeeHoursPage.
+          // el backend), con el real en el indicador. La cobertura se muestra
+          // en filas propias, alimentadas por noveltyCoverageRows.
           const amount = isBase ? null : conceptDayAmount(grid.accounting, day, row.concept.id, realMinutes);
           const minutes = amount ? amountMinutes(amount) : realMinutes;
-          const dayNovelties = isBase ? noveltiesForDay(grid.novelties, day) : [];
           // Franco (EMPLOYEE_DAY_OFF.md §15): "Franco" + lo que computa, nunca "—".
           const dayOff = isBase ? grid.dayOffsByDay[String(day)] : undefined;
           const cellClass = ["hour-cell", dayOff ? "day-off" : minutes ? "filled" : "", amount?.pending ? "is-syncing" : ""].filter(Boolean).join(" ");
           const description = dayOff ? dayOffDescription(dayOff, minutes) : amount ? amountDescription(amount, daySpecialHour?.ruleNames) : formatDurationMinutes(minutes);
           const titleParts = minutes || dayOff ? [description] : [];
-          if (dayNovelties.length) titleParts.push(dayNovelties.map((novelty) => `${novelty.type} · ${novelty.quantity}`).join(", "));
           return (
             <td key={`${row.concept.id}-${day}`}>
               <span className={cellClass} title={titleParts.join(" · ") || undefined} aria-label={`${label}, día ${day}: ${minutes || dayOff ? description : "sin horas"}`}>
                 {dayOff ? <DayOffMark countedMinutes={minutes} /> : <span>{minutes ? formatCompactDurationMinutes(minutes) : "—"}</span>}
-                {dayNovelties.length ? <span className="alert-dot purple" /> : null}
                 {amount && minutes ? <SpecialHourDot amount={amount} ruleNames={daySpecialHour?.ruleNames} /> : null}
               </span>
             </td>
@@ -93,7 +78,7 @@ export function MonthlyHoursReviewGrid({ grid, period }: { grid: EmployeeTimeGri
             <th>Total</th>
           </tr>
         </thead>
-        <MonthlyHoursTableSections rows={grid.rows} accounting={grid.accounting} monthDays={monthDays} renderRow={renderRow} specialHoursByDay={grid.specialHoursByDay} />
+        <MonthlyHoursTableSections rows={grid.rows} accounting={grid.accounting} monthDays={monthDays} renderRow={renderRow} specialHoursByDay={grid.specialHoursByDay} noveltyCoverageRows={grid.noveltyCoverageRows} noveltiesByDay={grid.noveltiesByDay} onReviewNovelty={onReviewNovelty} />
       </table>
     </div>
   );

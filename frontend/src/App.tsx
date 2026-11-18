@@ -6,6 +6,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { roleLevel } from "./utils/roles";
 import { LoadingState } from "./components/ui/LoadingState";
 import { RoleRoute } from "./app/RoleRoute";
+import { HOURLY_MANAGEMENT_ENTRY_PATH } from "./app/navigation";
 
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
 const EmployeesPage = lazy(() => import("./pages/EmployeesPage").then((module) => ({ default: module.EmployeesPage })));
@@ -23,7 +24,6 @@ const AuditParametersPage = lazy(() => import("./pages/AuditParametersPage").the
 const NoveltyTypesPage = lazy(() => import("./pages/NoveltyTypesPage").then((module) => ({ default: module.NoveltyTypesPage })));
 const NoveltyTypeCreatePage = lazy(() => import("./pages/NoveltyTypeCreatePage").then((module) => ({ default: module.NoveltyTypeCreatePage })));
 const NoveltyTypeDetailPage = lazy(() => import("./pages/NoveltyTypeDetailPage").then((module) => ({ default: module.NoveltyTypeDetailPage })));
-const HourlyManagementHomePage = lazy(() => import("./pages/HourlyManagementHomePage").then((module) => ({ default: module.HourlyManagementHomePage })));
 const HoursPage = lazy(() => import("./pages/HoursPage").then((module) => ({ default: module.HoursPage })));
 const EmployeeHoursPage = lazy(() => import("./pages/EmployeeHoursPage").then((module) => ({ default: module.EmployeeHoursPage })));
 const AttendancePage = lazy(() => import("./pages/AttendancePage").then((module) => ({ default: module.AttendancePage })));
@@ -70,14 +70,18 @@ export function App() {
     <AppShell>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/" element={level === 3 ? <Navigate to="/gestion-horaria" /> : <DashboardPage />} />
-          <Route path="/gestion-horaria" element={<HourlyManagementHomePage />} />
+          {/* "/" es el Dashboard sólo para Nivel 1; Nivel 2 y Nivel 3 van al
+              primer módulo real de Gestión horaria. "/gestion-horaria" (la
+              vieja pantalla "Inicio") ya no existe: queda como redirección
+              para URLs guardadas. */}
+          <Route path="/" element={level === 1 ? <DashboardPage /> : <Navigate to={HOURLY_MANAGEMENT_ENTRY_PATH} replace />} />
+          <Route path="/gestion-horaria" element={<Navigate to={HOURLY_MANAGEMENT_ENTRY_PATH} replace />} />
           <Route path="/legajos" element={<RoleRoute allowedLevels={[1, 2]}><EmployeesPage /></RoleRoute>} />
           <Route path="/legajos/nuevo" element={<RoleRoute allowedLevels={[1]}><EmployeeCreatePage /></RoleRoute>} />
           <Route path="/legajos/:id" element={<RoleRoute allowedLevels={[1, 2]}><EmployeeDetailPage /></RoleRoute>} />
-          <Route path="/puestos" element={<PuestosPage />} />
-          <Route path="/puestos/nuevo" element={<PuestoCreatePage />} />
-          <Route path="/puestos/:id" element={<PuestoDetailPage />} />
+          <Route path="/puestos" element={<RoleRoute allowedLevels={[1]}><PuestosPage /></RoleRoute>} />
+          <Route path="/puestos/nuevo" element={<RoleRoute allowedLevels={[1]}><PuestoCreatePage /></RoleRoute>} />
+          <Route path="/puestos/:id" element={<RoleRoute allowedLevels={[1]}><PuestoDetailPage /></RoleRoute>} />
           <Route path="/configuracion/empresas-estructura" element={<OrgStructurePage />} />
           <Route path="/configuracion/conceptos-horarios" element={<HourConceptsPage />} />
           <Route path="/configuracion/regimenes-laborales" element={<WorkRegimesPage />} />
@@ -99,12 +103,12 @@ export function App() {
           <Route path="/asistencia/alertas" element={<ShiftAlertsPage />} />
           <Route path="/novedades" element={<NoveltiesPage />} />
           <Route path="/documentacion" element={<RoleRoute allowedLevels={[1, 2]}><DocumentsPage /></RoleRoute>} />
-          <Route path="/organigramas" element={<OrganigramasPage />} />
+          <Route path="/organigramas" element={<RoleRoute allowedLevels={[1]}><OrganigramasPage /></RoleRoute>} />
           <Route path="/usuarios" element={<UsersPage />} />
           <Route path="/auditoria" element={<AuditPage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
-          <Route path="/reportes" element={<ReportsPage />} />
-          <Route path="/pendientes" element={<HoursPage pendingOnly />} />
+          <Route path="/reportes" element={<RoleRoute allowedLevels={[1]}><ReportsPage /></RoleRoute>} />
+          <Route path="/pendientes" element={<RoleRoute allowedLevels={[1, 2]}><HoursPage pendingOnly /></RoleRoute>} />
           <Route path="/cierres" element={<MonthlyClosuresPage />} />
           <Route path="/notificaciones" element={<NotificationsPage />} />
           <Route path="*" element={<Navigate to="/" />} />

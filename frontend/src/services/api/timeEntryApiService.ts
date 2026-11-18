@@ -13,7 +13,7 @@ import { hourConceptApiService } from "./hourConceptApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
 import type { Employee, TimeEntry, TimeStatus, User } from "../../types";
 import type { HoursExportColumn } from "../../utils/hoursExport";
-import type { PeriodAccounting, PeriodAccountingSummary } from "../../types/workedTimeAccounting.types";
+import type { NoveltyCoverageItem, PeriodAccounting, PeriodAccountingSummary } from "../../types/workedTimeAccounting.types";
 
 type ApiApprovalStatus =
   | "BORRADOR"
@@ -23,10 +23,6 @@ type ApiApprovalStatus =
   | "RECHAZADO"
   | "DEVUELTO"
   | "CERRADO";
-
-export type HomeSummary =
-  | { role: "carga"; period: string; paraCargar: number; devueltosParaCorregir: number; enviadoEsperandoRevision: number }
-  | { role: "revision"; period: string; paraRevisarHoy: number; novedadesPendientes: number; fichadasObservadas: number };
 
 export type ApiTimeEntry = {
   id: string;
@@ -82,6 +78,10 @@ export type EmployeePeriodDay = {
   dayOff?: DayOffActivity | null;
   specialHourRuleNames: string[];
   specialHourConflict: boolean;
+  totalWorkedMinutes: number;
+  noveltyCoveredMinutes: number;
+  computableMinutes: number;
+  novelties: NoveltyCoverageItem[];
 };
 
 type ApiEmployeePeriodRow = {
@@ -155,6 +155,8 @@ type ApiSummaryResponse = {
     pendingEmployees: number;
     reviewEmployees: number;
     countableHours: number;
+    coveredHours: number;
+    computableHours: number;
     coverage: number;
   };
 };
@@ -378,24 +380,6 @@ export const timeEntryApiService = {
       preview: response.data.preview,
       entries: response.data.entries.map(mapTimeEntryFromApi),
     };
-  },
-
-  // Etapa 14G.9: `getHomeSummary` no tenía dedupe in-flight -- doble-montaje
-  // de StrictMode disparaba 2 llamadas de red reales, documentado como
-  // pendiente desde 14G.2 (comentario de `homeCounts` en timeEntries.
-  // service.ts) y confirmado con el journey de 14G.8 ("Entrar a Inicio":
-  // `GET /time-entries/home-summary` x2). Misma familia "time-entries" que
-  // el resto de este servicio -- toda mutación de horas ya invalida esta
-  // familia vía `invalidateTimeEntryDependentCaches`, sin código nuevo de
-  // invalidación.
-  async getHomeSummary() {
-    const key = "/time-entries/home-summary";
-    return cachedData({
-      requestKey: `GET:${key}`,
-      policy: cachePolicies.timeEntriesAggregates,
-      fetcher: () => apiRequest<{ data: HomeSummary }>(key, { apiCache: false }).then((response) => response.data),
-      validate: (value: HomeSummary) => Boolean(value && (value.role === "carga" || value.role === "revision")),
-    });
   },
 
   async getSummary(period: string) {

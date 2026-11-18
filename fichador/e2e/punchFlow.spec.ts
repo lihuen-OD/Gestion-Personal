@@ -5,7 +5,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 // detector de rostros falso (servidor 5186, ver playwright.config.ts) y API
 // mockeado con page.route. Nada sale a un backend real.
 const API = "http://127.0.0.1:59999/api";
-const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const employee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 const SERVER_START = "2026-10-13T11:01:00.000Z"; // 08:01 en Argentina
 const inResult = { employee, workShift: { id: "shift-1", startAt: SERVER_START } };
 
@@ -56,9 +56,9 @@ async function openKiosk(page: Page, handlers: { punch?: Handler; attempt?: Hand
 }
 
 async function selectEmployee(page: Page) {
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
+  await page.getByLabel("Buscar por nombre, apellido o DNI").fill("Gomez");
   await page.getByRole("button", { name: /Gomez, Ana/ }).click();
-  await expect(page.getByText("Legajo 100 · DNI terminado en 456")).toBeVisible();
+  await expect(page.getByText("DNI 30123456")).toBeVisible();
 }
 
 async function captureAndConfirm(page: Page) {
@@ -84,12 +84,12 @@ test("ACTIVE → busca → estado → ficha → confirmación con hora del servi
   await captureAndConfirm(page);
 
   await expect(page.getByText("Entrada registrada")).toBeVisible();
-  await expect(page.getByText("Ana Gomez")).toBeVisible();
+  await expect(page.getByText("Gomez Ana")).toBeVisible();
   await expect(page.getByText("08:01", { exact: true })).toBeVisible();
   await expect(page.getByText("Volviendo al inicio…")).toBeVisible();
 
   // Retorno automático: el kiosco queda listo para la próxima persona.
-  await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveValue("", { timeout: 6_000 });
+  await expect(page.getByLabel("Buscar por nombre, apellido o DNI")).toHaveValue("", { timeout: 6_000 });
   await expect(page.getByText("Entrada registrada")).toBeHidden();
   await expect(page.getByRole("button", { name: /Marcar (ingreso|salida)/ })).toHaveCount(0);
 

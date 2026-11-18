@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
@@ -7,6 +8,27 @@ import { auditService } from "../audit/audit.service";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 import { shiftAssignmentService } from "./shiftAssignment.service";
 import { roles } from "../../shared/security/roles";
+
+// Etapa 5: el recálculo de cobertura de novedades se prueba en
+// noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
+import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
+  lockEmployeeCoverage: vi.fn(),
+  lockNoveltyCoverageGlobally: vi.fn(),
+}));
+vi.mock("../novelties/noveltyCoverageRecalculation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../novelties/noveltyCoverageRecalculation")>();
+  return {
+    ...actual,
+    lockNoveltyCoverageForEmployees: vi.fn(),
+    recalculateNoveltyCoverage: vi.fn(async (_db: unknown, _scope: unknown, reason: Parameters<typeof actual.emptyNoveltyCoverageRecalculation>[0]) => actual.emptyNoveltyCoverageRecalculation(reason)),
+    rebuildNoveltyCoverageSnapshots: vi.fn().mockResolvedValue([]),
+    auditNoveltyCoverageRecalculation: vi.fn(),
+    auditNoveltyCoverageRecalculationWithin: vi.fn(),
+  };
+});
+
 
 /**
  * Trazabilidad de autoria (2026-08-18): ShiftAssignment.assignedByUserId /
@@ -31,6 +53,8 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     shiftTemplate: { findUnique: vi.fn() },
     employee: { count: vi.fn() },
+    // Etapa 5: asignación + recálculo de cobertura en una transacción.
+    $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback({ tx: true })),
   },
 }));
 
@@ -76,11 +100,7 @@ describe("shiftAssignmentService.summary", () => {
 
     await shiftAssignmentService.summary(supervisor);
 
-    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining({
-      assignments: {
-        some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "supervisor-1" }),
-      },
-    }));
+    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining(employeeAccessWhere(supervisor)));
   });
 });
 
@@ -97,6 +117,7 @@ describe("shiftAssignmentService.assign", () => {
       template.id,
       { observation: undefined, effectiveFrom: baseAssignInput.effectiveFrom, effectiveTo: undefined, weekdays: [] },
       "user-1",
+      { tx: true },
     );
   });
 
@@ -138,12 +159,15 @@ describe("shiftAssignmentService.assign", () => {
 
 describe("shiftAssignmentService.update", () => {
   it("deshabilita la asignacion y escribe disabledByUserId con el userId real", async () => {
-    repo.findById.mockResolvedValue({ id: "assign-1", status: "HABILITADO", employee: { legajo: "100" }, shiftTemplate: template });
-    repo.update.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" }, shiftTemplate: template });
+    const vigency = { effectiveFrom: new Date("2026-01-01"), effectiveTo: null };
+    repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", status: "HABILITADO", ...vigency, employee: { legajo: "100" }, shiftTemplate: template });
+    repo.update.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", ...vigency, employee: { legajo: "100" }, shiftTemplate: template });
 
     await shiftAssignmentService.update("assign-1", { status: "DESHABILITADO" }, user);
 
-    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ status: "DESHABILITADO", disabledByUserId: "user-1" }));
+    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ status: "DESHABILITADO", disabledByUserId: "user-1" }), { tx: true });
+    // Etapa 5: deshabilitar cambia la jornada esperada → cobertura de su vigencia, en la misma transacción.
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith({ tx: true }, { employeeIds: ["emp-1"], from: vigency.effectiveFrom, to: null }, expect.objectContaining({ source: "SHIFT_ASSIGNMENT_CHANGED" }));
   });
 
   it("mapea un userId inexistente (P2003) a un 400 prolijo al deshabilitar", async () => {
@@ -165,6 +189,8 @@ describe("shiftAssignmentService.update", () => {
     await shiftAssignmentService.update("assign-1", { observation: "nota" }, user);
 
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ entity: "ShiftAssignment", entityId: "emp-1" }));
+    // Sólo la observación no cambia la jornada esperada: no se recalcula cobertura.
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 });
 
@@ -175,7 +201,7 @@ describe("shiftAssignmentService.remove", () => {
 
     await shiftAssignmentService.remove("assign-1");
 
-    expect(repo.remove).toHaveBeenCalledWith("assign-1");
+    expect(repo.remove).toHaveBeenCalledWith("assign-1", { tx: true });
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "ShiftAssignment", entityId: "emp-1" }));
   });
 
@@ -204,7 +230,10 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
       "assign-1",
       { observation: undefined, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
       "user-1",
+      { tx: true },
     );
+    // Etapa 5: la ventana cubre la vigencia vieja y la nueva.
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith({ tx: true }, { employeeIds: ["emp-1"], from: new Date("2025-01-01"), to: null }, expect.objectContaining({ source: "SHIFT_ASSIGNMENT_CHANGED" }));
   });
 
   it("audita la reactivación con entityId=employeeId (no el id de la asignación) — Etapa 10B", async () => {
@@ -239,7 +268,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
 
     await shiftAssignmentService.update("assign-1", { weekdays: [1, 2, 3] }, user);
 
-    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ weekdays: [1, 2, 3] }));
+    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ weekdays: [1, 2, 3] }), { tx: true });
   });
 
   it("actualiza solo effectiveTo (cerrar vigencia) validando contra el effectiveFrom ya guardado", async () => {
@@ -248,7 +277,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
 
     await shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2026-12-31") }, user);
 
-    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ effectiveTo: new Date("2026-12-31") }));
+    expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ effectiveTo: new Date("2026-12-31") }), { tx: true });
   });
 
   it("rechaza effectiveTo anterior al effectiveFrom ya guardado, aunque el payload solo mande effectiveTo", async () => {

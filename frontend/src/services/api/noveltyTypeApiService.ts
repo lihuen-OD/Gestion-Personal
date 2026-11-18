@@ -1,8 +1,13 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
-import { cachePolicies, cachedData, invalidateCacheFamily } from "../cache";
+import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type {
   FinnegansValueUnit,
+  NoveltyCoverageDayOffPolicy,
+  NoveltyCoverageDayRule,
+  NoveltyCoverageHolidayPolicy,
+  NoveltyCoverageMode,
+  NoveltyRealWorkCompatibility,
   NoveltyTimeEntryBehavior,
   NoveltyType,
   NoveltyTypeFilters,
@@ -12,8 +17,14 @@ import type {
 } from "../../types/noveltyType.types";
 import type { Role } from "../../types";
 import { resolveNoveltyUiColor } from "../../utils/noveltyColor";
+import { canonicalCoverage } from "../../utils/noveltyTypeCoverage";
 
-type ApiNoveltyType = {
+// Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
+function invalidateNoveltyCoverageDerivedCaches(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
+
+export type ApiNoveltyType = {
   id: string;
   code: string;
   name: string;
@@ -38,6 +49,17 @@ type ApiNoveltyType = {
   finnegansName?: string | null;
   allowedLoadRoles?: Role[];
   approvalRoles?: Role[];
+  // Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §4).
+  coverageMode: NoveltyCoverageMode;
+  coverageFixedMinutes: number | null;
+  coverageDayRule: NoveltyCoverageDayRule;
+  coverageWeekdays: number[];
+  coverageOnDayOff: NoveltyCoverageDayOffPolicy | null;
+  coverageOnHoliday: NoveltyCoverageHolidayPolicy | null;
+  coverageAppliesSpecialHours: boolean;
+  coverageCountsTowardTotal: boolean;
+  realWorkCompatibility: NoveltyRealWorkCompatibility;
+  requiresObservation: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,6 +97,18 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
       allowsDateRange: item.allowsDateRange,
       finnegansValueUnit: item.finnegansValueUnit,
       finnegansRequiresValidity: item.finnegansRequiresValidity,
+      requiresObservation: Boolean(item.requiresObservation),
+    },
+    coverage: {
+      mode: item.coverageMode ?? "NONE",
+      fixedMinutes: item.coverageFixedMinutes ?? null,
+      dayRule: item.coverageDayRule ?? "EVERY_DAY",
+      weekdays: Array.isArray(item.coverageWeekdays) ? [...item.coverageWeekdays].sort((left, right) => left - right) : [],
+      onDayOff: item.coverageOnDayOff ?? null,
+      onHoliday: item.coverageOnHoliday ?? null,
+      appliesSpecialHours: Boolean(item.coverageAppliesSpecialHours),
+      countsTowardTotal: Boolean(item.coverageCountsTowardTotal),
+      realWorkCompatibility: item.realWorkCompatibility ?? "COMPATIBLE",
     },
     allowedLoadRoles,
     approvalRoles,
@@ -90,9 +124,13 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
   };
 }
 
-function mapToApi(item: NoveltyType) {
+/** Payload de alta/edición. La cobertura viaja en su forma canónica (sin valores ocultos). */
+// El código interno nunca viaja desde la pantalla: en el alta lo asigna el
+// backend (noveltyTypes.repository.ts::generateNextCode, con reintento ante
+// colisión) y en la edición se conserva el existente.
+export function mapNoveltyTypeToApi(item: NoveltyType) {
+  const coverage = canonicalCoverage(item.coverage);
   return {
-    code: item.code,
     name: item.name,
     uiColor: item.uiColor,
     kind: item.kind,
@@ -111,6 +149,18 @@ function mapToApi(item: NoveltyType) {
     finnegansName: item.finnegansName?.trim() || null,
     allowedLoadRoles: item.allowedLoadRoles,
     approvalRoles: item.approvalRoles,
+    requiresObservation: item.rules.requiresObservation,
+    // Se envía el estado completo: el backend valida la combinación
+    // resultante y sólo recalcula si alguno de estos campos cambió de verdad.
+    coverageMode: coverage.mode,
+    coverageFixedMinutes: coverage.fixedMinutes,
+    coverageDayRule: coverage.dayRule,
+    coverageWeekdays: coverage.weekdays,
+    coverageOnDayOff: coverage.onDayOff,
+    coverageOnHoliday: coverage.onHoliday,
+    coverageAppliesSpecialHours: coverage.appliesSpecialHours,
+    coverageCountsTowardTotal: coverage.countsTowardTotal,
+    realWorkCompatibility: coverage.realWorkCompatibility,
   };
 }
 
@@ -123,11 +173,6 @@ function toQuery(filters?: Partial<NoveltyTypeFilters>) {
   if (filters?.exportsToFinnegans) params.set("exportsToFinnegans", filters.exportsToFinnegans);
   const query = params.toString();
   return query ? `?${query}` : "";
-}
-
-function nextCode(items: NoveltyType[]) {
-  const max = items.reduce((value, item) => Math.max(value, Number(item.code.replace(/\D/g, "")) || 0), 0);
-  return `NOV-${String(max + 1).padStart(3, "0")}`;
 }
 
 function isNoveltyType(value: NoveltyType) {
@@ -162,7 +207,7 @@ export const noveltyTypeApiService = {
   async create(item: NoveltyType) {
     const response = await apiRequest<ApiItemResponse>("/novelty-types", {
       method: "POST",
-      body: mapToApi(item),
+      body: mapNoveltyTypeToApi(item),
     });
     await invalidateCacheFamily("novelty-types", "novelty type created");
     return mapNoveltyTypeFromApi(response.data);
@@ -171,11 +216,10 @@ export const noveltyTypeApiService = {
   async update(id: string, item: NoveltyType) {
     const response = await apiRequest<ApiItemResponse>(`/novelty-types/${id}`, {
       method: "PATCH",
-      body: mapToApi(item),
+      body: mapNoveltyTypeToApi(item),
     });
-    await invalidateCacheFamily("novelty-types", "novelty type updated");
+    await Promise.all([invalidateCacheFamily("novelty-types", "novelty type updated"), invalidateNoveltyCoverageDerivedCaches("novelty type updated")]);
     return mapNoveltyTypeFromApi(response.data);
   },
 
-  getNextCode: nextCode,
 };

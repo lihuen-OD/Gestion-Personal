@@ -51,3 +51,20 @@ describe("employee detail route security", () => {
     expect(invoke(authorizationFor(employeesRouter, "/:id/hour-concept-breakdowns/recalculate-automatic"), roles.cargaHoraria)).toBeUndefined();
   });
 });
+
+// 2026-11-17: Organigramas pasó a ser sólo de Nivel 1. GET /org-chart es su
+// único consumidor, así que Nivel 2 tampoco puede leerlo por API directa.
+describe("GET /org-chart — sólo Nivel 1", () => {
+  it("Nivel 1 accede; Nivel 2 y Nivel 3 reciben 403", () => {
+    const handler = authorizationFor(employeesRouter, "/org-chart");
+    expect(invoke(handler, roles.rrhh)).toBeUndefined();
+    expect(invoke(handler, roles.supervision)).toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    expect(invoke(handler, roles.cargaHoraria)).toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
+
+  it("Nivel 2 conserva los endpoints de Legajos de su área", () => {
+    for (const path of ["/:id", "/:id/overview", "/summary", "/options"]) {
+      expect(invoke(authorizationFor(employeesRouter, path), roles.supervision)).toBeUndefined();
+    }
+  });
+});

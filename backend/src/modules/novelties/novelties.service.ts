@@ -1,12 +1,42 @@
 import { Prisma } from "@prisma/client";
+import { accountingNoveltyCoverageSelect, accountNoveltyDay, toAccountingNoveltyCoverage } from "../time-entries/workedTimeAccounting";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
-import { calendarDaysInclusive } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, calendarDateKey, calendarDaysInclusive, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
+import { evaluateSpecialHourRulesByDate, SpecialHourScopeHistoryMissingError } from "../time-entries/timeEntries.repository";
+import { formatMinutes } from "../time-entries/manualHoursConflict.service";
 import { noveltiesRepository } from "./novelties.repository";
-import type { CreateNoveltyInput, ListNoveltiesQuery, RejectNoveltyInput } from "./novelties.schemas";
+import type { CoverageDayResult } from "./noveltyCoverage.engine";
+import { assertDocumentBatchSize, compensateNoveltyDocuments, persistNoveltyDocumentsWithin, uploadNoveltyDocuments } from "./noveltyDocuments";
+import type {
+  CorrectionNoveltyInput,
+  CreateNoveltyCommand,
+  CreateNoveltyInput,
+  CreateNoveltyWithDocumentInput,
+  ListNoveltiesQuery,
+  NoveltyDocumentInput,
+  NoveltyCoveragePreviewInput,
+  NoveltyCoverageResolutionInput,
+  RejectNoveltyInput,
+} from "./novelties.schemas";
+import {
+  assertNoveltyCoverageWritableWithin,
+  computeNoveltyCoverage,
+  coverageDayLabel,
+  coverageRangeDays,
+  loadRealWorkedMinutesByDay,
+  loadRealWorkedMinutesOnDate,
+  MAX_COVERAGE_RANGE_DAYS,
+  MAX_COVERAGE_ROWS_PER_OPERATION,
+  persistNoveltyCoverageWithin,
+  toCoverageAppError,
+  type CoveragePersistSummary,
+} from "./noveltyCoverage.service";
 import { notifyRrhh } from "../workforce-management/workforce.service";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 
@@ -50,13 +80,32 @@ function assertCanApprove(novelty: Awaited<ReturnType<typeof noveltiesRepository
   }
 }
 
-function assertCanLoad(type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>, user: Express.AuthUser) {
-  if (user.role === roles.rrhh) return;
+function canLoadType(type: { allowedLoadRoles?: unknown } | null | undefined, user: Express.AuthUser) {
+  if (user.role === roles.rrhh) return true;
   const allowedLoadRoles = asStringArray(type?.allowedLoadRoles);
   const roleLabel = roleLabels[user.role] || user.role;
-  if (!allowedLoadRoles.includes(roleLabel) && !allowedLoadRoles.includes(user.role)) {
-    throw new AppError("User cannot create this novelty type", 403, "NOVELTY_LOAD_FORBIDDEN");
-  }
+  return allowedLoadRoles.includes(roleLabel) || allowedLoadRoles.includes(user.role);
+}
+
+/**
+ * Máximo de cobertura de un día ajustado a mano (NOVELTY_COVERAGE_ENGINE.md
+ * §19): el valor fijo del tipo, la cantidad cargada o la jornada conocida.
+ * `null` = sin tope propio (tipo según jornada con la jornada sin resolver:
+ * rige el límite general de 24 h del schema).
+ */
+export function coverageAdjustmentMaxMinutes(
+  type: { coverageMode: string; coverageFixedMinutes: number | null },
+  quantityMinutes: number | null,
+  row: { outcome: string; expectedMinutes: number | null },
+): number | null {
+  if (type.coverageMode === "FIXED_MINUTES") return type.coverageFixedMinutes ?? 0;
+  if (type.coverageMode === "MANUAL_MINUTES") return quantityMinutes ?? 0;
+  if (type.coverageMode === "EXPECTED_SCHEDULE") return row.outcome === "SCHEDULE_UNRESOLVED" || row.expectedMinutes === null ? null : row.expectedMinutes;
+  return 0;
+}
+
+function assertCanLoad(type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>, user: Express.AuthUser) {
+  if (!canLoadType(type, user)) throw new AppError("User cannot create this novelty type", 403, "NOVELTY_LOAD_FORBIDDEN");
 }
 
 async function ensureEmployeesVisible(employeeIds: string[], user: Express.AuthUser) {
@@ -106,7 +155,51 @@ async function ensureNoveltyTypeReady(input: CreateNoveltyInput) {
   if (type.finnegansRequiresValidity && type.allowsDateRange && !input.toDate) {
     throw new AppError("This novelty type requires fromDate and toDate", 400, "NOVELTY_VALIDITY_REQUIRED");
   }
+  assertCoverageInput(input, type);
   return type;
+}
+
+// Motor de cobertura — Etapa 3 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md):
+// lo que el motor necesita para calcular sin inventar.
+function assertCoverageInput(input: Pick<CreateNoveltyInput, "fromDate" | "toDate" | "quantityHours" | "observation" | "employeeIds">, type: NonNullable<Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>>) {
+  if (type.requiresObservation && !input.observation?.trim()) {
+    throw new AppError("Esta novedad requiere una observación.", 400, "NOVELTY_OBSERVATION_REQUIRED");
+  }
+  if (type.coverageMode === "NONE") return;
+  if (type.coverageMode === "MANUAL_MINUTES" && input.quantityHours == null) {
+    throw new AppError("Indicá el tiempo de la novedad.", 400, "NOVELTY_MANUAL_QUANTITY_REQUIRED");
+  }
+  // Sin fecha hasta la novedad es de un único día, aunque el tipo admita rango.
+  const toDate = type.allowsDateRange ? input.toDate ?? input.fromDate : input.fromDate;
+  const days = coverageRangeDays(input.fromDate, toDate);
+  if (days > MAX_COVERAGE_RANGE_DAYS) {
+    throw new AppError(`Una novedad que registra tiempo puede abarcar hasta ${MAX_COVERAGE_RANGE_DAYS} días.`, 400, "NOVELTY_COVERAGE_RANGE_TOO_LONG");
+  }
+  if (days * new Set(input.employeeIds).size > MAX_COVERAGE_ROWS_PER_OPERATION) {
+    throw new AppError(`La carga generaría más de ${MAX_COVERAGE_ROWS_PER_OPERATION} días de cobertura. Cargala en partes más chicas.`, 400, "NOVELTY_COVERAGE_TOO_LARGE");
+  }
+}
+
+// Mismo criterio que francos (EMPLOYEE_DAY_OFF.md §12): sobre un período ya
+// enviado a cierre sólo RRHH corrige, con motivo.
+function correctionPolicy(user: Express.AuthUser, correctionReason: string | null | undefined) {
+  const reason = correctionReason?.trim() || null;
+  return { allowCorrection: user.role === roles.rrhh && Boolean(reason), reason, isRrhh: user.role === roles.rrhh };
+}
+
+function assertCorrectionReason(protectedPeriods: unknown[], policy: ReturnType<typeof correctionPolicy>) {
+  if (protectedPeriods.length && policy.isRrhh && !policy.reason) {
+    throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "NOVELTY_CORRECTION_REASON_REQUIRED");
+  }
+}
+
+const NOVELTY_TRANSACTION_OPTIONS = { timeout: 30_000 };
+
+// RRHH sin motivo recibe el pedido de motivo; el resto, PERIOD_CLOSED.
+async function guardNoveltyMutation(tx: PrismaTransactionClient, novelty: Parameters<typeof assertNoveltyCoverageWritableWithin>[1], policy: ReturnType<typeof correctionPolicy>, dateKey?: string) {
+  const periods = await assertNoveltyCoverageWritableWithin(tx, novelty, { allowCorrection: policy.isRrhh, ...(dateKey ? { dateKey } : {}) });
+  assertCorrectionReason(periods, policy);
+  return periods;
 }
 
 function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
@@ -134,11 +227,29 @@ function normalizeCreateInput(input: CreateNoveltyInput, type: Awaited<ReturnTyp
 // `normalizeCreateInput` para que un tipo con `allowsDateRange=false`
 // calcule sobre `toDate=null` (1 día), nunca sobre un `toDate` extendido
 // que igual se iba a descartar.
-function resolveQuantities(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyInput {
+//
+// Motor de cobertura — Etapa 1 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md):
+// en un tipo de cantidad manual (`coverageMode = MANUAL_MINUTES`, siempre de
+// un único día) la cantidad canónica es `quantityMinutes`; mientras el
+// formulario siga enviando horas, el backend la deriva de `quantityHours`
+// (mismo redondeo que el backfill de la migración) y rechaza más de 24 h en
+// un día en vez de recortarlas. En cualquier otro modo queda `null`.
+const MAX_MINUTES_PER_DAY = 1440;
+
+function resolveQuantities(input: CreateNoveltyInput, type: Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>): CreateNoveltyCommand {
   if (type?.allowsHours) {
-    return { ...input, quantityDays: null };
+    return { ...input, quantityDays: null, quantityMinutes: manualQuantityMinutes(input, type) };
   }
-  return { ...input, quantityHours: null, quantityDays: calendarDaysInclusive(input.fromDate, input.toDate) };
+  return { ...input, quantityHours: null, quantityDays: calendarDaysInclusive(input.fromDate, input.toDate), quantityMinutes: null };
+}
+
+function manualQuantityMinutes(input: CreateNoveltyInput, type: NonNullable<Awaited<ReturnType<typeof noveltiesRepository.findNoveltyType>>>) {
+  if (type.coverageMode !== "MANUAL_MINUTES" || input.quantityHours == null) return null;
+  const minutes = Math.round(input.quantityHours * 60);
+  if (minutes > MAX_MINUTES_PER_DAY) {
+    throw new AppError("La cantidad de una novedad de un único día no puede superar 24 h.", 400, "NOVELTY_MANUAL_QUANTITY_EXCEEDS_DAY");
+  }
+  return minutes;
 }
 
 function rangeBounds(fromDate: Date, toDate: Date | null | undefined) {
@@ -180,6 +291,195 @@ async function ensureNoOverlap(input: CreateNoveltyInput, type: Awaited<ReturnTy
   throw new AppError(`Ya existe una novedad "${typeName}" para ${employeeLabel} que se superpone con el rango de fechas seleccionado.`, 409, "NOVELTY_OVERLAP");
 }
 
+type ApprovalResult = { before: NonNullable<Awaited<ReturnType<typeof noveltiesRepository.findById>>>; item: Awaited<ReturnType<typeof noveltiesRepository.approve>>; periods: unknown[] };
+
+async function approveWithin(tx: PrismaTransactionClient, ids: string[], user: Express.AuthUser, policy: ReturnType<typeof correctionPolicy>): Promise<ApprovalResult[]> {
+  const results: ApprovalResult[] = [];
+  for (const id of ids) {
+    // Etapa 3: alcance del legajo (antes approve leía sin filtrar por alcance).
+    const before = await noveltiesRepository.findById(id, employeeAccessWhere(user), tx);
+    if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
+    assertCanApprove(before, user);
+    if (before.status !== "PENDIENTE" && before.status !== "EN_REVISION") {
+      throw new AppError("Only pending novelties can be approved", 400, "NOVELTY_STATUS_NOT_APPROVABLE");
+    }
+    const periods = await guardNoveltyMutation(tx, before, policy);
+    // Etapa 15G.1: aprobar sólo cambia status/auditoría — nunca crea ni
+    // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
+    const item = await noveltiesRepository.approve(id, user.id, tx);
+    results.push({ before, item, periods });
+  }
+  return results;
+}
+
+async function auditApproval(result: ApprovalResult, policy: ReturnType<typeof correctionPolicy>, audit?: AuditContext) {
+  const { before, item, periods } = result;
+  await auditService.register({
+    ...audit,
+    action: "APPROVE",
+    entity: "Novelty",
+    entityId: item.id,
+    description: `Se aprobo novedad ${item.noveltyType.code} del legajo ${item.employee.legajo}.${periods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
+    before: before as Prisma.InputJsonValue,
+    after: { ...item, ...(periods.length ? { correctionReason: policy.reason } : {}) } as Prisma.InputJsonValue,
+  });
+}
+
+function coverageAuditText(summary: CoveragePersistSummary) {
+  if (!summary.days) return "";
+  return ` Cobertura: ${summary.days} día(s)${summary.pendingReviewDays ? `, ${summary.pendingReviewDays} para revisar` : ""}.`;
+}
+
+type CoverageDayViewInput = {
+  dateKey: string;
+  outcome: Parameters<typeof coverageDayLabel>[0]["outcome"];
+  scheduleReviewReason: Parameters<typeof coverageDayLabel>[0]["scheduleReviewReason"];
+  expectedMinutes: number | null;
+  baseMinutes: number;
+  multiplier: number;
+  reviewStatus: string;
+  resolution: string | null;
+  resolvedBaseMinutes: number | null;
+  effectiveBaseMinutes: number;
+  computedMinutes: number;
+  countsTowardTotal: boolean;
+};
+
+function coverageDayView(day: CoverageDayViewInput) {
+  return {
+    date: day.dateKey,
+    outcome: day.outcome,
+    scheduleReviewReason: day.scheduleReviewReason,
+    reviewStatus: day.reviewStatus,
+    label: coverageDayLabel(day),
+    expectedMinutes: day.expectedMinutes,
+    baseMinutes: day.baseMinutes,
+    resolution: day.resolution,
+    resolvedBaseMinutes: day.resolvedBaseMinutes,
+    effectiveBaseMinutes: day.effectiveBaseMinutes,
+    multiplier: day.multiplier,
+    computedMinutes: day.computedMinutes,
+    countsTowardTotal: day.countsTowardTotal,
+  };
+}
+
+function coverageTotals(days: Array<{ outcome: string; reviewStatus: string; effectiveBaseMinutes: number; computedMinutes: number }>) {
+  return {
+    days: days.length,
+    coveredDays: days.filter((day) => day.effectiveBaseMinutes > 0).length,
+    pendingReviewDays: days.filter((day) => day.reviewStatus === "PENDING").length,
+    baseMinutes: days.reduce((sum, day) => sum + day.effectiveBaseMinutes, 0),
+    computedMinutes: days.reduce((sum, day) => sum + day.computedMinutes, 0),
+  };
+}
+
+// RRHH crea siempre APROBADO; el resto, según requiresApproval del tipo
+// (ver create). La vista previa usa el mismo criterio para avisar si va a
+// quedar pendiente.
+function initialNoveltyStatus(type: { requiresApproval: boolean | null }, user: Express.AuthUser): "APROBADO" | "PENDIENTE" {
+  return user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
+}
+
+/**
+ * Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15): cómo quedará el día frente al
+ * trabajo real ya registrado, con la MISMA función que la grilla y el cierre
+ * (`accountNoveltyDay`). Se evalúa como aprobada para mostrar si va a sumar,
+ * si es informativa o si quedará para revisión; el estado inicial real se
+ * informa aparte (`initialStatus`).
+ */
+function previewDayAccounting(employeeId: string, noveltyTypeId: string, day: CoverageDayResult, workedMinutes: number) {
+  const [item] = accountNoveltyDay([{
+    employeeId,
+    day: Number(day.dateKey.slice(8, 10)),
+    dateKey: day.dateKey,
+    noveltyId: "preview",
+    noveltyTypeId,
+    status: "APROBADO",
+    outcome: day.outcome,
+    scheduleReviewReason: day.scheduleReviewReason,
+    baseMinutes: day.baseMinutes,
+    resolvedBaseMinutes: day.resolvedBaseMinutes,
+    multiplier: day.multiplier,
+    countsTowardTotal: day.countsTowardTotal,
+    realWorkCompatibility: day.realWorkCompatibility,
+    expectedMinutes: day.expectedMinutes,
+    reviewStatus: day.reviewStatus,
+    resolution: day.resolution,
+    resolvedAgainstWorkedMinutes: day.resolvedAgainstWorkedMinutes,
+  }], workedMinutes).items;
+  // Una sola cobertura no rechazada siempre produce un ítem.
+  return { workedMinutes, stateWhenApproved: item!.state, reviewReasons: item!.reviewReasons };
+}
+
+/**
+ * Alta de novedades (una por legajo). `document` sólo llega por
+ * createWithDocument; un tipo que exige documentación no se crea sin ella
+ * (NOVELTY_COVERAGE_ENGINE.md §15.1).
+ */
+async function createNovelties(input: CreateNoveltyInput, document: NoveltyDocumentInput | null, user: Express.AuthUser, audit?: AuditContext) {
+  // Antes de cualquier lectura o subida: con documento, lotes de hasta 25 personas.
+  if (document) assertDocumentBatchSize(input.employeeIds);
+  await ensureEmployeesVisible(input.employeeIds, user);
+  const type = await ensureNoveltyTypeReady(input);
+  if (type.requiresDocumentation && !document) {
+    throw new AppError("Este tipo de novedad requiere adjuntar documentación.", 400, "NOVELTY_DOCUMENTATION_REQUIRED");
+  }
+  const normalizedInput = resolveQuantities(normalizeCreateInput(input, type), type);
+  assertCanLoad(type, user);
+  await ensureNoOverlap(normalizedInput, type);
+  // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
+  // punto 15): RRHH sigue siendo la autoridad final -- crea siempre
+  // APROBADO. Para el resto de los roles, requiresApproval del tipo ahora
+  // decide de verdad: `false` autoaprueba, cualquier otro valor (incluido
+  // ausente, por defecto seguro) sigue pidiendo aprobación como hasta hoy.
+  const status = initialNoveltyStatus(type, user);
+  // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
+  // decisión funcional final — crear una novedad NUNCA crea ni modifica
+  // TimeEntry, sea cual sea el status resultante o `timeEntryBehavior` del
+  // tipo. El fichador y la carga horaria manual son la única fuente de
+  // verdad de horas reales; Novedades es sólo justificación administrativa.
+  // Etapa 3: la cobertura diaria (NoveltyDayCoverage, nunca TimeEntry) se
+  // genera en la misma transacción; si no se puede calcular sin inventar
+  // (historia laboral faltante) o el período está cerrado, no se crea nada.
+  const policy = correctionPolicy(user, input.correctionReason);
+  // Documento: se sube antes de la transacción (sin red adentro) y se
+  // compensa si la transacción falla (noveltyDocuments.ts).
+  const uploads = document ? await uploadNoveltyDocuments([...new Set(normalizedInput.employeeIds)], document, user, audit) : [];
+  const { items, coverage, documents } = await execute(() =>
+    prisma.$transaction(async (tx) => {
+      const created = await noveltiesRepository.createMany(normalizedInput, status, user.id, tx);
+      const summary = await persistNoveltyCoverageWithin(tx, created.map((item) => item.id), {
+        protectedPeriods: policy.allowCorrection ? "ALLOW_CORRECTION" : "REJECT",
+      });
+      const createdDocuments = document ? await persistNoveltyDocumentsWithin(tx, uploads, created, document, audit?.userId) : [];
+      return { items: created, coverage: summary, documents: createdDocuments };
+    }, NOVELTY_TRANSACTION_OPTIONS),
+  ).catch(async (error) => {
+    await compensateNoveltyDocuments(uploads);
+    if (error instanceof AppError && error.code === "PERIOD_CLOSED" && policy.isRrhh && !policy.reason) {
+      throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "NOVELTY_CORRECTION_REASON_REQUIRED");
+    }
+    throw error;
+  });
+
+  await auditService.register({
+    ...audit,
+    action: "CREATE",
+    entity: "Novelty",
+    entityId: items[0]?.id || normalizedInput.noveltyTypeId,
+    description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.${coverageAuditText(coverage)}${documents.length ? ` Con documentación (${documents.length} archivo${documents.length === 1 ? "" : "s"}).` : ""}${coverage.protectedPeriods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
+    after: { items, coverage, documents, ...(coverage.protectedPeriods.length ? { correctionReason: policy.reason } : {}) } as unknown as Prisma.InputJsonValue,
+  });
+
+  // Etapa 15L.2A: sólo notifica si de verdad queda pendiente -- con
+  // requiresApproval=false ya nace APROBADO y no hay nada que revisar.
+  if (status === "PENDIENTE") {
+    await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
+  }
+
+  return redactPiiForRole(items, user);
+}
+
 export const noveltiesService = {
   async list(query: ListNoveltiesQuery, user: Express.AuthUser) {
     const [items, total] = await noveltiesRepository.findMany(query, employeeAccessWhere(user));
@@ -194,96 +494,76 @@ export const noveltiesService = {
     };
   },
 
-  async create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
-    await ensureEmployeesVisible(input.employeeIds, user);
-    const type = await ensureNoveltyTypeReady(input);
-    const normalizedInput = resolveQuantities(normalizeCreateInput(input, type), type);
-    assertCanLoad(type, user);
-    await ensureNoOverlap(normalizedInput, type);
-    // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
-    // punto 15): RRHH sigue siendo la autoridad final -- crea siempre
-    // APROBADO. Para el resto de los roles, requiresApproval del tipo ahora
-    // decide de verdad: `false` autoaprueba, cualquier otro valor (incluido
-    // ausente, por defecto seguro) sigue pidiendo aprobación como hasta hoy.
-    const status = user.role === roles.rrhh || type.requiresApproval === false ? "APROBADO" : "PENDIENTE";
-    // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
-    // decisión funcional final — crear una novedad NUNCA crea ni modifica
-    // TimeEntry, sea cual sea el status resultante o `timeEntryBehavior` del
-    // tipo. El fichador y la carga horaria manual son la única fuente de
-    // verdad de horas reales; Novedades es sólo justificación administrativa.
-    const items = await execute(() => noveltiesRepository.createMany(normalizedInput, status, user.id));
-
-    await auditService.register({
-      ...audit,
-      action: "CREATE",
-      entity: "Novelty",
-      entityId: items[0]?.id || normalizedInput.noveltyTypeId,
-      description: `Se cargaron ${items.length} novedades ${type.code} - ${type.name}.`,
-      after: items as Prisma.InputJsonValue,
-    });
-
-    // Etapa 15L.2A: sólo notifica si de verdad queda pendiente -- con
-    // requiresApproval=false ya nace APROBADO y no hay nada que revisar.
-    if (status === "PENDIENTE") {
-      await notifyRrhh({ type: "NOVEDAD_PENDIENTE", title: "Nueva novedad pendiente", message: `${items.length} novedad(es) requieren aprobación de RH.`, entityType: "Novelty", entityId: items[0]?.id, link: "/pendientes", priority: "ALTA" });
-    }
-
-    return redactPiiForRole(items, user);
+  /** Alta sin documento: un tipo que exige documentación se rechaza (usar createWithDocument). */
+  create(input: CreateNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
+    return createNovelties(input, null, user, audit);
   },
 
-  async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await noveltiesRepository.findById(id);
-    if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
-    assertCanApprove(before, user);
-    if (before.status !== "PENDIENTE" && before.status !== "EN_REVISION") {
-      throw new AppError("Only pending novelties can be approved", 400, "NOVELTY_STATUS_NOT_APPROVABLE");
-    }
-
-    // Etapa 15G.1: aprobar sólo cambia status/auditoría — nunca crea ni
-    // modifica TimeEntry, sea cual sea `timeEntryBehavior` del tipo.
-    const item = await execute(() => noveltiesRepository.approve(id, user.id));
-    await auditService.register({
-      ...audit,
-      action: "APPROVE",
-      entity: "Novelty",
-      entityId: item.id,
-      description: `Se aprobo novedad ${item.noveltyType.code} del legajo ${item.employee.legajo}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
+  /**
+   * Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): alta con su documento, de
+   * forma coordinada (ver noveltyDocuments.ts). Nunca queda una novedad que
+   * exige documentación sin su documento.
+   */
+  createWithDocument(input: CreateNoveltyWithDocumentInput, user: Express.AuthUser, audit?: AuditContext) {
+    const { document, ...noveltyInput } = input;
+    return createNovelties(noveltyInput, document, user, audit);
   },
 
+  async approve(id: string, user: Express.AuthUser, audit?: AuditContext, input: CorrectionNoveltyInput = {}) {
+    const policy = correctionPolicy(user, input.correctionReason);
+    // Etapa 3: alcance del legajo + guard de cierres en la misma transacción.
+    // Aprobar no reescribe la cobertura (el estado se lee al contabilizar).
+    const [result] = await execute(() => prisma.$transaction((tx) => approveWithin(tx, [id], user, policy), NOVELTY_TRANSACTION_OPTIONS));
+    await auditApproval(result!, policy, audit);
+    return redactPiiForRole(result!.item, user);
+  },
+
+  // Etapa 3: atómico — si una novedad del lote no se puede aprobar, no se
+  // aprueba ninguna (antes se aprobaban una por una y un error dejaba el lote
+  // a medias). Sin motivo de corrección: un período cerrado rechaza el lote.
   async approveMany(ids: string[], user: Express.AuthUser, audit?: AuditContext) {
     if (user.role !== roles.rrhh) throw new AppError("Solo RH puede aprobar novedades en lote", 403, "NOVELTY_BULK_APPROVAL_FORBIDDEN");
     const uniqueIds = [...new Set(ids)];
-    const approved = [];
-    for (const id of uniqueIds) approved.push(await this.approve(id, user, audit));
-    return approved;
+    const policy = correctionPolicy(user, null);
+    const results = await execute(() => prisma.$transaction((tx) => approveWithin(tx, uniqueIds, user, policy), NOVELTY_TRANSACTION_OPTIONS));
+    for (const result of results) await auditApproval(result, policy, audit);
+    return results.map((result) => redactPiiForRole(result.item, user));
   },
 
   async reject(id: string, input: RejectNoveltyInput, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await noveltiesRepository.findById(id);
-    if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
-    assertCanApprove(before, user);
-    if (before.status !== "PENDIENTE" && before.status !== "EN_REVISION") {
-      throw new AppError("Only pending novelties can be rejected", 400, "NOVELTY_STATUS_NOT_REJECTABLE");
-    }
-
-    const item = await execute(() => noveltiesRepository.reject(id));
+    // Etapa 3: el motivo del rechazo es también el motivo de una corrección
+    // de RRHH sobre un período cerrado.
+    const policy = correctionPolicy(user, input.reason);
+    const { before, item, periods } = await execute(() =>
+      prisma.$transaction(async (tx) => {
+        const before = await noveltiesRepository.findById(id, employeeAccessWhere(user), tx);
+        if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
+        assertCanApprove(before, user);
+        if (before.status !== "PENDIENTE" && before.status !== "EN_REVISION") {
+          throw new AppError("Only pending novelties can be rejected", 400, "NOVELTY_STATUS_NOT_REJECTABLE");
+        }
+        const periods = await guardNoveltyMutation(tx, before, policy);
+        const item = await noveltiesRepository.reject(id, tx);
+        // Una novedad rechazada no tiene cobertura: sus filas derivadas se
+        // eliminan (la auditoría conserva la novedad completa).
+        await tx.noveltyDayCoverage.deleteMany({ where: { noveltyId: id } });
+        return { before, item, periods };
+      }, NOVELTY_TRANSACTION_OPTIONS),
+    );
     await auditService.register({
       ...audit,
       action: "REJECT",
       entity: "Novelty",
       entityId: item.id,
-      description: `Se rechazo novedad ${item.noveltyType.code} del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
+      description: `Se rechazo novedad ${item.noveltyType.code} del legajo ${item.employee.legajo}. Motivo: ${input.reason}${periods.length ? " (corrección sobre período cerrado)" : ""}`,
       before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
+      after: { item, reason: input.reason, ...(periods.length ? { correctionReason: input.reason } : {}) } as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
   },
 
-  async remove(id: string, user: Express.AuthUser, audit?: AuditContext) {
+  async remove(id: string, user: Express.AuthUser, audit?: AuditContext, input: CorrectionNoveltyInput = {}) {
+    const policy = correctionPolicy(user, input.correctionReason);
     const before = await noveltiesRepository.findById(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
     if (before.documents.length) {
@@ -297,15 +577,266 @@ export const noveltiesService = {
       throw new AppError("Approved exportable novelty cannot be deleted", 409, "NOVELTY_DELETE_EXPORTABLE_APPROVED");
     }
 
-    await execute(() => noveltiesRepository.remove(id));
+    // Etapa 3: guard de cierres en la misma transacción; la cobertura cae
+    // por Cascade (dato derivado).
+    const periods = await execute(() =>
+      prisma.$transaction(async (tx) => {
+        const periods = await guardNoveltyMutation(tx, before, policy);
+        await noveltiesRepository.remove(id, tx);
+        return periods;
+      }, NOVELTY_TRANSACTION_OPTIONS),
+    );
     await auditService.register({
       ...audit,
       action: "DELETE",
       entity: "Novelty",
       entityId: id,
-      description: `Se elimino la novedad ${before.noveltyType.code} del legajo ${before.employee.legajo}.`,
+      description: `Se elimino la novedad ${before.noveltyType.code} del legajo ${before.employee.legajo}.${periods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
       before: before as Prisma.InputJsonValue,
+      ...(periods.length ? { after: { correctionReason: policy.reason } as Prisma.InputJsonValue } : {}),
     });
     return { id };
+  },
+
+  // ── Cobertura (etapa 3) ──────────────────────────────────────────────────
+
+  /**
+   * Vista previa: el mismo motor que la persistencia, sin escribir nada. Mismos
+   * permisos y alcance que la carga.
+   */
+  async previewCoverage(input: NoveltyCoveragePreviewInput, user: Express.AuthUser) {
+    await ensureEmployeesVisible(input.employeeIds, user);
+    const type = await noveltiesRepository.findNoveltyType(input.noveltyTypeId);
+    if (!type || type.status !== "ACTIVO") throw new AppError("Novelty type not found or inactive", 400, "NOVELTY_TYPE_NOT_AVAILABLE");
+    assertCanLoad(type, user);
+    if (!type.allowsDateRange && input.toDate && !sameUtcDate(input.toDate, input.fromDate)) {
+      throw new AppError("This novelty type does not allow toDate", 400, "NOVELTY_TO_DATE_NOT_ALLOWED");
+    }
+    assertCoverageInput({ ...input, observation: "vista previa" }, type);
+    const quantityMinutes = type.coverageMode === "MANUAL_MINUTES" && input.quantityHours != null ? Math.round(input.quantityHours * 60) : null;
+    const toDate = type.allowsDateRange ? input.toDate ?? input.fromDate : input.fromDate;
+    if (type.coverageMode === "NONE" && coverageRangeDays(input.fromDate, toDate) > MAX_COVERAGE_RANGE_DAYS) {
+      throw new AppError(`La vista previa abarca hasta ${MAX_COVERAGE_RANGE_DAYS} días.`, 400, "NOVELTY_COVERAGE_RANGE_TOO_LONG");
+    }
+    const employeeIds = [...new Set(input.employeeIds)];
+    const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, legajo: true, firstName: true, lastName: true } });
+    let computed;
+    try {
+      computed = await computeNoveltyCoverage(prisma, employeeIds.map((employeeId) => ({ key: employeeId, employeeId, type, fromDate: input.fromDate, toDate, quantityMinutes })));
+    } catch (error) {
+      const employee = employees.find((item) => item.id === (error as { employeeId?: string }).employeeId);
+      throw toCoverageAppError(error, employee);
+    }
+    const worked = await loadRealWorkedMinutesByDay(prisma, employeeIds, calendarDateKey(input.fromDate), calendarDateKey(toDate));
+    return {
+      noveltyType: { id: type.id, code: type.code, name: type.name },
+      initialStatus: initialNoveltyStatus(type, user),
+      employees: employees.map((employee) => {
+        const days = computed.get(employee.id) ?? [];
+        const workedByDay = worked.get(employee.id);
+        return {
+          employee,
+          days: days.map((day) => ({ ...coverageDayView(day), ...previewDayAccounting(employee.id, type.id, day, workedByDay?.get(day.dateKey) ?? 0) })),
+          totals: coverageTotals(days),
+        };
+      }),
+    };
+  },
+
+  /** Cobertura diaria persistida de una novedad (respeta el alcance del legajo). */
+  async getCoverage(id: string, user: Express.AuthUser) {
+    const novelty = await noveltiesRepository.findById(id, employeeAccessWhere(user));
+    if (!novelty) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
+    const rows = await prisma.noveltyDayCoverage.findMany({
+      where: { noveltyId: id },
+      orderBy: { date: "asc" },
+      include: { shiftTemplate: { select: { code: true, name: true } }, resolvedBy: { select: { name: true } } },
+    });
+    const days = rows.map((row) => {
+      const effectiveBaseMinutes = row.resolvedBaseMinutes ?? row.baseMinutes;
+      const multiplier = Number(row.appliedMultiplier);
+      return {
+        ...coverageDayView({
+          dateKey: calendarDateKey(row.date),
+          outcome: row.outcome,
+          scheduleReviewReason: row.scheduleReviewReason,
+          expectedMinutes: row.expectedMinutes,
+          baseMinutes: row.baseMinutes,
+          multiplier,
+          reviewStatus: row.reviewStatus,
+          resolution: row.resolution,
+          resolvedBaseMinutes: row.resolvedBaseMinutes,
+          effectiveBaseMinutes,
+          computedMinutes: Math.round(effectiveBaseMinutes * multiplier),
+          countsTowardTotal: row.countsTowardTotal,
+        }),
+        shiftTemplate: row.shiftTemplate,
+        resolvedBy: row.resolvedBy?.name ?? null,
+        resolvedAt: row.resolvedAt,
+        resolutionNote: row.resolutionNote,
+      };
+    });
+    return {
+      // §18: quien puede cargar el tipo puede ajustar un día (mismo criterio que la resolución).
+      canAdjust: canLoadType(novelty.noveltyType, user),
+      novelty: {
+        id: novelty.id,
+        status: novelty.status,
+        fromDate: novelty.fromDate,
+        toDate: novelty.toDate,
+        quantityMinutes: novelty.quantityMinutes,
+        noveltyType: { code: novelty.noveltyType.code, name: novelty.noveltyType.name, coverageMode: novelty.noveltyType.coverageMode, coverageFixedMinutes: novelty.noveltyType.coverageFixedMinutes },
+      },
+      days,
+      totals: coverageTotals(days),
+    };
+  },
+
+  /**
+   * Resolución manual de un día en revisión (jornada o relación laboral sin
+   * resolver): confirmar 0 h o indicar las horas base. Nunca "aceptar con
+   * trabajo real". Guarda autor, fecha, nota y los minutos reales del día.
+   */
+  async resolveCoverageDay(id: string, dateKey: string, input: NoveltyCoverageResolutionInput, user: Express.AuthUser, audit?: AuditContext) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || Number.isNaN(argentinaCalendarDate(dateKey).getTime()) || calendarDateKey(argentinaCalendarDate(dateKey)) !== dateKey) {
+      throw new AppError("Fecha inválida: usá el formato AAAA-MM-DD.", 400, "VALIDATION_ERROR");
+    }
+    const policy = correctionPolicy(user, input.correctionReason);
+    const outcome = await execute(() =>
+      prisma.$transaction(async (tx) => {
+        const novelty = await noveltiesRepository.findById(id, employeeAccessWhere(user), tx);
+        if (!novelty) throw new AppError("Novelty not found", 404, "NOVELTY_NOT_FOUND");
+        if (novelty.status === "RECHAZADO") throw new AppError("Una novedad rechazada no tiene cobertura.", 409, "NOVELTY_COVERAGE_REJECTED");
+        const type = await noveltiesRepository.findNoveltyType(novelty.noveltyTypeId, tx);
+        if (!type) throw new AppError("Novelty type not found", 404, "NOVELTY_TYPE_NOT_FOUND");
+        assertCanLoad(type, user);
+        const periods = await guardNoveltyMutation(tx, novelty, policy, dateKey);
+        const date = argentinaCalendarDate(dateKey);
+        const row = await tx.noveltyDayCoverage.findUnique({ where: { noveltyId_date: { noveltyId: id, date } } });
+        if (!row) throw new AppError("Ese día no pertenece a la cobertura de la novedad.", 404, "NOVELTY_COVERAGE_DAY_NOT_FOUND");
+        // Ajuste manual de un día (NOVELTY_COVERAGE_ENGINE.md §17 a §19): la
+        // regla automática es la del tipo; RRHH (o quien puede cargar el
+        // tipo) puede corregir un día concreto entre 0 y el máximo que el
+        // tipo admite ese día, con nota y auditoría. Prevalece hasta
+        // RESTORE_AUTOMATIC.
+        // - CONFIRMED_ZERO: siempre ("no cubre este día").
+        // - SET_BASE_MINUTES: 1..máximo — el valor fijo del tipo, la
+        //   cantidad cargada (manual) o la jornada conocida (según jornada);
+        //   sin tope propio sólo si la jornada de un tipo según jornada no se
+        //   pudo determinar. Nunca contra trabajo real incompatible, ni
+        //   superando la jornada (con trabajo real o con otras coberturas, P5).
+        // - RESTORE_AUTOMATIC: deshace la resolución y recalcula el día.
+        // La falta de historia para un feriado nunca llega acá: es un error.
+        if (type.coverageMode === "NONE") {
+          throw new AppError("Este tipo de novedad no registra tiempo: no hay cobertura para ajustar.", 409, "NOVELTY_COVERAGE_DAY_NOT_IN_REVIEW");
+        }
+        if (input.resolution === "RESTORE_AUTOMATIC") {
+          if (row.reviewStatus !== "RESOLVED") throw new AppError("Este día no tiene una resolución manual para deshacer.", 409, "NOVELTY_COVERAGE_DAY_NOT_RESOLVED");
+          await tx.noveltyDayCoverage.update({
+            where: { id: row.id },
+            data: { reviewStatus: "NOT_REQUIRED", resolution: null, resolvedBaseMinutes: null, resolvedAgainstWorkedMinutes: null, resolvedByUserId: null, resolvedAt: null, resolutionNote: null },
+          });
+          // Mismo cálculo que cualquier recálculo: el día vuelve a la regla del tipo.
+          await persistNoveltyCoverageWithin(tx, [id], { protectedPeriods: periods.length ? "ALLOW_CORRECTION" : "REJECT", window: { from: date, to: date } });
+          const updated = await tx.noveltyDayCoverage.findUniqueOrThrow({ where: { id: row.id } });
+          return { novelty, type, before: row, updated, periods };
+        }
+        const workedMinutes = await loadRealWorkedMinutesOnDate(tx, novelty.employeeId, dateKey);
+        if (input.resolution === "SET_BASE_MINUTES") {
+          const requested = input.baseMinutes!;
+          const maximum = coverageAdjustmentMaxMinutes(type, novelty.quantityMinutes, row);
+          if (maximum !== null && requested > maximum) {
+            const range = maximum > 0 ? `entre 0 h y ${formatMinutes(maximum)}` : "0 h";
+            throw new AppError(`Para esta novedad, la cobertura de ese día puede ser ${range}.`, 400, "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED");
+          }
+          if (workedMinutes > 0 && row.realWorkCompatibility === "INCOMPATIBLE") {
+            throw new AppError(
+              "Esta novedad no puede coexistir con trabajo registrado ese día: corregí primero las horas del legajo o indicá que la novedad no cubre este día.",
+              400,
+              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
+            );
+          }
+          if (row.expectedMinutes !== null && workedMinutes > 0 && workedMinutes + requested > row.expectedMinutes) {
+            throw new AppError(
+              `El trabajo registrado más la cobertura superaría la jornada esperada (${formatMinutes(row.expectedMinutes)}).`,
+              400,
+              "NOVELTY_COVERAGE_EXCEEDS_EXPECTED",
+            );
+          }
+          // P5: con el valor pedido, las coberturas del día no pueden superar la jornada.
+          const others = await tx.noveltyDayCoverage.findMany({
+            where: { employeeId: novelty.employeeId, date, noveltyId: { not: id }, novelty: { status: { not: "RECHAZADO" } } },
+            select: accountingNoveltyCoverageSelect,
+          });
+          const candidate = {
+            ...toAccountingNoveltyCoverage({ ...row, novelty: { status: novelty.status } }),
+            status: "APROBADO" as const,
+            reviewStatus: "RESOLVED" as const,
+            resolution: "SET_BASE_MINUTES" as const,
+            resolvedBaseMinutes: requested,
+            resolvedAgainstWorkedMinutes: workedMinutes,
+          };
+          const item = accountNoveltyDay([candidate, ...others.map(toAccountingNoveltyCoverage)], workedMinutes).items.find((entry) => entry.noveltyId === id);
+          if (item?.reviewReasons.includes("COVERAGE_TOTAL_EXCEEDS_EXPECTED")) {
+            throw new AppError(
+              "Con ese valor, las novedades de este día superarían la jornada esperada: indicá cuál no cubre este día o corregí la novedad.",
+              400,
+              "NOVELTY_COVERAGE_RESOLUTION_NOT_ALLOWED",
+            );
+          }
+        }
+        const baseMinutes = input.resolution === "CONFIRMED_ZERO" ? 0 : input.baseMinutes!;
+        let multiplier = 1;
+        if (type.coverageAppliesSpecialHours && baseMinutes > 0) {
+          const evaluation = (await evaluateSpecialHourRulesByDate(novelty.employeeId, [date], tx)).get(dateKey);
+          if (evaluation?.missingHistory) throw new SpecialHourScopeHistoryMissingError(evaluation.missingHistory);
+          multiplier = evaluation?.resolution.multiplier ?? 1;
+        }
+        const updated = await tx.noveltyDayCoverage.update({
+          where: { id: row.id },
+          data: {
+            reviewStatus: "RESOLVED",
+            resolution: input.resolution,
+            resolvedBaseMinutes: baseMinutes,
+            resolvedAgainstWorkedMinutes: workedMinutes,
+            resolvedByUserId: user.id,
+            resolvedAt: new Date(),
+            resolutionNote: input.note,
+            appliedMultiplier: multiplier,
+          },
+        });
+        return { novelty, type, before: row, updated, periods };
+      }, NOVELTY_TRANSACTION_OPTIONS),
+    );
+    const { novelty, type, before, updated, periods } = outcome;
+    const result =
+      input.resolution === "RESTORE_AUTOMATIC"
+        ? "se deshizo la resolución manual y el día vuelve al cálculo automático"
+        : input.resolution === "CONFIRMED_ZERO"
+          ? "sin horas (0 h confirmadas)"
+          : `${formatMinutes(input.baseMinutes!)} base${Number(updated.appliedMultiplier) !== 1 ? ` × ${Number(updated.appliedMultiplier)}` : ""}`;
+    await auditService.register({
+      ...audit,
+      action: "UPDATE",
+      entity: "Novelty",
+      entityId: id,
+      description: `Se resolvió la cobertura de ${type.name} de ${formatEmployeeReference(novelty.employee)} para el ${formatArgentinaDate(dateKey)}: ${result}. Nota: ${input.note}${periods.length ? ` Corrección sobre período cerrado. Motivo: ${policy.reason}` : ""}`,
+      before: before as unknown as Prisma.InputJsonValue,
+      after: { ...updated, ...(periods.length ? { correctionReason: policy.reason } : {}) } as unknown as Prisma.InputJsonValue,
+    });
+    return coverageDayView({
+      dateKey,
+      outcome: updated.outcome,
+      scheduleReviewReason: updated.scheduleReviewReason,
+      expectedMinutes: updated.expectedMinutes,
+      baseMinutes: updated.baseMinutes,
+      multiplier: Number(updated.appliedMultiplier),
+      reviewStatus: updated.reviewStatus,
+      resolution: updated.resolution,
+      resolvedBaseMinutes: updated.resolvedBaseMinutes,
+      effectiveBaseMinutes: updated.resolvedBaseMinutes ?? updated.baseMinutes,
+      computedMinutes: Math.round((updated.resolvedBaseMinutes ?? updated.baseMinutes) * Number(updated.appliedMultiplier)),
+      countsTowardTotal: updated.countsTowardTotal,
+    });
   },
 };

@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
+import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { AppError } from "../../shared/errors/AppError";
@@ -80,7 +81,9 @@ export const orgStructureController = {
   }) satisfies RequestHandler,
   executeDeletion: (async (req, res) => {
     try {
-      res.json({ data: await orgStructureDeletion.execute(kindOf(req), requireParam(req, "id"), req.body, requestAuditContext(req)) });
+      const result = await orgStructureDeletion.execute(kindOf(req), requireParam(req, "id"), req.body, requestAuditContext(req));
+      clearNoveltyCoverageReadCaches();
+      res.json({ data: result });
     } catch (error) {
       const conflict = deletionConflictResponse(error);
       if (!conflict) throw error;

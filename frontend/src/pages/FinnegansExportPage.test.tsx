@@ -190,6 +190,16 @@ describe("FinnegansExportPage — preview (Etapa 15L.3A/15L.4)", () => {
     expect(screen.getByText("Falta cantidad")).toBeInTheDocument();
   });
 
+  it("una fila con días de cobertura en revisión muestra 'Revisión pendiente'", async () => {
+    vi.mocked(finnegansExportApiService.getPreview).mockResolvedValue(
+      buildPreview([buildRow({ valor1: "", estado: "REVISION_PENDIENTE" })], { readiness: { ready: false, blockedRows: 1, readyRows: 0, reasons: ["1 día de novedades pendiente de revisión"] } }),
+    );
+    renderPage();
+    await screen.findByText("Gomez, Ana");
+    expect(screen.getByText("Revisión pendiente")).toBeInTheDocument();
+    expect(screen.getByText(/1 día de novedades pendiente de revisión/)).toBeInTheDocument();
+  });
+
   it("muestra los motivos humanos del banner de readiness y nunca UUIDs", async () => {
     vi.mocked(finnegansExportApiService.getPreview).mockResolvedValue(
       buildPreview([buildRow({ estado: "CIERRE_PENDIENTE" })], { readiness: { ready: false, readyRows: 0, blockedRows: 1, reasons: ["1 persona con cierre mensual pendiente"] } }),
@@ -444,6 +454,22 @@ describe("FinnegansExportPage — errores de exportación definitiva", () => {
     await user.click(screen.getByRole("button", { name: /exportar excel finnegans/i }));
 
     await screen.findByText("El período tiene cierres pendientes para personas incluidas en la exportación.");
+    expect(XLSX_WRITE).not.toHaveBeenCalled();
+  });
+
+  // Etapa 9 de cobertura (NOVELTY_COVERAGE_ENGINE.md §16).
+  it("409 FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING: no genera el xlsx y muestra el mensaje con los días", async () => {
+    vi.mocked(finnegansExportApiService.getPreview).mockResolvedValue(buildPreview([buildRow()], { lastExport: null }));
+    vi.mocked(finnegansExportApiService.exportDefinitive).mockRejectedValue(
+      new ApiError("No se puede generar la exportación porque hay 2 días de novedades pendientes de revisión.", "FINNEGANS_EXPORT_COVERAGE_REVIEW_PENDING", 409),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Gomez, Ana");
+
+    await user.click(screen.getByRole("button", { name: /exportar excel finnegans/i }));
+
+    await screen.findByText("No se puede generar la exportación porque hay 2 días de novedades pendientes de revisión.");
     expect(XLSX_WRITE).not.toHaveBeenCalled();
   });
 

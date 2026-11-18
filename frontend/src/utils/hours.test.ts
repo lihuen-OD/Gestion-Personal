@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCompactDurationMinutes, formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "./hours";
+import { formatCompactDurationMinutes, formatDayDurationInput, formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes, parseDayDurationInput } from "./hours";
 
 // Etapa 15M.5 (docs/decisions/HUMAN_DURATION_FORMAT_15M5.md): 2.35 horas
 // decimales NO son "2h 35min" — son 2h 21min (0.35 * 60 = 21).
@@ -103,5 +103,23 @@ describe("suma de duraciones — siempre en minutos, nunca sumando decimales/str
     const total = dailyMinutes.reduce((sum, minutes) => sum + minutes, 0);
     expect(total).toBe(930);
     expect(formatDurationMinutes(total)).toBe("15 h 30 min");
+  });
+});
+
+describe("parseDayDurationInput / formatDayDurationInput — cantidades HH:mm de un día", () => {
+  it("acepta de 00:01 a 24:00 y rechaza el resto", () => {
+    expect(parseDayDurationInput("04:00")).toBe(240);
+    expect(parseDayDurationInput("8:30")).toBe(510);
+    expect(parseDayDurationInput("24:00")).toBe(1440);
+    expect(parseDayDurationInput("00:00")).toBeNull();
+    expect(parseDayDurationInput("24:01")).toBeNull();
+    expect(parseDayDurationInput("4")).toBeNull();
+    expect(parseDayDurationInput("04:60")).toBeNull();
+  });
+
+  it("formatea minutos como HH:mm", () => {
+    expect(formatDayDurationInput(240)).toBe("04:00");
+    expect(formatDayDurationInput(1440)).toBe("24:00");
+    expect(formatDayDurationInput(null)).toBe("");
   });
 });

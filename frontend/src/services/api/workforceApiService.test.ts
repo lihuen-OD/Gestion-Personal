@@ -479,7 +479,8 @@ describe("workforceApiService.shiftTemplates/doubleHourRules/doubleHourRulesCale
 // que ninguna pantalla de horas puede quedar mostrando la equivalencia vieja.
 describe("workforceApiService — reglas de Hora Especial invalidan las pantallas de horas", () => {
   beforeEach(() => vi.clearAllMocks());
-  const expectedFamilies = ["workforce-config", "employees", "time-entries", "pending", "dashboard", "monthly-closures"];
+  // Etapa 5: también Novedades (la regla reinterpreta su cobertura).
+  const expectedFamilies = ["workforce-config", "employees", "time-entries", "pending", "dashboard", "monthly-closures", "novelties"];
   const invalidatedFamilies = () => vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
 
   it.each([

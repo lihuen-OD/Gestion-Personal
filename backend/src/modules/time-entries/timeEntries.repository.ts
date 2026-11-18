@@ -6,7 +6,8 @@ import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptResponse } from "./clockAttemptErrorMeta";
 import { assertClosurePeriodsWritable, employeePeriodKey, findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
-import { noveltyCoversDay } from "../novelties/novelties.dateRange";
+import { noveltyCoversDay, noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
+import { loadNoveltyCoverageForAccounting, noveltyDayItemsView, periodNoveltyCoveredMinutes, type NoveltyDayItemView } from "../novelties/noveltyCoverageAccounting";
 import { dayOffsWithin, loadDayOffAccounting, periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
@@ -50,6 +51,7 @@ import {
   periodFromInstant,
 } from "../../shared/datetime/argentinaTime";
 import type { CreateTimeEntryInput, employeeRowSortKeys, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, timeEntryListSortKeys, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 // Etapa 10B: nota de la alerta POSIBLE_OLVIDO_SALIDA resuelta por un rollover (también la usa el post-proceso durable, PERF-5D).
@@ -533,6 +535,21 @@ export async function resolveDoubleHourMultipliersByDate(employeeId: string, dat
   return new Map(Array.from(resolutions, ([key, resolution]) => [key, resolution.multiplier]));
 }
 
+/**
+ * Dígitos con los que el fichador busca por DNI, o `null` si el término no es
+ * un DNI. Es DNI si sólo tiene dígitos y separadores (puntos, espacios o
+ * guiones) y al menos CLOCK_SEARCH_MIN_LENGTH dígitos —el mismo mínimo que
+ * nombre y apellido—. Los separadores se ignoran: "32.401.118" → "32401118".
+ */
+export function clockDniSearchDigits(search: string): string | null {
+  const trimmed = search.trim();
+  if (!/^[\d.\s-]+$/.test(trimmed)) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length >= CLOCK_SEARCH_MIN_LENGTH ? digits : null;
+}
+
+const CLOCK_SEARCH_LIMIT = 12;
+
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
   const trimmed = search?.trim();
   if (!trimmed) return {};
@@ -918,7 +935,7 @@ export const timeEntriesRepository = {
   // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted] = await Promise.all([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -977,6 +994,9 @@ export const timeEntriesRepository = {
       }),
       // Horas automáticas de jornadas en franco (EMPLOYEE_DAY_OFF.md §7).
       periodDayOffUncountedMinutes(period, employeeAccessWhere),
+      // Cobertura de novedades que cuenta (NOVELTY_COVERAGE_ENGINE.md §12):
+      // 1 consulta si no hay ninguna.
+      periodNoveltyCoveredMinutes(period, employeeAccessWhere),
     ]);
 
     // Total trabajado = base + adicionales (nunca + conceptos dentro de la
@@ -992,7 +1012,11 @@ export const timeEntriesRepository = {
       employeesWithEntries,
       pendingEmployees,
       reviewEmployees: reviewEmployeeGroups.length,
+      // "Total trabajado": sólo trabajo real (sin cambios). La cobertura de
+      // novedades va aparte y el total computable la suma (aditivo).
       countableHours,
+      coveredHours: noveltyCoveredMinutes / 60,
+      computableHours: countableHours + noveltyCoveredMinutes / 60,
       coverage: activeEmployees ? Math.round((employeesWithEntries / activeEmployees) * 100) : 0,
     };
   },
@@ -1097,7 +1121,7 @@ export const timeEntriesRepository = {
     ]);
 
     const employeeIds = employees.map((employee) => employee.id);
-    const [entries, breakdowns, novelties, dayOffs] = await Promise.all([
+    const [entries, breakdowns, novelties, dayOffs, coverage] = await Promise.all([
       employeeIds.length
         ? prisma.timeEntry.findMany({
             where: {
@@ -1143,21 +1167,22 @@ export const timeEntriesRepository = {
             where: {
               employeeId: { in: employeeIds },
               status: { not: "RECHAZADO" },
-              fromDate: { lt: end },
-              OR: [{ toDate: null }, { toDate: { gte: start } }],
+              // toDate nulo es un único día (NOVELTY_COVERAGE_ENGINE.md §6.3).
+              ...noveltyOverlapsRangeWhere(start, end),
             },
             select: {
               employeeId: true,
               fromDate: true,
               toDate: true,
-              // Etapa 15L.2C: allowsDateRange reemplaza allowsDateTo como
-              // fuente productiva -- ver noveltyCoversDay.
-              noveltyType: { select: { id: true, name: true, uiColor: true, allowsDateRange: true } },
+              noveltyType: { select: { id: true, name: true, uiColor: true } },
             },
           })
         : Promise.resolve([]),
       // Francos (docs/decisions/EMPLOYEE_DAY_OFF.md §7): 1 consulta si no hay ninguno.
       loadDayOffAccounting({ employeeIds, from: start, to: end }),
+      // Cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §12): 1 consulta
+      // para toda la página, por (employeeId, period).
+      loadNoveltyCoverageForAccounting({ period: query.period, employeeIds }),
     ]);
 
     // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: Horas base = TimeEntry
@@ -1168,7 +1193,7 @@ export const timeEntriesRepository = {
       entry.hourConcept.systemRole === "NORMAL_BASE"
       && (entry.status === ApprovalStatus.APROBADO || entry.status === ApprovalStatus.EN_REVISION);
     const countedBaseEntries = entries.filter(isCountedBase);
-    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs);
+    const accountingByEmployee = accountEmployeePeriods(countedBaseEntries.map(toAccountingBaseEntry), breakdowns.map(toAccountingBreakdown), dayOffs, coverage.coverages);
     const dayOffsByEmployeeDay = new Map(dayOffsWithin(dayOffs, start, end).map((item) => [`${item.employeeId}:${Number(item.dateKey.slice(8, 10))}`, item]));
 
     const metaByEmployee = new Map<string, { incidents: number; statuses: string[] }>();
@@ -1216,18 +1241,30 @@ export const timeEntriesRepository = {
           dayOff: { notes: string | null; activityShifts: number; activityMinutes: number } | null;
           specialHourRuleNames: string[];
           specialHourConflict: boolean;
+          // NOVELTY_COVERAGE_ENGINE.md §12 (aditivo): trabajo real, cobertura
+          // que cuenta, total computable y cada novedad del día con su estado.
+          // Las cifras salen de accounting.days[day].
+          totalWorkedMinutes: number;
+          noveltyCoveredMinutes: number;
+          computableMinutes: number;
+          novelties: NoveltyDayItemView[];
         }> = [];
         for (let day = 1; day <= dayCount; day++) {
           const dayDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), day));
-          const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, novelty.noveltyType, dayDate));
+          const coveringNovelties = employeeNovelties.filter((novelty) => noveltyCoversDay(novelty, dayDate));
           const dayOff = dayOffsByEmployeeDay.get(`${employee.id}:${day}`);
-          if (!accounting.days[String(day)] && !coveringNovelties.length && !dayOff) continue;
+          const dayAccounting = accounting.days[String(day)];
+          if (!dayAccounting && !coveringNovelties.length && !dayOff) continue;
           dailyBreakdown.push({
             day,
             novelty: coveringNovelties.length ? dayNoveltyMark(coveringNovelties) : null,
             dayOff: dayOff ? { notes: dayOff.notes, activityShifts: dayOff.activityShifts, activityMinutes: dayOff.activityMinutes } : null,
             specialHourRuleNames: dayRules?.get(day)?.names ?? [],
             specialHourConflict: dayRules?.get(day)?.conflict ?? false,
+            totalWorkedMinutes: dayAccounting?.totalWorkedMinutes ?? 0,
+            noveltyCoveredMinutes: dayAccounting?.noveltyCoveredMinutes ?? 0,
+            computableMinutes: dayAccounting?.computableMinutes ?? 0,
+            novelties: noveltyDayItemsView(dayAccounting?.novelty.items ?? [], coverage.types),
           });
         }
         return {
@@ -1669,7 +1706,29 @@ export const timeEntriesRepository = {
     });
   },
 
-  searchEmployeesForClock(search: string) {
+  // Fichador: nombre, apellido, "nombre apellido" (en cualquier orden) o DNI.
+  // Nunca por legajo; sólo ACTIVO; máximo 12, por apellido y nombre.
+  //
+  // DNI: `Employee.dni` es texto libre (sin normalizar al guardar; puede estar
+  // como "32.401.118"). Un término numérico se compara contra el DNI SIN
+  // separadores, sin modificar el dato guardado, así "324", "32401" o
+  // "32.401.118" encuentran "32.401.118" y "32401118" por igual. Prisma no
+  // expresa `regexp_replace`, por eso esta rama es SQL parametrizado (los
+  // dígitos van como parámetro; no pueden traer comodines de LIKE). Rendimiento:
+  // `LIKE '%…%'` no usa índices B-tree, igual que el `contains` de nombre y
+  // apellido; ambos recorren los ACTIVO (ver FICHADOR_STANDALONE_PWA_PLAN.md §32).
+  async searchEmployeesForClock(search: string): Promise<Array<{ id: string; dni: string; firstName: string; lastName: string; status: EmployeeStatus }>> {
+    const dniDigits = clockDniSearchDigits(search);
+    if (dniDigits) {
+      return prisma.$queryRaw<Array<{ id: string; dni: string; firstName: string; lastName: string; status: EmployeeStatus }>>(Prisma.sql`
+        SELECT "id", "dni", "firstName", "lastName", "status"
+        FROM "Employee"
+        WHERE "status" = 'ACTIVO'::"EmployeeStatus"
+          AND regexp_replace("dni", '[^0-9]', '', 'g') LIKE ${`%${dniDigits}%`}
+        ORDER BY "lastName" ASC, "firstName" ASC
+        LIMIT ${CLOCK_SEARCH_LIMIT}
+      `);
+    }
     const words = search.split(/\s+/).filter(Boolean);
     return prisma.employee.findMany({
       where: {
@@ -1693,14 +1752,13 @@ export const timeEntriesRepository = {
       },
       select: {
         id: true,
-        legajo: true,
         dni: true,
         firstName: true,
         lastName: true,
         status: true,
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-      take: 12,
+      take: CLOCK_SEARCH_LIMIT,
     });
   },
 
@@ -2076,13 +2134,17 @@ export const timeEntriesRepository = {
   // (los 3 campos legacy, siempre sincronizados en conjunto por
   // noveltyTypes.sync.ts desde la Etapa 15L.2A). timeEntryBehavior es ahora
   // la única fuente de verdad productiva de este bloqueo.
+  // Etapa 3 de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §6.3): un
+  // `toDate` nulo es siempre un único día (`fromDate`), para cualquier tipo —
+  // nunca un rango abierto. Antes bloqueaba todos los días posteriores a
+  // `fromDate`.
   findBlockingNovelty(employeeId: string, date: Date) {
     return prisma.novelty.findFirst({
       where: {
         employeeId,
         status: "APROBADO",
         fromDate: { lte: date },
-        OR: [{ toDate: null }, { toDate: { gte: date } }],
+        OR: [{ toDate: { gte: date } }, { toDate: null, fromDate: date }],
         noveltyType: { timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" },
       },
       include: { noveltyType: { select: { code: true, name: true } } },

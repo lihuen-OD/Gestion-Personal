@@ -10,6 +10,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 const schema = read("prisma/schema.prisma");
 const migration = read("prisma/migrations/20261026120000_add_clock_device_maintenance_access/migration.sql");
 const routes = read("src/modules/clock-devices/clockDevices.routes.ts");
+const rateLimits = read("src/modules/clock/clockRateLimits.ts");
 
 function publicTransportFiles(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
@@ -53,21 +54,22 @@ describe("Mantenimiento — rutas", () => {
 
   it("canje del código: IP antes de autenticar, sólo ACTIVE, cupo propio por dispositivo y body validado, en ese orden", () => {
     const post = segment('"/maintenance/session",', "clockDevicesController.openMaintenanceSession");
-    const ip = post.indexOf("maintenanceIpLimiter");
+    const ip = post.indexOf("...clockPreAuthLimiters");
     const auth = post.indexOf("requireClockDevice()");
-    const perDevice = post.indexOf("`clock-maintenance-code:${authenticatedClockDevice(req).id}`");
+    const perDevice = post.indexOf("...clockDeviceLimiters.maintenanceCode");
     const body = post.indexOf("validateBody(openMaintenanceSessionSchema)");
     expect(ip).toBeGreaterThan(-1);
     expect(auth).toBeGreaterThan(ip);
     expect(perDevice).toBeGreaterThan(auth);
     expect(body).toBeGreaterThan(perDevice);
-    expect(routes).toMatch(/MAINTENANCE_CODE_MAX_PER_DEVICE = 10;/);
+    expect(rateLimits).toMatch(/MAINTENANCE_CODE_MAX_PER_DEVICE = 10;/);
+    expect(rateLimits).toContain('perDevice("maintenance-code", MAINTENANCE_CODE_WINDOW_MS, MAINTENANCE_CODE_MAX_PER_DEVICE');
   });
 
   it("lectura y cierre de sesión: sólo ACTIVE con su propio cupo por dispositivo", () => {
     const guards = segment("const maintenanceSessionGuards", "];");
-    expect(guards.indexOf("requireClockDevice()")).toBeGreaterThan(guards.indexOf("maintenanceIpLimiter"));
-    expect(guards).toContain("`clock-maintenance-session:${authenticatedClockDevice(req).id}`");
+    expect(guards.indexOf("requireClockDevice()")).toBeGreaterThan(guards.indexOf("...clockPreAuthLimiters"));
+    expect(guards).toContain("...clockDeviceLimiters.maintenanceSession");
     expect(routes).toContain('clockDevicePublicRouter.get("/maintenance/session", ...maintenanceSessionGuards');
     expect(routes).toContain('clockDevicePublicRouter.delete("/maintenance/session", ...maintenanceSessionGuards');
   });

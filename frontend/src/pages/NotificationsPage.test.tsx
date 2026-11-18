@@ -11,6 +11,7 @@ import { noveltyTypeApiService } from "../services/api/noveltyTypeApiService";
 import { hourConceptApiService } from "../services/api/hourConceptApiService";
 import type { NoveltyType } from "../types/noveltyType.types";
 import { TOAST_SUCCESS_MS } from "../utils/toast";
+import { defaultNoveltyTypeCoverage } from "../utils/noveltyTypeCoverage";
 
 // Etapa 15L.2B (docs/decisions/NOVELTY_TYPE_FRONTEND_REDESIGN_15L2B.md,
 // punto 25): NoveltyModal (montado acá vía "Crear novedad") ahora usa
@@ -36,7 +37,7 @@ vi.mock("../services/api/employeeApiService", async (importOriginal) => {
 });
 vi.mock("../services/api/noveltyApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyApiService")>();
-  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, create: vi.fn() } };
+  return { ...actual, noveltyApiService: { ...actual.noveltyApiService, create: vi.fn(), previewCoverage: vi.fn().mockReturnValue(new Promise(() => undefined)) } };
 });
 vi.mock("../services/api/noveltyTypeApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/noveltyTypeApiService")>();
@@ -81,7 +82,9 @@ function buildGenericActiveType(): NoveltyType {
       allowsDateRange: true,
       finnegansValueUnit: null,
       finnegansRequiresValidity: false,
+      requiresObservation: false,
     },
+    coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
     approvalRoles: [],
     finnegansCode: null,
@@ -440,7 +443,7 @@ describe("NotificationsPage — Etapa 15G.2 (crear novedad desde notificación �
     await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
 
     const modal = await findModalScope();
-    expect(modal.getByLabelText("Desde")).toHaveValue("2026-08-20");
+    expect(modal.getByLabelText(/^(Desde|Fecha) \*$/)).toHaveValue("2026-08-20");
     expect(modal.getByText(/Origen: alerta del fichador/)).toBeInTheDocument();
     expect(modal.getByText(/El legajo no registró fichadas/)).toBeInTheDocument();
     expect(modal.getByText("500 · Soto, Elena")).toBeInTheDocument();
@@ -469,7 +472,7 @@ describe("NotificationsPage — Etapa 15G.2 (crear novedad desde notificación �
     await userEvent.click(await screen.findByRole("button", { name: /Crear novedad/ }));
 
     const modal = await findModalScope();
-    expect(modal.getByLabelText("Desde")).toHaveValue("2026-08-20");
+    expect(modal.getByLabelText(/^(Desde|Fecha) \*$/)).toHaveValue("2026-08-20");
     expect(modal.getByText(/Origen: alerta del fichador/)).toBeInTheDocument();
     expect(modal.getByText(/Ana Gomez llegó 1h 30m tarde/)).toBeInTheDocument();
     expect(modal.getByText(/Las horas reales se mantienen según fichador\/carga horaria/)).toBeInTheDocument();
