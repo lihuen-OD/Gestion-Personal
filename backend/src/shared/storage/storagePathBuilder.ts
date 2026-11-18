@@ -183,9 +183,10 @@ export const storagePathBuilder = {
 
   /**
    * Copia en Drive de la foto de una fichada:
-   * `Fichadas/<AAAA>/<MM - Mes>/<legajo - Nombre Apellido>/`
+   * `Fichadas/<AAAA>/<MM - Mes>/<DD>/<legajo - Nombre Apellido>/`
    * + `AAAA-MM-DD_HH-mm_<INGRESO|SALIDA>_<requestId corto>.<ext>`.
-   * Fotografía histórica por mes: usa el nombre vigente al archivar.
+   * Año, mes y día salen sólo de `AttendancePunch.timestamp` en hora
+   * argentina. Fotografía histórica: usa el nombre vigente al archivar.
    */
   attendanceArchive(input: {
     employee: StorageEmployeeIdentity;
@@ -200,6 +201,7 @@ export const storagePathBuilder = {
         { name: DRIVE_ROOTS.fichadas },
         { name: String(parts.year) },
         { name: monthFolder(parts.month) },
+        { name: pad2(parts.day) },
         { name: employeeFolderName(input.employee) },
       ],
       fileName: `${parts.key}_${pad2(parts.hour)}-${pad2(parts.minute)}_${input.punchType}_${shortId(input.requestId)}${extensionPart(input.extension)}`,
@@ -208,7 +210,7 @@ export const storagePathBuilder = {
 
   /**
    * Fallback defensivo (datos legacy/inconsistentes): evidencia sin fichada
-   * vinculada. `Fichadas/_Sin vincular/<AAAA>/<MM - Mes>/[<empleado>/]`. El
+   * vinculada. `Fichadas/_Sin vincular/<AAAA>/<MM - Mes>/<DD>/[<empleado>/]`. El
    * worker lo registra como inconsistencia observable — nunca es la ruta de
    * una fichada normal.
    */
@@ -225,6 +227,7 @@ export const storagePathBuilder = {
       { name: DRIVE_ROOTS.unlinked },
       { name: String(parts.year) },
       { name: monthFolder(parts.month) },
+      { name: pad2(parts.day) },
     ];
     if (input.employee) driveFolders.push({ name: employeeFolderName(input.employee) });
     return {

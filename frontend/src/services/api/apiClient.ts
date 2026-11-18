@@ -41,6 +41,7 @@ const fieldLabels: Record<string, string> = {
   positionId: "Puesto",
   employeeId: "Empleado",
   employeeIds: "Empleados",
+  supervisedUserIds: "Responsables de carga supervisados",
   companyId: "Empresa",
   recurrenceType: "Tipo de recurrencia",
   weekdays: "Días de la semana",
@@ -160,6 +161,11 @@ const errorMessagesByCode: Record<string, string> = {
   SHIFT_ALERT_NOT_FOUND: "No encontramos la alerta solicitada.",
   SHIFT_ALERT_ALREADY_RESOLVED: "La alerta ya fue resuelta.",
   EMAIL_ALREADY_EXISTS: "El email ya está asociado a otro usuario.",
+  EMPLOYEE_ALREADY_LINKED_TO_USER: "Este empleado ya está vinculado a otro usuario.",
+  USER_EMPLOYEE_NOT_FOUND: "El empleado seleccionado ya no existe. Recargá la pantalla e intentá nuevamente.",
+  USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE: "Sólo un usuario Nivel 2 - Supervisión / Gestión puede tener responsables de carga supervisados.",
+  USER_SUPERVISION_CONCURRENT_UPDATE: "Los responsables de carga se modificaron en paralelo. Recargá la pantalla e intentá nuevamente.",
+  USER_RELATED_RECORD_NOT_FOUND: "Alguno de los datos seleccionados ya no existe. Recargá la pantalla e intentá nuevamente.",
   USER_NOT_FOUND: "No encontramos el usuario solicitado.",
   CLOCK_DEVICE_PAIRING_NOT_FOUND: "El código no existe o venció. Generá uno nuevo desde el fichador.",
   CLOCK_DEVICE_ACTIVATION_CONFLICT: "La solicitud ya no está pendiente o el código venció.",
@@ -213,6 +219,7 @@ function isInternalMessage(message: string) {
 // backend ya explica estos rechazos en lenguaje de negocio y ese texto es más
 // específico que cualquier genérico (por eso no van en errorMessagesByCode).
 const fallbackMessagesByCode: Record<string, string> = {
+  USER_SUPERVISION_INVALID_TARGET: "Revisá los responsables de carga seleccionados: sólo se pueden supervisar usuarios Nivel 3 - Administrativo de Carga Horaria.",
   NOVELTY_TYPE_COVERAGE_CONFIG_INVALID: "La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.",
   NOVELTY_TYPE_HOURS_DAYS_CONFLICT: "Si al cargar la novedad se indican horas, la unidad de Valor 1 no puede ser \"Días\".",
   NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED: "Para exportar a Finnegans completá el código y el nombre Finnegans.",

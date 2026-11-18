@@ -110,14 +110,14 @@ describe("F6-05 — vencimiento del modo mantenimiento", () => {
     expect(notice()).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(MAINTENANCE_EXPIRED_TITLE);
     expect(screen.getByRole("button", { name: "Volver al fichador" })).toHaveFocus();
-    expect(screen.queryByLabelText("Buscar por nombre o apellido")).not.toBeInTheDocument(); // nadie ficha mientras se lee
+    expect(screen.queryByLabelText("Buscar por nombre, apellido o DNI")).not.toBeInTheDocument(); // nadie ficha mientras se lee
     expect(kioskActivity.isIdle()).toBe(false);
     const gets = requests("GET /clock/maintenance/session").length;
     await advance(MAINTENANCE_EXPIRED_NOTICE_MS - 1);
     expect(notice()).toBeInTheDocument();
     await advance(1);
     expect(notice()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(true);
     await advance(10 * MAINTENANCE_REFRESH_MS);
     expect(requests("GET /clock/maintenance/session")).toHaveLength(gets); // la sesión vencida no se sigue consultando
@@ -138,7 +138,7 @@ describe("F6-05 — vencimiento del modo mantenimiento", () => {
     fireEvent.click(screen.getByRole("button", { name: "Volver al fichador" }));
     await advance(0);
     expect(notice()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(requests("DELETE /clock/maintenance/session")).toHaveLength(1);
   });
 
@@ -166,7 +166,7 @@ describe("F6-05 — vencimiento del modo mantenimiento", () => {
     await advance(0);
     panelGone();
     await advance(MAINTENANCE_EXPIRED_NOTICE_MS);
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Modo mantenimiento" })).not.toBeInTheDocument();
   });
 
@@ -177,7 +177,7 @@ describe("F6-05 — vencimiento del modo mantenimiento", () => {
     fireEvent.click(screen.getByRole("button", { name: "Volver al fichador" }));
     await advance(0);
     expect(notice()).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
   });
 
   it("revocación durante el aviso: el Gate bloquea igual (el aviso no la oculta)", async () => {

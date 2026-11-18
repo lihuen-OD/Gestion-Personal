@@ -348,12 +348,13 @@ describe("NoveltyTypeCreatePage — Etapa 7 (accesibilidad del envío)", () => {
     expect(screen.getByRole("checkbox", { name: "Lunes" })).toHaveFocus();
   });
 
-  it("el selector muestra los 22 colores de la paleta", async () => {
+  it("el selector muestra los 23 colores de la paleta, con Azul marino al final", async () => {
     renderPage();
     await screen.findByText("1. Datos generales");
     const swatches = within(screen.getByRole("group", { name: "Color en carga horaria" })).getAllByRole("button");
-    expect(swatches).toHaveLength(22);
+    expect(swatches).toHaveLength(23);
     expect(swatches.slice(0, 3).map((swatch) => swatch.getAttribute("aria-label"))).toEqual(["Azul", "Naranja", "Violeta"]);
+    expect(swatches.at(-1)).toHaveAttribute("aria-label", "Azul marino");
   });
 
   it("al crear, preselecciona el primer color que ningún tipo usa (sin mirar nombre ni código)", async () => {
@@ -366,13 +367,24 @@ describe("NoveltyTypeCreatePage — Etapa 7 (accesibilidad del envío)", () => {
     await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledWith(expect.objectContaining({ uiColor: "violet" })));
   });
 
-  it("con los 22 colores en uso permite repetir y elegir cualquiera a mano", async () => {
-    const allColors = ["blue", "orange", "violet", "emerald", "red", "cyan", "fuchsia", "yellow", "pine", "pink", "indigo", "lime", "brown", "sky", "tangerine", "purple", "green", "rose", "slate", "amber", "magenta", "teal"];
+  it("con los 23 colores en uso permite repetir y elegir cualquiera a mano", async () => {
+    const allColors = ["blue", "orange", "violet", "emerald", "red", "cyan", "fuchsia", "yellow", "pine", "pink", "indigo", "lime", "brown", "sky", "tangerine", "purple", "green", "rose", "slate", "amber", "magenta", "teal", "navy"];
     vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([...allColors, "blue"].map((uiColor) => ({ uiColor })) as NoveltyType[]);
     renderPage();
     await waitFor(() => expect(screen.getByRole("button", { name: "Naranja" })).toHaveAttribute("aria-pressed", "true"));
     await userEvent.click(screen.getByRole("button", { name: "Azul" }));
     expect(screen.getByRole("button", { name: "Azul" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("con los 22 colores anteriores en uso, preselecciona Azul marino y lo envía como navy", async () => {
+    const previousColors = ["blue", "orange", "violet", "emerald", "red", "cyan", "fuchsia", "yellow", "pine", "pink", "indigo", "lime", "brown", "sky", "tangerine", "purple", "green", "rose", "slate", "amber", "magenta", "teal"];
+    vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue(previousColors.map((uiColor) => ({ uiColor })) as NoveltyType[]);
+    vi.mocked(noveltyTypeApiService.create).mockResolvedValue({ id: "nt-new" } as NoveltyType);
+    renderPage();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Azul marino" })).toHaveAttribute("aria-pressed", "true"));
+    await fillRequired("Tipo nuevo");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar tipo" }));
+    await waitFor(() => expect(noveltyTypeApiService.create).toHaveBeenCalledWith(expect.objectContaining({ uiColor: "navy" })));
   });
 
   it("el color elegido también se informa por nombre, no sólo por color", async () => {

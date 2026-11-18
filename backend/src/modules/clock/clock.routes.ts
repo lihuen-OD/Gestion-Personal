@@ -1,35 +1,26 @@
 import { Router, type RequestHandler } from "express";
-import { env } from "../../config/env";
-import { createRateLimiter } from "../../middlewares/rateLimiter";
 import { asyncHandler } from "../../shared/http/asyncHandler";
 import { CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES, jsonBody } from "../../shared/http/bodyLimits";
 import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
-import { authenticatedClockDevice, requireClockDevice } from "../clock-devices/clockDeviceAuthentication";
+import { requireClockDevice } from "../clock-devices/clockDeviceAuthentication";
 import { clockDevicePublicRouter } from "../clock-devices/clockDevices.routes";
 import { clockByEmployeeSchema, clockEmployeeSearchQuerySchema, clockPhotoPunchSchema } from "../time-entries/timeEntries.schemas";
 import { clockController } from "./clock.controller";
+import { clockDeviceLimiters, clockPreAuthLimiters } from "./clockRateLimits";
 
 // Guardas de las rutas operativas del fichador (sin sesión de usuario: en vez
 // de requireAuth exigen un ClockDevice ACTIVE autenticado individualmente).
-// Orden:
-// 1. límite por IP, antes de autenticar: frena fuerza bruta de credenciales
-//    sin tocar la base; generoso para que varios kioscos detrás de la misma
-//    red no compartan un cupo chico;
+// Orden (§33, clockRateLimits.ts):
+// 1. tope por IP y cupo de credenciales rechazadas, antes de autenticar: sin
+//    tocar la base para un exceso, y sin que un equipo mal configurado
+//    bloquee a los demás de la misma red;
 // 2. requireClockDevice(): 401/403 antes de cualquier validación o lectura;
-// 3. límite por dispositivo, keyed por el id YA autenticado: un deviceId
-//    inventado nunca crea un bucket.
-// Una única instancia de cada limitador para las cuatro rutas: el cupo es por
-// IP y por dispositivo, no por ruta.
-const clockOperationalGuards: RequestHandler[] = [
-  createRateLimiter({ windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS, max: env.CLOCK_IP_RATE_LIMIT_MAX }),
-  requireClockDevice({ recordPresence: true }),
-  createRateLimiter({
-    windowMs: env.CLOCK_RATE_LIMIT_WINDOW_MS,
-    max: env.CLOCK_RATE_LIMIT_MAX,
-    keyGenerator: (req) => `clock-device:${authenticatedClockDevice(req).id}`,
-  }),
-];
+// 3. cupo PROPIO de cada operación por dispositivo, keyed por el id YA
+//    autenticado: las búsquedas nunca agotan la jornada, la fichada ni la
+//    recuperación de intentos, y un deviceId inventado nunca crea un bucket.
+const authenticateOperationalDevice = requireClockDevice({ recordPresence: true });
+const operationalGuards = (operation: RequestHandler[]): RequestHandler[] => [...clockPreAuthLimiters, authenticateOperationalDevice, ...operation];
 
 function measureMiddleware(phase: "authMs" | "parseMs", middleware: RequestHandler): RequestHandler {
   return (req, res, next) => {
@@ -42,9 +33,9 @@ function measureMiddleware(phase: "authMs" | "parseMs", middleware: RequestHandl
 }
 
 const clockPhotoPunchGuards: RequestHandler[] = [
-  clockOperationalGuards[0]!,
-  measureMiddleware("authMs", clockOperationalGuards[1]!),
-  clockOperationalGuards[2]!,
+  ...clockPreAuthLimiters,
+  measureMiddleware("authMs", authenticateOperationalDevice),
+  ...clockDeviceLimiters.punch,
 ];
 
 /**
@@ -56,9 +47,9 @@ const clockPhotoPunchGuards: RequestHandler[] = [
  */
 export const clockRouter = Router();
 clockRouter.use(clockDevicePublicRouter);
-clockRouter.get("/employees", ...clockOperationalGuards, validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(clockController.searchEmployees));
-clockRouter.post("/status", ...clockOperationalGuards, validateBody(clockByEmployeeSchema), asyncHandler(clockController.status));
+clockRouter.get("/employees", ...operationalGuards(clockDeviceLimiters.search), validateQuery(clockEmployeeSearchQuerySchema), asyncHandler(clockController.searchEmployees));
+clockRouter.post("/status", ...operationalGuards(clockDeviceLimiters.status), validateBody(clockByEmployeeSchema), asyncHandler(clockController.status));
 // F11: la foto se parsea recién con el dispositivo autenticado y dentro de su
 // cupo (el parser global de 1 MiB saltea esta ruta, ver shared/http/bodyLimits.ts).
 clockRouter.post("/photo-punch", ...clockPhotoPunchGuards, measureMiddleware("parseMs", jsonBody(CLOCK_PHOTO_PUNCH_BODY_LIMIT_BYTES)), validateBody(clockPhotoPunchSchema), asyncHandler(clockController.photoPunch));
-clockRouter.get("/attempts/:requestId", ...clockOperationalGuards, asyncHandler(clockController.attemptStatus));
+clockRouter.get("/attempts/:requestId", ...operationalGuards(clockDeviceLimiters.attempts), asyncHandler(clockController.attemptStatus));

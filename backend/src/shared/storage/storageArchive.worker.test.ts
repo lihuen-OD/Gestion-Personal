@@ -54,7 +54,7 @@ function archiveContext(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const HUMAN_FOLDERS = [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "0001 - Juan Perez" }];
+const HUMAN_FOLDERS = [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "13" }, { name: "0001 - Juan Perez" }];
 
 function claimedJob(overrides: Record<string, unknown> = {}, source: Record<string, unknown> = {}) {
   return {
@@ -214,7 +214,7 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
     expect(uploadedLocation().fileName).toBe("2026-11-13_17-05_SALIDA_b72d61.jpg");
   });
 
-  it("usa el timestamp real de la fichada en hora argentina (23:30 del último día del mes no pasa al mes siguiente)", async () => {
+  it("usa el timestamp real de la fichada en hora argentina (23:30 del último día del mes no pasa al día ni al mes siguiente)", async () => {
     repo.claimNext.mockResolvedValueOnce(claimedJob());
     // 30/11/2026 23:30 Argentina = 01/12/2026 02:30 UTC.
     repo.findArchiveContext.mockResolvedValueOnce(archiveContext({
@@ -224,7 +224,7 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
     await processOneStorageArchiveJob();
 
     expect(uploadedLocation()).toMatchObject({
-      driveFolders: [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "0001 - Juan Perez" }],
+      driveFolders: [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "30" }, { name: "0001 - Juan Perez" }],
       fileName: "2026-11-30_23-30_INGRESO_b72d61.jpg",
     });
   });
@@ -239,7 +239,7 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
 
     await processOneStorageArchiveJob();
 
-    expect((uploadedLocation().driveFolders as Array<{ name: string }>)[3]).toEqual({ name: "0007 - José Peña" });
+    expect((uploadedLocation().driveFolders as Array<{ name: string }>)[4]).toEqual({ name: "0007 - José Peña" });
   });
 
   it("dos fichadas en el mismo minuto con distinto requestId generan nombres distintos", async () => {
@@ -256,6 +256,25 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
     expect(names).toEqual(["2026-11-13_08-02_INGRESO_b72d61.jpg", "2026-11-13_08-02_INGRESO_a19f82.jpg"]);
   });
 
+  it("fichadas del mismo empleado en días distintos van a carpetas diarias distintas; las del mismo día comparten carpeta", async () => {
+    const at = (instant: string, type: "INGRESO" | "SALIDA" = "INGRESO") =>
+      archiveContext({ attendancePunchPhotoLinks: [{ type, timestamp: new Date(instant), employee: EMPLOYEE }] });
+    repo.claimNext.mockResolvedValueOnce(claimedJob()).mockResolvedValueOnce(claimedJob()).mockResolvedValueOnce(claimedJob());
+    repo.findArchiveContext
+      .mockResolvedValueOnce(at("2026-11-13T11:02:00.000Z"))
+      .mockResolvedValueOnce(at("2026-11-13T20:05:00.000Z", "SALIDA"))
+      .mockResolvedValueOnce(at("2026-11-17T11:02:00.000Z"));
+
+    for (let i = 0; i < 3; i += 1) await processOneStorageArchiveJob();
+
+    const folders = driveUpload.mock.calls.map(([input]) => (input as { driveFolders: Array<{ name: string }> }).driveFolders.map((f) => f.name).join("/"));
+    expect(folders).toEqual([
+      "Fichadas/2026/11 - Noviembre/13/0001 - Juan Perez",
+      "Fichadas/2026/11 - Noviembre/13/0001 - Juan Perez",
+      "Fichadas/2026/11 - Noviembre/17/0001 - Juan Perez",
+    ]);
+  });
+
   it("evidencia sin fichada vinculada: archiva en _Sin vincular, lo registra como error observable y marca el job", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     repo.claimNext.mockResolvedValueOnce(claimedJob());
@@ -264,7 +283,7 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
     await expect(processOneStorageArchiveJob()).resolves.toEqual({ processed: true, completed: true });
 
     expect(uploadedLocation()).toMatchObject({
-      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "0001 - Juan Perez" }],
+      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "13" }, { name: "0001 - Juan Perez" }],
       fileName: "2026-11-13_08-02_INGRESO_b72d61.jpg",
     });
     expect(error).toHaveBeenCalledWith("STORAGE_ARCHIVE_UNLINKED", expect.objectContaining({ jobId: "job-1", sourceStorageFileId: "sf-1", reason: "NO_ATTENDANCE_PUNCH" }));
@@ -273,14 +292,14 @@ describe("processOneStorageArchiveJob — ruta humana en Drive", () => {
     expect(repo.complete).toHaveBeenCalledWith("job-1", 1, "drive-file-1", expect.any(Date), expect.objectContaining({ code: "STORAGE_ARCHIVE_UNLINKED" }));
   });
 
-  it("sin fichada ni empleado ni tipo: carpeta del mes en _Sin vincular y SIN-TIPO", async () => {
+  it("sin fichada ni empleado ni tipo: carpeta del día en _Sin vincular y SIN-TIPO", async () => {
     repo.claimNext.mockResolvedValueOnce(claimedJob());
     repo.findArchiveContext.mockResolvedValueOnce(archiveContext({ employee: null, metadata: {}, attendancePunchPhotoLinks: [] }));
 
     await processOneStorageArchiveJob();
 
     expect(uploadedLocation()).toMatchObject({
-      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }],
+      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "13" }],
       fileName: "2026-11-13_08-02_SIN-TIPO_sf1.jpg",
     });
   });

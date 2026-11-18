@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { roles } from "../../shared/security/roles";
@@ -177,7 +178,10 @@ describe("employeeDayOffService.save — permisos por alcance (backend, nunca s�
     ["Nivel 3 Carga horaria", carga],
   ])("%s: sólo legajos con su asignación TIME_RESPONSIBLE vigente", async (_label, user) => {
     await save([{ employeeId: EMP_1, status: "ACTIVO" }], user);
-    expect(repo.countEmployeesInScope).toHaveBeenCalledWith([EMP_1], { assignments: { some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: user.id }) } });
+    // Alcance de la fuente canónica: TIME_RESPONSIBLE vigentes propios (y, para
+    // Nivel 2, los de los Nivel 3 que supervisa).
+    expect(repo.countEmployeesInScope).toHaveBeenCalledWith([EMP_1], employeeAccessWhere(user));
+    expect(employeeAccessWhere(user)).toMatchObject({ assignments: { some: { type: "TIME_RESPONSIBLE" } } });
   });
 });
 

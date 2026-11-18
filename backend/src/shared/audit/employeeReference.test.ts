@@ -52,6 +52,9 @@ describe("technicalIds", () => {
     expect(containsTechnicalId(`para el legajo ${employeeUuid}.`)).toBe(true);
     expect(containsTechnicalId("para Pérez, Juan · Legajo 30.")).toBe(false);
     expect(describeRequestPath(`/api/employees/${employeeUuid}/overview?employeeId=${employeeUuid}`)).toBe("/api/employees/:id/overview?employeeId=:id");
+    // El término buscado (puede ser un DNI desde el fichador) nunca llega a la auditoría.
+    expect(describeRequestPath("/api/clock/employees?search=32456789")).toBe("/api/clock/employees?search=:texto");
+    expect(describeRequestPath("/api/employees?page=1&search=Juan+Perez&status=ACTIVO")).toBe("/api/employees?page=1&search=:texto&status=ACTIVO");
   });
 
   it("el fallback es lenguaje neutro que se lee completo, nunca un placeholder", () => {

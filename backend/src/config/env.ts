@@ -25,12 +25,29 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
-  CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
-  // F6: cupo de las rutas operativas de /api/clock/* POR DISPOSITIVO autenticado (ClockDevice).
-  CLOCK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
-  // F6: cupo por IP previo a la autenticación (fuerza bruta de credenciales).
-  // Más alto que el de dispositivo: varios kioscos pueden salir por la misma IP.
-  CLOCK_IP_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // §33 del plan del fichador (capacidad simultánea): ventana común de los
+  // cupos por operación y del tope por IP de /api/clock/*. Los valores y su
+  // justificación están en modules/clock/clockRateLimits.ts y en
+  // docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md §33.
+  CLOCK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(60_000).max(60 * 60_000).default(5 * 60 * 1000),
+  // Tope por IP, ANTES de autenticar, compartido por todas las rutas de
+  // dispositivo de /api/clock/*. Cuenta sólo solicitudes SIN una credencial ya
+  // verificada (ausente, inválida o la primera de un equipo tras un reinicio):
+  // el tráfico de equipos verificados lo acotan sus cupos por dispositivo.
+  CLOCK_IP_RATE_LIMIT_MAX: z.coerce.number().int().min(50).max(20_000).default(300),
+  // Cupos por dispositivo AUTENTICADO y por operación (cada ventana
+  // CLOCK_RATE_LIMIT_WINDOW_MS). Separados: las búsquedas nunca gastan el cupo
+  // de la jornada, la fichada ni la recuperación de intentos.
+  CLOCK_SEARCH_RATE_LIMIT_MAX: z.coerce.number().int().min(10).max(5_000).default(450),
+  // Tope por hora de búsquedas por dispositivo: acota la enumeración sostenida.
+  CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX: z.coerce.number().int().min(10).max(50_000).default(1800),
+  CLOCK_STATUS_RATE_LIMIT_MAX: z.coerce.number().int().min(10).max(5_000).default(100),
+  CLOCK_PUNCH_RATE_LIMIT_MAX: z.coerce.number().int().min(5).max(1_000).default(60),
+  CLOCK_ATTEMPT_RATE_LIMIT_MAX: z.coerce.number().int().min(15).max(5_000).default(120),
+  // Credenciales de dispositivo rechazadas (401) por IP y por credencial
+  // presentada, cada 15 minutos. Por credencial: un equipo mal configurado
+  // nunca bloquea a otro que comparte la IP.
+  CLOCK_AUTH_FAILURE_RATE_LIMIT_MAX: z.coerce.number().int().min(3).max(1_000).default(10),
   // F7: ventana mínima entre dos fichadas DISTINTAS (otro requestId) del mismo
   // empleado, medida con el reloj del servidor contra su última
   // AttendancePunch, desde cualquier dispositivo o canal. No es la

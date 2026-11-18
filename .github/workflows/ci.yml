@@ -138,7 +138,7 @@ jobs:
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_migrations"
         run: >-
           npx tsx scripts/ci/migrate-clean-database.ts
-          --clone=clock_it_ci,clock_it_ci_devices,clock_it_ci_maint,clock_it_ci_perf,clock_it_ci_postprocess,clock_it_ci_dayoff,clock_it_ci_manual,deletion_it_ci,clock_it_ci_employee_minimal,clock_it_ci_novelty_coverage,clock_it_ci_novelty_recalc
+          --clone=clock_it_ci,clock_it_ci_devices,clock_it_ci_maint,clock_it_ci_perf,clock_it_ci_postprocess,clock_it_ci_dayoff,clock_it_ci_manual,deletion_it_ci,clock_it_ci_employee_minimal,clock_it_ci_novelty_coverage,clock_it_ci_novelty_recalc,clock_it_ci_user_supervision,clock_it_ci_notification_recipients
 
       # Suites opt-in que corren contra el schema actual, cada una en su propia
       # copia de la base recien migrada. Quedan afuera, a proposito, las dos de
@@ -157,6 +157,8 @@ jobs:
           EMPLOYEE_MINIMAL_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_employee_minimal"
           NOVELTY_COVERAGE_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_novelty_coverage"
           NOVELTY_RECALC_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_novelty_recalc"
+          USER_SUPERVISION_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_user_supervision"
+          NOTIFICATION_RECIPIENTS_IT_DATABASE_URL: "postgresql://ci:ci@localhost:5432/clock_it_ci_notification_recipients"
         run: >-
           npx vitest run
           src/modules/clock/clock.integration.test.ts
@@ -170,6 +172,8 @@ jobs:
           src/modules/employees/employees.minimalCreate.integration.test.ts
           src/modules/novelties/noveltyCoverage.integration.test.ts
           src/modules/novelties/noveltyCoverageRecalculation.integration.test.ts
+          src/modules/users/userSupervision.integration.test.ts
+          src/modules/workforce-management/employeeNotificationRecipients.integration.test.ts
 
   frontend:
     name: Frontend

@@ -11,3 +11,11 @@ describe("RoleRoute", () => {
     expect(canAccessRoleRoute("Nivel 2 - Supervisión / Gestión", [1, 2])).toBe(true);
   });
 });
+
+describe("RoleRoute — módulos sólo de Nivel 1 (Puestos, Organigramas, Reportes)", () => {
+  it("sólo Nivel 1 pasa el guard", () => {
+    expect(canAccessRoleRoute("Nivel 1 - RRHH", [1])).toBe(true);
+    expect(canAccessRoleRoute("Nivel 2 - Supervisión / Gestión", [1])).toBe(false);
+    expect(canAccessRoleRoute("Nivel 3 - Administrativo de Carga Horaria", [1])).toBe(false);
+  });
+});

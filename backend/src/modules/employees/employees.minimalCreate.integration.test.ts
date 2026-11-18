@@ -206,8 +206,10 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
   it("el fichador lo encuentra, lo consulta por employeeId y registra el ingreso con las reglas normales", async () => {
     const search = await clock("/employees?search=Perez");
     expect(search.status).toBe(200);
-    const found = ((await search.json()) as { data: Array<{ id: string; legajo: string }> }).data;
-    expect(found).toEqual([expect.objectContaining({ id: minimalId, legajo: "0001" })]);
+    // Plan §32: el fichador recibe el DNI completo y nunca el legajo.
+    const found = ((await search.json()) as { data: Array<Record<string, unknown>> }).data;
+    expect(found).toEqual([expect.objectContaining({ id: minimalId, dni: "12345678" })]);
+    expect(found[0]).not.toHaveProperty("legajo");
 
     const status = await clock("/status", { method: "POST", body: JSON.stringify({ employeeId: minimalId }) });
     expect(status.status).toBe(200);
@@ -254,7 +256,8 @@ describe.skipIf(!url)("Alta mínima de legajo contra PostgreSQL local", () => {
     const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
     expect(fakeDrive.files).toHaveLength(1);
     expect(fakeDrive.files[0]).toMatchObject({
-      driveFolders: [{ name: "Fichadas" }, { name: String(at.year) }, { name: `${pad(at.month)} - ${months[at.month - 1]}` }, { name: "0001 - Juan Perez" }],
+      // 42d1db8: las fotos se organizan por día (Fichadas/<AAAA>/<MM - Mes>/<DD>/<legajo - Nombre Apellido>).
+      driveFolders: [{ name: "Fichadas" }, { name: String(at.year) }, { name: `${pad(at.month)} - ${months[at.month - 1]}` }, { name: pad(at.day) }, { name: "0001 - Juan Perez" }],
       fileName: `${at.key}_${pad(at.hour)}-${pad(at.minute)}_INGRESO_${punchRequestId.replace(/-/g, "").slice(0, 6)}.jpg`,
       metadata: { sourceStorageFileId: file.id, checksum: file.checksum, archiveRootId: ARCHIVE_ROOT },
     });

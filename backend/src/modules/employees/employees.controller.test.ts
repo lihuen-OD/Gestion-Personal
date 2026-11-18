@@ -5,6 +5,7 @@ import { employeesController } from "./employees.controller";
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
+import { invalidateEmployeeScopeCaches } from "./employeeScopeCaches";
 
 vi.mock("./employees.service", () => ({
   employeesService: {
@@ -12,7 +13,12 @@ vi.mock("./employees.service", () => ({
     approveManualHourConceptBreakdown: vi.fn(),
     rejectManualHourConceptBreakdown: vi.fn(),
     returnManualHourConceptBreakdown: vi.fn(),
+    replaceAssignments: vi.fn(),
   },
+}));
+
+vi.mock("./employeeScopeCaches", () => ({
+  invalidateEmployeeScopeCaches: vi.fn(),
 }));
 
 vi.mock("./automaticHourConceptBreakdowns.service", () => ({
@@ -99,5 +105,26 @@ describe("employeesController — invalidación de timeEntriesPeriodEmployeesCac
     const res = fakeRes();
     await employeesController.approveManualHourConceptBreakdown(fakeReq(), res);
     expect(res.json).toHaveBeenCalledWith({ data: { id: "brk-1", status: "APROBADO" } });
+  });
+});
+
+describe("employeesController.replaceAssignments — alcance visible sin esperar TTL", () => {
+  it("después de guardar responsables/asignaciones invalida todas las cachés que dependen del alcance", async () => {
+    const replaceAssignments = (employeesService as unknown as { replaceAssignments: Mock }).replaceAssignments;
+    replaceAssignments.mockResolvedValue({ id: "emp-1", legajo: "100" });
+    const res = fakeRes();
+
+    await employeesController.replaceAssignments(fakeReq({ body: { assignments: [] } }), res);
+
+    expect(invalidateEmployeeScopeCaches).toHaveBeenCalledTimes(1);
+    expect(replaceAssignments.mock.invocationCallOrder[0]).toBeLessThan((invalidateEmployeeScopeCaches as unknown as Mock).mock.invocationCallOrder[0]!);
+    expect(res.json).toHaveBeenCalledWith({ data: { id: "emp-1", legajo: "100" } });
+  });
+
+  it("si el guardado falla no invalida (nada cambió)", async () => {
+    (employeesService as unknown as { replaceAssignments: Mock }).replaceAssignments.mockRejectedValue(new Error("fallo"));
+
+    await expect(employeesController.replaceAssignments(fakeReq({ body: { assignments: [] } }), fakeRes())).rejects.toThrow("fallo");
+    expect(invalidateEmployeeScopeCaches).not.toHaveBeenCalled();
   });
 });

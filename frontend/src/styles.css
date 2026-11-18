@@ -396,7 +396,7 @@ td b{color:#1d3148}
 .hour-cell.filled{box-shadow:inset 0 0 0 1px #d4efed}
 .hour-cell{display:inline-grid;place-items:center;align-content:center;gap:1px;line-height:1}
 .hour-cell small{display:block;font-size:8px;font-weight:900;letter-spacing:.02em;text-transform:uppercase}
-/* Paleta de Tipos de Novedad (22 colores, utils/noveltyColor.ts): cada clase fija su acento y tonos derivados (fondo 8 %, borde 45 %, texto 70 % del acento con negro, contraste AA). */
+/* Paleta de Tipos de Novedad (23 colores, utils/noveltyColor.ts): cada clase fija su acento y tonos derivados (fondo 8 %, borde 45 %, texto 70 % del acento con negro, contraste AA). */
 .novelty-color-blue{--novelty-accent:#2563eb;--novelty-border:#9db9f6;--novelty-bg:#eef3fd;--novelty-text:#1a45a4}
 .novelty-color-orange{--novelty-accent:#f97316;--novelty-border:#fcc096;--novelty-bg:#fff4ec;--novelty-text:#ae500f}
 .novelty-color-violet{--novelty-accent:#7c3aed;--novelty-border:#c4a6f7;--novelty-bg:#f5effe;--novelty-text:#5729a6}
@@ -419,6 +419,7 @@ td b{color:#1d3148}
 .novelty-color-amber{--novelty-accent:#d97706;--novelty-border:#eec28f;--novelty-bg:#fcf4eb;--novelty-text:#985304}
 .novelty-color-magenta{--novelty-accent:#a21caf;--novelty-border:#d599db;--novelty-bg:#f8edf9;--novelty-text:#71147a}
 .novelty-color-teal{--novelty-accent:#0d9488;--novelty-border:#92cfc9;--novelty-bg:#ecf6f5;--novelty-text:#09685f}
+.novelty-color-navy{--novelty-accent:#1e3a8a;--novelty-border:#9aa6ca;--novelty-bg:#edeff6;--novelty-text:#152961}
 .hour-cell[class*="novelty-color-"],.hour-cell.filled[class*="novelty-color-"],.cell-novelty-pill[class*="novelty-color-"]{border-color:var(--novelty-border);background:var(--novelty-bg);color:var(--novelty-text)}
 /* Varias novedades de colores distintos, o un color no atribuible a un tipo
    (dayNoveltyColorClass): neutro punteado, distinto de todo color del catálogo. */
@@ -2813,3 +2814,17 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .context-novelty-card .novelty-preview{position:static}
 @media(max-width:900px){.novelty-load-layout{grid-template-columns:minmax(0,1fr)}.novelty-preview{position:static}}
 @media(max-width:520px){.novelty-load-dates{grid-template-columns:minmax(0,1fr)}.novelty-load-duration{max-width:none}}
+/* Usuarios y roles: responsables de carga supervisados por un Nivel 2 (SupervisedUsersSelector) y ayuda del empleado vinculado. Reusa .people-search. */
+.supervised-users-head{display:grid;gap:4px}
+.supervised-users-head b{color:var(--color-text-primary,#203648);font-size:13px}
+.supervised-users-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.supervised-users .people-search-results{max-height:220px}
+.supervised-users .people-search-results b{display:inline-flex;align-items:center;gap:8px}
+.supervised-users button:disabled{cursor:not-allowed;opacity:.6}
+.modal-body label>small.field-hint{display:block;margin-top:6px}
+/* Modal de usuario: grilla explícita de 2 columnas parejas (sin ella,
+   .form-stack>.form-actions{grid-column:span 2} arma columnas implícitas
+   desparejas). Notas, bloques anchos, error y acciones ocupan la fila. */
+.modal-body .user-form{grid-template-columns:repeat(2,minmax(0,1fr))}
+.user-form>.info-note,.user-form>.supervised-users,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
+@media(max-width:620px){.modal-body .user-form{grid-template-columns:minmax(0,1fr)}}

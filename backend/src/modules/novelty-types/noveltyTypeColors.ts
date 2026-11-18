@@ -4,7 +4,7 @@ export type NoveltyUiColor = (typeof NOVELTY_UI_COLORS)[number];
 
 /**
  * Color para un Tipo nuevo: el primero de la paleta que ningún tipo usa; si
- * los 22 están en uso, el menos repetido (primero en el orden de la paleta).
+ * los 23 están en uso, el menos repetido (primero en el orden de la paleta).
  * Nunca depende del nombre ni del código; la paleta no limita la cantidad de
  * tipos. Mismo criterio que frontend/src/utils/noveltyColor.ts.
  */

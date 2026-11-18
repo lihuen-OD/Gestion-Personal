@@ -22,7 +22,7 @@ vi.mock("../features/device/clockDeviceStorage", () => ({ clockDeviceStorage: { 
 vi.mock("../services/api/clockDeviceApiService", () => ({ clockDeviceApiService: { register: vi.fn(), status: vi.fn(), refreshPairing: vi.fn() } }));
 
 const IDENTITY = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", secret: "s".repeat(43) };
-const ANA = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const ANA = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 const DEVICE = { name: "Recepción", status: "ACTIVE" as const, activatedAt: null, lastSeenAt: null, lastAppVersion: "0.1.0", connectivity: "ONLINE" as const, establishment: null };
 const originalMediaDevices = navigator.mediaDevices;
 
@@ -73,7 +73,7 @@ describe("Captura facial", () => {
     vi.spyOn(timeClockApiService, "searchEmployees").mockResolvedValue([ANA]);
     vi.spyOn(timeClockApiService, "status").mockResolvedValue({ employee: ANA, openShift: null });
     render(<TimeClockPage />);
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
     await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     const action = await screen.findByRole("button", { name: "Marcar ingreso" });
     await waitFor(() => expect(action).toBeEnabled());

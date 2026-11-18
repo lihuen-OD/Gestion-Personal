@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 // de rostros REAL (MediaPipe self-hosted, WASM) tienen que cargar sin una sola
 // violación. Cámara falsa de Chromium y API mockeado, como el resto de E2E.
 // Safari/iPad no se prueba acá: queda en la checklist del piloto (F12).
-const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const employee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => new Promise<void>((resolve, reject) => {
@@ -47,7 +47,7 @@ test("CSP enforced: la PWA y el detector de rostros cargan sin violaciones", asy
   await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeVisible();
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
 
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
+  await page.getByLabel("Buscar por nombre, apellido o DNI").fill("Gomez");
   await page.getByRole("button", { name: /Gomez, Ana/ }).click();
   await page.getByRole("button", { name: /Marcar ingreso/ }).click();
   // El detector real cargó (WASM + modelo) y analiza la cámara falsa, que no tiene rostro.

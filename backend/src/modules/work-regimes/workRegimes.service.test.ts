@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { workRegimesService, resolveActiveWorkRegime } from "./workRegimes.service";
@@ -452,7 +453,7 @@ describe("WorkRegime.listEmployees — empleados asociados (Etapa 8G)", () => {
 
     const accessWhereUsed = repo.findEmployees.mock.calls.at(0)?.[3];
     expect(accessWhereUsed).not.toEqual({});
-    expect(accessWhereUsed).toMatchObject({ assignments: { some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "user-sup" }) } });
+    expect(accessWhereUsed).toEqual(employeeAccessWhere(supervisionUser));
   });
 
   it("usa hoy en calendario Argentina como fecha de referencia por defecto cuando no se pasa date", async () => {

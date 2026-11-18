@@ -152,15 +152,15 @@ describe("NoveltyTypeDetailPage — Etapa 15L.2B", () => {
   });
 });
 
-// Paleta de 22 colores: el color persistido de un tipo existente se conserva.
+// Paleta de 23 colores: el color persistido de un tipo existente se conserva.
 describe("NoveltyTypeDetailPage — color", () => {
-  it("un tipo con un color anterior lo muestra elegido y lo conserva al guardar; el selector ofrece los 22", async () => {
+  it("un tipo con un color anterior lo muestra elegido y lo conserva al guardar; el selector ofrece los 23", async () => {
     vi.mocked(noveltyTypeApiService.getById).mockResolvedValue(buildNoveltyType({ uiColor: "teal" }));
     vi.mocked(noveltyTypeApiService.update).mockImplementation(async (_id, item) => item);
     renderPage();
     await screen.findByRole("heading", { name: "Vacaciones" });
     expect(screen.getByRole("button", { name: "Turquesa" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getAllByRole("button", { pressed: false }).filter((button) => button.classList.contains("novelty-color-swatch"))).toHaveLength(21);
+    expect(screen.getAllByRole("button", { pressed: false }).filter((button) => button.classList.contains("novelty-color-swatch"))).toHaveLength(22);
     await userEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(noveltyTypeApiService.update).toHaveBeenCalledWith("nt-1", expect.objectContaining({ uiColor: "teal" })));
   });

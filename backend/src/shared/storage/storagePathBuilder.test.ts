@@ -118,37 +118,85 @@ describe("storagePathBuilder.employeeDocument", () => {
 });
 
 describe("storagePathBuilder.attendanceArchive", () => {
-  it("Fichadas/<año>/<MM - Mes>/<legajo - Nombre Apellido> y AAAA-MM-DD_HH-mm_TIPO_id6.ext en hora argentina", () => {
-    expect(storagePathBuilder.attendanceArchive({
-      employee: JUAN,
-      punchType: "INGRESO",
-      timestamp: new Date("2026-11-13T11:02:00.000Z"),
-      requestId: REQUEST_ID,
-      extension: "jpg",
-    })).toEqual({
-      driveFolders: [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "0001 - Juan Perez" }],
+  const punch = (instant: string, overrides: Partial<Parameters<typeof storagePathBuilder.attendanceArchive>[0]> = {}) =>
+    storagePathBuilder.attendanceArchive({ employee: JUAN, punchType: "INGRESO", timestamp: new Date(instant), requestId: REQUEST_ID, extension: "jpg", ...overrides });
+
+  it("Fichadas/<año>/<MM - Mes>/<DD>/<legajo - Nombre Apellido> y AAAA-MM-DD_HH-mm_TIPO_id6.ext en hora argentina", () => {
+    expect(punch("2026-11-13T11:02:00.000Z")).toEqual({
+      driveFolders: [{ name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "13" }, { name: "0001 - Juan Perez" }],
       fileName: "2026-11-13_08-02_INGRESO_b72d61.jpg",
     });
   });
 
-  it.each([
-    // 30/11 23:30 AR = 01/12 02:30 UTC → noviembre.
-    ["2026-12-01T02:30:00.000Z", "2026", "11 - Noviembre", "2026-11-30_23-30"],
-    // 31/12 23:30 AR = 01/01 02:30 UTC → diciembre de 2026, no 2027.
-    ["2027-01-01T02:30:00.000Z", "2026", "12 - Diciembre", "2026-12-31_23-30"],
-    // 01/01 00:05 AR = 03:05 UTC.
-    ["2027-01-01T03:05:00.000Z", "2027", "01 - Enero", "2027-01-01_00-05"],
-  ])("instante %s → %s/%s, %s", (instant, year, month, prefix) => {
-    const location = storagePathBuilder.attendanceArchive({ employee: JUAN, punchType: "SALIDA", timestamp: new Date(instant), requestId: REQUEST_ID, extension: "webp" });
+  it("fichada del 17/11 va a la carpeta del día 17", () => {
+    expect(punch("2026-11-17T12:00:00.000Z").driveFolders).toEqual([
+      { name: "Fichadas" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "17" }, { name: "0001 - Juan Perez" },
+    ]);
+  });
 
-    expect(location.driveFolders.slice(1, 3)).toEqual([{ name: year }, { name: month }]);
+  it("el día va con dos dígitos y sin repetir mes ni año", () => {
+    // 01/11/2026 09:00 hora argentina.
+    expect(punch("2026-11-01T12:00:00.000Z").driveFolders[3]).toEqual({ name: "01" });
+  });
+
+  it("dos fichadas del mismo empleado en días distintos van a carpetas distintas", () => {
+    const first = punch("2026-11-13T11:02:00.000Z").driveFolders;
+    const second = punch("2026-11-17T11:02:00.000Z").driveFolders;
+
+    expect(first).not.toEqual(second);
+    expect(first[3]).toEqual({ name: "13" });
+    expect(second[3]).toEqual({ name: "17" });
+  });
+
+  it("ingreso y salida del mismo día van a la misma carpeta del empleado", () => {
+    const entry = punch("2026-11-13T11:02:00.000Z");
+    const exit = punch("2026-11-13T20:05:00.000Z", { punchType: "SALIDA", requestId: "a19f82c3-1111-4222-8333-444455556666" });
+
+    expect(exit.driveFolders).toEqual(entry.driveFolders);
+    expect([entry.fileName, exit.fileName]).toEqual(["2026-11-13_08-02_INGRESO_b72d61.jpg", "2026-11-13_17-05_SALIDA_a19f82.jpg"]);
+  });
+
+  it.each([
+    // 30/11 23:30 AR = 01/12 02:30 UTC → noviembre, día 30.
+    ["2026-12-01T02:30:00.000Z", "2026", "11 - Noviembre", "30", "2026-11-30_23-30"],
+    // 01/12 00:30 AR = 01/12 03:30 UTC → diciembre, día 01.
+    ["2026-12-01T03:30:00.000Z", "2026", "12 - Diciembre", "01", "2026-12-01_00-30"],
+    // 31/12 23:30 AR = 01/01 02:30 UTC → diciembre de 2026, no 2027.
+    ["2027-01-01T02:30:00.000Z", "2026", "12 - Diciembre", "31", "2026-12-31_23-30"],
+    // 01/01 00:05 AR = 03:05 UTC.
+    ["2027-01-01T03:05:00.000Z", "2027", "01 - Enero", "01", "2027-01-01_00-05"],
+  ])("instante %s → %s/%s/%s, %s", (instant, year, month, day, prefix) => {
+    const location = punch(instant, { punchType: "SALIDA", extension: "webp" });
+
+    expect(location.driveFolders.slice(1, 4)).toEqual([{ name: year }, { name: month }, { name: day }]);
     expect(location.fileName).toBe(`${prefix}_SALIDA_b72d61.webp`);
   });
 
-  it("no usa identidad por appProperties en Fichadas (fotografía histórica por mes)", () => {
-    const location = storagePathBuilder.attendanceArchive({ employee: JOSE, punchType: "INGRESO", timestamp: new Date("2026-11-13T11:02:00.000Z"), requestId: REQUEST_ID, extension: "jpg" });
+  it("no usa identidad por appProperties en Fichadas (fotografía histórica)", () => {
+    expect(punch("2026-11-13T11:02:00.000Z", { employee: JOSE }).driveFolders[4]).toEqual({ name: "0007 - José Peña" });
+  });
+});
 
-    expect(location.driveFolders[3]).toEqual({ name: "0007 - José Peña" });
+describe("storagePathBuilder.unlinkedAttendanceArchive", () => {
+  it("Fichadas/_Sin vincular/<año>/<MM - Mes>/<DD>/<empleado> en hora argentina", () => {
+    expect(storagePathBuilder.unlinkedAttendanceArchive({
+      employee: JUAN,
+      punchType: "INGRESO",
+      // 30/11/2026 23:30 AR = 01/12 02:30 UTC.
+      timestamp: new Date("2026-12-01T02:30:00.000Z"),
+      requestId: REQUEST_ID,
+      extension: "jpg",
+    })).toEqual({
+      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "30" }, { name: "0001 - Juan Perez" }],
+      fileName: "2026-11-30_23-30_INGRESO_b72d61.jpg",
+    });
+  });
+
+  it("sin empleado termina en la carpeta del día", () => {
+    expect(storagePathBuilder.unlinkedAttendanceArchive({ timestamp: new Date("2026-11-13T11:02:00.000Z"), requestId: REQUEST_ID, extension: "jpg" })).toEqual({
+      driveFolders: [{ name: "Fichadas" }, { name: "_Sin vincular" }, { name: "2026" }, { name: "11 - Noviembre" }, { name: "13" }],
+      fileName: "2026-11-13_08-02_SIN-TIPO_b72d61.jpg",
+    });
   });
 });
 

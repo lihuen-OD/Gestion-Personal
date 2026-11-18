@@ -1,8 +1,12 @@
 import type { ClockEmployee } from "../../services/api/timeClockApiService";
 
-/** "Legajo 100 · DNI terminado en 456" (F0: el DNI completo nunca llega al kiosco). */
+// Fichador §32 (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md): la persona se
+// identifica como "Apellido Nombre" + "DNI <completo>". El legajo nunca se
+// muestra en el fichador (el backend tampoco lo envía).
+
+/** "DNI 12345678"; vacío si el dato no llegó (intento guardado con un contrato anterior). */
 export function employeeIdentity(employee: ClockEmployee) {
-  return employee.dniSuffix ? `Legajo ${employee.legajo} · DNI terminado en ${employee.dniSuffix}` : `Legajo ${employee.legajo}`;
+  return employee.dni ? `DNI ${employee.dni}` : "";
 }
 
 /** Como se lista en la búsqueda: "Gomez, Ana". */
@@ -10,12 +14,12 @@ export function employeeListName(employee: ClockEmployee) {
   return `${employee.lastName}, ${employee.firstName}`;
 }
 
-/** Como se saluda a la persona: "Ana Gomez". */
-export function employeeFullName(employee: ClockEmployee) {
-  return `${employee.firstName} ${employee.lastName}`;
+/** Como se muestra a la persona elegida: "Gomez Ana" (apellido primero, sin coma). */
+export function employeeDisplayName(employee: ClockEmployee) {
+  return `${employee.lastName} ${employee.firstName}`;
 }
 
-/** Iniciales para el avatar: "AG". */
+/** Iniciales para el avatar, en el mismo orden que el nombre visible: "GA". */
 export function employeeInitials(employee: ClockEmployee) {
-  return `${employee.firstName.trim().charAt(0)}${employee.lastName.trim().charAt(0)}`.toUpperCase();
+  return `${employee.lastName.trim().charAt(0)}${employee.firstName.trim().charAt(0)}`.toUpperCase();
 }

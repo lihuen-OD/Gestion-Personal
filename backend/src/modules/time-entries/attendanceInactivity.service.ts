@@ -5,6 +5,7 @@ import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
 import { calendarDayEventAt } from "../workforce-management/notificationListing";
+import { resolveEmployeeNotificationRecipientsBatch } from "../workforce-management/employeeNotificationRecipients";
 
 export function previousOperationalDateKey(value = new Date()) {
   const { year, month, day } = argentinaDateParts(value);
@@ -148,7 +149,6 @@ export interface InactivityCandidate {
   legajo: string;
   firstName: string;
   lastName: string;
-  assignments: { userId: string | null }[];
 }
 
 export interface PersistInactivityResult {
@@ -156,17 +156,11 @@ export interface PersistInactivityResult {
   notified: number;
 }
 
-const TIME_RESPONSIBLE_SELECT = {
-  where: { type: "TIME_RESPONSIBLE" as const, userId: { not: null }, OR: [{ status: null }, { status: { in: ["ACTIVO", "Activo"] } }] },
-  select: { userId: true },
-};
-
 export const INACTIVITY_CANDIDATE_SELECT = {
   id: true,
   legajo: true,
   firstName: true,
   lastName: true,
-  assignments: TIME_RESPONSIBLE_SELECT,
 } as const;
 
 /**
@@ -206,14 +200,15 @@ export async function persistAndNotifyInactivityIncidents(
     where: { operationalDate, notifiedAt: null, employeeId: { in: candidates.map((employee) => employee.id) } },
     include: { employee: { select: INACTIVITY_CANDIDATE_SELECT } },
   });
-  const rrhh = await prisma.user.findMany({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } });
+  // Destinatarios en batch (RRHH + responsables directos + Nivel 2
+  // heredados), vigencia evaluada en la fecha operativa del incidente — no en
+  // el día en que corre el chequeo (un catch-up de días anteriores usa los
+  // responsables de ese día).
+  const recipientsByEmployee = await resolveEmployeeNotificationRecipientsBatch(pendingNotification.map((incident) => incident.employeeId), dateKey);
   let notified = 0;
 
   for (const incident of pendingNotification) {
-    const recipients = Array.from(new Set([
-      ...rrhh.map((user) => user.id),
-      ...incident.employee.assignments.flatMap((assignment) => (assignment.userId ? [assignment.userId] : [])),
-    ]));
+    const recipients = recipientsByEmployee.get(incident.employeeId) ?? [];
     await prisma.$transaction(async (tx) => {
       if (recipients.length) {
         await tx.systemNotification.createMany({

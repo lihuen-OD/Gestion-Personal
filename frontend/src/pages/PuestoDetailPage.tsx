@@ -113,7 +113,7 @@ export function PuestoDetailPage() {
     }
   });
 
-  if (roleLevel(user!.role) === 3) return <Navigate to="/gestion-horaria" />;
+  if (roleLevel(user!.role) === 3) return <Navigate to="/" replace />;
   if (loadStatus === "loading") return <Section title="Puesto"><LoadingState text="Cargando puesto..." /></Section>;
   if (loadStatus === "error") return <Section title="Puesto"><ErrorState message="No se pudo cargar el puesto." onRetry={() => setLoadRetry((value) => value + 1)} /></Section>;
   if (!position) return <Navigate to="/puestos" />;

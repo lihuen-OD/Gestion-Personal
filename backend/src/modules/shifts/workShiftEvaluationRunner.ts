@@ -205,7 +205,7 @@ export async function notifyShiftAlert(alert: { id: string; employeeId: string; 
   // ya persistida quede registrada. Mismo criterio ya usado para
   // resolveOpenShiftOverflowAlert (Etapa 10B).
   try {
-    await notifyUsers(await attendanceRecipients(alert.employeeId), {
+    await notifyUsers(await attendanceRecipients(alert.employeeId, alert.actualAt, db), {
       type: "ALERTA_FICHADA",
       title: labelByAlertType[alert.type],
       message: messageByAlertType[alert.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,

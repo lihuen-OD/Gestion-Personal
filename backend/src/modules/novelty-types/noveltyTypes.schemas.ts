@@ -36,9 +36,10 @@ export const roleSchema = z.enum([
 // aceptaba "purple" (el frontend lo mapeaba a "violet" antes de mandarlo).
 // Confirmado contra la base real: ningún NoveltyType existente usa
 // "indigo", así que quitarlo del enum no pierde ningún dato.
-// Paleta fija de 22 colores (decisión del usuario, 2026-11-16), en el orden en
-// que se ofrecen y se asignan. Los 15 nombres anteriores siguen siendo válidos
-// (son 15 de estos 22), así que ningún color persistido cambia de nombre.
+// Paleta fija de 23 colores (decisión del usuario, 2026-11-16; "navy" agregado
+// al final el 2026-11-17), en el orden en que se ofrecen y se asignan. Los 15
+// nombres anteriores siguen siendo válidos (son 15 de estos 23), así que ningún
+// color persistido cambia de nombre.
 export const NOVELTY_UI_COLORS = [
   "blue",
   "orange",
@@ -62,6 +63,7 @@ export const NOVELTY_UI_COLORS = [
   "amber",
   "magenta",
   "teal",
+  "navy",
 ] as const;
 export const noveltyColorSchema = z.enum(NOVELTY_UI_COLORS);
 

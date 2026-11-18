@@ -536,9 +536,32 @@ model User {
   employeeLegacySectorPeriodsCreated EmployeeLegacySectorPeriod[]   @relation("EmployeeLegacySectorPeriodCreatedBy")
   employeeEmployerPeriodsCreated     EmployeeEmployerPeriod[]       @relation("EmployeeEmployerPeriodCreatedBy")
   positionOrgScopePeriodsCreated     PositionOrgScopePeriod[]       @relation("PositionOrgScopePeriodCreatedBy")
+  // Jerarquía de alcance Nivel 2 → Nivel 3 (UserSupervisionAssignment).
+  supervisionsAsSupervisor           UserSupervisionAssignment[]    @relation("UserSupervisionSupervisor")
+  supervisionsAsSupervised           UserSupervisionAssignment[]    @relation("UserSupervisionSupervised")
 
   @@index([role])
   @@index([status])
+}
+
+// Un usuario Nivel 2 (supervisor) hereda, de forma dinámica, el alcance de
+// cada Nivel 3 (supervisado) que tiene asignado: los legajos con un
+// EmployeeAssignment TIME_RESPONSIBLE vigente de ese Nivel 3
+// (employees/employeeAccess.ts). No copia asignaciones. Los roles de ambos
+// extremos los valida users.service.ts (cross-table, no expresable como
+// CHECK); employeeAccessWhere además exige rol Nivel 3 al supervisado.
+// Restrict: un usuario con relaciones no se borra físicamente.
+model UserSupervisionAssignment {
+  id               String   @id @default(uuid())
+  supervisorUserId String
+  supervisedUserId String
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+
+  supervisor User @relation("UserSupervisionSupervisor", fields: [supervisorUserId], references: [id], onDelete: Restrict)
+  supervised User @relation("UserSupervisionSupervised", fields: [supervisedUserId], references: [id], onDelete: Restrict)
+
+  @@unique([supervisorUserId, supervisedUserId])
+  @@index([supervisedUserId])
 }
 
 model Company {

@@ -50,7 +50,7 @@ describe("evaluateWorkShiftDayOff — paso del post-proceso de fichada (EMPLOYEE
       where: { workShiftId_type: { workShiftId: "shift-1", type: "ACTIVIDAD_EN_FRANCO" } },
       create: expect.objectContaining({ employeeId: "emp-1", type: "ACTIVIDAD_EN_FRANCO", severity: "ADVERTENCIA", actualAt: START }),
     }));
-    expect(attendanceRecipients).toHaveBeenCalledWith("emp-1");
+    expect(attendanceRecipients).toHaveBeenCalledWith("emp-1", START, client);
     expect(notifyUsers).toHaveBeenCalledWith(["user-rrhh", "user-responsable"], expect.objectContaining({
       type: "ALERTA_FICHADA",
       title: "Actividad registrada en día de franco",

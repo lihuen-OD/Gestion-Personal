@@ -79,9 +79,10 @@ employeesRouter.post(
   asyncHandler(employeesController.recalculateAutomaticHourConceptBreakdowns),
 );
 
+// 2026-11-17: Organigramas es sólo de Nivel 1 (único consumidor).
 employeesRouter.get(
   "/org-chart",
-  requireAnyRole([roles.rrhh, roles.supervision]),
+  requireAnyRole([roles.rrhh]),
   validateQuery(listEmployeeOrgChartQuerySchema),
   asyncHandler(employeesController.listOrgChart),
 );

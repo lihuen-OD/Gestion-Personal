@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
@@ -99,11 +100,7 @@ describe("shiftAssignmentService.summary", () => {
 
     await shiftAssignmentService.summary(supervisor);
 
-    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining({
-      assignments: {
-        some: expect.objectContaining({ type: "TIME_RESPONSIBLE", userId: "supervisor-1" }),
-      },
-    }));
+    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining(employeeAccessWhere(supervisor)));
   });
 });
 

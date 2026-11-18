@@ -13,6 +13,8 @@ vi.mock("../../shared/prisma/client", () => ({
     novelty: { findMany: vi.fn() },
     attendanceInactivityIncident: { createMany: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
+    employeeAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    userSupervisionAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
 }));
@@ -29,6 +31,8 @@ const mockedPrisma = prisma as unknown as {
   novelty: { findMany: Mock };
   attendanceInactivityIncident: { createMany: Mock; findMany: Mock; updateMany: Mock };
   user: { findMany: Mock };
+  employeeAssignment: { findMany: Mock };
+  userSupervisionAssignment: { findMany: Mock };
   $transaction: Mock;
 };
 const mockedObligation = resolveWorkObligationCandidates as unknown as Mock;
@@ -94,6 +98,28 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
     expect(mockedPrisma.attendanceInactivityIncident.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: [expect.objectContaining({ employeeId: "employee-1" })], skipDuplicates: true }),
     );
+  });
+
+  it("FALTA_INGRESO: notifica a RRHH + responsable Nivel 3 + Nivel 2 que lo supervisa, una fila por destinatario", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow("employee-1")]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow("employee-1") }]);
+    mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
+    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([
+      { employeeId: "employee-1", userId: "joaquin", user: { role: "NIVEL_3_CARGA_HORARIA" } },
+      { employeeId: "employee-1", userId: "eugenia", user: { role: "NIVEL_2_SUPERVISION" } },
+    ]);
+    mockedPrisma.userSupervisionAssignment.findMany.mockResolvedValueOnce([{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }]);
+    const createMany = vi.fn();
+    const tx = { systemNotification: { createMany }, attendanceInactivityIncident: { update: vi.fn() } };
+    mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
+
+    await checkMissingExpectedEntries(new Date("2026-09-18T11:11:00.000Z"));
+
+    const rows = createMany.mock.calls[0]![0].data as Array<{ recipientUserId: string; type: string }>;
+    // Eugenia es directa y además heredada: una sola fila.
+    expect(rows.map((row) => row.recipientUserId)).toEqual(["user-rrhh", "joaquin", "eugenia"]);
+    expect(rows.every((row) => row.type === "FALTA_INGRESO")).toBe(true);
   });
 
   it("fichada dentro de tolerancia (antes del deadline): no genera falta de ingreso, sin importar en qué tick se evalúe", async () => {

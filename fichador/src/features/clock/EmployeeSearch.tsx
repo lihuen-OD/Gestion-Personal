@@ -1,13 +1,16 @@
 import { useRef, type KeyboardEvent } from "react";
 import { AlertCircle, ChevronRight, Search, X } from "lucide-react";
 import type { ClockEmployee } from "../../services/api/timeClockApiService";
-import { employeeIdentity, employeeInitials, employeeListName } from "./employeeLabels";
+import { employeeInitials, employeeListName } from "./employeeLabels";
 import { useKeyboardInset } from "./useKeyboardInset";
 
 /** Mínimo de caracteres para consultar al backend (TimeClockPage). */
 export const MIN_SEARCH_LENGTH = 2;
 
 export type SearchState = "idle" | "hint" | "pending" | "results" | "empty" | "error";
+
+/** Lo escrito es un DNI (dígitos, con o sin puntos/espacios/guiones). */
+const looksLikeDni = (value: string) => /^[\d.\s-]+$/.test(value.trim());
 
 const normalize = (value: string) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -23,6 +26,26 @@ function Highlighted({ text, query }: { text: string; query: string }) {
       {text.slice(0, start)}
       <mark>{text.slice(start, end)}</mark>
       {text.slice(end)}
+    </>
+  );
+}
+
+/**
+ * Resalta en el DNI los dígitos escritos ignorando separadores, como compara el
+ * backend: "324" marca "32.4" en "32.401.118". Un término que no es DNI no marca nada.
+ */
+function DniHighlighted({ dni, query }: { dni: string; query: string }) {
+  const needle = looksLikeDni(query) ? query.replace(/\D/g, "") : "";
+  const positions = Array.from(dni).flatMap((char, index) => (/\d/.test(char) ? [index] : []));
+  const at = needle.length >= MIN_SEARCH_LENGTH ? positions.map((index) => dni[index]).join("").indexOf(needle) : -1;
+  if (at < 0) return <>{dni}</>;
+  const start = positions[at]!;
+  const end = positions[at + needle.length - 1]! + 1;
+  return (
+    <>
+      {dni.slice(0, start)}
+      <mark>{dni.slice(start, end)}</mark>
+      {dni.slice(end)}
     </>
   );
 }
@@ -69,7 +92,7 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
     <>
       <div className="kiosk-intro">
         <h2>Registrá tu entrada o salida</h2>
-        <p>Buscá tu nombre para empezar.</p>
+        <p>Buscá tu nombre, apellido o DNI para empezar.</p>
       </div>
 
       <div className="kiosk-search">
@@ -85,8 +108,8 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
           autoComplete="off"
           autoCapitalize="words"
           spellCheck={false}
-          placeholder="Apellido o nombre"
-          aria-label="Buscar por nombre o apellido"
+          placeholder="Nombre, apellido o DNI"
+          aria-label="Buscar por nombre, apellido o DNI"
           aria-controls="kiosk-search-results"
         />
         <span className="kiosk-search-trail">
@@ -109,7 +132,7 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
       </div>
 
       <div id="kiosk-search-results" className="kiosk-search-results" aria-live="polite">
-        {state === "hint" ? <p className="kiosk-helper">Escribí al menos {MIN_SEARCH_LENGTH} letras.</p> : null}
+        {state === "hint" ? <p className="kiosk-helper">Escribí al menos {MIN_SEARCH_LENGTH} caracteres.</p> : null}
 
         {state === "pending" && !matches.length ? (
           <>
@@ -138,7 +161,7 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
                   <span className="kiosk-avatar" aria-hidden="true">{employeeInitials(employee)}</span>
                   <span className="kiosk-row-text">
                     <span className="kiosk-row-name"><Highlighted text={employeeListName(employee)} query={value} /></span>
-                    <span className="kiosk-row-meta">{employeeIdentity(employee)}</span>
+                    {employee.dni ? <span className="kiosk-row-meta">DNI <DniHighlighted dni={employee.dni} query={value} /></span> : null}
                   </span>
                   <ChevronRight size={20} strokeWidth={1.75} aria-hidden="true" />
                 </button>
@@ -150,8 +173,8 @@ export function EmployeeSearch({ value, state, matches, errorMessage, onChange, 
         {state === "empty" ? (
           <div className="kiosk-empty">
             <span className="kiosk-empty-icon" aria-hidden="true"><Search size={22} strokeWidth={1.75} /></span>
-            <strong>No encontramos a “{value.trim()}”</strong>
-            <p>Revisá cómo está escrito o probá sólo con tu apellido.</p>
+            <strong>No encontramos coincidencias para “{value.trim()}”</strong>
+            <p>{looksLikeDni(value) ? "Revisá el número o escribí tu DNI completo." : "Revisá cómo está escrito o probá sólo con tu apellido o tu DNI."}</p>
           </div>
         ) : null}
 

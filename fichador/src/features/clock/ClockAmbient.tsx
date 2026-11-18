@@ -5,7 +5,7 @@ import type { useMaintenanceTrigger } from "../maintenance/maintenanceTrigger";
 
 export type ClockStep = 1 | 2 | 3;
 
-const STEPS = ["Buscá tu nombre", "Tocá Marcar ingreso o salida", "Mirá a la cámara y confirmá"] as const;
+const STEPS = ["Buscá tu nombre o DNI", "Tocá Marcar ingreso o salida", "Mirá a la cámara y confirmá"] as const;
 
 // Marcas del anillo del reloj (decorativas): se calculan una sola vez.
 const RING_TICKS = Array.from({ length: 120 }, (_, index) => {

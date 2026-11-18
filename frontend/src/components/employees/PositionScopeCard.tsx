@@ -11,7 +11,7 @@ import { orgScopePathNames } from "../org-structure/orgScopePath";
  * organizacional del legajo se LEE del puesto. Sólo consulta: no se copia ni
  * se edita en el legajo, y no se deriva ni exige un sector único.
  */
-export function PositionScopeCard({ position, hasPositionId }: { position?: Position; hasPositionId: boolean }) {
+export function PositionScopeCard({ position, hasPositionId, canOpenPosition = false }: { position?: Position; hasPositionId: boolean; canOpenPosition?: boolean }) {
   const [catalog, setCatalog] = useState<OrgStructureCatalog | null>(null);
 
   useEffect(() => {
@@ -44,7 +44,8 @@ export function PositionScopeCard({ position, hasPositionId }: { position?: Posi
     <div className={`position-scope-summary ${scopes.length ? "ready" : "pending"}`}>
       <div className="position-scope-summary-head">
         <small>Alcance organizacional del puesto</small>
-        <Link to={`/puestos/${position.id}`}>Ver puesto</Link>
+        {/* El módulo Puestos es sólo de Nivel 1: los demás niveles no reciben un link a una ruta bloqueada. */}
+        {canOpenPosition ? <Link to={`/puestos/${position.id}`}>Ver puesto</Link> : null}
       </div>
       {scopes.length ? (
         <ul className="org-scope-path-list">

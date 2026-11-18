@@ -224,7 +224,7 @@ export function FaceCaptureModal({ punchType, onCancel, onConfirm, onInterrupted
   onInterrupted?: () => void;
   submitting?: boolean;
   submissionStage?: SubmissionStage;
-  /** Etapa 3 (sólo presentación): "Ana Gómez · Legajo 100" bajo el título. */
+  /** Sólo presentación: "Gómez Ana · DNI 12345678" bajo el título (§32: nunca el legajo). */
   employeeLabel?: string;
   /** Etapa 3 (sólo presentación): hora Argentina en el visor. */
   now?: Date;

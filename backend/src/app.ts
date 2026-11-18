@@ -7,6 +7,7 @@ import { env } from "./config/env";
 import { requestBodyLimits } from "./shared/http/bodyLimits";
 import { trustProxySetting } from "./shared/http/clientIp";
 import { requestLogger } from "./middlewares/requestLogger";
+import { isExemptFromGlobalRateLimit } from "./modules/clock/clockRateLimits";
 import { apiRouter } from "./routes";
 import { errorHandler } from "./shared/errors/errorHandler";
 import { notFoundHandler } from "./shared/errors/notFoundHandler";
@@ -37,6 +38,12 @@ export function createApp() {
       limit: env.RATE_LIMIT_MAX,
       standardHeaders: true,
       legacyHeaders: false,
+      // §33 del fichador: sus rutas operativas EXACTAS no cuentan acá; cada una
+      // tiene tope por IP, cupo de credenciales rechazadas, autenticación y
+      // cupo por dispositivo propios (modules/clock/clockRateLimits.ts). Así
+      // una oficina con varios kioscos y usuarios admin detrás de la misma IP
+      // no comparte este cupo. Toda otra ruta sigue contando.
+      skip: (req) => isExemptFromGlobalRateLimit(req, env.API_PREFIX),
     }),
   );
   // F11: guarda de Content-Length + parser JSON de 1 MiB. Las dos rutas de

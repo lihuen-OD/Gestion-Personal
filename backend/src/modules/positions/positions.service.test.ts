@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { employeeAccessWhere } from "../employees/employeeAccess";
 import type { Mock } from "vitest";
 import { positionsRepository } from "./positions.repository";
 import { positionsService } from "./positions.service";
@@ -66,26 +67,15 @@ describe("positionsService.listAssignedEmployees", () => {
     await positionsService.listAssignedEmployees("pos-1", listQuery, supervisionUser);
 
     const accessWhere = repo.findAssignedEmployees.mock.calls[0]![2];
-    expect(accessWhere).toEqual({
-      assignments: {
-        some: {
-          type: "TIME_RESPONSIBLE",
-          userId: supervisionUser.id,
-          AND: [
-            { OR: [{ status: null }, { status: "ACTIVO" }, { status: "Activo" }] },
-            { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: expect.any(Date) } }] },
-            { OR: [{ effectiveTo: null }, { effectiveTo: { gte: expect.any(Date) } }] },
-          ],
-        },
-      },
-    });
+    expect(accessWhere).toEqual(employeeAccessWhere(supervisionUser));
+    expect(accessWhere).not.toEqual({});
   });
 
   it("Nivel 3 (Carga Horaria) tambien queda acotado a sus empleados asignados, no ve el puesto completo", async () => {
     await positionsService.listAssignedEmployees("pos-1", listQuery, cargaHorariaUser);
 
     const accessWhere = repo.findAssignedEmployees.mock.calls[0]![2];
-    expect(accessWhere.assignments.some.userId).toBe(cargaHorariaUser.id);
+    expect(accessWhere).toEqual(employeeAccessWhere(cargaHorariaUser));
     expect(accessWhere.assignments.some.type).toBe("TIME_RESPONSIBLE");
     expect(accessWhere).not.toEqual({});
   });

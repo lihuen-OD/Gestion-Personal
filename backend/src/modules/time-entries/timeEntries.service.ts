@@ -20,6 +20,7 @@ import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observabi
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
 import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
+import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
@@ -524,21 +525,16 @@ async function validateShift(input: PreviewWorkShiftInput, user: Express.AuthUse
   return { employee, hourConcept, ...calculation };
 }
 
-// F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
-// todo lo que devuelve /clock/* lo puede leer cualquiera que tenga el token
-// compartido del kiosco (embebido en el bundle público). Para distinguir
-// homónimos en pantalla alcanzan legajo + últimos 3 dígitos del DNI; el DNI
-// completo no sale del backend por este camino.
-function clockDniSuffix(dni?: string | null) {
-  const digits = (dni || "").replace(/\D/g, "");
-  return digits ? digits.slice(-3) : null;
-}
-
-function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; legajo: string; dni?: string | null }) {
+// Contrato del empleado en /api/clock/* (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md
+// §32): id, DNI completo, nombre y apellido. /api/clock/* exige un ClockDevice
+// ACTIVE autenticado individualmente, y el kiosco identifica a la persona como
+// "Apellido Nombre · DNI <completo>". El legajo no se expone al fichador (sigue
+// usándose internamente: auditoría, storage, Drive). Reemplaza la política F0
+// (legajo + últimos 3 dígitos del DNI).
+function publicEmployeeLabel(employee: { id?: string; firstName: string; lastName: string; dni: string }) {
   return {
     id: employee.id,
-    legajo: employee.legajo,
-    dniSuffix: clockDniSuffix(employee.dni),
+    dni: employee.dni,
     firstName: employee.firstName,
     lastName: employee.lastName,
     name: `${employee.lastName}, ${employee.firstName}`,
@@ -868,10 +864,12 @@ function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.Json
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-// F0: un intento guardado antes de F0 (se retienen
-// CLOCK_ATTEMPT_RETENTION_DAYS) puede traer el DNI completo y los
-// TimeEntry/TimeSegment internos de la salida. Se proyecta al mismo contrato
-// público que una respuesta nueva antes de devolverlo al kiosco.
+// Un intento guardado con un contrato anterior (se retienen
+// CLOCK_ATTEMPT_RETENTION_DAYS) puede traer los TimeEntry/TimeSegment internos
+// de la salida (antes de F0) o legajo + dniSuffix (F0 hasta §32). Se proyecta
+// al contrato público vigente antes de devolverlo al kiosco: nunca el legajo;
+// el DNI completo si quedó guardado, si no `null` (el kiosco sólo usa el nombre
+// del resultado).
 function storedAttemptResponse(value: Prisma.JsonValue | null) {
   if (!isJsonObject(value)) return null;
   const { entries: _entries, timeSegments: _timeSegments, employee, ...rest } = value;
@@ -881,8 +879,7 @@ function storedAttemptResponse(value: Prisma.JsonValue | null) {
     ...rest,
     employee: {
       id: text("id") || undefined,
-      legajo: text("legajo"),
-      dniSuffix: text("dniSuffix") || clockDniSuffix(text("dni")),
+      dni: text("dni") || null,
       firstName: text("firstName"),
       lastName: text("lastName"),
       name: text("name"),
@@ -910,9 +907,11 @@ function clockPostProcessWriter(employeeId: string, request: ClockPunchPostProce
 
 // `startAt`: eventAt de la notificación — la jornada que quedó sin salida, no
 // el momento en que se detectó/cerró (docs/decisions/NOTIFICATIONS_EVENT_ORDER.md).
+// También es la fecha de referencia de los destinatarios (vigencia de
+// TIME_RESPONSIBLE en el día Argentina de inicio de la jornada).
 // PERF-5D: el post-proceso durable del rollover pasa `db` (su transacción) y
 // `rethrow` (un fallo reintenta el paso en vez de quedar sólo logueado).
-export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification">; rethrow?: boolean } = {}) {
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification"> & RecipientsReader; rethrow?: boolean } = {}) {
   // Etapa 10E: best-effort — un fallo acá (ej. problema transitorio de DB)
   // no debe tirar abajo una fichada/rollover que ya se confirmó. El otro
   // llamador (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch
@@ -920,7 +919,7 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string,
   // (F0 del fichador standalone retiró los caminos legacy sin foto
   // clockInResolved/clockIn, que también lo llamaban.)
   try {
-    await notifyUsers(await attendanceRecipients(employeeId), {
+    await notifyUsers(await attendanceRecipients(employeeId, startAt, options.db), {
       type: "FALTA_SALIDA",
       title: "Falta registrar la salida",
       message: "La jornada venció sin salida registrada y requiere revisión.",

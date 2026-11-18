@@ -9,6 +9,7 @@ import type { EmployeeTimeGridQuery, ListEmployeeHistoryQuery, ListEmployeeOptio
 import { employeesService } from "./employees.service";
 import { automaticHourConceptBreakdownsService } from "./automaticHourConceptBreakdowns.service";
 import { employeeWorkLocationsService } from "./employeeWorkLocations.service";
+import { invalidateEmployeeScopeCaches } from "./employeeScopeCaches";
 
 const employeeDetailCache = createTtlCache<unknown>(30_000);
 const employeeTimeGridCache = createTtlCache<unknown>(60_000);
@@ -214,7 +215,9 @@ export const employeesController = {
 
   replaceAssignments: (async (req, res) => {
     const employee = await employeesService.replaceAssignments(requireParam(req, "id"), req.body, requestAuditContext(req));
-    clearEmployeeReadCaches();
+    // Un TIME_RESPONSIBLE agregado o quitado cambia el alcance del responsable
+    // y de todo Nivel 2 que lo supervise: visible ya, sin esperar TTL.
+    invalidateEmployeeScopeCaches();
     res.json({ data: employee });
   }) satisfies RequestHandler,
 

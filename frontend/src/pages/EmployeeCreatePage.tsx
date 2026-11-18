@@ -334,7 +334,7 @@ export function EmployeeCreatePage() {
                 <CompanyMultiCreateField value={value} setValue={setValue} />
                 <EmployeePositionCreateField value={value} setValue={setValue} />
                 <div className="form-wide labor-bare-slot">
-                  <PositionScopeCard position={selectedPosition} hasPositionId={Boolean(value.positionId)} />
+                  <PositionScopeCard position={selectedPosition} hasPositionId={Boolean(value.positionId)} canOpenPosition />
                   <p className="info-note compact">
                     Las ubicaciones de trabajo (zonas y establecimientos con vigencia) se asignan desde Datos Laborales una
                     vez creado el legajo.

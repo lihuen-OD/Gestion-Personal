@@ -40,7 +40,7 @@ vi.mock("../components/time-clock/FaceCaptureModal", () => ({
   ),
 }));
 
-const employeeMatch = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const employeeMatch = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 
 // Fechas relativas al reloj real de la corrida, no hardcodeadas: un turno
 // abierto hace 8 horas nunca "expira" (supera las 20h de
@@ -71,7 +71,7 @@ function mockOpenShift() {
 async function selectEmployee() {
   const user = userEvent.setup();
   render(<TimeClockPage />);
-  await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+  await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
   const resultButton = await screen.findByRole("button", { name: /Gomez, Ana/ });
   await user.click(resultButton);
   await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalledWith("employee-1"));
@@ -96,7 +96,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     mockNoOpenShift();
     const { container } = render(<TimeClockPage />);
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
     await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalled());
 
@@ -110,7 +110,7 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     mockNoOpenShift();
     const { container } = render(<TimeClockPage />);
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
     await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(timeClockApiService.status).toHaveBeenCalled());
 
@@ -175,18 +175,25 @@ describe("TimeClockPage — fichador sin selector de concepto horario (Etapa 6K)
     vi.mocked(timeClockApiService.status).mockRejectedValue(new Error("network down"));
     const user = userEvent.setup();
     render(<TimeClockPage />);
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
     await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
 
     expect(await screen.findByText("No pudimos consultar el estado del legajo seleccionado.")).toBeInTheDocument();
   });
 
-  it("identifica al empleado por legajo y los últimos 3 dígitos del DNI (F0: el DNI completo no llega al kiosco)", async () => {
+  it("§32: identifica a la persona elegida como \"Apellido Nombre\" + DNI completo, nunca por legajo", async () => {
     mockNoOpenShift();
     await selectEmployee();
 
-    expect(await screen.findByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
-    expect(screen.queryByText(/DNI \d{6,}/)).not.toBeInTheDocument();
+    const person = await waitFor(() => {
+      const card = document.querySelector(".kiosk-person");
+      expect(card).not.toBeNull();
+      return card as HTMLElement;
+    });
+    expect(person.querySelector("h2")).toHaveTextContent(/^Gomez Ana$/);
+    expect(await screen.findByText("DNI 30123456")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Legajo/i);
+    expect(document.body).not.toHaveTextContent(/DNI terminado en/i);
   });
 });
 
@@ -205,17 +212,17 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     render(<TimeClockPage />);
 
     expect(screen.getByRole("heading", { name: "Fichador de personal" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Marcar (nuevo )?ingreso/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     expect(screen.queryByText(/Cerrar sesión/i)).not.toBeInTheDocument();
   });
 
-  it("búsqueda: no consulta con menos de 2 caracteres y muestra legajo + DNI terminado en", async () => {
+  it("búsqueda: no consulta con menos de 2 caracteres y cada resultado muestra el DNI completo (sin legajo)", async () => {
     const user = userEvent.setup();
     render(<TimeClockPage />);
-    const input = screen.getByLabelText("Buscar por nombre o apellido");
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
 
     await user.type(input, "G");
     await new Promise((resolve) => setTimeout(resolve, 350));
@@ -223,7 +230,27 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
 
     await user.type(input, "o");
     await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Go"));
-    expect(await screen.findByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
+    expect(await screen.findByText("DNI 30123456")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Gomez, Ana/ })).toHaveTextContent("Gomez, AnaDNI 30123456");
+    expect(document.body).not.toHaveTextContent(/Legajo|DNI terminado en/i);
+  });
+
+  it("§32: se puede buscar por DNI; el resultado resalta los dígitos escritos y lleva a la persona", async () => {
+    mockNoOpenShift();
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
+    expect(input).toHaveAttribute("placeholder", "Nombre, apellido o DNI");
+
+    await user.type(input, "30123456");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("30123456"));
+    const row = await screen.findByRole("button", { name: /Gomez, Ana/ });
+    expect(row).toHaveTextContent("DNI 30123456");
+    expect(row.querySelector(".kiosk-row-meta mark")).toHaveTextContent("30123456");
+
+    await user.click(row);
+    expect(await screen.findByText("DNI 30123456")).toBeInTheDocument();
+    expect(document.querySelector(".kiosk-person h2")).toHaveTextContent(/^Gomez Ana$/);
   });
 
   it("sin conexión con el backend: la búsqueda muestra un estado claro y no permite fichar", async () => {
@@ -231,7 +258,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     const user = userEvent.setup();
     render(<TimeClockPage />);
 
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
 
     expect(await screen.findByText(/No hay conexión con el servidor/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Marcar (ingreso|salida)/i })).not.toBeInTheDocument();
@@ -244,7 +271,7 @@ describe("TimeClockPage standalone (F1) — flujo, errores e idempotencia", () =
     const user = userEvent.setup();
     render(<TimeClockPage />);
 
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
 
     expect(await screen.findByText("Este dispositivo fue deshabilitado por RRHH.")).toBeInTheDocument();
   });
@@ -365,7 +392,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
   // Library espera un setTimeout(0) que con los timers falsos de Vitest nunca
   // dispara.
   async function searchAndSelect() {
-    fireEvent.change(screen.getByLabelText("Buscar por nombre o apellido"), { target: { value: "Gomez" } });
+    fireEvent.change(screen.getByLabelText("Buscar por nombre, apellido o DNI"), { target: { value: "Gomez" } });
     await flush(300);
     fireEvent.click(screen.getByRole("button", { name: /Gomez, Ana/ }));
     await flush();
@@ -397,7 +424,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     await confirm();
 
     expect(screen.getByText("Entrada registrada")).toBeInTheDocument();
-    expect(screen.getByText("Ana Gomez")).toBeInTheDocument();
+    expect(screen.getByText("Gomez Ana")).toBeInTheDocument();
     expect(screen.getByText("08:01")).toBeInTheDocument();
     expect(screen.queryByText("12:30")).not.toBeInTheDocument();
     expect(screen.getByText("Volviendo al inicio…")).toBeInTheDocument();
@@ -409,8 +436,8 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     await flush(SUCCESS_RESET_MS);
 
     expect(screen.queryByText("Entrada registrada")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toHaveValue("");
-    expect(screen.queryByText("Legajo 100 · DNI terminado en 456")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toHaveValue("");
+    expect(screen.queryByText("DNI 30123456")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Marcar ingreso/i })).not.toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(true);
   });
@@ -554,7 +581,7 @@ describe("TimeClockPage — F8: confirmación, recuperación, cooldown y retorno
     expect(screen.getByRole("button", { name: /Marcar ingreso/i })).toBeEnabled();
     expect(screen.queryByRole("button", { name: /Marcar salida/i })).not.toBeInTheDocument();
     // El empleado sigue elegido; nada se fichó solo ni se consultó.
-    expect(screen.getByText("Legajo 100 · DNI terminado en 456")).toBeInTheDocument();
+    expect(screen.getByText("DNI 30123456")).toBeInTheDocument();
     expect(allBackendCalls()).toEqual(callsBefore);
   });
 
@@ -804,7 +831,7 @@ describe("TimeClockPage — gesto oculto de mantenimiento", () => {
     expect(requestAccess).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
 
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "Gomez");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
     await user.click(await screen.findByRole("button", { name: /Gomez, Ana/ }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Marcar ingreso" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Marcar ingreso" }));
@@ -839,10 +866,10 @@ describe("TimeClockPage — Etapa 2: hora, búsqueda y orientación", () => {
     vi.mocked(timeClockApiService.searchEmployees).mockImplementation(() => new Promise((resolve) => { resolveSearch = resolve; }));
     const user = userEvent.setup();
     render(<TimeClockPage />);
-    const input = screen.getByLabelText("Buscar por nombre o apellido");
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
 
     await user.type(input, "Z");
-    expect(screen.getByText("Escribí al menos 2 letras.")).toBeInTheDocument();
+    expect(screen.getByText("Escribí al menos 2 caracteres.")).toBeInTheDocument();
     expect(timeClockApiService.searchEmployees).not.toHaveBeenCalled();
 
     await user.type(input, "z");
@@ -850,15 +877,101 @@ describe("TimeClockPage — Etapa 2: hora, búsqueda y orientación", () => {
     await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Zz"));
     await act(async () => resolveSearch([]));
 
-    expect(await screen.findByText("No encontramos a “Zz”")).toBeInTheDocument();
+    expect(await screen.findByText("No encontramos coincidencias para “Zz”")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: "Buscando" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Marcar (ingreso|salida)/i })).not.toBeInTheDocument();
+  });
+
+  it("búsqueda por DNI: desde 2 dígitos, progresiva, y sin coincidencias sugiere revisar el número", async () => {
+    vi.mocked(timeClockApiService.searchEmployees).mockImplementation(async (term: string) => (["30", "301", "3012"].includes(term) ? [employeeMatch] : []));
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
+
+    await user.type(input, "3");
+    expect(screen.getByText("Escribí al menos 2 caracteres.")).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(timeClockApiService.searchEmployees).not.toHaveBeenCalled();
+
+    await user.type(input, "0");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("30"));
+    expect(await screen.findByRole("button", { name: /Gomez, Ana/ })).toHaveTextContent("DNI 30123456");
+
+    // §33: "30" volvió completo (menos de 12), así que "301" se resuelve con
+    // esa respuesta, sin otra consulta al backend.
+    await user.type(input, "1");
+    expect(await screen.findByRole("button", { name: /Gomez, Ana/ })).toHaveTextContent("DNI 30123456");
+    expect(timeClockApiService.searchEmployees).toHaveBeenCalledTimes(1);
+
+    await user.clear(input);
+    await user.type(input, "99");
+    expect(await screen.findByText("No encontramos coincidencias para “99”")).toBeInTheDocument();
+    expect(screen.getByText("Revisá el número o escribí tu DNI completo.")).toBeInTheDocument();
+  });
+
+  it("búsqueda por DNI guardado con puntos: resalta los dígitos escritos ignorando separadores", async () => {
+    const dotted = { ...employeeMatch, dni: "32.401.118" };
+    vi.mocked(timeClockApiService.searchEmployees).mockResolvedValue([dotted]);
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
+
+    await user.type(input, "324");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("324"));
+    const row = await screen.findByRole("button", { name: /Gomez, Ana/ });
+    expect(row).toHaveTextContent("DNI 32.401.118");
+    expect(row.querySelector(".kiosk-row-meta mark")).toHaveTextContent(/^32\.4$/);
+
+    // §33: "32401118" contiene "324", cuya respuesta fue completa: se
+    // resuelve sin otra consulta.
+    await user.clear(input);
+    await user.type(input, "32.401.118");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Gomez, Ana/ }).querySelector(".kiosk-row-meta mark")).toHaveTextContent(/^32\.401\.118$/));
+    expect(timeClockApiService.searchEmployees).not.toHaveBeenCalledWith("32.401.118");
+
+    await user.clear(input);
+    await user.type(input, "Gomez");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Gomez"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Gomez, Ana/ }).querySelector(".kiosk-row-meta mark")).toBeNull());
+  });
+
+  it("§33: una búsqueda más específica que una respuesta completa no vuelve a consultar; una con 12 resultados sí", async () => {
+    const twelve = Array.from({ length: 12 }, (_, index) => ({ ...employeeMatch, id: `employee-${index + 10}`, lastName: `Gomez${index}`, name: `Gomez${index}, Ana` }));
+    vi.mocked(timeClockApiService.searchEmployees).mockImplementation(async (term: string) => (term === "Go" ? twelve : [employeeMatch]));
+    const user = userEvent.setup();
+    render(<TimeClockPage />);
+    const input = screen.getByLabelText("Buscar por nombre, apellido o DNI");
+
+    await user.type(input, "Go");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Go"));
+    // 12 = el máximo: pudo quedar gente afuera, se consulta "Gom".
+    await user.type(input, "m");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledWith("Gom"));
+    expect(await screen.findByRole("button", { name: /Gomez, Ana/ })).toBeInTheDocument();
+    // "Gom" volvió completo: el resto del apellido se resuelve en memoria.
+    await user.type(input, "ez");
+    expect(await screen.findByRole("button", { name: /Gomez, Ana/ })).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(timeClockApiService.searchEmployees).toHaveBeenCalledTimes(2);
+    // Un espacio final es la misma consulta.
+    await user.type(input, " ");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(timeClockApiService.searchEmployees).toHaveBeenCalledTimes(2);
+  });
+
+  it("§33: limpiar la selección vacía el caché: la próxima persona consulta de nuevo", async () => {
+    mockNoOpenShift();
+    const user = await selectEmployee();
+    expect(timeClockApiService.searchEmployees).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Cambiar empleado" }));
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "Gomez");
+    await waitFor(() => expect(timeClockApiService.searchEmployees).toHaveBeenCalledTimes(2));
   });
 
   it("búsqueda: resalta la coincidencia sin cambiar el nombre accesible del resultado", async () => {
     const user = userEvent.setup();
     render(<TimeClockPage />);
-    await user.type(screen.getByLabelText("Buscar por nombre o apellido"), "gom");
+    await user.type(screen.getByLabelText("Buscar por nombre, apellido o DNI"), "gom");
 
     const result = await screen.findByRole("button", { name: /Gomez, Ana/ });
     expect(result.querySelector("mark")).toHaveTextContent("Gom");

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { KeyRound, Pencil, Plus, Power } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
-import type { Employee, Role, User } from "../types";
+import type { Employee, Role, User, UserSupervisionPerson } from "../types";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { userApiService } from "../services/api/userApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
@@ -24,6 +24,10 @@ import { useSort, type SortAccessors } from "../utils/sort";
 import { confirmAction } from "../services/appDialog";
 import { getUserErrorMessage } from "../services/api/apiClient";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
+import { SupervisedUsersSelector } from "../components/users/SupervisedUsersSelector";
+
+const SUPERVISION_ROLE: Role = "Nivel 2 - Supervisión / Gestión";
+const CARGA_ROLE: Role = "Nivel 3 - Administrativo de Carga Horaria";
 
 type UserDraft = Omit<User, "id">;
 
@@ -42,7 +46,12 @@ function emptyUserDraft(): UserDraft {
     sector: "",
     employeeId: "",
     employeeName: "",
+    supervisedUserIds: [],
   };
+}
+
+function peopleList(people: UserSupervisionPerson[]) {
+  return people.map((person) => person.name).join(", ");
 }
 
 // La empresa es un dato administrativo existente; no concede permisos.
@@ -123,7 +132,7 @@ export function UsersPage() {
 
   const openEdit = (user: User, focusPassword = false) => {
     setEditingUserId(user.id);
-    setDraft({ ...user, password: "" });
+    setDraft({ ...user, password: "", supervisedUserIds: user.supervisedUserIds ?? [] });
     setError(focusPassword ? "Completa la nueva contrasena y guarda los cambios." : "");
     setOpen(true);
     ensureCatalogLoaded();
@@ -154,18 +163,27 @@ export function UsersPage() {
       sector: undefined,
     };
 
+    // La contraseña nunca viaja en el PATCH: en edición sólo se resetea, en
+    // un pedido aparte, si se completó.
     try {
-      if (editingUserId) {
-        await userApiService.update({ ...payload, id: editingUserId });
-        if (password) await userApiService.resetPassword(editingUserId, password);
-      } else {
-        await userApiService.create(payload);
-      }
-      reload();
-      close();
-    } catch {
-      setError("No se pudo guardar el usuario. Revisa email, contrasena y alcance.");
+      if (editingUserId) await userApiService.update({ ...payload, id: editingUserId });
+      else await userApiService.create(payload);
+    } catch (saveError) {
+      setError(getUserErrorMessage(saveError, "No se pudo guardar el usuario. Intentá nuevamente."));
+      return;
     }
+    if (editingUserId && password) {
+      try {
+        await userApiService.resetPassword(editingUserId, password);
+      } catch (passwordError) {
+        reload();
+        setDraft((current) => ({ ...current, password: "" }));
+        setError(`Los datos del usuario se guardaron, pero no se pudo cambiar la contraseña: ${getUserErrorMessage(passwordError, "intentá nuevamente.")}`);
+        return;
+      }
+    }
+    reload();
+    close();
   });
 
   const toggleStatus = async (user: User) => {
@@ -191,6 +209,21 @@ export function UsersPage() {
   };
 
   const { sorted, sort, toggleSort } = useSort(users, sortAccessors);
+
+  const editingUser = editingUserId ? users.find((user) => user.id === editingUserId) : undefined;
+  // Responsables de carga elegibles: Nivel 3 activos, más los ya
+  // seleccionados aunque estén inactivos (para poder verlos y quitarlos).
+  const supervisionOptions = useMemo<UserSupervisionPerson[]>(() => users
+    .filter((user) => user.id !== editingUserId && user.role === CARGA_ROLE && (user.status === "Activo" || draft.supervisedUserIds?.includes(user.id)))
+    .map((user) => ({ id: user.id, name: user.name, email: user.email, status: user.status }))
+    .sort((a, b) => a.name.localeCompare(b.name, "es")), [users, editingUserId, draft.supervisedUserIds]);
+  // Empleado vinculado: un legajo sólo puede tener una cuenta. El del usuario
+  // que se edita sigue disponible.
+  const linkedEmployeeOwner = useMemo(() => new Map(users
+    .filter((user) => user.employeeId && user.id !== editingUserId)
+    .map((user) => [user.employeeId!, user.name])), [users, editingUserId]);
+  const losesSupervised = editingUser?.role === SUPERVISION_ROLE && draft.role !== SUPERVISION_ROLE && (editingUser.supervisedUsers?.length ?? 0) > 0;
+  const losesSupervisors = editingUser?.role === CARGA_ROLE && draft.role !== CARGA_ROLE && (editingUser.supervisorUsers?.length ?? 0) > 0;
 
   if (roleLevel(currentUser!.role) !== 1) return <Navigate to="/" />;
 
@@ -247,7 +280,7 @@ export function UsersPage() {
 
     {open && (
       <Modal title={editingUserId ? "Editar usuario" : "Crear usuario"} close={close}>
-        <div className="form-stack">
+        <div className="form-stack user-form">
           <div className="info-note compact">
             <b>{editingUserId ? "Edicion de usuario" : "Alta de usuario"}</b>
             <p>
@@ -262,10 +295,30 @@ export function UsersPage() {
           <Field label={editingUserId ? "Nueva contrasena (opcional)" : "Contrasena inicial *"} type="password" value={draft.password} set={(password) => setDraft({ ...draft, password })} />
           <Select label="Rol *" value={draft.role} set={(role) => setDraft({ ...draft, role: role as Role })} options={userRoleOptions(draft.role)} />
           <Select label="Estado" value={draft.status} set={(status) => setDraft({ ...draft, status: status as User["status"] })} options={["Activo", "Inactivo"]} />
-          {catalogStatus === "loading" ? <p className="muted small">Cargando opciones de empresa y empleados...</p> : null}
-          {catalogStatus === "error" ? <p className="muted small">No pudimos cargar empresa/empleados. Podés guardar igual sin esos datos, o cerrar y volver a intentar.</p> : null}
           <Select label="Empresa administrativa" value={draft.company || ""} set={(company) => setDraft({ ...draft, company })} options={companyOptions} disabled={catalogStatus === "loading"} />
-          <label>
+          {catalogStatus === "loading" ? <p className="muted small user-form-wide">Cargando opciones de empresa y empleados...</p> : null}
+          {catalogStatus === "error" ? <p className="muted small user-form-wide">No pudimos cargar empresa/empleados. Podés guardar igual sin esos datos, o cerrar y volver a intentar.</p> : null}
+          {draft.role === SUPERVISION_ROLE ? (
+            <SupervisedUsersSelector
+              options={supervisionOptions}
+              selectedIds={draft.supervisedUserIds ?? []}
+              onChange={(supervisedUserIds) => setDraft({ ...draft, supervisedUserIds })}
+              disabled={isSaving}
+            />
+          ) : null}
+          {losesSupervised ? (
+            <div className="info-note compact" role="note">
+              <b>Al guardar, dejará de supervisar responsables de carga</b>
+              <p>Con el rol {draft.role} se quitan sus responsables supervisados ({peopleList(editingUser!.supervisedUsers!)}) y deja de ver los legajos que tenían asignados.</p>
+            </div>
+          ) : null}
+          {losesSupervisors ? (
+            <div className="info-note compact" role="note">
+              <b>Al guardar, dejará de ser responsable de carga supervisado</b>
+              <p>{peopleList(editingUser!.supervisorUsers!)} dejará{editingUser!.supervisorUsers!.length === 1 ? "" : "n"} de acceder a los legajos asignados a este usuario.</p>
+            </div>
+          ) : null}
+          <label className="user-form-wide">
             Empleado vinculado
             <select
               value={draft.employeeId || ""}
@@ -280,12 +333,16 @@ export function UsersPage() {
               }}
             >
               <option value="">Sin empleado vinculado</option>
-              {employeeOptions.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employee.lastName}, {employee.firstName} - Legajo {displayLegajo(employee)}
-                </option>
-              ))}
+              {employeeOptions.map((employee) => {
+                const owner = linkedEmployeeOwner.get(employee.id);
+                return (
+                  <option key={employee.id} value={employee.id} disabled={Boolean(owner)}>
+                    {employee.lastName}, {employee.firstName} - Legajo {displayLegajo(employee)}{owner ? ` (ya vinculado a ${owner})` : ""}
+                  </option>
+                );
+              })}
             </select>
+            <small className="field-hint">Identifica a qué persona corresponde la cuenta. No define a qué legajos accede.</small>
           </label>
 
           {error && <p className="error">{error}</p>}

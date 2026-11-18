@@ -26,6 +26,8 @@ vi.mock("../../shared/prisma/client", () => ({
     novelty: { findMany: vi.fn() },
     attendanceInactivityIncident: { createMany: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     user: { findMany: vi.fn() },
+    employeeAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    userSupervisionAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn(),
   },
 }));
