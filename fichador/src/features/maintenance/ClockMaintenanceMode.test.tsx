@@ -118,14 +118,14 @@ describe("Modo mantenimiento sobre el fichador real", () => {
   it("con un código válido reemplaza al fichador por el modo mantenimiento y al salir vuelve al fichador normal", async () => {
     await renderKiosk();
     await enterMaintenance();
-    expect(screen.queryByLabelText("Buscar por nombre o apellido")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Buscar por nombre, apellido o DNI")).not.toBeInTheDocument();
     expect(kioskActivity.isIdle()).toBe(false);
     // La sesión operativa del equipo no cambió: el token de mantenimiento va aparte.
     expect(clockDeviceSession.isActive()).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Volver al fichador" }));
     await advance(0);
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(screen.queryByText("Modo mantenimiento")).not.toBeInTheDocument();
     expect(requests("DELETE /clock/maintenance/session")).toHaveLength(1);
     expect(kioskActivity.isIdle()).toBe(true);
@@ -138,7 +138,7 @@ describe("Modo mantenimiento sobre el fichador real", () => {
     // Etapa 6B-4 (F6-05): antes de volver, un aviso breve explica el vencimiento.
     expect(screen.getByRole("heading", { name: MAINTENANCE_EXPIRED_TITLE })).toBeInTheDocument();
     await advance(MAINTENANCE_EXPIRED_NOTICE_MS);
-    expect(screen.getByLabelText("Buscar por nombre o apellido")).toBeInTheDocument();
+    expect(screen.getByLabelText("Buscar por nombre, apellido o DNI")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Modo mantenimiento" })).not.toBeInTheDocument();
   });
 

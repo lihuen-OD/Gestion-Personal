@@ -971,22 +971,31 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
   });
 });
 
-// F0 del fichador standalone: todo lo que devuelve /clock/* lo puede leer
-// cualquiera con el token compartido del kiosco. Se fija el contrato mínimo.
-describe("F0 — datos que el fichador expone al kiosco", () => {
+// Contrato del empleado en /clock/* (FICHADOR_STANDALONE_PWA_PLAN.md §32,
+// reemplaza la política F0 de legajo + últimos 3 dígitos del DNI): id, DNI
+// completo, nombre y apellido. Nunca legajo, CUIL ni conceptos horarios.
+describe("§32 — datos que el fichador expone al kiosco", () => {
   const normalConcept = { id: "concept-normal", name: "Hora normal", code: "NORMAL", kind: "NORMAL", status: "ACTIVO", systemRole: "NORMAL_BASE" };
 
-  it("clockSearch devuelve sólo los últimos 3 dígitos del DNI, nunca el DNI completo ni el CUIL", async () => {
+  it("clockSearch devuelve el DNI completo, nunca el legajo ni el CUIL", async () => {
     repo.searchEmployeesForClock.mockResolvedValueOnce([activeEmployee]);
 
     const [employee] = await timeEntriesService.clockSearch({ search: "Gomez" });
 
-    expect(employee).toEqual({ id: activeEmployee.id, legajo: "100", dniSuffix: "000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" });
-    expect(JSON.stringify(employee)).not.toContain(activeEmployee.dni);
+    expect(employee).toEqual({ id: activeEmployee.id, dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" });
+    expect(employee).not.toHaveProperty("legajo");
+    expect(employee).not.toHaveProperty("dniSuffix");
     expect(JSON.stringify(employee)).not.toContain(activeEmployee.cuil);
   });
 
-  it("clockStatusByEmployee no expone conceptos horarios ni el DNI completo", async () => {
+  it("clockSearch pasa el término tal cual al repositorio (nombre, apellido o DNI)", async () => {
+    repo.searchEmployeesForClock.mockResolvedValueOnce([activeEmployee]);
+
+    await expect(timeEntriesService.clockSearch({ search: "30000000" })).resolves.toEqual([expect.objectContaining({ dni: "30000000" })]);
+    expect(repo.searchEmployeesForClock).toHaveBeenCalledWith("30000000");
+  });
+
+  it("clockStatusByEmployee expone el DNI completo pero no conceptos horarios ni el legajo", async () => {
     repo.findClockValidationContext.mockResolvedValueOnce({
       ...activeEmployee,
       workShifts: [{ id: "shift-open", startAt: new Date("2026-10-06T11:00:00.000Z"), hourConcept: normalConcept }],
@@ -996,11 +1005,11 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     const status = await timeEntriesService.clockStatusByEmployee({ employeeId: activeEmployee.id });
 
     expect(status).toEqual({
-      employee: expect.objectContaining({ dniSuffix: "000" }),
+      employee: { id: activeEmployee.id, dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
       openShift: { id: "shift-open", startAt: new Date("2026-10-06T11:00:00.000Z") },
     });
     expect(status).not.toHaveProperty("hourConcepts");
-    expect(status.employee).not.toHaveProperty("dni");
+    expect(status.employee).not.toHaveProperty("legajo");
   });
 
   it("la respuesta de una salida no incluye los TimeEntry/TimeSegment internos", async () => {
@@ -1025,8 +1034,8 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
 
     expect(result).not.toHaveProperty("entries");
     expect(result).not.toHaveProperty("timeSegments");
-    expect(result.employee).toEqual(expect.objectContaining({ dniSuffix: "000" }));
-    expect(result.employee).not.toHaveProperty("dni");
+    expect(result.employee).toEqual({ id: activeEmployee.id, dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" });
+    expect(result.employee).not.toHaveProperty("legajo");
   });
 
   it("la evidencia de la fichada lleva IP, user-agent y deviceId de la request autenticada, nunca del payload", async () => {
@@ -1073,7 +1082,7 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     expect(await evidenceWrittenBy(repo.createOpenWorkShift)).toMatchObject({ userAgent: null, deviceId: CLOCK_DEVICE_ID });
   });
 
-  it("un intento guardado antes de F0 se proyecta al contrato público (sin DNI completo ni datos internos)", async () => {
+  it("un intento guardado antes de F0 se proyecta al contrato público vigente (sin legajo ni datos internos)", async () => {
     repo.findClockPunchAttempt.mockResolvedValueOnce({
       requestId: "88888888-8888-8888-8888-888888888888",
       employeeId: activeEmployee.id,
@@ -1092,9 +1101,30 @@ describe("F0 — datos que el fichador expone al kiosco", () => {
     const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888888", activeEmployee.id, CLOCK_DEVICE_ID);
 
     expect(state.response).toEqual({
-      employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
+      employee: { id: activeEmployee.id, dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
       workShift: { id: "shift-open", startAt: "2026-10-06T11:00:00.000Z", endAt: "2026-10-06T12:00:00.000Z", totalMinutes: 60, totalHours: 1 },
       segments: [],
+    });
+  });
+
+  it("un intento guardado con el contrato F0 (legajo + dniSuffix) se devuelve sin legajo ni sufijo", async () => {
+    repo.findClockPunchAttempt.mockResolvedValueOnce({
+      requestId: "88888888-8888-8888-8888-888888888889",
+      employeeId: activeEmployee.id,
+      deviceId: CLOCK_DEVICE_ID,
+      status: "COMPLETED",
+      startedAt: new Date(),
+      response: {
+        employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
+        workShift: { id: "shift-1", startAt: "2026-10-06T11:00:00.000Z" },
+      },
+    });
+
+    const state = await timeEntriesService.clockPunchAttemptStatus("88888888-8888-8888-8888-888888888889", activeEmployee.id, CLOCK_DEVICE_ID);
+
+    expect(state.response).toEqual({
+      employee: { id: activeEmployee.id, dni: null, firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" },
+      workShift: { id: "shift-1", startAt: "2026-10-06T11:00:00.000Z" },
     });
   });
 });
@@ -1894,7 +1924,8 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
       const { key, response } = await completionWrittenBy(repo.createOpenWorkShift, row);
       expect(key).toEqual(ATTEMPT_KEY("INGRESO"));
       expect(response).toEqual(JSON.parse(JSON.stringify(result)));
-      expect(JSON.stringify(response)).not.toMatch(/photo|thumbnail|base64|tokenHash|secret|"dni"/i);
+      // §32: el resultado lleva el DNI completo (contrato del kiosco); nunca legajo, CUIL ni evidencia.
+      expect(JSON.stringify(response)).not.toMatch(/photo|thumbnail|base64|tokenHash|secret|"legajo"|"cuil"|dniSuffix/i);
     });
 
     it("salida: guarda la jornada cerrada y los tramos públicos, sin TimeEntry/TimeSegment internos", async () => {
@@ -1971,7 +2002,7 @@ describe("F7 — canal KIOSK, cooldown y auditoría del dispositivo", () => {
     it("un paso posterior al commit que falla no presenta como fallida una fichada confirmada: responde el resultado guardado", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const input = punch("IN");
-      const stored = { employee: { id: activeEmployee.id, legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez" }, workShift: { id: "shift-1", startAt: "2026-10-15T11:00:00.000Z" } };
+      const stored = { employee: { id: activeEmployee.id, dni: "30000000", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" }, workShift: { id: "shift-1", startAt: "2026-10-15T11:00:00.000Z" } };
       repo.findClockValidationContext.mockResolvedValue(context());
       repo.createClockPunchAttempt.mockResolvedValueOnce({});
       repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1", startAt: new Date(), startPunchId: null });

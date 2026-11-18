@@ -51,6 +51,7 @@ import {
   periodFromInstant,
 } from "../../shared/datetime/argentinaTime";
 import type { CreateTimeEntryInput, employeeRowSortKeys, ListTimeEntriesQuery, TimeEntriesExportQuery, TimeEntriesPeriodEmployeesQuery, timeEntryListSortKeys, UpdateTimeEntryInput } from "./timeEntries.schemas";
+import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 // Etapa 10B: nota de la alerta POSIBLE_OLVIDO_SALIDA resuelta por un rollover (también la usa el post-proceso durable, PERF-5D).
@@ -533,6 +534,21 @@ export async function resolveDoubleHourMultipliersByDate(employeeId: string, dat
   const resolutions = await resolveSpecialHourRulesByDate(employeeId, dates, db);
   return new Map(Array.from(resolutions, ([key, resolution]) => [key, resolution.multiplier]));
 }
+
+/**
+ * Dígitos con los que el fichador busca por DNI, o `null` si el término no es
+ * un DNI. Es DNI si sólo tiene dígitos y separadores (puntos, espacios o
+ * guiones) y al menos CLOCK_SEARCH_MIN_LENGTH dígitos —el mismo mínimo que
+ * nombre y apellido—. Los separadores se ignoran: "32.401.118" → "32401118".
+ */
+export function clockDniSearchDigits(search: string): string | null {
+  const trimmed = search.trim();
+  if (!/^[\d.\s-]+$/.test(trimmed)) return null;
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length >= CLOCK_SEARCH_MIN_LENGTH ? digits : null;
+}
+
+const CLOCK_SEARCH_LIMIT = 12;
 
 function employeeSearchWhere(search?: string): Prisma.EmployeeWhereInput {
   const trimmed = search?.trim();
@@ -1690,7 +1706,29 @@ export const timeEntriesRepository = {
     });
   },
 
-  searchEmployeesForClock(search: string) {
+  // Fichador: nombre, apellido, "nombre apellido" (en cualquier orden) o DNI.
+  // Nunca por legajo; sólo ACTIVO; máximo 12, por apellido y nombre.
+  //
+  // DNI: `Employee.dni` es texto libre (sin normalizar al guardar; puede estar
+  // como "32.401.118"). Un término numérico se compara contra el DNI SIN
+  // separadores, sin modificar el dato guardado, así "324", "32401" o
+  // "32.401.118" encuentran "32.401.118" y "32401118" por igual. Prisma no
+  // expresa `regexp_replace`, por eso esta rama es SQL parametrizado (los
+  // dígitos van como parámetro; no pueden traer comodines de LIKE). Rendimiento:
+  // `LIKE '%…%'` no usa índices B-tree, igual que el `contains` de nombre y
+  // apellido; ambos recorren los ACTIVO (ver FICHADOR_STANDALONE_PWA_PLAN.md §32).
+  async searchEmployeesForClock(search: string): Promise<Array<{ id: string; dni: string; firstName: string; lastName: string; status: EmployeeStatus }>> {
+    const dniDigits = clockDniSearchDigits(search);
+    if (dniDigits) {
+      return prisma.$queryRaw<Array<{ id: string; dni: string; firstName: string; lastName: string; status: EmployeeStatus }>>(Prisma.sql`
+        SELECT "id", "dni", "firstName", "lastName", "status"
+        FROM "Employee"
+        WHERE "status" = 'ACTIVO'::"EmployeeStatus"
+          AND regexp_replace("dni", '[^0-9]', '', 'g') LIKE ${`%${dniDigits}%`}
+        ORDER BY "lastName" ASC, "firstName" ASC
+        LIMIT ${CLOCK_SEARCH_LIMIT}
+      `);
+    }
     const words = search.split(/\s+/).filter(Boolean);
     return prisma.employee.findMany({
       where: {
@@ -1714,14 +1752,13 @@ export const timeEntriesRepository = {
       },
       select: {
         id: true,
-        legajo: true,
         dni: true,
         firstName: true,
         lastName: true,
         status: true,
       },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-      take: 12,
+      take: CLOCK_SEARCH_LIMIT,
     });
   },
 

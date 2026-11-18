@@ -565,7 +565,8 @@
   overflow-wrap: anywhere;
 }
 
-.kiosk-row-name mark {
+.kiosk-row-name mark,
+.kiosk-row-meta mark {
   background: none;
   color: var(--color-cyan-2);
 }

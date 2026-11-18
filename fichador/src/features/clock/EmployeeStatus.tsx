@@ -1,7 +1,7 @@
 import { AlertTriangle, Clock3, LogIn, RefreshCw } from "lucide-react";
 import type { ClockEmployee } from "../../services/api/timeClockApiService";
 import { formatDayMonth, formatTime, isSameArgentinaDay } from "../../utils/date";
-import { employeeFullName, employeeIdentity, employeeInitials } from "./employeeLabels";
+import { employeeDisplayName, employeeIdentity, employeeInitials } from "./employeeLabels";
 
 export type ShiftView =
   | { kind: "loading" }
@@ -113,8 +113,8 @@ export function EmployeeStatus({ employee, shift, now, refreshing, refreshDisabl
         </span>
         <div className="kiosk-person-text">
           <p className="kiosk-eyebrow" aria-hidden="true">Empleado seleccionado</p>
-          <h2>{employeeFullName(employee)}</h2>
-          <p>{employeeIdentity(employee)}</p>
+          <h2>{employeeDisplayName(employee)}</h2>
+          {employee.dni ? <p>{employeeIdentity(employee)}</p> : null}
         </div>
         <button type="button" className="kiosk-change" onClick={onChange} disabled={changeDisabled} aria-label="Cambiar empleado">
           Cambiar

@@ -14,17 +14,24 @@ describe("F5 — contrato de enrolamiento de ClockDevice", () => {
     expect(routes).toContain('"/:id/activate"');
     expect(routes).toContain('"/:id/revoke"');
     expect(routes).toContain("requireAuth, requireAnyRole(adminRoles)");
-    // F5: register, status, pairing refresh, resolve-pairing. F9: heartbeat por IP y por dispositivo.
-    // Mantenimiento: IP, canje de código y sesión por dispositivo, y emisión RRHH por usuario.
-    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(10);
+    // F5/§33: register y pairing refresh con cupo por IP propio (sin
+    // credencial todavía); status, heartbeat y mantenimiento con las capas
+    // compartidas de clock/clockRateLimits.ts; resolve-pairing y la emisión
+    // del código de mantenimiento con cupos RRHH propios.
+    expect(routes.match(/clockEnrollmentLimiter\(/g)).toHaveLength(2);
+    expect(routes.match(/createRateLimiter\(\{/g)).toHaveLength(2);
+    const status = routes.slice(routes.indexOf('"/device/status"'), routes.indexOf("clockDevicesController.status"));
+    expect(status.indexOf("...clockPreAuthLimiters")).toBeGreaterThan(-1);
+    expect(status.indexOf("anyEnrolledDevice")).toBeGreaterThan(status.indexOf("...clockPreAuthLimiters"));
+    expect(status.indexOf("...clockDeviceLimiters.deviceStatus")).toBeGreaterThan(status.indexOf("anyEnrolledDevice"));
   });
 
   it("F9: el heartbeat exige ACTIVE, tiene limitadores propios (IP antes, dispositivo después) y no audita", () => {
     const routes = moduleFile("clockDevices.routes.ts");
     const heartbeat = routes.slice(routes.indexOf('"/heartbeat"'), routes.indexOf("clockDevicesController.heartbeat"));
-    const ipLimiter = heartbeat.indexOf("CLOCK_IP_RATE_LIMIT_MAX");
+    const ipLimiter = heartbeat.indexOf("...clockPreAuthLimiters");
     const auth = heartbeat.indexOf("requireClockDevice()");
-    const deviceLimiter = heartbeat.indexOf("`clock-heartbeat:${authenticatedClockDevice(req).id}`");
+    const deviceLimiter = heartbeat.indexOf("...clockDeviceLimiters.heartbeat");
     expect(ipLimiter).toBeGreaterThan(-1);
     expect(auth).toBeGreaterThan(ipLimiter);
     expect(deviceLimiter).toBeGreaterThan(auth);

@@ -19,7 +19,7 @@ vi.mock("../services/api/timeClockApiService", () => ({
 }));
 vi.mock("@mediapipe/tasks-vision", () => ({ FilesetResolver: { forVisionTasks: vi.fn() }, FaceDetector: { createFromOptions: vi.fn() } }));
 
-const ANA: ClockEmployee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const ANA: ClockEmployee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 const DEVICE_NOW = new Date("2026-11-11T12:00:00.000Z");
 const inResult = { employee: ANA, workShift: { id: "shift-1", startAt: DEVICE_NOW.toISOString() } };
 const PHOTO = `data:image/jpeg;base64,${"A".repeat(10_000)}`;
@@ -31,7 +31,7 @@ let detectorClose: ReturnType<typeof vi.fn>;
 
 const flush = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const personShown = () => document.querySelector(".kiosk-person h2")?.textContent ?? null;
-const searchInput = () => screen.queryByLabelText("Buscar por nombre o apellido") as HTMLInputElement | null;
+const searchInput = () => screen.queryByLabelText("Buscar por nombre, apellido o DNI") as HTMLInputElement | null;
 const captureOpen = () => screen.queryByRole("dialog", { name: "Confirmar fichada con foto" }) !== null;
 const touch = (element: Element = document.body) => fireEvent.pointerDown(element);
 
@@ -58,7 +58,7 @@ function expectInitialScreen() {
   expect(personShown()).toBeNull();
   expect(captureOpen()).toBe(false);
   expect(searchInput()).toHaveValue("");
-  expect(screen.queryByText(/Gomez|Legajo 100|DNI terminado en 456/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Gomez|30123456|Legajo|DNI terminado/)).not.toBeInTheDocument();
 }
 
 // La cámara se carga diferida (React.lazy); con temporizadores simulados la
@@ -105,10 +105,10 @@ describe("Pantalla principal abandonada", () => {
   it("1/19. con un empleado elegido y sin interacción, vuelve al inicio a los 45 s y libera el kiosco", async () => {
     render(<TimeClockPage />);
     await selectAna();
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     expect(kioskActivity.isIdle()).toBe(false);
     await flush(KIOSK_IDLE_MS - 1_000);
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     await flush(1_000);
     expectInitialScreen();
     expect(kioskActivity.isIdle()).toBe(true);
@@ -120,10 +120,10 @@ describe("Pantalla principal abandonada", () => {
     await flush(40_000);
     touch(screen.getByRole("region", { name: "Fichada" }));
     await flush(40_000);
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     fireEvent.keyDown(document.body, { key: "Tab" });
     await flush(KIOSK_IDLE_MS - 1);
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     await flush(1);
     expectInitialScreen();
   });
@@ -274,7 +274,7 @@ describe("Operaciones protegidas", () => {
     await flush(10 * 60_000);
     expect(captureOpen()).toBe(true);
     expect(screen.getByText(/Registrando fichada…|Estamos verificando/)).toBeInTheDocument();
-    expect(personShown()).toBe("Ana Gomez");
+    expect(personShown()).toBe("Gomez Ana");
     expect(vi.mocked(timeClockApiService.photoPunch).mock.calls[0]![0].employeeId).toBe(ANA.id);
   });
 

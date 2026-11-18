@@ -1457,7 +1457,9 @@ GET  /api/clock/attempts/:requestId?employeeId=
 
 Semántica de `source` (F7.1): `AttendancePunch.source` = canal de **esa** fichada; `WorkShift.source` = canal que **originó** la jornada (nunca se reescribe); `TimeEntry.source` = `WorkShift.source`. Toda fichada nueva es `KIOSK`. `PUBLIC_CLOCK_PHOTO` queda como valor histórico (fichadas del alias y del fichador de F6): una jornada histórica `PUBLIC_CLOCK_PHOTO` todavía abierta y cerrada por `/api/clock` queda con salida `KIOSK` y jornada y horas `PUBLIC_CLOCK_PHOTO`; en un rollover, la jornada vieja y su `TimeEntry` de 0 h conservan su source y la nueva es `KIOSK`. El `source` lo decide el servidor, nunca el cliente: cualquier `source` o `deviceId` del body se descarta (el schema no los acepta). Las fichadas históricas no se reescriben (no hay backfill).
 
-Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas: límite por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `requireClockDevice()`, límite por dispositivo autenticado (`CLOCK_RATE_LIMIT_MAX`), y recién después validación del body. No requieren `requireAuth` (y un JWT no las abre). `photo-punch` parsea su body (hasta 6 MiB) recién después de esas guardas (ver "Tamaño del body y errores de body"). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
+Kiosco sin sesión de usuario. Desde F6 cada ruta operativa exige un `ClockDevice` **ACTIVE** autenticado individualmente con `Authorization: ClockDevice <deviceId>.<secret>` (`requireClockDevice()`); no existe token compartido y `x-clock-device-token` ya no autentica nada. Orden de guardas (§33): tope por IP previo a autenticar (`CLOCK_IP_RATE_LIMIT_MAX`, sólo tráfico sin credencial ya verificada), cupo de credenciales rechazadas por IP y credencial (`CLOCK_AUTH_FAILURE_RATE_LIMIT_MAX` cada 15 min), `requireClockDevice()`, cupo propio de la operación por dispositivo autenticado, y recién después validación del body.
+
+**Fichador — cupos y 429 (§33).** Cupos por dispositivo y por operación, en ventanas de `CLOCK_RATE_LIMIT_WINDOW_MS` (5 min): búsqueda `CLOCK_SEARCH_RATE_LIMIT_MAX` (450) más `CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX` (1800/h), jornada `CLOCK_STATUS_RATE_LIMIT_MAX` (100), fichada `CLOCK_PUNCH_RATE_LIMIT_MAX` (60), intentos `CLOCK_ATTEMPT_RATE_LIMIT_MAX` (120). Agotar uno no afecta a los otros ni a otro dispositivo. Las seis rutas exactas `GET /clock/employees`, `POST /clock/status`, `POST /clock/photo-punch`, `GET /clock/attempts/:requestId`, `POST /clock/heartbeat` y `GET /clock/device/status` no cuentan en el limitador global de la API (`RATE_LIMIT_MAX`); toda otra ruta, incluidas las desconocidas bajo `/api/clock/*`, el enrolamiento y el mantenimiento, sí. Un cupo agotado responde `429` con header `Retry-After` y body `{ "error": { "code", "message", "retryAfterSeconds" } }`; códigos: `CLOCK_SEARCH_RATE_LIMITED`, `CLOCK_STATUS_RATE_LIMITED`, `CLOCK_PUNCH_RATE_LIMITED`, `CLOCK_ATTEMPT_RATE_LIMITED`, `CLOCK_DEVICE_RATE_LIMITED` (heartbeat, estado, mantenimiento), `CLOCK_NETWORK_RATE_LIMITED` (tope por IP), `CLOCK_AUTH_RATE_LIMITED` (credencial rechazada repetidamente) y `CLOCK_ENROLLMENT_RATE_LIMITED` (registro y refresh). Un `429` en `photo-punch` es definitivo: la fichada no se procesó; el cliente no reintenta solo. No requieren `requireAuth` (y un JWT no las abre). `photo-punch` parsea su body (hasta 6 MiB) recién después de esas guardas (ver "Tamaño del body y errores de body"). Cualquier otra ruta bajo `/api/clock/*` o `/api/time-entries/clock/*` responde `404 ROUTE_NOT_FOUND` con o sin credencial (F0 del fichador standalone retiró `POST /clock/in`, `/clock/out`, `/clock/status-by-dni`, `/clock/in-by-dni` y `/clock/out-by-dni`, que fichaban sin foto). Ver `docs/SECURITY_STANDARDS.md` → "Public clock endpoints (fichador)".
 
 Errores de dispositivo y de fichada:
 
@@ -1488,7 +1490,9 @@ Errores de dispositivo y de fichada:
 
 Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Provincia › Zona · Establecimiento` cuando hay provincia y `Zona · Establecimiento` cuando no la hay. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
-Contrato de empleado en las cuatro respuestas (F0): `{ id, legajo, dniSuffix, firstName, lastName, name }` — `dniSuffix` son los últimos 3 dígitos del DNI; el DNI completo nunca se devuelve. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
+Contrato de empleado en las cuatro respuestas (plan §32, vigente): `{ id, dni, firstName, lastName, name }` — `dni` es el DNI completo tal como está guardado; el legajo no se devuelve (sigue siendo interno: auditoría, storage, Drive). `dni` sólo es `null` al leer un intento guardado con el contrato anterior. Reemplaza el contrato F0 `{ id, legajo, dniSuffix, firstName, lastName, name }` (`dniSuffix` = últimos 3 dígitos), retirado en §32.
+
+Búsqueda `GET /api/clock/employees?search=` (2 a 80 caracteres): sólo empleados `ACTIVO`, máximo 12, orden apellido/nombre. Coincide por nombre, por apellido, por varias palabras repartidas entre nombre y apellido (en cualquier orden) o por DNI. El DNI se compara contra `Employee.dni` **ignorando separadores** (`regexp_replace(dni, '[^0-9]', '', 'g') LIKE '%<dígitos>%'`, SQL parametrizado; el dato guardado no se modifica) sólo si el término es numérico (dígitos con puntos, espacios o guiones) y tiene al menos 2 dígitos (`CLOCK_SEARCH_MIN_LENGTH`, el mismo mínimo que nombre y apellido): `32`, `324`, `3240`, `32401`, `32401118` y `32.401.118` encuentran tanto `32.401.118` como `32401118`. Nunca busca por legajo. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
 ```json
 {
@@ -2224,18 +2228,16 @@ Rutas públicas, con rate limit independiente:
 | GET | `/api/clock/maintenance/session` | idem + `X-Clock-Maintenance-Session: <token>` | Diagnóstico del equipo y segundos restantes: `{ expiresAt, expiresInSeconds, device, serverTime }`. Sesión inválida o vencida → `401 CLOCK_MAINTENANCE_SESSION_INVALID` |
 | DELETE | `/api/clock/maintenance/session` | idem | Cierra la sesión de ese token. Siempre `204` (idempotente) |
 
-Rate limits por IP: registro `5/10 min`, estado `120/5 min`, refresh `10/10
-min`; además hay un máximo operativo de 20 solicitudes pendientes. La
+Rate limits (§33 del plan del fichador): registro `5/10 min` y refresh `10/10
+min` por IP; estado (`GET /clock/device/status`) `60/5 min` por dispositivo
+autenticado; además hay un máximo operativo de 20 solicitudes pendientes. La
 resolución RRHH usa `10/5 min`, separada de las anteriores. El heartbeat (F9)
-tiene dos límites propios, que nunca consumen el cupo de fichadas:
-
-- por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`);
-- `10/5 min` por dispositivo ya autenticado.
-
-El modo mantenimiento también tiene limitadores propios: por IP antes de
-autenticar (`CLOCK_IP_RATE_LIMIT_MAX`), `10/15 min` por dispositivo para canjear
-códigos y `30/5 min` por dispositivo para leer o cerrar la sesión. Además, 5
-intentos fallidos anulan el código vigente; ese contador vive en la base.
+tiene su propio cupo, `10/5 min` por dispositivo ya autenticado, que nunca
+consume el de las fichadas. El modo mantenimiento también: `10/15 min` por
+dispositivo para canjear códigos y `30/5 min` para leer o cerrar la sesión;
+además, 5 intentos fallidos anulan el código vigente (contador en la base).
+Estado, heartbeat y mantenimiento pasan antes por las mismas capas previas a
+autenticar que las rutas operativas (ver "Fichador — cupos y 429").
 
 Rutas RRHH (`Bearer` JWT + Nivel 1):
 

@@ -119,8 +119,14 @@ async function call(method: string, path: string, options: CallOptions = {}) {
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const payload = (await response.json().catch(() => null)) as { error?: { code?: string } } | null;
-  return { status: response.status, code: payload?.error?.code, rateLimit: response.headers.get("ratelimit-limit") };
+  const payload = (await response.json().catch(() => null)) as { error?: { code?: string; retryAfterSeconds?: number } } | null;
+  return {
+    status: response.status,
+    code: payload?.error?.code,
+    retryAfterSeconds: payload?.error?.retryAfterSeconds,
+    retryAfterHeader: response.headers.get("retry-after"),
+    rateLimit: response.headers.get("ratelimit-limit"),
+  };
 }
 
 const validPunch = {
@@ -268,19 +274,44 @@ describe("F6 — presencia con throttle", () => {
   });
 });
 
-describe("F6 — rate limit por dispositivo", () => {
-  it("agotar el cupo de un dispositivo no bloquea a otro que sale por la misma IP", async () => {
-    for (let index = 0; index < env.CLOCK_RATE_LIMIT_MAX; index += 1) {
-      expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(RATE_LIMITED) })).status).toBe(200);
+describe("§33 — cupos por dispositivo separados por operación", () => {
+  const searchAs = (entry: FakeDevice) => call("GET", "/clock/employees?search=ana", { authorization: credential(entry) });
+
+  it("agotar las búsquedas de un equipo no bloquea su jornada, su fichada ni la recuperación de intentos", async () => {
+    for (let index = 0; index < env.CLOCK_SEARCH_RATE_LIMIT_MAX; index += 1) {
+      expect((await searchAs(RATE_LIMITED)).status).toBe(200);
     }
-    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(RATE_LIMITED) })).status).toBe(429);
-    expect((await call("GET", "/clock/employees?search=ana", { authorization: credential(RATE_LIMITED_NEIGHBOUR) })).status).toBe(200);
+    const limited = await searchAs(RATE_LIMITED);
+    expect(limited).toMatchObject({ status: 429, code: "CLOCK_SEARCH_RATE_LIMITED" });
+    // 429 estructurado: el body repite la espera porque CORS no expone Retry-After.
+    expect(limited.retryAfterSeconds).toBeGreaterThan(0);
+    expect(limited.retryAfterSeconds).toBeLessThanOrEqual(env.CLOCK_RATE_LIMIT_WINDOW_MS / 1000);
+    expect(Number(limited.retryAfterHeader)).toBe(limited.retryAfterSeconds);
+    const searchesServed = vi.mocked(timeEntriesService.clockSearch).mock.calls.length;
+
+    expect((await call("POST", "/clock/status", { authorization: credential(RATE_LIMITED), body: { employeeId: EMPLOYEE_ID } })).status).toBe(200);
+    expect((await call("POST", "/clock/photo-punch", { authorization: credential(RATE_LIMITED), body: validPunch })).status).toBe(201);
+    expect((await call("GET", `/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, { authorization: credential(RATE_LIMITED) })).status).toBe(200);
+    // El rechazo nunca llegó al servicio.
+    expect(searchesServed).toBe(env.CLOCK_SEARCH_RATE_LIMIT_MAX);
   });
 
-  it("una credencial rechazada sólo consume el cupo por IP: nunca crea un bucket de dispositivo", async () => {
-    const rejected = await call("GET", "/clock/employees?search=ana", { authorization: `ClockDevice ${UNKNOWN_ID}.${ACTIVE.secret}` });
-    const accepted = await call("GET", "/clock/employees?search=ana", { authorization: credential(OTHER_ACTIVE) });
-    expect(rejected).toMatchObject({ status: 401, rateLimit: String(env.CLOCK_IP_RATE_LIMIT_MAX) });
-    expect(accepted).toMatchObject({ status: 200, rateLimit: String(env.CLOCK_RATE_LIMIT_MAX) });
+  it("agotar el cupo de un dispositivo no bloquea a otro que sale por la misma IP", async () => {
+    expect((await searchAs(RATE_LIMITED)).status).toBe(429);
+    expect((await searchAs(RATE_LIMITED_NEIGHBOUR)).status).toBe(200);
+  });
+
+  it("cada operación anuncia su propio cupo por dispositivo", async () => {
+    expect((await call("POST", "/clock/status", { authorization: credential(OTHER_ACTIVE), body: { employeeId: EMPLOYEE_ID } })).rateLimit).toBe(String(env.CLOCK_STATUS_RATE_LIMIT_MAX));
+    expect((await call("POST", "/clock/photo-punch", { authorization: credential(OTHER_ACTIVE), body: validPunch })).rateLimit).toBe(String(env.CLOCK_PUNCH_RATE_LIMIT_MAX));
+    expect((await call("GET", `/clock/attempts/${REQUEST_ID}?employeeId=${EMPLOYEE_ID}`, { authorization: credential(OTHER_ACTIVE) })).rateLimit).toBe(String(env.CLOCK_ATTEMPT_RATE_LIMIT_MAX));
+    // La búsqueda tiene dos ventanas (5 min y 1 h); el header es el de la última.
+    expect((await searchAs(OTHER_ACTIVE)).rateLimit).toBe(String(env.CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX));
+  });
+
+  it("una credencial rechazada nunca crea un bucket de dispositivo: sólo cuenta en las capas previas", async () => {
+    const rejected = await call("POST", "/clock/status", { authorization: `ClockDevice ${UNKNOWN_ID}.${ACTIVE.secret}`, body: { employeeId: EMPLOYEE_ID } });
+    // El último limitador que la contó es el tope por IP (credencial no verificada).
+    expect(rejected).toMatchObject({ status: 401, code: "CLOCK_DEVICE_INVALID_CREDENTIAL", rateLimit: String(env.CLOCK_IP_RATE_LIMIT_MAX) });
   });
 });

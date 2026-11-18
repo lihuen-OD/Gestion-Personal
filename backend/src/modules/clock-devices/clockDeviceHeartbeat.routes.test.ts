@@ -66,7 +66,7 @@ async function heartbeat(options: { authorization?: string; body?: unknown; head
   if (options.authorization) headers.authorization = options.authorization;
   const response = await fetch(`${baseUrl}/clock/heartbeat`, { method: "POST", headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
   const text = await response.text();
-  // El 429 de express-rate-limit es texto plano.
+  // §33: el 429 de los cupos del fichador es JSON con código.
   const payload = (response.headers.get("content-type")?.includes("application/json") ? JSON.parse(text) : null) as { data?: { device: Record<string, unknown>; serverTime: string }; error?: { code?: string } } | null;
   return { status: response.status, data: payload?.data, error: payload?.error, raw: text, rateLimit: response.headers.get("ratelimit-limit") };
 }
@@ -148,11 +148,11 @@ describe("F9 — cupo propio del heartbeat", () => {
       expect(result.status).toBe(200);
       expect(result.rateLimit).toBe("10");
     }
-    expect((await heartbeat({ authorization: credential(QUOTA) })).status).toBe(429);
+    expect(await heartbeat({ authorization: credential(QUOTA) })).toMatchObject({ status: 429, error: { code: "CLOCK_DEVICE_RATE_LIMITED" } });
     expect((await heartbeat({ authorization: credential(OTHER_ACTIVE) })).status).toBe(200);
 
     const operational = await fetch(`${baseUrl}/clock/employees?search=ana`, { headers: { authorization: credential(QUOTA) } });
     expect(operational.status).toBe(200);
-    expect(operational.headers.get("ratelimit-remaining")).toBe(String(env.CLOCK_RATE_LIMIT_MAX - 1));
+    expect(operational.headers.get("ratelimit-remaining")).toBe(String(env.CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX - 1));
   });
 });

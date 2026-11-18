@@ -334,6 +334,7 @@ Notas:
 - **Un solo endpoint de fichada** (`POST /api/clock/punches`, foto obligatoria) en lugar de `/punch` + `/photo-punch`. No existe camino sin foto en el namespace nuevo. El reconocimiento facial futuro agrega campos al mismo endpoint.
 - `GET` para estado (es una lectura; hoy es `POST`).
 - `dniMasked`: el kiosco necesita distinguir homónimos; legajo + últimos 3 dígitos del DNI (`***.***.678`) alcanzan sin exponer el DNI completo.
+  > **Reemplazado en §32:** el kiosco muestra y recibe el DNI completo y ya no el legajo.
 - No se agrega endpoint de "renovar código": si vence, se vuelve a registrar.
 
 **Namespace administrativo — `/api/clock-devices/*`** (JWT + rol RRHH; **no** bajo `/api/clock`, para que los dos middlewares nunca se mezclen en un mismo router):
@@ -673,6 +674,8 @@ Se eliminaron también el código que sólo servía a esas rutas: handlers del c
 | `POST /clock/photo-punch` | Fichar con foto, idempotente | **Escritura** | etiqueta + `workShift` + `segments` (sin filas internas) | ídem + foto obligatoria | ídem |
 | `GET /clock/attempts/:requestId?employeeId=` | Recuperar el resultado tras un corte de red | Lectura | lo mismo que `photo-punch`; exige que `employeeId` coincida | ídem | ídem |
 
+> **Nota (§32):** la política de esta tabla para la identificación (legajo + `dniSuffix`) fue reemplazada: hoy la búsqueda acepta nombre, apellido o DNI y el contrato es `{ id, dni, firstName, lastName, name }`, sin legajo. Se conserva el texto como registro de F0.
+
 Minimización aplicada en F0: DNI completo → `dniSuffix`; sin `hourConcepts` ni concepto de la jornada en `status`; sin `entries`/`timeSegments` en la salida; los intentos guardados antes de F0 se proyectan al mismo contrato al leerse. La búsqueda **se mantiene**: el fichador actual no tiene otra forma de identificar al empleado; su reemplazo restringido llega con `ClockDevice` (F8).
 
 ### 18.4 Token compartido actual
@@ -742,6 +745,7 @@ Revisado: `requestLogger` / `performanceLogger` loguean método, path saneado (s
 - **Fotos de otros:** con el token se puede fichar con una foto cualquiera por cualquier empleado; la validación facial sigue siendo del cliente (R10).
 - **Body de 40 MB** (R9): el parser JSON global corre antes de la verificación del token. No se cambió en F0 porque el límite es global (afecta también `/auth/login`) y moverlo toca el orden de todos los middlewares; queda para F12.
 - **Enumeración por nombre:** la búsqueda con 2 caracteres sigue permitiendo listar empleados activos (sin DNI completo), acotada por el rate limit por IP una vez configurado.
+  > **Actualizado en §32:** desde §32 cada resultado lleva el DNI completo; el riesgo se acota con `ClockDevice` `ACTIVE`, los límites por IP y por dispositivo y el máximo de 12 resultados. El mínimo es de 2 caracteres también para el DNI (ver el riesgo aceptado en §32).
 - **Despliegue desfasado:** si el backend nuevo convive un rato con el frontend viejo, la línea de identificación muestra sólo el legajo (sin el sufijo de DNI). No afecta la fichada.
 
 ### 18.9 Cierre de F0 (entorno de desarrollo actual)
@@ -3594,6 +3598,9 @@ público. Incluye `previousOpenShift` en rollover y excluye foto/thumbnail,
 DNI completo, credenciales y filas internas. `storedAttemptResponse()` sigue
 proyectando intentos históricos al contrato vigente.
 
+> **Nota (§32):** desde §32 el resultado público (y por lo tanto el persistido)
+> incluye el DNI completo y ya no el legajo.
+
 **Fallos y efectos posteriores.** Si falla auditoría o `COMPLETED`, la
 transacción revierte, la evidencia original se compensa, el intento pasa a
 `FAILED` con `503 CLOCK_TEMPORARY_FAILURE` y el mismo `requestId` reproduce
@@ -3854,7 +3861,7 @@ iPad/iPadOS, versión desplegada y evidencia breve.
 | Persistencia | Cerrar/reabrir y reiniciar iPad | Mantiene credencial. Si iOS limpia storage: OBSERVAR, reenrolar y documentar |
 | Orientación | Portrait y landscape | Sin overflow, solapamiento ni controles inaccesibles |
 | Acceso guiado | Activar, bloquear/salir y volver | Reduce salidas accidentales; documentar que no es control de seguridad |
-| RRHH | Presencia, nombre/ubicación, fichada en Asistencia | Dispositivo y actor técnico correctos, sin DNI completo en el kiosco |
+| RRHH | Presencia, nombre/ubicación, fichada en Asistencia | Dispositivo y actor técnico correctos, sin DNI completo en el kiosco (desde §32: DNI completo y sin legajo en el kiosco) |
 
 Una fila crítica de fichada, duplicación, seguridad, storage, CSP o recovery en
 `FAIL` bloquea el piloto. `OBSERVAR` sólo se admite para comportamiento
@@ -3881,3 +3888,299 @@ elegir el legajo/persona autorizada y el iPad/iPadOS. Ninguno requiere hoy un
 cambio de código. El próximo paso es crear esos recursos manualmente, llenar
 la checklist de gates y ejecutar el smoke test previo; recién después se
 agenda la prueba física de §31.9.
+
+## 32. Identificación por DNI completo en el fichador (2026-11-17)
+
+**Decisión.** Reemplaza la política F0 (legajo + últimos 3 dígitos del DNI,
+`dniSuffix`). El fichador identifica a la persona como:
+
+```text
+Gomez Ana          ← "Apellido Nombre" (en la búsqueda: "Gomez, Ana")
+DNI 30123456       ← DNI completo
+```
+
+y nunca muestra el legajo. El legajo sigue existiendo y usándose internamente
+(auditoría, nombres de fotos, storage, Drive); esta etapa sólo deja de
+exponerlo en el fichador.
+
+**Contrato.** Las cuatro rutas operativas de `/api/clock/*` devuelven el
+empleado como `{ id, dni, firstName, lastName, name }`. `legajo` y `dniSuffix`
+salen del contrato; `clockDniSuffix()` se eliminó. Un intento guardado con un
+contrato anterior se proyecta al vigente al leerse (`dni: null` si no guardó
+el DNI completo; el kiosco sólo usa el nombre del resultado). Detalle en
+`docs/BACKEND_API_CONTRACTS.md` → "Fichador (`clock`, F7)".
+
+**Búsqueda.** Nombre, apellido, "nombre apellido" en cualquier orden o DNI;
+sólo `ACTIVO`, mínimo 2 caracteres, máximo 12 resultados, nunca por legajo.
+`Employee.dni` es texto libre sin normalizar al guardar (puede estar como
+"32.401.118"), así que un término numérico se compara contra el DNI **sin
+separadores**: `regexp_replace(dni, '[^0-9]', '', 'g') LIKE '%<dígitos>%'`, en
+SQL parametrizado y sin modificar el dato guardado. Así "32", "324", "3240",
+"32401", "32401118" y "32.401.118" encuentran tanto "32.401.118" como
+"32401118" (la versión anterior comparaba variantes del término y no
+encontraba el comienzo de un DNI guardado con puntos). Rendimiento medido en
+PostgreSQL local con 20.000 empleados: peor caso (8 dígitos sin coincidencia,
+recorre la tabla) ≈ 3,8 ms, menor que la búsqueda por nombre ya existente
+(`ILIKE '%…%'`, ≈ 8,7 ms); con coincidencias, el índice
+`(status, lastName, firstName)` corta en 12 filas (≈ 0,1 ms). No se agrega
+índice: `LIKE '%…%'` no usa B-tree y un índice de expresión trigram exigiría
+`pg_trgm` y una migración; reevaluar si el padrón supera ~100.000 legajos.
+El mínimo es único para nombre,
+apellido y DNI: 2 caracteres (`CLOCK_SEARCH_MIN_LENGTH`), y la búsqueda es
+progresiva mientras se escribe (debounce de 250 ms; una respuesta vieja nunca
+pisa a la vigente). La primera versión de §32 exigía 4 dígitos para el DNI; se
+unificó en 2 a pedido del usuario el mismo día.
+
+**Límite de solicitudes (análisis, sin cambios aplicados).** Las cuatro rutas
+operativas comparten UN cupo por dispositivo (`CLOCK_RATE_LIMIT_MAX` = 30 cada
+5 min). Medido contra un backend real: escribir un DNI de 8 dígitos a ritmo
+normal (≈ 320 ms por tecla, más que el debounce de 250 ms) dispara 7 búsquedas;
+con la consulta de estado son 8–9 solicitudes por persona antes de fichar. A la
+tercera persona dentro de la misma ventana, `POST /clock/status` respondió
+`429` con `Retry-After` ≈ 230 s: **las búsquedas pueden bloquear fichadas
+legítimas** en un cambio de turno. Además, el limitador global de la API
+(`RATE_LIMIT_MAX` = 300 cada 15 min por IP) también cuenta las rutas del
+fichador. Propuesta pendiente de aprobación: cupos separados por dispositivo
+para búsqueda y para estado/fichada/intentos, de modo que agotar la búsqueda
+nunca impida fichar; ver el informe de la etapa. **Aplicado en §33.**
+
+**Riesgo de enumeración (aceptado).** Desde 2 caracteres un dispositivo
+`ACTIVE` puede listar hasta 12 empleados activos con su DNI completo por
+consulta. Bajar el DNI de 4 a 2 dígitos no abre una puerta nueva: 2 letras de
+nombre o apellido ya devolvían el DNI completo de hasta 12 personas. Lo que
+acota una enumeración sistemática es: credencial individual revocable,
+límite por dispositivo (`CLOCK_RATE_LIMIT_MAX`, 30 cada 5 min por defecto,
+compartido con estado y fichada), límite por IP y el máximo de 12 resultados.
+**No resuelto:** no hay cupo de búsquedas separado ni alerta por patrones de
+enumeración, y quien tenga acceso al equipo (o extraiga su credencial) podría
+recorrer el padrón activo en algunas horas. La respuesta operativa es revocar
+el `ClockDevice`.
+
+**Pantallas del fichador.** Búsqueda (label/aria "Buscar por nombre, apellido
+o DNI", placeholder "Nombre, apellido o DNI"; cada resultado "Apellido,
+Nombre" + "DNI <completo>" con los dígitos coincidentes resaltados), empleado
+seleccionado ("Apellido Nombre" + "DNI <completo>"), visor de cámara
+("Apellido Nombre · DNI <completo>") y pantalla de éxito ("Apellido Nombre",
+sin DNI: es una confirmación breve, no una identificación). Ninguna muestra
+el legajo.
+
+**Seguridad y privacidad.** El DNI completo pasa a ser visible en el
+dispositivo de fichada. Se mantiene sin cambios: `/api/clock/*` exige un
+`ClockDevice` `ACTIVE` autenticado individualmente, ninguna ruta se volvió
+pública, los límites por IP y por dispositivo siguen igual, guards y flujo de
+fichada no cambian. El DNI no se agrega a logs, telemetría (`clock_punch_timing`
+no lleva datos de la persona), `localStorage`/IndexedDB, nombres de fotos,
+rutas de Drive ni URLs, salvo el texto `search` que la búsqueda ya usaba: el
+request logger descarta el query string y la descripción de auditoría de un
+`403` redacta `search=` a `search=:texto` (`describeRequestPath`). El intento
+persistido (`ClockPunchAttempt.response`, con retención limitada) guarda el
+mismo resultado público, por lo que incluye el DNI completo.
+
+**Despliegue.** Publicar primero el fichador y después el backend: el fichador
+nuevo tolera la respuesta vieja (sin `dni` oculta la línea del DNI), pero un
+fichador viejo con el backend nuevo mostraría "Legajo undefined" hasta que el
+service worker actualice la PWA.
+
+**Verificación.** Tests de repositorio (búsqueda por nombre, apellido, nombre +
+apellido, DNI completo, con puntos, fragmentos de 2, 3 y 4 dígitos, INACTIVO, DNI de otro, sin
+legajo) y de servicio (contrato de búsqueda, estado, fichada e intentos
+guardados F0/pre-F0); Vitest del fichador (identidad, búsqueda por DNI,
+label); Playwright (búsqueda por DNI, sin legajo, sin desborde en 320x568,
+390x844, 844x390, 1366x768 y 1920x1080, DNI ausente de consola y
+almacenamiento); PWA (CSP y offline shell).
+
+## 33. Capacidad simultánea: cupos por operación, buscador y pruebas de carga (2026-11-17)
+
+Objetivo: fichadas simultáneas en oficinas y establecimientos reales, con 30
+personas en 5 minutos en la primera oficina y 100 en 5 minutos como capacidad
+general, en equipos con IP pública compartida o propia. Sin cambios de schema,
+de reglas de asistencia, de autenticación `ClockDevice`, de idempotencia, de
+cooldown ni de transacciones. Sin cambios del pool de PostgreSQL ni de
+timeouts: las pruebas no mostraron espera de conexión (`transaction_acquire`
+p95 < 1 ms localmente).
+
+### 33.1 Qué limitaba
+
+- Las cuatro rutas operativas compartían **un** cupo por dispositivo de 30
+  cada 5 minutos: con el debounce de 250 ms, buscar consumía casi todo el cupo
+  y `POST /clock/status` respondía `429` (§32).
+- El limitador global de la API (300 cada 15 minutos por IP) también contaba
+  el fichador, el heartbeat y el uso administrativo de la misma red.
+- El tope por IP de las rutas del fichador (300 cada 5 minutos) contaba todo
+  el tráfico de la red, legítimo o no.
+- El `429` era texto plano, sin código ni `retryAfterSeconds` (CORS no expone
+  `Retry-After`): el fichador no podía distinguir causas ni informar la espera.
+
+Línea de base medida contra el código anterior (`base30`, §33.5): 30 personas
+en fila frente a 1 equipo → **8 fichadas**, 139 respuestas `429`, 21 personas
+no llegaron a encontrarse en el buscador y 1 recibió `429` en la jornada.
+
+### 33.2 Cupos
+
+Única fuente: `backend/src/modules/clock/clockRateLimits.ts`. Valores por
+defecto en `config/env.ts` (rangos validados; documentados en
+`.env.example` y `DEVOPS_DEPLOYMENT_STANDARDS.md`). Capas de cada ruta de
+dispositivo, en orden:
+
+| Capa | Clave | Valor | Justificación |
+|---|---|---|---|
+| Tope por IP antes de autenticar (`CLOCK_IP_RATE_LIMIT_MAX`) | IP | 300 / 5 min | Cuenta **sólo** solicitudes sin credencial ya verificada (ausente, mal formada, inventada, o la primera de un equipo tras un reinicio). Acota los lookups de credenciales inventadas; el tráfico de equipos verificados lo acotan sus cupos, así que ni 200 fichadas detrás de una IP (899 solicitudes medidas) ni una inundación sin credencial bloquean a un equipo verificado |
+| Credenciales rechazadas (`CLOCK_AUTH_FAILURE_RATE_LIMIT_MAX`) | IP + huella de la credencial | 10 / 15 min | Cuenta sólo `401` de `requireClockDevice` ya ocurridos (no los `401` de negocio ni requests en curso). Un equipo mal configurado se bloquea a sí mismo; los vecinos de la IP presentan otra credencial |
+| Búsqueda (`CLOCK_SEARCH_RATE_LIMIT_MAX`, `CLOCK_SEARCH_HOURLY_RATE_LIMIT_MAX`) | dispositivo | 450 / 5 min y 1800 / h | Un equipo atiende ≤ ~33 personas cada 5 min (medido: 30 en fila en 274 s). Peor caso legítimo ≈ 13 consultas por persona (tecleo de 300 ms por letra, apellido frecuente que siempre devuelve 12, nombre completo): 33 × 13 ≈ 430. Por hora, 4 ventanas al máximo |
+| Jornada (`CLOCK_STATUS_RATE_LIMIT_MAX`) | dispositivo | 100 / 5 min | 40 personas × 2 (consulta + refresco) + margen |
+| Fichada (`CLOCK_PUNCH_RATE_LIMIT_MAX`) | dispositivo | 60 / 5 min | 40 personas; con red mala cada fichada tarda ~45 s y el ritmo cae a ~7 (con 3 reenvíos ≈ 28) |
+| Intentos (`CLOCK_ATTEMPT_RATE_LIMIT_MAX`) | dispositivo | 120 / 5 min | ~7 recuperaciones completas × 14 consultas |
+| Heartbeat / estado del enrolamiento / mantenimiento | dispositivo | 10 / 60 / 10 por 15 min y 30 | Sin cambios salvo el estado: antes 120 / 5 min **por IP** (3 tablets pendientes detrás de una red lo agotaban), ahora 60 / 5 min por dispositivo |
+
+- **Limitador global:** las seis rutas exactas `GET /clock/employees`,
+  `POST /clock/status`, `POST /clock/photo-punch`,
+  `GET /clock/attempts/:requestId`, `POST /clock/heartbeat` y
+  `GET /clock/device/status` no cuentan (`isExemptFromGlobalRateLimit`, por
+  método y path exactos). Las variantes (otras mayúsculas, barra final,
+  `HEAD`), las rutas desconocidas bajo `/api/clock/*`, el enrolamiento, el
+  mantenimiento y todo el admin siguen contando. `clockRateLimits.test.ts`
+  verifica sobre la app real que cada ruta exenta tiene sus capas propias.
+- **Credencial verificada:** conjunto en memoria de huellas (SHA-256 truncado
+  del header, nunca el secreto) que pasaron `requireClockDevice` con un estado
+  permitido en los últimos 10 minutos; cualquier `401` o `403` la borra, así
+  que un equipo revocado vuelve a contar desde su primer `403`.
+- **Memoria del proceso:** como antes (§30.10), todos los cupos viven en una
+  instancia. Con más de una instancia hace falta un store compartido.
+
+### 33.3 Buscador del fichador
+
+`fichador/src/features/clock/employeeSearchCache.ts`, sólo en memoria (sin
+`localStorage`, `sessionStorage` ni IndexedDB), vigente 60 s y vaciado al
+volver al inicio o al cambiar de persona. Sin respuesta conocida con certeza
+consulta al backend como antes. Se reutiliza:
+
+1. la misma consulta para el backend: mismos dígitos de DNI ("33" = "33." =
+   "3-3"), o el mismo nombre ASCII sin distinguir mayúsculas;
+2. una consulta más específica que una respuesta **completa** (menos de 12)
+   del mismo tipo: DNI cuyos dígitos contienen a los anteriores (en cualquier
+   posición), o nombre que contiene al anterior. Se filtra con la regla del
+   backend (nombre, apellido, cada palabra; DNI sin separadores) y en su orden.
+
+Equivalencia exacta con `ILIKE`: el filtrado sólo se aplica si la consulta es
+ASCII sin comodines (`%`, `_`, `\`) y los nombres candidatos tienen sólo ASCII
+o letras latinas acentuadas habituales; fuera de eso, al backend. Supuesto: la
+base no usa una configuración regional turca (en `en_US`, `C.UTF-8` o ICU,
+`A-Z → a-z` es igual que en JavaScript). Paridad medida contra el backend
+real (escenario `parity`): 5376 consultas, 57 030 pares, 17 284 resueltos en
+memoria, **0 diferencias** (nombres con tildes, ñ, ü, apóstrofos, guiones,
+compuestos, mayúsculas, NFD y signo Kelvin; DNI con puntos, espacios, guiones
+y subcadenas).
+
+Efecto medido: con nombres frecuentes cada respuesta llega a 12 y no se puede
+reutilizar, así que el ahorro real está en el DNI y en las repeticiones
+(en el navegador: "33.333.333" hizo 2 consultas en lugar de 8). La corrección
+del problema la dan los cupos separados, no el caché. El debounce de 250 ms se
+mantiene: subirlo sumaría demora visible y los cupos ya contemplan el peor
+caso de tecleo.
+
+### 33.4 `429` y mensajes
+
+`429` con `Retry-After` y body `{ error: { code, message, retryAfterSeconds } }`
+(contrato en `BACKEND_API_CONTRACTS.md`). El fichador distingue búsqueda
+("Se hicieron muchas búsquedas seguidas en este equipo. Esperá N y volvé a
+buscar."), cupo del equipo, red y credencial rechazada, siempre con la espera
+y, salvo la búsqueda, "Si se repite, avisá a RRHH". Nunca reintenta solo: un
+`429` en `photo-punch` es definitivo (la fichada no se procesó). El backend
+registra el primer rechazo de cada clave y ventana como `RATE_LIMITED` (código,
+patrón de ruta, dispositivo, e IP sólo en las capas previas a autenticar),
+nunca la búsqueda ni el `requestId`.
+
+### 33.5 Pruebas de carga
+
+`backend/scripts/clock-load/run.mts` (cómo correrlo en su encabezado). Sólo
+PostgreSQL local `clock_load*`, empleados y dispositivos sintéticos
+(`LOAD-*`, `PAR-*`), backend lanzado aislado (sin `.env`, fotos en un
+directorio temporal, sin Object Storage ni Neon, sólo el worker del
+post-proceso) y kioscos virtuales con el recorrido del cliente real: tecleo
+de 150-350 ms por letra con el caché real del fichador, jornada, cámara de 2 a
+3,5 s, fichada con foto única de ~100 KB, recuperación con el mismo
+`requestId`, pantalla de éxito de 3,5 s y heartbeat por minuto. Cada escenario
+corre en tiempo real (5 min) con equipos e IPs propios y después verifica en la
+base: una fichada por intento confirmado, ningún duplicado, a lo sumo una
+jornada abierta por persona, cada foto con el hash enviado y del empleado
+correcto, sin archivos ni filas huérfanas, intentos sin `PROCESSING` y
+post-proceso drenado.
+
+Resultados **locales** (MacBook, PostgreSQL 18 local, disco local; los
+escenarios de volumen corrieron con búsqueda 300/1200, antes de subirla a
+450/1800, sin ningún `429`):
+
+| Escenario | Confirmadas | En ≤ 5 min | 429 | 5xx | Duplicados | Fotos OK | Fichada p50/p95/p99 (ms) | Búsquedas por persona | Solicitudes de la IP más cargada | Conexiones PG máx. | RSS máx. (MB) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| base30 (código anterior) | 8/30 | 8 | 139 | 0 | 0 | 8 | 20.6/51/51 | 5.07 | 173 | 2 | 177.5 |
+| s30_1dev (1 equipo) | 30/30 | 30 | 0 | 0 | 0 | 30 | 16.6/55.7/75 | 2.03 | 126 | 8 | 144.2 |
+| s30_3dev (3 equipos, 1 IP) | 30/30 | 30 | 0 | 0 | 0 | 30 | 16.6/37.7/56.1 | 1.8 | 120 | 9 | 115.1 |
+| s30_legacy (sin caché) | 30/30 | 29 | 0 | 0 | 0 | 30 | 16.4/54.9/55.1 | 1.73 | 117 | 9 | 110.4 |
+| s30_keystroke (1 consulta por tecla) | 30/30 | 30 | 0 | 0 | 0 | 30 | 17.4/39.6/68 | 2.8 | 149 | 9 | 108.6 |
+| s100_dist (10 equipos, 10 IP) | 100/100 | 100 | 0 | 0 | 0 | 100 | 19.7/25.1/41.6 | 1.9 | 49 | 10 | 117.4 |
+| s100_1ip (10 equipos, 1 IP) | 100/100 | 100 | 0 | 0 | 0 | 100 | 18.7/24.9/27.7 | 1.9 | 440 | 10 | 118 |
+| s100_2ip (10 equipos, 2 IP) | 100/100 | 100 | 0 | 0 | 0 | 100 | 18.1/24.7/33.5 | 2.25 | 240 | 9 | 123.2 |
+| s150 (15 equipos, 3 IP) | 150/150 | 150 | 0 | 0 | 0 | 150 | 17.7/26.1/57.6 | 2.06 | 248 | 10 | 158.9 |
+| s200_1ip (20 equipos, 1 IP) | 200/200 | 200 | 0 | 0 | 0 | 200 | 23.5/39.4/68.3 | 2.04 | 899 | 13 | 225.3 |
+| s200_dist (20 equipos, 20 IP) | 200/200 | 200 | 0 | 0 | 0 | 200 | 23.1/34.5/64.3 | 1.94 | 53 | 13 | 225.3 |
+
+En todos: CPU media del backend ≤ 3,5 %, `transaction_acquire` p95 < 1 ms,
+10 consultas SQL por ingreso y ~25 por salida, post-proceso drenado en < 0,5 s.
+
+Escenarios funcionales y de abuso (`special`, con los cupos finales):
+
+- dispositivo revocado: `403 CLOCK_DEVICE_REVOKED` en búsqueda, jornada,
+  fichada y heartbeat; 0 fichadas;
+- mismo `requestId`: el reenvío idéntico devuelve el mismo resultado y uno con
+  otro payload `409 CLOCK_IDEMPOTENCY_KEY_REUSED`; 11 fichadas para 11 intentos;
+- timeout del cliente (corte entre 2 y 120 ms): 10/10 confirmadas, 4 por
+  recuperación del intento, 10 fichadas en la base;
+- mismo empleado desde dos equipos a la vez (20 personas): 20 éxitos, 20
+  `409 CLOCK_PUNCH_COOLDOWN`, ninguna persona con dos fichadas;
+- ráfaga de 60 fichadas simultáneas detrás de una IP: 60/60, p99 108 ms, fotos
+  íntegras;
+- búsquedas abusivas: 450 `200` y luego `429 CLOCK_SEARCH_RATE_LIMITED`; la
+  jornada y la fichada de ese equipo siguen funcionando;
+- credencial mal configurada: 10 × `401` y luego `429 CLOCK_AUTH_RATE_LIMITED`;
+  el vecino de la misma IP sigue con `200`;
+- inundación sin credencial desde una IP: 299 × `401` y luego
+  `429 CLOCK_NETWORK_RATE_LIMITED`; el equipo verificado de esa red sigue con
+  `200`, uno nunca verificado en esa red queda bloqueado hasta verificar desde
+  otra o que venza la ventana.
+
+Navegador real (Chromium contra el backend aislado, 390x844 y 1366x768): nombre
+compuesto, DNI con puntos, salida con foto, cooldown de negocio, `429` de
+búsqueda con su mensaje, bloqueo por revocación, sin errores de consola ni
+desborde horizontal.
+
+### 33.6 Hallazgos de las pruebas
+
+- `express-rate-limit` con `skipSuccessfulRequests` cuenta cada request **en
+  curso**: la primera versión del cupo de credenciales devolvió `429` a un
+  equipo legítimo con 20 requests simultáneas. Se reemplazó por un contador
+  propio que sólo suma rechazos ocurridos (regresión en `clockRateLimits.test.ts`).
+- Con un único equipo, 30 personas en fila tardan 4,5-5 min (≈ 9 s por persona
+  con tecleo y cámara ágiles): el límite es físico, no del backend. Para la
+  primera oficina se recomiendan **2 o más equipos**.
+- `ILIKE` distingue tildes: "Perez" no encuentra "Pérez" (comportamiento
+  previo, fuera de este alcance; pendiente de decisión de producto).
+- Riesgo de enumeración: con una credencial válida, 450 búsquedas en ≈ 0,9 s
+  listan 629 de 640 personas sintéticas; con el cupo anterior las mismas
+  búsquedas tomaban ≈ 75 min. Ningún cupo protege el padrón de un dispositivo
+  comprometido; los controles son la credencial individual revocable, el
+  equipo en un lugar supervisado y el registro `RATE_LIMITED` (ver
+  `SECURITY_STANDARDS.md`).
+
+### 33.7 Pendiente antes de producción (staging, con autorización)
+
+- Medir `TRUST_PROXY_HOPS` en Render (§18.5). Con el valor por defecto `0`,
+  todo el tráfico comparte la IP del proxy: el tope previo a autenticar y el
+  global agrupan a todos los clientes. **Bloquea el piloto.**
+- Revisar en Render que no queden definidos `CLOCK_IP_RATE_LIMIT_MAX` con un
+  valor viejo ni `CLOCK_RATE_LIMIT_MAX` (ya no se lee).
+- Medir latencia Render ↔ Neon (≈ 10-25 consultas secuenciales por fichada),
+  `connection_limit`/`pool_timeout` efectivos de `DATABASE_URL` (por parámetro,
+  sin exponer la URL) y el tamaño de la instancia.
+- Medir la subida real a Neon Object Storage (timeout 5 s) bajo concurrencia.
+- Repetir una carga reducida (30 y 100 en 5 min) contra un backend de staging
+  con base y storage aislados, nunca con datos ni storage de producción.

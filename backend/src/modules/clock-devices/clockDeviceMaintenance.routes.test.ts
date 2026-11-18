@@ -121,7 +121,7 @@ async function call(method: string, path: string, options: { authorization?: str
   if (options.session !== undefined) headers["x-clock-maintenance-session"] = options.session;
   const response = await fetch(`${baseUrl}${path}`, { method, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
   const text = await response.text();
-  // El 429 de express-rate-limit es texto plano.
+  // §33: el 429 de los cupos del fichador es JSON con código.
   const payload = (response.headers.get("content-type")?.includes("application/json") ? JSON.parse(text) : null) as { data?: Record<string, any>; error?: { code?: string; message?: string } } | null;
   return { status: response.status, data: payload?.data, error: payload?.error, raw: text, cacheControl: response.headers.get("cache-control") };
 }
@@ -276,7 +276,7 @@ describe("Mantenimiento — cupo propio para validar códigos", () => {
       expect((await open(quota, "123456")).status).toBe(401);
     }
     const limited = await open(quota, "123456");
-    expect(limited.status).toBe(429);
+    expect(limited).toMatchObject({ status: 429, error: { code: "CLOCK_DEVICE_RATE_LIMITED" } });
     expect(clockDevicesRepository.consumeMaintenanceCode).toHaveBeenCalledTimes(10);
 
     expect((await open(B, "123456")).status).toBe(401);

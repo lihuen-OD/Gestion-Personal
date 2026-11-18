@@ -31,12 +31,13 @@ export type ClockHeartbeat = {
   serverTime: string;
 };
 
-// El backend nunca devuelve el DNI completo al kiosco: sólo sus últimos 3
-// dígitos, para distinguir homónimos (F0 del fichador standalone).
+// §32 (reemplaza la política F0 de legajo + últimos 3 dígitos del DNI): el
+// backend devuelve el DNI completo y nunca el legajo. `dni` sólo es null en un
+// intento guardado con el contrato anterior. El DNI no se registra en logs ni
+// se guarda en el dispositivo.
 export type ClockEmployee = {
   id: string;
-  legajo: string;
-  dniSuffix: string | null;
+  dni: string | null;
   firstName: string;
   lastName: string;
   name: string;

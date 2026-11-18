@@ -6,7 +6,7 @@ import { expect, test, type Page } from "@playwright/test";
 // (sin rostro), informa "No se detectó una cara". La captura+envío de la
 // foto necesita un rostro real, así que el envío/resultado se cubren en
 // src/pages/TimeClockPage.test.tsx con la cámara mockeada.
-const employee = { id: "employee-1", legajo: "100", dniSuffix: "456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
+const employee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 const DEVICE_ID = "00000000-0000-4000-8000-000000000001";
 const DEVICE_SECRET = "e2e-individual-device-secret";
 // F6: cada request operativo lleva la identidad individual del equipo.
@@ -32,7 +32,11 @@ async function mockApi(page: Page, options: { revokeOperational?: boolean; revok
     if (path.startsWith("/clock/") && !path.startsWith("/clock/device/") && options.revokeOperational) {
       return route.fulfill({ status: 403, json: { error: { code: "CLOCK_DEVICE_REVOKED", message: "Este dispositivo fue deshabilitado por RRHH." } } });
     }
-    if (path === "/clock/employees") return route.fulfill({ json: { data: [employee] } });
+    if (path === "/clock/employees") {
+      // Como el backend: un término numérico filtra por DNI (substring); un nombre devuelve al empleado.
+      const term = new URL(request.url()).searchParams.get("search") ?? "";
+      return route.fulfill({ json: { data: /^\d+$/.test(term) && !employee.dni.includes(term) ? [] : [employee] } });
+    }
     if (path === "/clock/status") return route.fulfill({ json: { data: { employee, openShift: null } } });
     return route.fulfill({ status: 404, json: { error: { code: "ROUTE_NOT_FOUND" } } });
   });
@@ -61,9 +65,9 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   // Etapa 2: sin persona elegida no hay ninguna acción de fichada.
   await expect(page.getByRole("button", { name: /Marcar (ingreso|salida)/ })).toHaveCount(0);
 
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
+  await page.getByLabel("Buscar por nombre, apellido o DNI").fill("Gomez");
   await page.getByRole("button", { name: /Gomez, Ana/ }).click();
-  await expect(page.getByText("Legajo 100 · DNI terminado en 456")).toBeVisible();
+  await expect(page.getByText("DNI 30123456")).toBeVisible();
 
   await page.getByRole("button", { name: /Marcar ingreso/ }).click();
   await expect(page.getByRole("heading", { name: "Confirmar fichada con foto" })).toBeVisible();
@@ -74,7 +78,7 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
   await page.getByRole("button", { name: "Cancelar" }).click();
   await expect(page.getByRole("heading", { name: "Confirmar fichada con foto" })).toBeHidden();
   await page.getByRole("button", { name: "Cambiar empleado" }).click();
-  await expect(page.getByLabel("Buscar por nombre o apellido")).toHaveValue("");
+  await expect(page.getByLabel("Buscar por nombre, apellido o DNI")).toHaveValue("");
 
   // F8: operación sólo por /api/clock/*; nada del namespace legacy. F9: un
   // heartbeat al abrir el fichador (el siguiente sale al minuto).
@@ -87,6 +91,65 @@ test("abre, busca, selecciona, abre la cámara, cancela y vuelve al inicio sin f
     expect(legacyToken, call).toBeUndefined();
   }
 });
+
+// §32: la persona se busca por nombre, apellido o DNI y se identifica como
+// "Apellido Nombre" + "DNI <completo>". Nunca se muestra el legajo, y el DNI no
+// queda en la consola ni en el almacenamiento del equipo.
+for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1366, height: 768 }, { width: 1920, height: 1080 }]) {
+  test(`§32 — búsqueda por DNI desde 2 dígitos e identidad sin legajo, sin desborde (${viewport.width}x${viewport.height})`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const consoleText: string[] = [];
+    page.on("console", (message) => consoleText.push(message.text()));
+    const apiCalls = await mockApi(page);
+    await seedActiveIdentity(page);
+    await page.goto("/");
+
+    const search = page.getByLabel("Buscar por nombre, apellido o DNI");
+    await expect(search).toHaveAttribute("placeholder", "Nombre, apellido o DNI");
+    const row = page.getByRole("button", { name: /Gomez, Ana/ });
+    // Desde 2 dígitos, igual que nombre y apellido; progresivo hasta el DNI completo.
+    for (const digits of ["30", "301", "3012", "30123456"]) {
+      await search.fill(digits);
+      await expect(row).toContainText("DNI 30123456");
+      await expect(row.locator(".kiosk-row-meta mark")).toHaveText(digits);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await row.click();
+
+    await expect(page.locator(".kiosk-person h2")).toHaveText("Gomez Ana");
+    await expect(page.locator(".kiosk-person")).toContainText("DNI 30123456");
+    const visible = await page.locator("body").innerText();
+    expect(visible).not.toMatch(/Legajo|DNI terminado en/i);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await expect(page.getByRole("button", { name: /Marcar ingreso/ })).toBeInViewport();
+
+    expect(apiCalls.some(({ call }) => call === "GET /clock/employees")).toBe(true);
+    for (const digits of ["30", "301", "3012", "30123456"]) expect(consoleText.join("\n")).not.toContain(`search=${digits}`);
+    expect(consoleText.join("\n")).not.toContain("30123456");
+    const stored = await page.evaluate(async () => {
+      const local = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
+      const databases = await indexedDB.databases();
+      const values: unknown[] = [];
+      for (const { name } of databases) {
+        if (!name) continue;
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open(name);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        for (const storeName of Array.from(db.objectStoreNames)) {
+          values.push(await new Promise((resolve) => {
+            const read = db.transaction(storeName).objectStore(storeName).getAll();
+            read.onsuccess = () => resolve(read.result);
+          }));
+        }
+        db.close();
+      }
+      return local + JSON.stringify(values);
+    });
+    expect(stored).not.toContain("30123456");
+  });
+}
 
 test("dev con backend apagado: error de red sin CSP de hosting", async ({ page }) => {
   await seedActiveIdentity(page);
@@ -108,7 +171,7 @@ test("RRHH revoca con la app abierta: el siguiente request bloquea el fichador s
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Fichador de personal" })).toBeVisible();
 
-  await page.getByLabel("Buscar por nombre o apellido").fill("Gomez");
+  await page.getByLabel("Buscar por nombre, apellido o DNI").fill("Gomez");
 
   await expect(page.getByRole("heading", { name: "Dispositivo deshabilitado" })).toBeVisible();
   await expect(page.getByText("Este dispositivo fue deshabilitado por RRHH.", { exact: false })).toBeVisible();

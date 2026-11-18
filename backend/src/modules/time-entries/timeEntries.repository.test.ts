@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { ClockPunchAttemptNotProcessing, duplicateTimeEntryError, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
+import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
+import { ClockPunchAttemptNotProcessing, clockDniSearchDigits, duplicateTimeEntryError, resolveDoubleHourMultipliersByDate, timeEntriesRepository } from "./timeEntries.repository";
 import { createShiftAlert, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
 import { ClockPunchCooldownConflict } from "./clockPunchCooldown";
 
@@ -56,6 +57,8 @@ vi.mock("../../shared/prisma/client", () => {
   return {
     prisma: {
       ...historyFrom(prismaEmployee),
+      // Fichador §32: búsqueda por DNI ignorando separadores (SQL parametrizado).
+      $queryRaw: vi.fn(),
       workShift: { findMany: vi.fn(), count: vi.fn() },
       employeeHourConcept: { findFirst: vi.fn() },
       hourConcept: { findFirst: vi.fn(), findMany: vi.fn() },
@@ -135,6 +138,7 @@ const mockedPrisma = prisma as unknown as {
   clockPunchAttempt: { update: Mock; updateMany: Mock; findUnique: Mock };
   attendanceInactivityIncident: { findMany: Mock; count: Mock };
   employee: { count: Mock; findMany: Mock; findUnique: Mock };
+  $queryRaw: Mock;
   employeePositionPeriod: { findMany: Mock };
   doubleHourRule: { findMany: Mock };
   holidayWorkAssignment: { findMany: Mock };
@@ -3249,5 +3253,117 @@ describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
     await timeEntriesRepository.update("entry-1", before, { hours: 7, correctionReason: "Error de carga" } as never, "user-rrhh");
     expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
+  });
+});
+
+// Fichador §32: búsqueda por nombre, apellido o DNI (nunca legajo). Nombre y
+// apellido: el `where` de Prisma se evalúa sobre filas en memoria con su
+// semántica (`contains` = substring; `insensitive` = ILIKE). DNI: el SQL
+// parametrizado se emula con el mismo criterio (dígitos del DNI guardado,
+// LIKE '%dígitos%', ACTIVO, orden y LIMIT); clock.integration.test.ts lo
+// verifica contra PostgreSQL real.
+describe("searchEmployeesForClock — nombre, apellido o DNI (fichador §32)", () => {
+  type Row = { id: string; legajo: string; dni: string; firstName: string; lastName: string; status: "ACTIVO" | "INACTIVO" };
+  const rows: Row[] = [
+    { id: "e-juan", legajo: "9901", dni: "32456789", firstName: "Juan", lastName: "Perez", status: "ACTIVO" },
+    { id: "e-ana", legajo: "9902", dni: "27111222", firstName: "Ana", lastName: "Gomez", status: "ACTIVO" },
+    { id: "e-dots", legajo: "9903", dni: "32.401.118", firstName: "Lucia", lastName: "Alvarez", status: "ACTIVO" },
+    { id: "e-baja", legajo: "9904", dni: "32456000", firstName: "Juana", lastName: "Perez", status: "INACTIVO" },
+  ];
+  type Where = Record<string, unknown>;
+  const matches = (row: Row, where: Where): boolean => Object.entries(where).every(([key, condition]) => {
+    if (key === "OR") return (condition as Where[]).some((inner) => matches(row, inner));
+    if (key === "AND") return (condition as Where[]).every((inner) => matches(row, inner));
+    if (key === "status") return row.status === condition;
+    const { contains, mode } = condition as { contains: string; mode?: string };
+    const value = row[key as keyof Row];
+    return mode === "insensitive" ? value.toLowerCase().includes(contains.toLowerCase()) : value.includes(contains);
+  });
+  const byName = (a: Row, b: Row) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
+  type Sql = { sql: string; values: unknown[] };
+  const search = async (term: string) => {
+    const findMany = mockedPrisma.employee.findMany as Mock;
+    findMany.mockReset();
+    findMany.mockResolvedValueOnce([]);
+    mockedPrisma.$queryRaw.mockReset();
+    mockedPrisma.$queryRaw.mockResolvedValueOnce([]);
+    await timeEntriesRepository.searchEmployeesForClock(term);
+    if (mockedPrisma.$queryRaw.mock.calls.length) {
+      expect(findMany).not.toHaveBeenCalled();
+      const query = mockedPrisma.$queryRaw.mock.calls[0]![0] as Sql;
+      const [pattern, limit] = query.values as [string, number];
+      const digits = pattern.slice(1, -1);
+      const ids = rows.filter((row) => row.status === "ACTIVO" && row.dni.replace(/[^0-9]/g, "").includes(digits)).sort(byName).slice(0, limit).map((row) => row.id);
+      return { ids, sql: query, args: undefined };
+    }
+    const args = findMany.mock.calls[0]![0] as { where: Where; take: number; select: Record<string, boolean> };
+    return { ids: rows.filter((row) => matches(row, args.where)).map((row) => row.id), args, sql: undefined };
+  };
+
+  it("por nombre, apellido y nombre + apellido en cualquier orden (sin SQL de DNI)", async () => {
+    expect((await search("Juan")).ids).toEqual(["e-juan"]);
+    expect((await search("perez")).ids).toEqual(["e-juan"]);
+    expect((await search("Juan Perez")).ids).toEqual(["e-juan"]);
+    expect((await search("Perez Juan")).ids).toEqual(["e-juan"]);
+    expect((await search("Juan")).sql).toBeUndefined();
+  });
+
+  it("DNI guardado con puntos: se encuentra progresivamente ignorando separadores", async () => {
+    for (const term of ["32", "324", "3240", "32401", "32401118", "32.401.118", "32.401", "32 401 118", "401118"]) {
+      expect((await search(term)).ids, term).toContain("e-dots");
+    }
+    expect((await search("3240")).ids).toEqual(["e-dots"]);
+    expect((await search("32.401.118")).ids).toEqual(["e-dots"]);
+  });
+
+  it("DNI guardado sin puntos: se encuentra escribiéndolo con o sin puntos", async () => {
+    expect((await search("32456789")).ids).toEqual(["e-juan"]);
+    expect((await search("32.456.789")).ids).toEqual(["e-juan"]);
+    expect((await search("3245")).ids).toEqual(["e-juan"]);
+    expect((await search("32")).ids).toEqual(["e-dots", "e-juan"]); // por apellido; 32456000 está INACTIVO
+  });
+
+  it("un DNI no devuelve a otro empleado y el INACTIVO nunca aparece", async () => {
+    expect((await search("27111222")).ids).toEqual(["e-ana"]);
+    expect((await search("32456000")).ids).toEqual([]);
+    expect((await search("Juana")).ids).toEqual([]);
+    expect((await search("99999999")).ids).toEqual([]);
+  });
+
+  it("el SQL de DNI es parametrizado: ACTIVO, sin separadores, LIMIT 12, sin legajo", async () => {
+    const { sql } = await search("32.401");
+    expect(sql!.values).toEqual(["%32401%", 12]);
+    expect(sql!.sql).toContain(`"status" = 'ACTIVO'`);
+    expect(sql!.sql).toContain("regexp_replace(\"dni\", '[^0-9]', '', 'g') LIKE");
+    expect(sql!.sql).toContain(`ORDER BY "lastName" ASC, "firstName" ASC`);
+    expect(sql!.sql).not.toMatch(/legajo/i);
+    expect(sql!.sql).not.toContain("32401"); // el término nunca se interpola
+  });
+
+  it("nunca se busca por legajo", async () => {
+    // Legajos que no aparecen en ningún DNI: escribirlos no encuentra a nadie.
+    expect((await search("9901")).ids).toEqual([]);
+    expect((await search("9903")).ids).toEqual([]);
+    expect(JSON.stringify((await search("Juan")).args!.where)).not.toContain("legajo");
+  });
+
+  it("nombre: mantiene ACTIVO, máximo 12 resultados y no selecciona el legajo", async () => {
+    const { args } = await search("Perez");
+    expect(args!.where.status).toBe("ACTIVO");
+    expect(args!.take).toBe(12);
+    expect(args!.select).toEqual({ id: true, dni: true, firstName: true, lastName: true, status: true });
+  });
+});
+
+describe("clockDniSearchDigits", () => {
+  it("sólo términos numéricos de 2+ dígitos (CLOCK_SEARCH_MIN_LENGTH) son DNI; los separadores se ignoran", () => {
+    expect(CLOCK_SEARCH_MIN_LENGTH).toBe(2);
+    expect(clockDniSearchDigits("Juan")).toBeNull();
+    expect(clockDniSearchDigits("Juan 3245")).toBeNull();
+    expect(clockDniSearchDigits("1")).toBeNull();
+    expect(clockDniSearchDigits("1.")).toBeNull();
+    expect(clockDniSearchDigits("12")).toBe("12");
+    expect(clockDniSearchDigits(" 32.401.118 ")).toBe("32401118");
+    expect(clockDniSearchDigits("32 401-118")).toBe("32401118");
   });
 });
