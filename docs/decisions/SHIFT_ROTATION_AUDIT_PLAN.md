@@ -898,6 +898,20 @@ Reversión de R3.1: la columna y la tabla son aditivas; con `shiftGroupId` en `n
 
 **Límite conocido:** `toLowerCase()` de JavaScript y `lower()` de PostgreSQL pueden diferir en caracteres poco comunes según la colación; en ese caso la base sigue siendo la garantía final (409 por `P2002`).
 
+### 23.16 Aplicación y validación de R3.1 en development (2026-11-19)
+
+Autorizada por el usuario sólo para development. Producción **no** se tocó. **Desde esta aplicación `20261119120000_add_shift_groups/migration.sql` queda congelada**: cualquier cambio estructural posterior va en una migración nueva.
+
+- **Destino**: `prisma migrate status` mostró base `neondb`, schema `public`, host `ep-gentle-resonance-aiftcbel-pooler.c-4.us-east-1.aws.neon.tech` (comprobado antes de cada operación). El `.env` declara `APP_ENV=staging` / `NODE_ENV=development` (deuda §21.5).
+- **Antes**: 77 migraciones en el repo, única pendiente `20261119120000_add_shift_groups`. Rollback escrito antes de aplicar: `backend/prisma/rollbacks/20261119120000_add_shift_groups.down.sql` (aborta si hay grupos o plantillas clasificadas; no se ejecutó). Foto de sólo lectura (transacción `READ ONLY` verificada) de las 15 plantillas y de los conteos de 12 tablas funcionales.
+- **Aplicación**: `npx prisma migrate deploy` → "All migrations have been successfully applied". Sin `db push`, `migrate reset`, `migrate dev` ni SQL manual.
+- **Después**: `prisma migrate status` → "Database schema is up to date!"; `prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code` → exit 0, "No difference detected" (los índices `lower()`, el CHECK y la FK no generan drift).
+- **Plantillas**: 15 → 15, mismos ids, 0 diferencias en `code`, `name`, `categoryName`, `status` y `updatedAt`; `shiftGroupId = null` en 15/15. `ShiftGroup`: 0 filas.
+- **Catálogos de PostgreSQL** (sólo lectura): FK `ShiftTemplate_shiftGroupId_fkey … ON DELETE RESTRICT`; índices `ShiftGroup_status_sortOrder_idx`, `ShiftTemplate_shiftGroupId_idx`, únicos exactos `ShiftGroup_code_key` / `ShiftGroup_name_key`, únicos funcionales `ShiftGroup_code_lower_key` (`lower(code)`) / `ShiftGroup_name_lower_key` (`lower(name)`); `ShiftGroup_code_name_shape_check`; `shiftGroupId` `text`, nullable, sin default. No se insertaron datos de prueba.
+- **Verificación**: 1897 tests verdes (shifts, workforce, time-entries, novelties, employee-day-offs: incluye R1, R2 y R3.1) y typecheck verde.
+- **Smoke real** (funciones del backend, sólo lectura): catálogo de 15 plantillas, todas con `shiftGroup: null`; 0 grupos; 29 asignaciones cargadas; obligación del día con 29 candidatos; jornada esperada de 29 legajos × 7 días resuelta (186 WORKDAY, 16 NO_WORK_OBLIGATION, 1 DAY_OFF), ninguna inválida por no tener grupo.
+- **Datos**: conteos idénticos antes de migrar, después de migrar y después del smoke en `ShiftTemplate`, `ShiftAssignment`, `WorkShift`, `ShiftAlert`, `AttendanceInactivityIncident`, `SystemNotification`, `Novelty`, `NoveltyDayCoverage`, `TimeEntry`, `HolidayWorkAssignment`, `EmployeeDayOff` y `Employee`: ninguna fila funcional creada ni modificada; el único cambio es estructural.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
