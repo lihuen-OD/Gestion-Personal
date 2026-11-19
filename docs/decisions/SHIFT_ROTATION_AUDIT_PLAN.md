@@ -1,6 +1,6 @@
 # Rotaciones de turnos — auditoría y plan (Etapa R0)
 
-Estado: **R0 (auditoría y plan), R1 (caracterización + diagnóstico) y R2 (resolución central en modo paridad) completadas** — cierre de R1 en §21, de R2 en §22. R3 no iniciada. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
+Estado: **R0 (auditoría y plan), R1 (caracterización + diagnóstico) y R2 (resolución central en modo paridad) completadas** — cierre de R1 en §21, de R2 en §22. R3: plan en §23, **R3.1 (modelo + API) implementada** (§23.14); R3.2–R3.4 pendientes. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
 
 Alcance de esta etapa: no se modificó código productivo, `schema.prisma`, migraciones ni bases. La única ejecución fue la de tests unitarios existentes (mocks, sin base) y un test de reproducción temporal fuera del repositorio (§5.0).
 
@@ -685,6 +685,203 @@ Sin migrar (no hace falta en R2): salida, olvido de salida, vencimiento y fecha 
 - **R3**: `ShiftGroup` + `ShiftTemplate.shiftGroupId` con mapeo explícito (§11, §21.4). No depende del resolver.
 - **R4**: fuentes `ROTATION` (y luego `OVERRIDE`, R7) en `resolveExpectedShift` con resultado único; carga de contexto compartida para los tres consumidores; `WorkShift.shiftTemplateSource` y `resolveMatchForExit` sin exigir `ShiftAssignment` para rotaciones (P6); recálculo de cobertura por cambios de rotación.
 - **R10**: decidir la política para varias asignaciones fijas (hoy reglas legacy distintas por consumidor).
+
+---
+
+## 23. R3-P0 — Plan de `ShiftGroup` (análisis previo a la primera migración)
+
+Estado: **propuesta, sin implementar.** Base: `feature/shift-rotation-system` en R2 (`eade44c`). Sin cambios de schema, migraciones ni datos. Decisiones de negocio pendientes en §23.7.
+
+### 23.1 Modelo actual relevante
+
+- `ShiftTemplate` (schema l.1936): `id` uuid, `code @unique`, `name`, `description?`, `categoryName String?` (texto libre ≤ 60, `@@index([categoryName])`), horario/tolerancias/umbrales, `status RecordStatus` (ACTIVO/INACTIVO), `createdByUserId`/`updatedByUserId` (FK `SetNull`), `createdAt`/`updatedAt` `Timestamptz(3)`. Relaciones: `workShifts`, `assignments`, `holidayWorkAssignments`, `noveltyCoverageDays`.
+- Escritores: sólo `workforceService.createShiftTemplate` / `updateShiftTemplate` / `removeShiftTemplate` (`POST/PATCH/DELETE /api/workforce/shift-templates`, RRHH) y `prisma/seed.ts` (upsert `TURNO-MANIANA`, `categoryName: "Administrativo"`). Ningún script ni migración escribe plantillas.
+- Lectura del catálogo: `workforceService.shiftTemplates()` (`findMany` sin `select`, orden por `startTime`), con caché backend de 30 s (`workforce.cache.ts`, se limpia en cada escritura) y caché frontend `shiftTemplatesCatalog` (`cachePolicy.ts`).
+- Convenciones de catálogos del repo: id `uuid`, `code @unique`, `status RecordStatus @default(ACTIVO)` como baja lógica, autoría FK `SetNull`, `Timestamptz(3)`, `@@index([status])`. Orden manual: un único precedente, `SalaryCategory.order Int` (sin `sortOrder` en ningún modelo). Sin `description` obligatoria en catálogos simples.
+
+### 23.2 Usos de `categoryName`
+
+| Capa | Archivo | Uso |
+|---|---|---|
+| Schema | `schema.prisma` | `categoryName String?` + `@@index([categoryName])` |
+| Validación | `workforce-management/workforce.schemas.ts:54` | `z.string().trim().max(60).optional().nullable()` |
+| Lectura | `shifts/shiftAssignment.repository.ts:8` | en el `select` de la plantilla de cada asignación |
+| Seed | `prisma/seed.ts:460` | `"Administrativo"` |
+| Diagnóstico R1 | `shifts/diagnostics/*` | B1 (sólo lectura) |
+| UI | `ShiftTemplateFormFields.tsx` | campo "Categoría / tipo" (placeholder "Administrativo, Cosecha, Sereno") |
+| UI | `ShiftTable.tsx` | columna "Categoría" ordenable, "Sin categoría" |
+| UI | `ShiftsPage.tsx:64` | búsqueda por texto |
+| UI | `ShiftDetailPage.tsx:98` | eyebrow `código · categoría` |
+| UI | `EmployeeShiftsPanel.tsx:44,164` | columna y selector de turnos del legajo |
+| Tipos | `workforceApiService.ts`, `shiftAssignmentApiService.ts` | campo opcional |
+| Tests | `ShiftTable.test.tsx`, `HolidayWorkAssignmentsPage.test.tsx`, diagnóstico | fixtures |
+
+Ningún cálculo de negocio (resolver R2, alertas, Novedades, horas, cierres, fichador) lee `categoryName`.
+
+### 23.3 Modelo propuesto
+
+```prisma
+model ShiftGroup {
+  id              String       @id @default(uuid())
+  code            String       @unique            // "PLANTA"; editable, nunca reutilizado como clave de permisos
+  name            String       @unique            // "Planta"; unicidad sin distinguir mayúsculas validada en el servicio
+  sortOrder       Int          @default(0)        // orden visual; desempate por name
+  status          RecordStatus @default(ACTIVO)   // baja lógica
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  templates ShiftTemplate[]
+  createdBy User? @relation("ShiftGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("ShiftGroupUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, sortOrder])
+}
+
+// ShiftTemplate (aditivo):
+//   shiftGroupId String?
+//   shiftGroup   ShiftGroup? @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
+//   @@index([shiftGroupId])
+```
+
+- **Sin `description`**: hoy no tiene uso; se agrega después si aparece la necesidad (cambio aditivo).
+- **`sortOrder` en vez de `order`**: mismo concepto que `SalaryCategory.order`, sin la palabra reservada de SQL; con default para que el alta no exija pensar el orden.
+- **`onDelete: Restrict`** (no `SetNull`): borrar un grupo no puede desclasificar plantillas en silencio, mismo criterio que la reorganización aplicó a `DoubleHourRule`.
+- **`shiftGroupId` nullable** y sin backfill: `null` = "turno todavía no clasificado", nunca "inválido". Sigue siendo la opción correcta: ningún consumidor de negocio lee el grupo, la migración es aditiva e inerte, y el mapeo es explícito y auditado.
+- `categoryName` se conserva sin cambios (etiqueta secundaria: "Sereno", "Administrativo"). Su eventual renombre visual ("Tipo") es sólo UI.
+
+### 23.4 API propuesta (R3, sólo RRHH escribe)
+
+Rutas nuevas en el módulo `shifts` (no es un módulo nuevo), documentadas en `BACKEND_API_CONTRACTS.md`:
+
+| Método | Ruta | Roles | Comportamiento |
+|---|---|---|---|
+| GET | `/api/shifts/groups` | N1, N2, N3 | Lista ordenada por `sortOrder`, `name`; incluye `templateCount`. Filtro `status?`. |
+| GET | `/api/shifts/groups/:id` | N1, N2, N3 | Detalle + plantillas del grupo. |
+| POST | `/api/shifts/groups` | N1 | Alta (`code`, `name`, `sortOrder?`). 409 si `code`/`name` (sin distinguir mayúsculas) ya existen. |
+| PATCH | `/api/shifts/groups/:id` | N1 | `name`, `code`, `sortOrder`, `status`. Inactivar no desclasifica plantillas. |
+| DELETE | `/api/shifts/groups/:id` | N1 | Sólo sin plantillas asociadas; si no, `409 SHIFT_GROUP_IN_USE` (sugiere inactivar). Cuando existan rotaciones/alcances (R4/R8) pasa al protocolo de eliminación controlada. |
+| POST/PATCH | `/api/workforce/shift-templates[/:id]` | N1 | Acepta `shiftGroupId` (uuid o `null`). Asignar exige grupo ACTIVO (conservar uno ya inactivo está permitido). No recalcula cobertura (no cambia la jornada). |
+| GET | `/api/workforce/shift-templates` | todos | Agrega `shiftGroup: { id, code, name, status, sortOrder } \| null`. |
+
+Auditoría: entidad `ShiftGroup` (CREATE/UPDATE/ACTIVATE/DEACTIVATE/DELETE) y, en la plantilla, descripción con **nombres** de grupo, nunca ids. Cachés: el catálogo de plantillas (backend 30 s y `shiftTemplatesCatalog` del frontend) se invalida también al renombrar, reordenar o inactivar un grupo.
+
+`ShiftGroup.id` es la clave estable para R4 (`ShiftRotation.shiftGroupId`) y R8 (`UserShiftGroupScope.shiftGroupId`); nada de R3 se rediseña para eso.
+
+### 23.5 UI propuesta (R3, sin implementar)
+
+- **Turnos**: secciones por grupo en orden `sortOrder` → `name`, cada una con encabezado (nombre, cantidad de turnos, badge si está inactivo) y la tabla actual (`ShiftTable`) dentro. Al final, **"Sin grupo"** mientras queden plantillas sin clasificar, con un aviso que invita a clasificarlas. Grupos inactivos al final, colapsados. Secciones colapsables con el patrón ya existente (`aria-expanded` como en Alertas de Turnos), abiertas por defecto. Filtro por grupo junto a la búsqueda y al estado; la búsqueda incluye el nombre del grupo.
+- `categoryName` pasa a mostrarse como chip secundario junto al nombre ("Tipo"), no como agrupador.
+- **Formulario de turno**: selector "Lugar / grupo" (opcional, sólo grupos activos) además del campo de tipo.
+- **Gestión de grupos** (RRHH): listado simple con alta, edición de nombre/código/orden y activar/inactivar, dentro de la Configuración de Turnos (pestaña o panel), con los componentes existentes (`Section`, `DataTable`/`TableShell`, `Badge`, `Modal`, `EmptyState`, `LoadingState`, `ErrorState`).
+- **Legajo** (`EmployeeShiftsPanel`) y detalle de turno: mostrar el grupo junto a la categoría.
+- Antes de implementar: lectura obligatoria de `.claude/rules/frontend-ui.md` y sus documentos/referencias, y QA en 1366×768, 1440×900, 1920×1080, tablet y mobile.
+
+### 23.6 Mapeo de las plantillas actuales (development)
+
+Conocido: los 9 valores de `categoryName` y cuántas plantillas tiene cada uno (§21.4). **No** se conocen todavía los códigos/nombres de cada plantilla en este documento; están en el bloque "Category values" de la salida del diagnóstico R1 ya ejecutado (código · nombre · estado por categoría). El mapeo final se completa con ese bloque; ninguna plantilla se clasifica por deducción.
+
+| `categoryName` | Plantillas | Grupo propuesto | Confianza | Motivo |
+|---|---|---|---|---|
+| Planta | 2 | Planta | Alta | El valor ya es un lugar. Confirmar con nombres. |
+| Taller | 2 | Taller | Alta | Ídem. |
+| Granja | 2 | Granja | Media | Lugar, pero ver "Granja 02". |
+| Granja 02 | 1 | **REQUIERE DECISIÓN** | — | ¿Segunda granja (lugar distinto, posiblemente con otro responsable → grupo propio) o un segundo turno de la misma granja (→ Granja)? |
+| Administrativo | 2 | Oficina | Media | Es una función/área, no un lugar; la seed lo usa para "Turno Mañana". Probable "Oficina" si los nombres son Oficina-01/02. |
+| Sereno | 2 | **REQUIERE DECISIÓN** (por plantilla) | — | Función, no lugar: cada sereno va al lugar donde se presta (Planta, Granja, …). |
+| Medio Ambiente | 1 | **REQUIERE DECISIÓN** | — | ¿Lugar propio o área que trabaja en Planta/otro lugar? |
+| Obra | 1 | **REQUIERE DECISIÓN** | — | ¿Lugar/obra transitoria con grupo propio, o pertenece a otro lugar? |
+| Prueba | 2 | **REQUIERE DECISIÓN** | — | Plantillas de prueba: dejar sin grupo, o inactivar/eliminar con el procedimiento existente (decisión aparte, fuera de R3). |
+| *(sin categoría)* | 0 | — | — | No hay plantillas sin `categoryName` en development. |
+
+Total: 15 plantillas. Mapeo seguro sin decisión: hasta 6 (Planta, Taller, Granja), sujeto a confirmar con nombres; 9 requieren decisión o confirmación (Administrativo 2, Sereno 2, Granja 02, Medio Ambiente, Obra, Prueba 2).
+
+### 23.7 Decisiones de negocio pendientes
+
+1. Lista de grupos iniciales y su orden (propuesta: Planta, Granja, Oficina, Taller; más los que surjan de 2–4).
+2. "Granja 02": ¿mismo grupo Granja o grupo propio?
+3. "Medio Ambiente" y "Obra": ¿grupos propios o parte de otro lugar?
+4. Cada plantilla "Sereno": ¿a qué lugar pertenece?
+5. "Administrativo" → ¿grupo "Oficina"?
+6. Plantillas "Prueba": ¿sin grupo, inactivar o eliminar (procedimiento aparte)?
+7. Producción: ¿mismo mapeo que development? (producción no se consultó; hace falta su lista de plantillas, en sólo lectura y con autorización).
+
+### 23.8 Estrategia de migración y subetapas
+
+Orden revisado respecto del sugerido (crear grupos/mapear antes de tener API obligaría a escribir datos con scripts o SQL; se prefiere hacerlo por el producto, auditado):
+
+| Subetapa | Contenido | Datos |
+|---|---|---|
+| **R3.1** | Migración aditiva (`<timestamp posterior a 20261117120000>_add_shift_groups`): tabla `ShiftGroup`, `ShiftTemplate.shiftGroupId` nullable + índice + FK `Restrict`. Backend: rutas de grupos, `shiftGroupId` en plantillas, serialización, auditoría, cachés, tests, contratos. Plan acordado antes de escribir `schema.prisma` (AGENTS.md). | Ninguno: tabla vacía, columna en `null`. |
+| **R3.2** | UI: listado agrupado, sección "Sin grupo", gestión de grupos, selector en el formulario, grupo en legajo/detalle. QA visual. | Ninguno. |
+| **R3.3** | Clasificación en **development** por RRHH desde la UI (alta de grupos + asignación plantilla por plantilla, 15 casos), con las decisiones de §23.7. Diagnóstico: verificar plantillas sin grupo (extensión de solo lectura del diagnóstico R1, opcional). | Escrituras de producto auditadas, en development. |
+| **R3.4** | Producción: deploy del esquema y del código por el flujo normal (`development → main`), luego la misma clasificación por RRHH desde la UI, con autorización explícita. | Escrituras de producto auditadas. |
+
+Sin script de backfill: con 15 plantillas, la clasificación manual por la UI es más segura (auditoría por cambio, sin acceso directo a la base) que un script con `--apply`.
+
+Reversión de R3.1: la columna y la tabla son aditivas; con `shiftGroupId` en `null` y sin grupos, un rollback escrito a mano (`prisma/rollbacks/*.down.sql`) puede eliminarlas; si ya hay grupos o plantillas clasificadas, el rollback aborta sin cambios (regla de DATABASE_STANDARDS).
+
+### 23.9 Compatibilidad
+
+- Plantilla sin grupo: funciona igual en todas partes (sólo aparece en "Sin grupo").
+- `ShiftAssignment`, resolver R2, fichadas, alertas, Novedades, horas y cierres no leen el grupo; `ShiftTemplateRef`/`toTemplateRef` no lo incluyen. Asignar grupo no dispara recálculo de cobertura (`affectsWorkday` no cambia).
+- Ninguna plantilla se elimina, recrea ni cambia de id; `categoryName` se conserva.
+- La snapshot de rendimiento del fichador (`clockPunchPerf`) no depende de columnas de `ShiftTemplate`.
+- Los 65 tests de caracterización y los del resolver deben seguir verdes sin cambios.
+
+### 23.10 Tests previstos
+
+- **Backend (unit, Prisma mockeado)**: alta, edición, inactivación, orden (`sortOrder` + nombre), unicidad de `code`/`name` sin distinguir mayúsculas, DELETE bloqueado con plantillas, permisos (N2/N3 sólo lectura), plantilla sin grupo / con grupo / desasignar (`null`), rechazo de grupo inactivo o inexistente, serialización de `shiftGroup` en el catálogo, invalidación de cachés, auditoría sin ids en textos, ningún recálculo de cobertura al asignar grupo.
+- **Integración (PostgreSQL efímero, gate de CI)**: la migración aplica sobre la historia completa y `migrate diff` queda vacío; FK `Restrict` impide borrar un grupo en uso.
+- **Regresión**: caracterización R1, resolver R2, `shiftAssignment.*`, `workforce.service.test.ts`, suite completa.
+- **Frontend**: grupos con varios turnos, grupo sin turnos, sección "Sin grupo" (aparece y desaparece), orden estable, grupo inactivo, filtro y búsqueda por grupo, formulario con selector, estados loading/error/empty, responsive.
+
+### 23.11 Impacto en R4/R8
+
+- `ShiftRotation.shiftGroupId` **obligatorio**, FK directa `Restrict`: el grupo es el alcance de administración de la rotación. Propuesta para R4: las celdas de una rotación sólo usan plantillas del mismo grupo (coherencia con permisos); decidir ahí.
+- `UserShiftGroupScope(userId, shiftGroupId)` (R8) referencia `ShiftGroup.id`; inactivar un grupo deja sus alcances inertes, no los borra.
+- Calendario/vista previa (R5): filtrar por grupo = personas de rotaciones del grupo ∪ personas con asignaciones fijas a plantillas del grupo. **No** se agrega `Employee.shiftGroupId`: la pertenencia de una persona se deriva de su planificación.
+- Excepciones (R7): el permiso se evalúa por el grupo de la plantilla de reemplazo y de la rotación.
+- Cuando existan rotaciones/alcances, la eliminación de un grupo pasa al protocolo de eliminación controlada (§ "Eliminación controlada con dependencias" de los contratos).
+
+### 23.12 Riesgos
+
+- Clasificación incorrecta de plantillas "funcionales" (Sereno, Administrativo) → mitigado con decisión explícita (§23.7) y auditoría.
+- Duplicados por mayúsculas/espacios ("Granja"/"granja ") → unicidad validada en el servicio.
+- Caché del catálogo con nombre de grupo viejo → invalidar en escrituras de grupos.
+- `...input` en create/update de plantillas: `shiftGroupId` debe validarse (existencia y estado) antes de escribir; el error FK genérico (`RELATION_CONSTRAINT`) no basta para el mensaje al usuario.
+- Grupo inactivo con plantillas activas: es válido (no rompe nada) pero debe verse en la UI.
+- Producción puede tener plantillas distintas de development: el mapeo de producción se decide con su propia lista.
+
+### 23.13 Archivos que se modificarían
+
+- **R3.1**: `backend/prisma/schema.prisma`; `backend/prisma/migrations/<ts>_add_shift_groups/migration.sql`; opcional `backend/prisma/rollbacks/<ts>_add_shift_groups.down.sql`; nuevos `backend/src/modules/shifts/shiftGroup.{schemas,repository,service,controller}.ts` + tests; `backend/src/modules/shifts/shifts.routes.ts`; `backend/src/modules/workforce-management/workforce.{schemas,service,cache}.ts` (+ tests); opcional `backend/prisma/seed.ts`; `docs/BACKEND_API_CONTRACTS.md`; `docs/DATABASE_STANDARDS.md` si se agrega una regla; este ADR.
+- **R3.2**: `frontend/src/services/api/workforceApiService.ts` (+ servicio de grupos), `frontend/src/services/cache/cachePolicy.ts`, `frontend/src/pages/ShiftsPage.tsx`, `frontend/src/components/shifts/{ShiftTable,ShiftTemplateFormFields}.tsx` + nuevos componentes de grupo, `ShiftDetailPage.tsx`, `ShiftCreatePage.tsx`, `EmployeeShiftsPanel.tsx`, `shiftAssignmentApiService.ts` (tipo), tests correspondientes.
+
+### 23.14 R3.1 implementada (2026-11-19)
+
+**Estado: R3.1 completada; R3 no.** Quedan R3.2 (UI), R3.3 (clasificación en development) y R3.4 (producción).
+
+**Decisiones de negocio recibidas** (resuelven §23.7 salvo serenos): grupos iniciales Oficina, Planta, Granja, Taller, Medio Ambiente y Obra. Mapeo previsto para R3.3 (no aplicado): Oficina-01/02 → Oficina; Planta-01/02 → Planta; Granja-01/02/03 → Granja ("Granja 02" era un `categoryName`, no un lugar distinto); Taller-01/02 → Taller; MA-01 → Medio Ambiente; 01 Obra → Obra; Sereno-01/02 → **pendiente**; Prueba y 02Prueba → sin grupo. `categoryName` se conserva (ej.: grupo Oficina, `categoryName` "Administrativo").
+
+**Modelo** (`schema.prisma`): `ShiftGroup { id uuid, code @unique, name @unique, sortOrder Int @default(0), status RecordStatus @default(ACTIVO), createdByUserId?/updatedByUserId? (FK User SetNull), createdAt/updatedAt Timestamptz(3), @@index([status, sortOrder]) }`; `ShiftTemplate.shiftGroupId String?` + relación `onDelete: Restrict` + `@@index([shiftGroupId])`.
+
+**Migración** `20261119120000_add_shift_groups` — creada, **no aplicada a ninguna base**. Generada sin base con `prisma migrate diff` (datamodel de HEAD → nuevo) e inspeccionada: `ALTER TABLE "ShiftTemplate" ADD COLUMN "shiftGroupId" TEXT` (nullable, sin default), `CREATE TABLE "ShiftGroup"`, índices únicos de `code` y `name`, índices `(status, sortOrder)` y `ShiftTemplate(shiftGroupId)`, FK de autoría `SET NULL` y FK `ShiftTemplate_shiftGroupId_fkey … ON DELETE RESTRICT`. Agregado a mano: `CHECK (btrim(code) <> '' AND btrim(name) <> '')` (columnas NOT NULL: sin caso NULL). Sin `UPDATE`/`INSERT`/`DELETE`/`DROP`, sin tocar `categoryName` ni `ShiftAssignment`. La puerta de migraciones del CI (historial completo sobre PostgreSQL limpio + diff vacío) es la primera ejecución real.
+
+**API** (`shifts`): `GET /api/shifts/groups?status` (N1/N2/N3), `POST`, `PATCH /:id`, `DELETE /:id` (N1). Plantillas: `shiftGroupId` en `POST/PATCH /api/workforce/shift-templates` y `shiftGroup` en el `GET`. Contrato en `BACKEND_API_CONTRACTS.md` (§ Turnos → Grupos de turnos).
+
+**Reglas implementadas**
+- Código y nombre normalizados en el schema (trim + espacios internos colapsados) y únicos sin distinguir mayúsculas en el servicio (`409 SHIFT_GROUP_DUPLICATE`); índice único como segunda defensa (P2002 → mismo 409).
+- Grupo inactivo: no desclasifica; las plantillas asociadas siguen funcionando y pueden editarse conservando su grupo. Sólo se rechaza asociar un grupo inactivo **nuevo** a una plantilla (`409 SHIFT_GROUP_INACTIVE`).
+- DELETE sólo sin plantillas (`409 SHIFT_GROUP_IN_USE`, sugiere inactivar), en transacción Serializable; FK `RESTRICT` como segunda defensa (P2003 → 409).
+- Plantilla: `shiftGroupId` opcional; `null` desasigna; grupo inexistente → 404. Cambiar el grupo no entra en `affectsWorkday`: sin lock global ni recálculo de cobertura.
+- Auditoría: `ShiftGroup` con código y nombre; en la plantilla, "Grupo: anterior → nuevo" con nombres. Nunca ids en el texto.
+- Caché: escrituras de grupos y de plantillas invalidan la caché backend del catálogo de plantillas (sin capa nueva). La caché del frontend (`shiftTemplatesCatalog`) se ocupa en R3.2.
+
+**Tests** (+ 66; suite backend 4034 verdes, typecheck verde; los 65 de caracterización R1, los 57 del diagnóstico y los 24 del resolver R2 sin cambios): `shiftGroup.service.test.ts` (listar/orden, crear, duplicados por código/nombre sin distinguir mayúsculas y por P2002, editar, reordenar, inactivar/reactivar, 404, DELETE sin uso / con plantillas / P2003, auditoría sin ids, `assertShiftGroupAssignable`); `shiftGroup.schemas.test.ts` (normalización, rangos, `shiftGroupId` en plantillas, guarda estática de la migración y de la relación `Restrict`); `shiftGroup.routes.test.ts` (router real: lectura N1/N2/N3, escritura sólo N1, validación de body/query); `shiftGroup.controller.test.ts` (invalidación de caché); `workforce-management/shiftTemplateGroup.test.ts` (catálogo con/sin grupo, alta con/sin grupo, grupo inexistente/inactivo, asignar/cambiar/desasignar sin recálculo, conservar grupo inactivo, control de que cambiar el horario sí recalcula). Sin test de integración PostgreSQL de la FK: requeriría una base clonada más en `ci.yml` (configuración compartida); queda cubierto por la puerta de migraciones del CI, la guarda estática y el mapeo de P2003.
+
+**Diferencias respecto de R3-P0**: sin `GET /groups/:id` (no hace falta todavía: el listado trae todo; se agrega con la UI si se necesita); `sortOrder` acotado a 0–9999; CHECK de no-vacío agregado; el seed no crea grupos.
 
 ---
 

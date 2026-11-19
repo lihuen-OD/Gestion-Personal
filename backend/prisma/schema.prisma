@@ -511,6 +511,8 @@ model User {
   workShiftsReviewed                 WorkShift[]                    @relation("WorkShiftReviewedBy")
   shiftTemplatesCreated              ShiftTemplate[]                @relation("ShiftTemplateCreatedBy")
   shiftTemplatesUpdated              ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
+  shiftGroupsCreated                 ShiftGroup[]                   @relation("ShiftGroupCreatedBy")
+  shiftGroupsUpdated                 ShiftGroup[]                   @relation("ShiftGroupUpdatedBy")
   shiftAssignmentsAssigned           ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
   shiftAssignmentsDisabled           ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
   holidayWorkAssignmentsCreated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentCreatedBy")
@@ -518,7 +520,7 @@ model User {
   employeeDayOffsCreated             EmployeeDayOff[]               @relation("EmployeeDayOffCreatedBy")
   employeeDayOffsUpdated             EmployeeDayOff[]               @relation("EmployeeDayOffUpdatedBy")
   noveltyCoverageDaysResolved        NoveltyDayCoverage[]           @relation("NoveltyDayCoverageResolvedBy")
-  shiftAlertsResolved               ShiftAlert[]
+  shiftAlertsResolved                ShiftAlert[]
   doubleHourRulesCreated             DoubleHourRule[]
   attendancePunchesReviewed          AttendancePunch[]
   auditParametersCreated             AuditParameter[]               @relation("AuditParameterCreatedBy")
@@ -1043,7 +1045,7 @@ model Employee {
   shiftAssignments          ShiftAssignment[]
   holidayWorkAssignments    HolidayWorkAssignment[]
   dayOffs                   EmployeeDayOff[]
-  workRegimeAssignments    EmployeeWorkRegime[]
+  workRegimeAssignments     EmployeeWorkRegime[]
   workLocations             EmployeeWorkLocation[]
   positionPeriods           EmployeePositionPeriod[]
   costCenterPeriods         EmployeeCostCenterPeriod[]
@@ -1933,12 +1935,42 @@ model SystemNotification {
   @@index([recipientUserId, eventAt])
 }
 
+// Lugar / ámbito operativo principal de los turnos (Planta, Granja, Oficina,
+// Taller…) — docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23. No es la función
+// del turno: eso sigue en ShiftTemplate.categoryName ("Sereno",
+// "Administrativo"). Será el alcance de las rotaciones (R4) y de los permisos
+// de administración de turnos (R8), que referencian `id`.
+// `status` INACTIVO no desclasifica plantillas: las ya asociadas siguen
+// funcionando igual; sólo impide asociar plantillas nuevas.
+model ShiftGroup {
+  id              String       @id @default(uuid())
+  code            String       @unique
+  name            String       @unique
+  sortOrder       Int          @default(0)
+  status          RecordStatus @default(ACTIVO)
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  templates ShiftTemplate[]
+  createdBy User?           @relation("ShiftGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User?           @relation("ShiftGroupUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, sortOrder])
+}
+
 model ShiftTemplate {
   id                            String                  @id @default(uuid())
   code                          String                  @unique
   name                          String
   description                   String?
   categoryName                  String?
+  // R3 (SHIFT_ROTATION_AUDIT_PLAN.md §23): null = turno todavía no
+  // clasificado en un grupo, nunca "inválido". Ningún cálculo de negocio
+  // (resolver, alertas, Novedades, horas, cierres) lo lee. RESTRICT: borrar un
+  // grupo nunca desclasifica plantillas en silencio.
+  shiftGroupId                  String?
   startTime                     String
   endTime                       String
   crossesMidnight               Boolean                 @default(false)
@@ -1969,9 +2001,11 @@ model ShiftTemplate {
   noveltyCoverageDays           NoveltyDayCoverage[]
   createdBy                     User?                   @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy                     User?                   @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  shiftGroup                    ShiftGroup?             @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
 
   @@index([status])
   @@index([categoryName])
+  @@index([shiftGroupId])
 }
 
 model ShiftAssignment {
@@ -2346,39 +2380,39 @@ model AttendancePunch {
 // historia nunca se borra físicamente: se revoca. Todavía no autentica
 // ningún endpoint (el token compartido sigue vigente hasta F6).
 model ClockDevice {
-  id                String            @id @default(uuid())
+  id                            String            @id @default(uuid())
   // Lo define RRHH al aprobar; NULL mientras está PENDING.
-  name              String?
-  status            ClockDeviceStatus @default(PENDING)
+  name                          String?
+  status                        ClockDeviceStatus @default(PENDING)
   // SHA-256 hex del secreto del dispositivo (32 bytes aleatorios).
-  tokenHash         String            @unique
+  tokenHash                     String            @unique
   // SHA-256 hex del código de enrolamiento corto (F5). NULL fuera de PENDING.
-  pairingCodeHash   String?           @unique
-  pairingExpiresAt  DateTime?         @db.Timestamptz(3)
+  pairingCodeHash               String?           @unique
+  pairingExpiresAt              DateTime?         @db.Timestamptz(3)
   // Ubicación del dispositivo en el árbol de Ubicaciones. Metadata, no
   // autorización (M2 retiró el `sectorId` legado).
-  establishmentId   String?
-  activatedAt       DateTime?         @db.Timestamptz(3)
-  activatedByUserId String?
-  revokedAt         DateTime?         @db.Timestamptz(3)
-  revokedByUserId   String?
-  lastSeenAt        DateTime?         @db.Timestamptz(3)
-  lastIp            String?
-  lastUserAgent     String?
-  lastAppVersion    String?
+  establishmentId               String?
+  activatedAt                   DateTime?         @db.Timestamptz(3)
+  activatedByUserId             String?
+  revokedAt                     DateTime?         @db.Timestamptz(3)
+  revokedByUserId               String?
+  lastSeenAt                    DateTime?         @db.Timestamptz(3)
+  lastIp                        String?
+  lastUserAgent                 String?
+  lastAppVersion                String?
   // Acceso de mantenimiento (docs/decisions/FICHADOR_MAINTENANCE_MODE.md).
   // Código temporal que genera RRHH, de un solo uso: sólo su SHA-256 ligado a
   // este dispositivo. Uno por equipo (generar otro reemplaza al anterior).
   maintenanceCodeHash           String?
-  maintenanceCodeExpiresAt      DateTime? @db.Timestamptz(3)
-  maintenanceCodeFailedAttempts Int       @default(0)
+  maintenanceCodeExpiresAt      DateTime?         @db.Timestamptz(3)
+  maintenanceCodeFailedAttempts Int               @default(0)
   // Sesión corta abierta con ese código: sólo el SHA-256 del token. Las CHECK
   // de la migración exigen hash y vencimiento juntos, y que sólo un ACTIVE
   // tenga código o sesión.
   maintenanceSessionHash        String?
-  maintenanceSessionExpiresAt   DateTime? @db.Timestamptz(3)
-  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+  maintenanceSessionExpiresAt   DateTime?         @db.Timestamptz(3)
+  createdAt                     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt                     DateTime          @updatedAt @db.Timestamptz(3)
 
   establishment Establishment?      @relation(fields: [establishmentId], references: [id], onDelete: Restrict)
   activatedBy   User?               @relation("ClockDeviceActivatedBy", fields: [activatedByUserId], references: [id], onDelete: SetNull)

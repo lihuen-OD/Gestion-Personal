@@ -52,6 +52,8 @@ export const shiftTemplateSchema = z.object({
   name: z.string().trim().min(2).max(100),
   description: z.string().trim().max(500).optional().nullable(),
   categoryName: z.string().trim().max(60).optional().nullable(),
+  // R3.1: grupo de turnos (lugar). null = sin grupo (válido); en PATCH, null desasigna.
+  shiftGroupId: z.string().uuid().optional().nullable(),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   entryToleranceBeforeMinutes: z.coerce.number().int().min(0).max(180),

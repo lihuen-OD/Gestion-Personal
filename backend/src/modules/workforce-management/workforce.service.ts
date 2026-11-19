@@ -23,6 +23,8 @@ import { describeReinterpretation, reinterpretationMetadata } from "./specialHou
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
 import { computeExpectedMinutes } from "../shifts/shiftTemplateTime";
+import { assertShiftGroupAssignable, describeShiftGroup } from "../shifts/shiftGroup.service";
+import { shiftGroupSummarySelect } from "../shifts/shiftGroup.repository";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -93,6 +95,15 @@ function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
 
 // ── Turnos: cobertura de novedades de quienes usan la plantilla (etapa 5) ──
 const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+// R3.1: cada plantilla del catálogo trae su grupo (`shiftGroup: null` = sin
+// grupo). Es clasificación: no participa de ningún cálculo de jornada.
+const SHIFT_TEMPLATE_GROUP_INCLUDE = { shiftGroup: { select: shiftGroupSummarySelect } } as const;
+
+/** Frase de auditoría del grupo de una plantilla, con nombres (nunca ids). */
+function shiftGroupAuditPhrase(before: { code: string; name: string } | null | undefined, after: { code: string; name: string } | null | undefined): string {
+  const label = (group: { code: string; name: string } | null | undefined) => (group ? describeShiftGroup(group) : "sin grupo");
+  return ` Grupo: ${label(before)} → ${label(after)}.`;
+}
 
 /**
  * Cambio de horario/minutos/estado de una plantilla: recalcula sólo los
@@ -490,9 +501,11 @@ export const workforceService = {
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
-  shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
+  shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" }, include: SHIFT_TEMPLATE_GROUP_INCLUDE }); },
   async createShiftTemplate(input: any, audit?: AuditContext) {
     const crossesMidnight = input.endTime <= input.startTime;
+    // R3.1: un grupo nuevo para la plantilla debe existir y estar ACTIVO.
+    const group = await assertShiftGroupAssignable(input.shiftGroupId, null);
     const item = await execute(() => prisma.shiftTemplate.create({
       data: {
         ...input,
@@ -501,13 +514,20 @@ export const workforceService = {
         createdByUserId: audit?.userId || null,
         updatedByUserId: audit?.userId || null,
       },
+      include: SHIFT_TEMPLATE_GROUP_INCLUDE,
     }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
+    const groupPhrase = group ? ` Grupo: ${describeShiftGroup(group)}.` : "";
+    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.${groupPhrase}`, after: item as Prisma.InputJsonValue });
     return item;
   },
   async updateShiftTemplate(id: string, input: any, audit?: AuditContext) {
-    const before = await prisma.shiftTemplate.findUnique({ where: { id } });
+    const before = await prisma.shiftTemplate.findUnique({ where: { id }, include: SHIFT_TEMPLATE_GROUP_INCLUDE });
     if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+    // R3.1: cambiar el grupo es clasificación, no planificación horaria: no
+    // entra en `affectsWorkday` y nunca recalcula cobertura. Conservar un
+    // grupo ya inactivo está permitido; asociar uno nuevo exige ACTIVO.
+    const groupChanged = input.shiftGroupId !== undefined && (input.shiftGroupId ?? null) !== (before.shiftGroupId ?? null);
+    const nextGroup = groupChanged ? await assertShiftGroupAssignable(input.shiftGroupId, before.shiftGroupId ?? null) : null;
     const startTime = input.startTime ?? before.startTime;
     const endTime = input.endTime ?? before.endTime;
     const crossesMidnight = endTime <= startTime;
@@ -525,6 +545,7 @@ export const workforceService = {
           expectedMinutes,
           updatedByUserId: audit?.userId || null,
         },
+        include: SHIFT_TEMPLATE_GROUP_INCLUDE,
       });
       const recalculated = affectsWorkday ? await recalculateTemplateCoverage(tx, id, `cambio del turno ${updated.code} - ${updated.name}`) : null;
       return { item: updated, coverage: recalculated };
@@ -535,7 +556,7 @@ export const workforceService = {
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
       entity: "ShiftTemplate",
       entityId: id,
-      description: `Se actualizó el turno ${item.code} - ${item.name}.`,
+      description: `Se actualizó el turno ${item.code} - ${item.name}.${groupChanged ? shiftGroupAuditPhrase(before.shiftGroup, nextGroup) : ""}`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });

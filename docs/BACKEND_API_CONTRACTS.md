@@ -2040,6 +2040,22 @@ Todas las rutas requieren `requireAuth`.
 | GET | `/holiday-work/candidates?shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
 | GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias activas para una fecha |
 | PUT | `/holiday-work/assignments` | RRHH | Guardar convocatorias (upsert por empleado, ver abajo) |
+| GET | `/groups?status` | RRHH/Supervisión/Carga Horaria | Grupos de turnos (lugar), ver abajo |
+| POST | `/groups` | RRHH | Crear grupo de turnos |
+| PATCH | `/groups/:id` | RRHH | Editar código, nombre, orden o estado |
+| DELETE | `/groups/:id` | RRHH | Eliminar un grupo sin plantillas |
+
+#### Grupos de turnos (`/groups`) — R3.1
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §23. Un grupo (`ShiftGroup`) es el lugar / ámbito operativo principal de un turno (Planta, Granja, Oficina, Taller…), **no** su función: la función sigue en `ShiftTemplate.categoryName` ("Sereno", "Administrativo"). Es sólo clasificación: ningún cálculo (resolución del turno esperado, alertas, falta de ingreso, Novedades, horas, cierres, fichador) lo lee, y ninguna operación de grupos recalcula cobertura ni reevalúa jornadas.
+
+- Forma: `{ id, code, name, sortOrder, status: "ACTIVO" | "INACTIVO", templateCount, createdAt, updatedAt }`. Orden: `sortOrder` y después `name`.
+- `GET /groups?status=ACTIVO|INACTIVO`: `status` opcional (sin él, todos). Los 3 roles operativos. El alcance por grupo para Nivel 2/3 (`UserShiftGroupScope`) es una etapa posterior (R8); hoy la escritura es sólo RRHH.
+- `POST /groups` — body `{ code, name, sortOrder? }` (`sortOrder` entero 0–9999, default 0). `code` (2–30) y `name` (2–60) se normalizan (sin espacios en los extremos, espacios internos colapsados) y deben ser únicos **sin distinguir mayúsculas**: `409 SHIFT_GROUP_DUPLICATE` (la validación es del servicio; el índice único de la base es la segunda defensa y también responde 409). Un grupo nace `ACTIVO`.
+- `PATCH /groups/:id` — body parcial `{ code?, name?, sortOrder?, status? }` (al menos un campo). `404 SHIFT_GROUP_NOT_FOUND`; duplicados → `409 SHIFT_GROUP_DUPLICATE`. **Inactivar no desclasifica**: las plantillas ya asociadas conservan el grupo y siguen funcionando igual; sólo deja de poder asociarse a plantillas nuevas.
+- `DELETE /groups/:id`: sólo si el grupo no tiene ninguna plantilla asociada; si tiene, `409 SHIFT_GROUP_IN_USE` con un mensaje que sugiere inactivarlo. La FK `ShiftTemplate.shiftGroupId → ShiftGroup` es `RESTRICT` (segunda defensa: una asociación concurrente también responde 409). Cuando existan rotaciones o alcances por grupo (R4/R8), la eliminación pasará al protocolo de eliminación controlada.
+- Auditoría: entidad `ShiftGroup` (`CREATE`, `UPDATE`, `ACTIVATE`, `DEACTIVATE`, `DELETE`) con código y nombre en la descripción, nunca el id.
+- Caché: toda escritura de grupos invalida la caché backend del catálogo de plantillas (`GET /workforce/shift-templates`), que incluye el grupo de cada plantilla.
 
 #### Asignaciones de trabajo en feriados (`/holiday-work/*`) — Etapa 12D
 
@@ -2099,7 +2115,7 @@ Todas las rutas requieren `requireAuth`.
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
-| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno |
+| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno. R3.1: cada plantilla del `GET` incluye `shiftGroupId` y `shiftGroup: { id, code, name, status, sortOrder } \| null` (`null` = todavía no clasificada en un grupo, nunca "inválida"). `POST`/`PATCH` aceptan `shiftGroupId` (uuid o `null`; en `PATCH`, `null` desasigna y ausente no lo toca): debe existir (`404 SHIFT_GROUP_NOT_FOUND`) y, si es un grupo nuevo para la plantilla, estar `ACTIVO` (`409 SHIFT_GROUP_INACTIVE`); conservar un grupo que se inactivó después está permitido. Cambiar el grupo no recalcula la cobertura de Novedades (no cambia la jornada); la auditoría nombra el grupo anterior y el nuevo. |
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
 | GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
 

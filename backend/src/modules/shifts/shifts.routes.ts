@@ -11,6 +11,8 @@ import { shiftAlertController } from "./shiftAlert.controller";
 import { listShiftAlertsQuerySchema, resolveShiftAlertSchema } from "./shiftAlert.schemas";
 import { holidayWorkAssignmentController } from "./holidayWorkAssignment.controller";
 import { holidayDatesQuerySchema, holidayWorkAssignmentsByDateQuerySchema, holidayWorkCandidatesQuerySchema, saveHolidayWorkAssignmentsSchema } from "./holidayWorkAssignment.schemas";
+import { shiftGroupController } from "./shiftGroup.controller";
+import { createShiftGroupSchema, listShiftGroupsQuerySchema, updateShiftGroupSchema } from "./shiftGroup.schemas";
 
 export const shiftsRouter = Router();
 shiftsRouter.use(requireAuth);
@@ -34,3 +36,12 @@ shiftsRouter.get("/holiday-work/dates", requireAnyRole(all), validateQuery(holid
 shiftsRouter.get("/holiday-work/candidates", requireAnyRole(all), validateQuery(holidayWorkCandidatesQuerySchema), asyncHandler(holidayWorkAssignmentController.candidates));
 shiftsRouter.get("/holiday-work/assignments", requireAnyRole(all), validateQuery(holidayWorkAssignmentsByDateQuerySchema), asyncHandler(holidayWorkAssignmentController.listByDate));
 shiftsRouter.put("/holiday-work/assignments", requireAnyRole([roles.rrhh]), validateBody(saveHolidayWorkAssignmentsSchema), asyncHandler(holidayWorkAssignmentController.save));
+
+// R3.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23): grupos de turnos
+// (lugar / ámbito operativo). Lectura para los 3 roles operativos, escritura
+// sólo RRHH — mismo criterio que las plantillas (/workforce/shift-templates).
+// El alcance por grupo para Nivel 2/3 (UserShiftGroupScope) es R8.
+shiftsRouter.get("/groups", requireAnyRole(all), validateQuery(listShiftGroupsQuerySchema), asyncHandler(shiftGroupController.list));
+shiftsRouter.post("/groups", requireAnyRole([roles.rrhh]), validateBody(createShiftGroupSchema), asyncHandler(shiftGroupController.create));
+shiftsRouter.patch("/groups/:id", requireAnyRole([roles.rrhh]), validateBody(updateShiftGroupSchema), asyncHandler(shiftGroupController.update));
+shiftsRouter.delete("/groups/:id", requireAnyRole([roles.rrhh]), asyncHandler(shiftGroupController.remove));
