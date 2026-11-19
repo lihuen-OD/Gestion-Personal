@@ -1,6 +1,6 @@
 # Rotaciones de turnos — auditoría y plan (Etapa R0)
 
-Estado: **R0 (auditoría y plan) y R1 (caracterización + diagnóstico) completadas** — cierre de R1 en §21. R2 no iniciada. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
+Estado: **R0 (auditoría y plan), R1 (caracterización + diagnóstico) y R2 (resolución central en modo paridad) completadas** — cierre de R1 en §21, de R2 en §22. R3 no iniciada. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
 
 Alcance de esta etapa: no se modificó código productivo, `schema.prisma`, migraciones ni bases. La única ejecución fue la de tests unitarios existentes (mocks, sin base) y un test de reproducción temporal fuera del repositorio (§5.0).
 
@@ -511,7 +511,7 @@ RRHH siempre; N2/N3 con y sin `UserShiftGroupScope`; grupo correcto pero legajo 
 |---|---|---|---|
 | **R0** | Esta auditoría | No | No |
 | **R1** ✅ (§21) | Tests de caracterización (§18.1) + diagnóstico de solo lectura: script/consulta que lista (a) empleados con >1 `ShiftAssignment` HABILITADA aplicable el mismo día y su superposición, (b) valores distintos de `categoryName`. Ejecución sobre producción sólo con autorización explícita y en lectura. | No | No |
-| **R2** | Resolver central en **modo paridad** (sólo fuentes actuales) y migración de `workObligation`, `expectedWorkday` y entrada a leer a través de él. Caracterización verde sin cambios. | No | No |
+| **R2** ✅ (§22) | Resolver central en **modo paridad** (sólo fuentes actuales) y migración de `workObligation`, `expectedWorkday` y entrada a leer a través de él. Caracterización verde sin cambios. | No | No |
 | **R3** | `ShiftGroup` + `ShiftTemplate.shiftGroupId` + UI agrupada por lugar. | Aditivo | No (sólo organización visual) |
 | **R4** | Rotaciones en backend: tablas, resolver con `ROTATION`, `WorkShift.shiftTemplateSource`, salida, recálculo de cobertura, endpoints sólo RRHH, contratos documentados. | Aditivo | Sólo para miembros de rotaciones (ninguno al desplegar) |
 | **R5** | Vista previa del turno esperado (endpoint + calendario de solo lectura). | No | No |
@@ -601,6 +601,90 @@ Conclusiones:
 ### 21.5 Deuda de configuración (fuera de alcance de R1)
 
 El entorno de development declara `APP_ENV=staging` y `NODE_ENV=development`. Se registra para revisión por separado (coherencia de nombres de entorno y de las guardas que dependen de `APP_ENV`); no se modifica en esta etapa.
+
+---
+
+## 22. R2 — Resolución central del turno esperado (modo paridad)
+
+R2 quedó **completada** en `feature/shift-rotation-system` (sobre R1, `094f81e`). Es una refactorización estructural del backend: sin rotaciones, sin `ShiftGroup`, sin tablas ni columnas, sin migraciones, sin cambios de API ni de UI, y **sin cambios de comportamiento**.
+
+### 22.1 Arquitectura implementada
+
+`backend/src/modules/shifts/expectedShiftResolver.ts`: núcleo **puro** (sin Prisma, sin HTTP), usable desde jobs y servicios. Los consumidores siguen cargando sus datos en lote como antes (mismas consultas, mismos cortes tempranos) y le pasan el contexto de un empleado + fecha operativa. Cuatro piezas:
+
+1. **Bloque de asignaciones fijas**: único lugar con vigencia, día de semana, estado de la asignación y de la plantilla (`isShiftAssignmentActiveOnDate`, `isShiftAssignmentApplicableOnWeekday`, `isShiftAssignmentApplicableOnDate`, `fixedAssignmentsInVigency`, `applicableFixedAssignments`). `workShiftEvaluation.service.ts` re-exporta los dos primeros para no cambiar a los importadores existentes.
+2. **Régimen**: `activeRegimeKindOn` (antes duplicado en `expectedWorkday.ts` y en el diagnóstico).
+3. **Precedencia**: `resolveExpectedShift(input, policy)` → `ExpectedShiftResolution`.
+4. **Selección legacy** entre varias asignaciones aplicables: `pickEarliestFixedCandidate` (obligación) y `entryReferenceCandidates` (entrada).
+
+```ts
+type ExpectedShiftPolicy = "WORK_OBLIGATION" | "EXPECTED_WORKDAY";
+type ExpectedShiftSource = "DAY_OFF" | "HOLIDAY_NOT_CONVOKED" | "HOLIDAY_SCOPE" | "HOLIDAY_CONVOCATION" | "REGIME" | "FIXED_ASSIGNMENT" | "NONE";
+
+resolveExpectedShift<T, C>(
+  input: { dateKey; assignments: FixedAssignment<T>[]; dayOff; holiday: HolidayScopeStatus | null; convocation: C | null; regimeKind },
+  policy: ExpectedShiftPolicy,
+): {
+  dateKey; policy;
+  obligation: "SHIFT" | "NO_OBLIGATION" | "UNRESOLVED";
+  source: ExpectedShiftSource;
+  reason: ExpectedShiftReason | null;   // DAY_OFF, HOLIDAY_NOT_CONVOKED, REGIME_SIN_TURNO, SCHEDULE_MISSING, PLAN_EXCLUDES_DAY, …
+  isHoliday; convoked; convocation;
+  fixedCandidates: T[];                 // LEGACY: todas las plantillas aplicables, en orden de lectura
+}
+```
+
+### 22.2 Cómo preserva las asignaciones múltiples legacy
+
+El resolver **no elige un turno** cuando hay varias asignaciones fijas aplicables: devuelve todas en `fixedCandidates` (orden de lectura) y cada consumidor aplica su regla actual:
+
+| Consumidor | Regla legacy conservada |
+|---|---|
+| Obligación (falta de ingreso / inactividad) | `pickEarliestFixedCandidate`: inicio más temprano; empate → el primero leído (P1) |
+| Novedades | `expectedMinutesForTemplates`: disjuntos suman; superpuestos `UNRESOLVED` (P2/P3) |
+| Entrada | `entryReferenceCandidates` + cercanía a la fichada: habilitadas primero, después deshabilitadas; empate exacto → el primero (§21.3) |
+
+### 22.3 Precedencia por política (la real, no la propuesta en §10)
+
+- **WORK_OBLIGATION**: feriado sin convocatoria → sin asignación aplicable → `SIN_TURNO` → franco → obligación (en feriado convocado, con el turno habitual: P8). Empleado y plantilla ACTIVO los sigue filtrando la consulta. Feriado por calendario, sin alcance (P7): el servicio pasa `IN_SCOPE` para todo feriado.
+- **EXPECTED_WORKDAY**: franco → feriado + convocatoria (cualquier estado de alcance) → feriado `IN_SCOPE` → alcance sin historia → `SIN_TURNO` → asignación aplicable → `TURNO_FLEXIBLE` → sin planificación vigente → planificación que excluye el día.
+
+Las diferencias entre consumidores se declaran como `policy` en vez de quedar escondidas en cada servicio. Los minutos (regla P3 y fuentes de minutos de la convocatoria) quedan como **proyección propia de Novedades** en `expectedWorkday.ts`.
+
+### 22.4 Consumidores migrados
+
+| Etapa | Consumidor | Cambio |
+|---|---|---|
+| R2.1 | `workObligation.service.ts` `resolveWorkObligationCandidates` | Mismas consultas; vigencia/día/estado por `applicableFixedAssignments`, decisión por `resolveExpectedShift(WORK_OBLIGATION)`, selección por `pickEarliestFixedCandidate`. Mismo orden de candidatos. |
+| R2.2 | `expectedWorkday.ts` `evaluateEmployeeWorkday` | Precedencia por `resolveExpectedShift(EXPECTED_WORKDAY)`; minutos en `projectExpectedWorkday`. `HolidayScopeStatus` y `WorkdayRegimePeriod` pasan a ser del resolver (re-exportados/alias). |
+| R2.3 | `workShiftEvaluation.service.ts` `matchShiftForEmployee` | Candidatos por `entryReferenceCandidates`; la cercanía (`closestOwnMatch`) no cambia. |
+| — | Diagnóstico R1 (`shiftAssignmentDiagnostic.ts`) | Se eliminó la réplica de "inicio más temprano" y el `activeRegimeKind` duplicado: usa el resolver. Candidatos de entrada en el orden real del matching. |
+
+Sin migrar (no hace falta en R2): salida, olvido de salida, vencimiento y fecha operativa ya usan el turno adoptado en la entrada (`WorkShift.shiftTemplateId`).
+
+### 22.5 Diferencias que permanecen intencionalmente
+
+- Alertas vs Novedades en SIN_TURNO, TURNO_FLEXIBLE sin asignación, sin planificación, alcance del feriado (P7) y convocatoria (P8).
+- La entrada no aplica franco, feriado ni régimen al elegir el turno, y usa el día calendario de la fichada (P9).
+- Bugs congelados por R1 sin corregir: P1, P2/P3 con turnos disjuntos, empate dependiente del orden, `GENERAL_UNASSIGNED` contra 600 min (§21.3).
+
+### 22.6 Diferencias respecto de lo propuesto en §8–§10
+
+- Archivo `expectedShiftResolver.ts` (no `expectedShift.ts`). Fuentes agregadas `HOLIDAY_SCOPE` y `REGIME` para no mezclar motivos.
+- No hay `resolveExpectedShifts(employeeIds, from, to, db)` con carga propia: cada consumidor conserva su cargador en lote (la obligación consulta una fecha para todos; Novedades, legajos × rango; la entrada, un empleado con todos los estados). Unificar la carga cambiaría consultas verificadas por tests y queda para R4, cuando la rotación necesite su propio contexto.
+- La precedencia real de alertas evalúa "sin asignación aplicable" antes que SIN_TURNO y el franco al final (§10 proponía otro orden); los resultados son los mismos, pero se conserva el orden del código.
+
+### 22.7 Tests
+
+- `expectedShiftResolver.test.ts`: **24 tests** — bloque de asignaciones (vigencia, weekdays, estados, orden), régimen vigente, los 14 casos pedidos en ambas políticas (turno fijo, sin turno, SIN_TURNO, franco, feriado sin/con convocatoria, dos asignaciones, vigencias, weekdays, cross-midnight, deshabilitada, plantilla inactiva, empate exacto, disjuntos) y paridad con los tres consumidores.
+- Los 65 tests de caracterización y los 57 del diagnóstico de R1: **verdes sin modificar ningún archivo de test**.
+- Suite backend completa: **3968 tests verdes** (3944 + 24). Typecheck verde.
+
+### 22.8 Deuda que queda para R3/R4
+
+- **R3**: `ShiftGroup` + `ShiftTemplate.shiftGroupId` con mapeo explícito (§11, §21.4). No depende del resolver.
+- **R4**: fuentes `ROTATION` (y luego `OVERRIDE`, R7) en `resolveExpectedShift` con resultado único; carga de contexto compartida para los tres consumidores; `WorkShift.shiftTemplateSource` y `resolveMatchForExit` sin exigir `ShiftAssignment` para rotaciones (P6); recálculo de cobertura por cambios de rotación.
+- **R10**: decidir la política para varias asignaciones fijas (hoy reglas legacy distintas por consumidor).
 
 ---
 

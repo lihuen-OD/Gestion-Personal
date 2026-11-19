@@ -1,9 +1,15 @@
 import { ARGENTINA_OFFSET_MINUTES, argentinaCalendarDate, argentinaDateKey, scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTime";
+import { entryReferenceCandidates, isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnDate, isShiftAssignmentApplicableOnWeekday, type ShiftAssignmentStatusValue } from "./expectedShiftResolver";
+
+// Etapa R2: la vigencia y el día de semana de una asignación los define el
+// resolver central (expectedShiftResolver.ts); se re-exportan para no
+// cambiar a los importadores existentes.
+export { isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnWeekday };
 
 export const DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES = 1200;
 export const DEFAULT_MAXIMUM_INFORMATIVE_MINUTES = 600;
 
-export type ShiftAssignmentStatusRef = "HABILITADO" | "DESHABILITADO";
+export type ShiftAssignmentStatusRef = ShiftAssignmentStatusValue;
 
 export interface ShiftTemplateRef {
   id: string;
@@ -35,33 +41,13 @@ export interface EmployeeShiftAssignmentRef {
   weekdays?: number[];
 }
 
-// Vigencia: aplica si effectiveFrom <= fecha y (effectiveTo es null o
-// effectiveTo >= fecha) — mismo criterio que EmployeeWorkRegime
-// (workRegimes.repository.ts). `referenceDate` debe ser una fecha calendario
-// ya resuelta (medianoche UTC), no un instante real — ver
-// argentinaCalendarDate/argentinaDateKey.
-export function isShiftAssignmentActiveOnDate(assignment: Pick<EmployeeShiftAssignmentRef, "effectiveFrom" | "effectiveTo">, referenceDate: Date): boolean {
-  if (assignment.effectiveFrom && assignment.effectiveFrom > referenceDate) return false;
-  if (assignment.effectiveTo && assignment.effectiveTo < referenceDate) return false;
-  return true;
-}
-
-// weekdays sigue el criterio ya usado en el proyecto (DoubleHourRule.weekdays,
-// TimeSegment.date.getDay()): 0=domingo..6=sábado. Vacío o ausente = todos
-// los días. `referenceDate` ya resuelta a medianoche UTC: getUTCDay() da el
-// día de semana correcto sin volver a aplicar ningún corrimiento de huso.
-export function isShiftAssignmentApplicableOnWeekday(assignment: Pick<EmployeeShiftAssignmentRef, "weekdays">, referenceDate: Date): boolean {
-  if (!assignment.weekdays?.length) return true;
-  return assignment.weekdays.includes(referenceDate.getUTCDay());
-}
-
 // Combina status + vigencia + weekday contra un INSTANTE real (ej. la
 // fichada), resolviendo la fecha calendario Argentina internamente — para
 // que ningún llamador tenga que reimplementar esa conversión.
 export function isShiftAssignmentApplicableForInstant(assignment: EmployeeShiftAssignmentRef, instant: Date): boolean {
   if (assignment.status !== "HABILITADO") return false;
   const referenceDate = argentinaCalendarDate(argentinaDateKey(instant));
-  return isShiftAssignmentActiveOnDate(assignment, referenceDate) && isShiftAssignmentApplicableOnWeekday(assignment, referenceDate);
+  return isShiftAssignmentApplicableOnDate(assignment, referenceDate);
 }
 
 export type ShiftMatchCase = "ENABLED" | "DISABLED_FOR_EMPLOYEE" | "GENERAL_UNASSIGNED" | "NO_MATCH";
@@ -172,16 +158,15 @@ export function matchShiftForEmployee(input: {
   employeeAssignments: EmployeeShiftAssignmentRef[];
   activeTemplates: ShiftTemplateRef[];
 }): ShiftMatchResult {
+  // Etapa R2: candidatos desde el resolver central — asignaciones propias
+  // aplicables el día CALENDARIO de la fichada (P9), habilitadas primero y
+  // deshabilitadas después, contra plantillas ACTIVO. La elección por cercanía
+  // (y su desempate por orden) sigue siendo la de siempre.
   const referenceDate = argentinaCalendarDate(argentinaDateKey(input.actualAt));
-  const appliesToday = (assignment: EmployeeShiftAssignmentRef) =>
-    isShiftAssignmentActiveOnDate(assignment, referenceDate) && isShiftAssignmentApplicableOnWeekday(assignment, referenceDate);
+  const candidates = entryReferenceCandidates({ referenceDate, assignments: input.employeeAssignments, activeTemplates: input.activeTemplates });
+  const enabledIds = new Set(candidates.filter((candidate) => candidate.enabled).map((candidate) => candidate.template.id));
 
-  const templatesById = new Map(input.activeTemplates.map((template) => [template.id, template]));
-  const enabledIds = new Set(input.employeeAssignments.filter((a) => a.status === "HABILITADO" && appliesToday(a)).map((a) => a.shiftTemplateId));
-  const disabledIds = new Set(input.employeeAssignments.filter((a) => a.status === "DESHABILITADO" && appliesToday(a)).map((a) => a.shiftTemplateId));
-  const ownTemplates = [...enabledIds, ...disabledIds].map((id) => templatesById.get(id)).filter((t): t is ShiftTemplateRef => Boolean(t));
-
-  const ownMatch = closestOwnMatch(input.actualAt, ownTemplates);
+  const ownMatch = closestOwnMatch(input.actualAt, candidates.map((candidate) => candidate.template));
   if (ownMatch) {
     return { case: enabledIds.has(ownMatch.template.id) ? "ENABLED" : "DISABLED_FOR_EMPLOYEE", template: ownMatch.template, differenceMinutes: ownMatch.differenceMinutes };
   }

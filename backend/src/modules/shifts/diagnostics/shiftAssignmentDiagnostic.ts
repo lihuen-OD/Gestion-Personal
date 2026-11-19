@@ -8,12 +8,13 @@
  *       ingreso / inactividad), candidatos y ruteo del matching de entrada,
  *       jornada esperada de Novedades y superposición.
  *
- * No corrige nada ni reinterpreta `categoryName` como lugar. Reutiliza las
- * funciones reales (vigencia, weekday, `matchShiftForEmployee`,
- * `evaluateEmployeeWorkday`, `loadEmployeeWorkdayContext`). La única réplica
- * es la elección "inicio más temprano" de `resolveWorkObligationCandidates`
- * (inline en ese servicio, sin exportar), cubierta por un test de paridad
- * contra la función real (shiftAssignmentDiagnostic.test.ts).
+ * No corrige nada ni reinterpreta `categoryName` como lugar. Etapa R2: no
+ * replica ninguna regla — usa el resolver central (`resolveExpectedShift`,
+ * `pickEarliestFixedCandidate`, `entryReferenceCandidates`,
+ * `activeRegimeKindOn`) y las funciones reales de los consumidores
+ * (`matchShiftForEmployee`, `evaluateEmployeeWorkday`,
+ * `loadEmployeeWorkdayContext`). El test de paridad contra
+ * `resolveWorkObligationCandidates` se conserva (shiftAssignmentDiagnostic.test.ts).
  *
  * Este módulo nunca importa el cliente Prisma compartido ni `config/env`: el
  * script le pasa un lector de sólo lectura (readOnlyDiagnostic.ts).
@@ -24,7 +25,6 @@ import {
   argentinaDayRange,
   calendarDateKey,
   nextCalendarDateKey,
-  scheduledInstantForShiftTime,
   todayArgentinaDateKey,
 } from "../../../shared/datetime/argentinaTime";
 import type { PrismaTransactionClient } from "../../../shared/prisma/client";
@@ -36,14 +36,15 @@ import {
   workdayDateKeys,
   type EmployeeWorkdayContext,
   type WorkdayContextReader,
-  type WorkdayRegimePeriod,
 } from "../expectedWorkday";
 import {
-  isShiftAssignmentActiveOnDate,
-  isShiftAssignmentApplicableOnWeekday,
-  matchShiftForEmployee,
-  type ShiftTemplateRef,
-} from "../workShiftEvaluation.service";
+  activeRegimeKindOn,
+  entryReferenceCandidates,
+  isShiftAssignmentApplicableOnDate,
+  pickEarliestFixedCandidate,
+  resolveExpectedShift,
+} from "../expectedShiftResolver";
+import { matchShiftForEmployee, type ShiftTemplateRef } from "../workShiftEvaluation.service";
 
 export const DEFAULT_DIAGNOSTIC_DAYS = 28;
 
@@ -97,7 +98,11 @@ export type AssignmentReport = {
 
 export type PotentialOverlap = { codes: [string, string]; from: string; to: string | null; weekdays: number[] };
 
-export type WorkObligationPick = { code: string | null; scheduledStart: string | null; reason: "EARLIEST_START" | "HOLIDAY_NOT_CONVOKED" | "DAY_OFF" | "REGIME_SIN_TURNO" };
+export type WorkObligationPick = {
+  code: string | null;
+  scheduledStart: string | null;
+  reason: "EARLIEST_START" | "HOLIDAY_NOT_CONVOKED" | "DAY_OFF" | "REGIME_SIN_TURNO" | "NO_APPLICABLE_ASSIGNMENT";
+};
 
 export type ConflictDayGroup = {
   dates: string[];
@@ -191,23 +196,14 @@ export function summarizeCategoryNames(templates: DiagnosticTemplate[]): { categ
   return { categories, collisions };
 }
 
-// ── Réplica de la elección de resolveWorkObligationCandidates ──────────────
-
-function activeRegimeKind(regimes: WorkdayRegimePeriod[], date: Date): WorkRegimeKind | null {
-  let winner: WorkdayRegimePeriod | null = null;
-  for (const regime of regimes) {
-    if (regime.effectiveFrom > date || (regime.effectiveTo && regime.effectiveTo < date)) continue;
-    if (!winner || regime.effectiveFrom > winner.effectiveFrom) winner = regime;
-  }
-  return winner?.kind ?? null;
-}
+// ── Obligación de trabajo (resolver central) ────────────────────────────────
 
 /**
- * Lo que hoy decide `resolveWorkObligationCandidates` (workObligation.service.ts)
- * para un empleado ACTIVO con estas plantillas HABILITADAS aplicables:
- * feriado por calendario (sin alcance) sin convocatoria ⇒ ninguna; régimen
- * SIN_TURNO ⇒ ninguna; franco ⇒ ninguna; si no, el inicio más temprano (en
- * empate, la primera leída). Test de paridad contra la función real.
+ * Lo que hoy decide `resolveWorkObligationCandidates` para un empleado ACTIVO
+ * con estas plantillas HABILITADAS aplicables. Etapa R2: ya no es una réplica
+ * — usa la misma precedencia (`resolveExpectedShift`, política
+ * WORK_OBLIGATION) y la misma selección legacy (`pickEarliestFixedCandidate`)
+ * que el servicio. El feriado de alertas es por calendario, sin alcance (P7).
  */
 export function currentWorkObligationPick(input: {
   dateKey: string;
@@ -217,16 +213,24 @@ export function currentWorkObligationPick(input: {
   regimeKind: WorkRegimeKind | null;
   dayOff: boolean;
 }): WorkObligationPick {
-  if (input.isHolidayByCalendar && !input.convoked) return { code: null, scheduledStart: null, reason: "HOLIDAY_NOT_CONVOKED" };
-  if (input.regimeKind === "SIN_TURNO") return { code: null, scheduledStart: null, reason: "REGIME_SIN_TURNO" };
-  if (input.dayOff) return { code: null, scheduledStart: null, reason: "DAY_OFF" };
-  const reference = argentinaDayRange(input.dateKey).startAt;
-  let earliest: { code: string; at: Date; startTime: string } | null = null;
-  for (const template of input.applicable) {
-    const at = scheduledInstantForShiftTime(reference, template.startTime);
-    if (!earliest || at < earliest.at) earliest = { code: template.code, at, startTime: template.startTime };
+  const resolution = resolveExpectedShift(
+    {
+      dateKey: input.dateKey,
+      // Ya aplicables: sin vigencia ni días que filtrar.
+      assignments: input.applicable.map((template) => ({ status: "HABILITADO" as const, template })),
+      dayOff: input.dayOff,
+      holiday: input.isHolidayByCalendar ? "IN_SCOPE" : null,
+      convocation: input.convoked ? { convoked: true } : null,
+      regimeKind: input.regimeKind,
+    },
+    "WORK_OBLIGATION",
+  );
+  if (resolution.obligation !== "SHIFT") {
+    const reason = resolution.reason === "HOLIDAY_NOT_CONVOKED" || resolution.reason === "DAY_OFF" || resolution.reason === "REGIME_SIN_TURNO" ? resolution.reason : "NO_APPLICABLE_ASSIGNMENT";
+    return { code: null, scheduledStart: null, reason };
   }
-  return earliest ? { code: earliest.code, scheduledStart: earliest.startTime, reason: "EARLIEST_START" } : { code: null, scheduledStart: null, reason: "EARLIEST_START" };
+  const earliest = pickEarliestFixedCandidate(input.dateKey, resolution.fixedCandidates);
+  return earliest ? { code: earliest.template.code, scheduledStart: earliest.template.startTime, reason: "EARLIEST_START" } : { code: null, scheduledStart: null, reason: "NO_APPLICABLE_ASSIGNMENT" };
 }
 
 // ── Ruteo de la entrada (función real, minuto a minuto) ─────────────────────
@@ -254,7 +258,7 @@ export function entryRoutingForDate(dateKey: string, assignments: DiagnosticAssi
 // ── B2/B3 ───────────────────────────────────────────────────────────────────
 
 function appliesOn(assignment: Pick<DiagnosticAssignment, "effectiveFrom" | "effectiveTo" | "weekdays">, date: Date) {
-  return isShiftAssignmentActiveOnDate(assignment, date) && isShiftAssignmentApplicableOnWeekday(assignment, date);
+  return isShiftAssignmentApplicableOnDate(assignment, date);
 }
 
 function weekdaySet(weekdays: number[]) {
@@ -325,12 +329,13 @@ export function buildShiftAssignmentDiagnostic(input: DiagnosticInput): ShiftAss
       const holidayStatus = context?.holidays.get(dateKey) ?? null;
       const convoked = Boolean(context?.convocations.get(dateKey));
       const dayOff = Boolean(context?.dayOffDates.has(dateKey));
-      const regimeKind = context ? activeRegimeKind(context.regimes, date) : null;
+      const regimeKind = context ? activeRegimeKindOn(context.regimes, date) : null;
       const applicableTemplates = applicable.map((row) => row.template);
       const workObligation = currentWorkObligationPick({ dateKey, applicable: applicableTemplates, isHolidayByCalendar: holidayStatus !== null, convoked, regimeKind, dayOff });
-      const entryCandidates = rows
-        .filter((row) => templatesById.get(row.shiftTemplateId)?.status === "ACTIVO" && appliesOn(row, date))
-        .map((row) => ({ code: templatesById.get(row.shiftTemplateId)!.code, status: row.status }));
+      // Mismos candidatos y mismo orden que el matching real (habilitadas primero).
+      const entryCandidates = entryReferenceCandidates({ referenceDate: date, assignments: rows, activeTemplates: input.templates.filter((template) => template.status === "ACTIVO") }).map(
+        (candidate) => ({ code: candidate.template.code, status: candidate.enabled ? ("HABILITADO" as const) : ("DESHABILITADO" as const) }),
+      );
       const workday = context ? evaluateEmployeeWorkday(context, dateKey) : null;
       const minutes = expectedMinutesForTemplates(applicableTemplates);
       const overlap = "unresolved" in minutes && minutes.unresolved === "SHIFT_ASSIGNMENTS_OVERLAP";
