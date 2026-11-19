@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
-import { assertShiftGroupAssignable, shiftGroupService } from "./shiftGroup.service";
+import { assertShiftGroupAssignable, shiftGroupService, shiftGroupUniquenessKey } from "./shiftGroup.service";
+import { createShiftGroupSchema, updateShiftGroupSchema } from "./shiftGroup.schemas";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
@@ -31,6 +32,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.shiftGroup.findMany.mockResolvedValue([]);
   db.shiftGroup.delete.mockResolvedValue({});
+  db.shiftGroup.create.mockReset();
+  db.shiftGroup.update.mockReset();
   db.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
 });
 
@@ -60,13 +63,45 @@ describe("crear", () => {
     expect(register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftGroup", entityId: GROUP_ID, description: "Se creó el grupo de turnos PLANTA - Planta." }));
   });
 
-  it("busca duplicados sin distinguir mayúsculas por código y nombre", async () => {
+  it("lee código y nombre de los demás grupos (sin ILIKE) para comparar con la clave de los índices lower()", async () => {
     db.shiftGroup.create.mockResolvedValue(row());
     await shiftGroupService.create({ code: "PLANTA", name: "Planta", sortOrder: 0 });
-    expect(db.shiftGroup.findMany.mock.calls[0]![0]).toEqual({
-      where: { OR: [{ code: { equals: "PLANTA", mode: "insensitive" } }, { name: { equals: "Planta", mode: "insensitive" } }] },
-      select: { id: true, code: true, name: true },
-    });
+    expect(db.shiftGroup.findMany.mock.calls[0]![0]).toEqual({ where: undefined, select: { id: true, code: true, name: true } });
+  });
+
+  it("«Planta» y «PLANTA» son el mismo nombre", async () => {
+    db.shiftGroup.findMany.mockResolvedValue([{ id: "g-x", code: "PLT", name: "Planta" }]);
+    await expect(shiftGroupService.create({ code: "OTRO", name: "PLANTA", sortOrder: 0 })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_DUPLICATE", message: expect.stringContaining("nombre «PLANTA»") });
+    expect(db.shiftGroup.create).not.toHaveBeenCalled();
+  });
+
+  it("«Oficina» y « oficina » son el mismo nombre tras normalizar (schema + servicio)", async () => {
+    db.shiftGroup.findMany.mockResolvedValue([{ id: "g-x", code: "OFICINA", name: "Oficina" }]);
+    const input = createShiftGroupSchema.parse({ code: "OF", name: " oficina " });
+    expect(input.name).toBe("oficina");
+    await expect(shiftGroupService.create(input)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_DUPLICATE" });
+  });
+
+  it("dos códigos equivalentes por mayúsculas: el schema los lleva a MAYÚSCULAS y el servicio los rechaza", async () => {
+    db.shiftGroup.findMany.mockResolvedValue([{ id: "g-x", code: "OFICINA", name: "Oficina" }]);
+    const input = createShiftGroupSchema.parse({ code: "oficina", name: "Oficina Central" });
+    expect(input.code).toBe("OFICINA");
+    await expect(shiftGroupService.create(input)).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("código «OFICINA»") });
+    // Aun si llegara sin pasar por el schema, la clave ignora mayúsculas.
+    await expect(shiftGroupService.create({ code: "Oficina", name: "Otra", sortOrder: 0 })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("caracteres de patrón (_ %) no generan falsos duplicados", async () => {
+    db.shiftGroup.findMany.mockResolvedValue([{ id: "g-x", code: "PL-1", name: "Planta-1" }]);
+    db.shiftGroup.create.mockResolvedValue(row({ code: "PL_1", name: "Planta_1" }));
+    await expect(shiftGroupService.create({ code: "PL_1", name: "Planta_1", sortOrder: 0 })).resolves.toMatchObject({ code: "PL_1" });
+    db.shiftGroup.create.mockResolvedValue(row({ code: "PL%", name: "Planta%" }));
+    await expect(shiftGroupService.create({ code: "PL%", name: "Planta%", sortOrder: 0 })).resolves.toMatchObject({ code: "PL%" });
+  });
+
+  it("clave de unicidad: equivalente a lower() de la base", () => {
+    expect(shiftGroupUniquenessKey("Medio Ambiente")).toBe(shiftGroupUniquenessKey("MEDIO AMBIENTE"));
+    expect(shiftGroupUniquenessKey("Granja")).not.toBe(shiftGroupUniquenessKey("Granja 02"));
   });
 
   it.each([
@@ -78,9 +113,11 @@ describe("crear", () => {
     expect(db.shiftGroup.create).not.toHaveBeenCalled();
   });
 
-  it("un unique de la base en paralelo (P2002) también es 409", async () => {
+  it("concurrencia: la violación de un índice único (lower o exacto) llega como P2002 y es el mismo 409", async () => {
+    // Dos altas simultáneas «Planta» / «PLANTA»: ambas pasan la validación previa y
+    // la segunda choca con ShiftGroup_name_lower_key (23505 → P2002).
     db.shiftGroup.create.mockRejectedValue(knownError("P2002"));
-    await expect(shiftGroupService.create({ code: "PLANTA", name: "Planta", sortOrder: 0 })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_DUPLICATE" });
+    await expect(shiftGroupService.create({ code: "PLANTA", name: "PLANTA", sortOrder: 0 })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_DUPLICATE" });
   });
 });
 
@@ -93,6 +130,21 @@ describe("editar", () => {
     expect(db.shiftGroup.update.mock.calls[0]![0].data).toEqual({ code: "PLT", name: "Planta Norte", sortOrder: 5, updatedByUserId: "user-1" });
     expect(item).toMatchObject({ code: "PLT", sortOrder: 5 });
     expect(register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", description: "Se actualizó el grupo de turnos PLT - Planta Norte." }));
+  });
+
+  it("concurrencia en la edición: P2002 → 409", async () => {
+    db.shiftGroup.findUnique.mockResolvedValue(row());
+    db.shiftGroup.update.mockRejectedValue(knownError("P2002"));
+    const input = updateShiftGroupSchema.parse({ name: "GRANJA" });
+    await expect(shiftGroupService.update(GROUP_ID, input)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_DUPLICATE" });
+  });
+
+  it("renombrar cambiando sólo mayúsculas no choca consigo mismo (se excluye el propio id)", async () => {
+    db.shiftGroup.findMany.mockResolvedValue([{ id: "g2", code: "TALLER", name: "Taller" }]);
+    db.shiftGroup.findUnique.mockResolvedValue(row());
+    db.shiftGroup.update.mockResolvedValue(row({ name: "PLANTA" }));
+    await expect(shiftGroupService.update(GROUP_ID, { name: "PLANTA" })).resolves.toMatchObject({ name: "PLANTA" });
+    expect(db.shiftGroup.findMany.mock.calls[0]![0].where).toEqual({ id: { not: GROUP_ID } });
   });
 
   it("sólo reordenar no consulta duplicados", async () => {

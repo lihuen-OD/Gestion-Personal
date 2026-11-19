@@ -1942,6 +1942,11 @@ model SystemNotification {
 // de administración de turnos (R8), que referencian `id`.
 // `status` INACTIVO no desclasifica plantillas: las ya asociadas siguen
 // funcionando igual; sólo impide asociar plantillas nuevas.
+// Escritos a mano en la migración (Prisma no los modela): índices únicos
+// sobre lower(code) y lower(name) — unicidad sin distinguir mayúsculas — y
+// CHECK de forma (sin espacios en los extremos ni repetidos). Los @unique de
+// abajo distinguen mayúsculas; se conservan como unicidad exacta visible
+// para Prisma.
 model ShiftGroup {
   id              String       @id @default(uuid())
   code            String       @unique

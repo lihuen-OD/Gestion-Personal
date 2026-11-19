@@ -122,6 +122,8 @@ Use constraints for:
 
 Hand-written `CHECK` constraints (added 2026-11-13, `20261113180000_add_novelty_coverage_engine`): PostgreSQL treats a CHECK that evaluates to `NULL` as satisfied. Any expression over nullable columns (`col BETWEEN 1 AND 1440`, `cardinality(arr)`, `arr <@ ARRAY[...]`) must be guarded with `IS NOT NULL`/`COALESCE`, or the whole expression wrapped in `COALESCE((...), false)`. Test each CHECK with the NULL case, not only with wrong values: the first version of that migration accepted a fixed-minutes novelty type with no minutes.
 
+Case-insensitive uniqueness (added 2026-11-19, `20261119120000_add_shift_groups`): Prisma's `@unique` is case-sensitive in PostgreSQL, so it is not a second line of defense for a "unique regardless of case" business rule. Add a hand-written unique index on `lower(col)` in the migration (Prisma does not model expression indexes and does not compare them in `migrate diff`; document it in a comment on the model), keep `@unique` if Prisma needs the exact key, normalize whitespace in the app and enforce the same shape with a CHECK so whitespace variants cannot bypass the index. Validate duplicates in the service with the same semantics as `lower()` — not `mode: "insensitive"`, which can compile to `ILIKE` and treat `_`, `%` and `\` as pattern characters — and map `P2002` to the domain 409.
+
 ## Indexes
 
 Consider indexes for:

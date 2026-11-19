@@ -21,14 +21,15 @@ export const shiftGroupRepository = {
     return db.shiftGroup.findUnique({ where: { id }, include: { _count: { select: { templates: true } } } });
   },
 
-  /** Otro grupo con el mismo código o nombre, sin distinguir mayúsculas (valores ya normalizados). */
-  findConflicting(input: { code?: string; name?: string }, excludeId: string | null, db: Db = prisma) {
-    const or: Prisma.ShiftGroupWhereInput[] = [];
-    if (input.code) or.push({ code: { equals: input.code, mode: "insensitive" } });
-    if (input.name) or.push({ name: { equals: input.name, mode: "insensitive" } });
-    if (!or.length) return Promise.resolve([]);
+  /**
+   * Código y nombre de los demás grupos, para validar duplicados sin distinguir
+   * mayúsculas en el servicio. Catálogo chico (decenas de filas): se compara en
+   * memoria con la misma semántica que los índices únicos sobre lower(...), en
+   * vez de `mode: "insensitive"` (ILIKE: `_`, `%` y `\` actuarían como patrón).
+   */
+  findOtherKeys(excludeId: string | null, db: Db = prisma) {
     return db.shiftGroup.findMany({
-      where: { OR: or, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      where: excludeId ? { id: { not: excludeId } } : undefined,
       select: { id: true, code: true, name: true },
     });
   },

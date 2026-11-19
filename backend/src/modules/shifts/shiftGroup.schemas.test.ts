@@ -5,9 +5,23 @@ import { createShiftGroupSchema, listShiftGroupsQuerySchema, normalizeShiftGroup
 import { shiftTemplateSchema, updateShiftTemplateSchema } from "../workforce-management/workforce.schemas";
 
 describe("normalización de código y nombre", () => {
-  it("recorta extremos y colapsa espacios internos", () => {
+  it("recorta extremos y colapsa espacios internos (incluidos tabs)", () => {
     expect(normalizeShiftGroupText("  Medio    Ambiente ")).toBe("Medio Ambiente");
+    expect(normalizeShiftGroupText("Medio\t Ambiente")).toBe("Medio Ambiente");
     expect(createShiftGroupSchema.parse({ code: " MA ", name: " Medio   Ambiente " })).toEqual({ code: "MA", name: "Medio Ambiente", sortOrder: 0 });
+  });
+
+  it("el código se guarda en MAYÚSCULAS; el nombre conserva sus mayúsculas", () => {
+    expect(createShiftGroupSchema.parse({ code: " oficina ", name: "Oficina" })).toEqual({ code: "OFICINA", name: "Oficina", sortOrder: 0 });
+    expect(updateShiftGroupSchema.parse({ code: "medio ambiente" })).toEqual({ code: "MEDIO AMBIENTE" });
+  });
+
+  it("lo que produce el schema cumple el CHECK de forma de la base", () => {
+    const shape = (value: string) => /\S/.test(value) && !/(^\s|\s$|\s\s)/.test(value);
+    for (const raw of ["  Planta ", "Medio \t  Ambiente", "\tGranja\n"]) {
+      const parsed = createShiftGroupSchema.parse({ code: raw, name: raw });
+      expect(shape(parsed.code) && shape(parsed.name)).toBe(true);
+    }
   });
 
   it("rechaza vacíos o demasiado cortos después de normalizar", () => {
@@ -57,6 +71,20 @@ describe("migración 20261119120000_add_shift_groups", () => {
   const root = path.resolve(__dirname, "../../..");
   const sql = readFileSync(path.join(root, "prisma/migrations/20261119120000_add_shift_groups/migration.sql"), "utf8");
   const statements = sql.split("\n").filter((line) => line.trim() && !line.trim().startsWith("--")).join("\n");
+
+  it("unicidad sin distinguir mayúsculas en la base: índices únicos sobre lower(code) y lower(name), además de los @unique", () => {
+    expect(statements).toContain('CREATE UNIQUE INDEX "ShiftGroup_code_lower_key" ON "ShiftGroup"(lower("code"));');
+    expect(statements).toContain('CREATE UNIQUE INDEX "ShiftGroup_name_lower_key" ON "ShiftGroup"(lower("name"));');
+    expect(statements).toContain('CREATE UNIQUE INDEX "ShiftGroup_code_key" ON "ShiftGroup"("code");');
+    expect(statements).toContain('CREATE UNIQUE INDEX "ShiftGroup_name_key" ON "ShiftGroup"("name");');
+  });
+
+  it("CHECK de forma: no vacío, sin espacios en los extremos ni repetidos (columnas NOT NULL)", () => {
+    expect(statements).toContain('CONSTRAINT "ShiftGroup_code_name_shape_check" CHECK (');
+    expect(statements).toContain(`"code" ~ '\\S' AND "code" !~ '(^\\s|\\s$|\\s\\s)'`);
+    expect(statements).toContain(`"name" ~ '\\S' AND "name" !~ '(^\\s|\\s$|\\s\\s)'`);
+    expect(statements).toMatch(/"code" TEXT NOT NULL,\s+"name" TEXT NOT NULL/);
+  });
 
   it("crea la tabla, agrega la columna nullable sin default, índices y FK RESTRICT", () => {
     expect(statements).toContain('CREATE TABLE "ShiftGroup"');

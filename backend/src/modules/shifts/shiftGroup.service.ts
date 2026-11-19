@@ -65,10 +65,21 @@ function duplicateError() {
   return new AppError("Ya existe un grupo de turnos con ese código o nombre", 409, "SHIFT_GROUP_DUPLICATE");
 }
 
+/**
+ * Clave de unicidad: la misma que los índices únicos sobre lower(...) de la
+ * base (migración 20261119120000_add_shift_groups). Los valores ya llegan
+ * normalizados en espacios (schema), y la base lo garantiza con un CHECK.
+ */
+export function shiftGroupUniquenessKey(value: string) {
+  return value.toLowerCase();
+}
+
 async function assertNoConflict(input: { code?: string; name?: string }, excludeId: string | null) {
-  const conflicts = await shiftGroupRepository.findConflicting(input, excludeId);
-  if (!conflicts.length) return;
-  const sameCode = input.code && conflicts.some((item) => item.code.toLocaleLowerCase("es") === input.code!.toLocaleLowerCase("es"));
+  if (input.code === undefined && input.name === undefined) return;
+  const others = await shiftGroupRepository.findOtherKeys(excludeId);
+  const sameCode = input.code !== undefined && others.some((item) => shiftGroupUniquenessKey(item.code) === shiftGroupUniquenessKey(input.code!));
+  const sameName = input.name !== undefined && others.some((item) => shiftGroupUniquenessKey(item.name) === shiftGroupUniquenessKey(input.name!));
+  if (!sameCode && !sameName) return;
   throw new AppError(
     sameCode ? `Ya existe un grupo de turnos con el código «${input.code}»` : `Ya existe un grupo de turnos con el nombre «${input.name}»`,
     409,
