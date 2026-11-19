@@ -1,6 +1,6 @@
 # Rotaciones de turnos — auditoría y plan (Etapa R0)
 
-Estado: **R0 (auditoría y plan), R1 (caracterización + diagnóstico) y R2 (resolución central en modo paridad) completadas** — cierre de R1 en §21, de R2 en §22. R3: plan en §23, **R3.1 (modelo + API) implementada** (§23.14); R3.2–R3.4 pendientes. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
+Estado: **R0 (auditoría y plan), R1 (caracterización + diagnóstico) y R2 (resolución central en modo paridad) completadas** — cierre de R1 en §21, de R2 en §22. R3: plan en §23, **R3.1 (modelo + API, aplicada en development)** y **R3.2 (UI)** implementadas (§23.14–§23.17); R3.3–R3.4 pendientes. Fecha: 2026-11-19. Rama de trabajo al auditar: `pre-development` (`4de624c`); R1 en `fix/shift-rotation-r1`.
 
 Alcance de esta etapa: no se modificó código productivo, `schema.prisma`, migraciones ni bases. La única ejecución fue la de tests unitarios existentes (mocks, sin base) y un test de reproducción temporal fuera del repositorio (§5.0).
 
@@ -911,6 +911,38 @@ Autorizada por el usuario sólo para development. Producción **no** se tocó. *
 - **Verificación**: 1897 tests verdes (shifts, workforce, time-entries, novelties, employee-day-offs: incluye R1, R2 y R3.1) y typecheck verde.
 - **Smoke real** (funciones del backend, sólo lectura): catálogo de 15 plantillas, todas con `shiftGroup: null`; 0 grupos; 29 asignaciones cargadas; obligación del día con 29 candidatos; jornada esperada de 29 legajos × 7 días resuelta (186 WORKDAY, 16 NO_WORK_OBLIGATION, 1 DAY_OFF), ninguna inválida por no tener grupo.
 - **Datos**: conteos idénticos antes de migrar, después de migrar y después del smoke en `ShiftTemplate`, `ShiftAssignment`, `WorkShift`, `ShiftAlert`, `AttendanceInactivityIncident`, `SystemNotification`, `Novelty`, `NoveltyDayCoverage`, `TimeEntry`, `HolidayWorkAssignment`, `EmployeeDayOff` y `Employee`: ninguna fila funcional creada ni modificada; el único cambio es estructural.
+
+### 23.17 R3.2 — UI de grupos de turnos (implementada, 2026-11-19)
+
+**Estado: R3.1 y R3.2 completadas; R3 no.** Pendientes R3.3 (clasificación en development) y R3.4 (producción). Sólo frontend: sin cambios de backend, schema, migraciones ni datos.
+
+**Arquitectura**
+- `services/api/shiftGroupApiService.ts`: tipos estrictos (`ShiftGroup`, `ShiftGroupSummary`, entradas de alta/edición) y `list/create/update/remove`. Las mutaciones usan `silentErrors` (el error se muestra en contexto, sin el aviso global duplicado) e invalidan la familia `workforce-config`.
+- `ShiftTemplate` (tipos del frontend): `shiftGroupId` y `shiftGroup: ShiftGroupSummary | null`; `ShiftTemplateInput.shiftGroupId` (null desasigna).
+- `utils/shiftGroups.ts` (lógica pura): secciones, orden, filtro, etiquetas y opciones del selector.
+- Componentes: `ShiftGroupSections` (secciones colapsables con `ShiftTable` dentro), `ShiftGroupsPanel` + `ShiftGroupFormModal` (gestión RRHH), `useShiftGroupsCatalog` (alta/detalle de turno).
+
+**Pantalla Turnos** (`ShiftsPage`): pestañas "Turnos por grupo" y "Grupos". Secciones en este orden: grupos activos por `sortOrder` y nombre → "Sin grupo" → grupos inactivos (colapsados, con badge "Grupo inactivo"). Dentro de cada sección se conserva el orden del catálogo y las columnas de siempre (la categoría pasa a tono secundario). Filtro "Grupo" (todos, cada grupo, "Sin grupo") además de estado y búsqueda; la búsqueda también encuentra por nombre de grupo. Con filtros activos no se muestran grupos vacíos. Las secciones usan el patrón accesible de Alertas de Turnos (botón con `aria-expanded`/`aria-controls`).
+- **Cero grupos** (estado actual de development): una sola sección "Sin grupo" con las 15 plantillas y el aviso "Aún no hay grupos configurados. Los turnos se muestran en «Sin grupo»." (RRHH: botón "Administrar grupos"; Nivel 2/3: sólo información). "Sin grupo" es un estado válido, no un error.
+- **Error al cargar grupos**: los turnos se siguen mostrando agrupados con el grupo que trae cada uno (el catálogo de turnos lo incluye) y un aviso visible con "Reintentar"; nunca se oculta el error.
+
+**Gestión de grupos (sólo RRHH)**: tabla Orden / Código / Nombre / Turnos / Estado / Acciones; alta y edición en modal (código en mayúsculas y normalizado como en el backend, nombre, orden sugerido = máximo + 10, validación en línea accesible con `FieldMessages`); la edición envía sólo los campos cambiados; activar/inactivar con confirmación que explica que los turnos no se borran ni dejan de funcionar; eliminar con confirmación. Mensajes humanos para `SHIFT_GROUP_DUPLICATE` ("Ya existe un grupo con ese código o nombre."), `SHIFT_GROUP_IN_USE` ("Este grupo tiene turnos asociados. Podés inactivarlo, pero no eliminarlo."), `SHIFT_GROUP_INACTIVE` y `SHIFT_GROUP_NOT_FOUND` (en `apiClient`, sin códigos ni ids). Nivel 2/3 ven la lista sin acciones. Permisos por grupo: R8.
+
+**Formulario de turno** (alta y detalle): selector "Grupo (lugar)" con "Sin grupo" + grupos activos; un grupo inactivo que la plantilla ya tiene se muestra como "Nombre (inactivo)" y se puede conservar, pero nunca se ofrece como destino. `categoryName` no cambia y su ayuda aclara que es la función del turno. Si el catálogo de grupos no carga: se puede conservar el grupo actual o quitarlo (con aviso).
+
+**Detalle del turno**: "Grupo: <nombre>" o "Grupo: Sin grupo" y "Categoría: <categoría>" cuando existe; sin ids ni null.
+
+**Legajo** (`EmployeeShiftsPanel`): columna "Grupo" (el grupo del TURNO, resuelto con el catálogo que el panel ya carga; no es un atributo del empleado) y grupo en el selector "Agregar turno". Sin cambios de backend.
+
+**Caché**: política `shiftGroupsCatalog` en la familia `workforce-config` (TTL 30 s, sin persistencia, igual que el catálogo de turnos). Toda mutación de grupos y de turnos invalida la familia: después de crear, editar, reordenar, activar/inactivar o eliminar un grupo, o de asignar/cambiar/quitar el grupo de un turno, ambos catálogos se vuelven a pedir sin refrescar la página. Sin capa de caché nueva.
+
+**Responsive**: en la vista agrupada `ShiftTable` usa `layout="grouped"` (columnas de ancho fijo proporcional alineadas entre grupos, mínimo 960 px, código y horario sin corte, encabezados que cortan entre palabras), porque con el mínimo de 1180 px cada grupo mostraba su propia barra de scroll a 1366/1440. Escritorio sin scroll horizontal ni contenido recortado; en tablet y mobile cada tabla se desplaza dentro de su contenedor (estrategia estándar del sistema de tablas), sin overflow de página.
+
+**Tests** (+44 en 6 archivos, frontend 1561 verdes, 136 archivos; `tsc -b` y `vite build` verdes): `utils/shiftGroups.test.ts` (0 grupos con las 15 plantillas reales, orden, empate por nombre, vacíos, fallback sin catálogo, filtro, etiquetas, opciones con inactivo actual); `shiftGroupApiService.test.ts` (endpoints, `silentErrors`, dedupe, invalidación cruzada de ambos catálogos, mensajes de error sin códigos ni ids); `ShiftsPage.groups.test.tsx` (0 grupos, varios grupos, orden, plegado, filtro, búsqueda por grupo, error de carga, RRHH vs Nivel 2/3); `ShiftGroupsPanel.test.tsx` (alta normalizada, validación, duplicado, edición parcial, inactivar, cancelar, eliminar en uso y sin uso, permisos); `ShiftTemplateFormFields.groups.test.tsx` (opciones, asignar y desasignar sin tocar la categoría, inactivo actual, accesibilidad de las ayudas); `EmployeeShiftsPanel.groups.test.tsx`. Los tests previos de Turnos no se modificaron. Backend R1/R2/R3.1 sin cambios y verdes.
+
+**QA real en navegador** (Playwright, Vite local, API interceptada en el navegador, sin llamadas a ninguna base): estado real de development (15 plantillas leídas en sólo lectura, 0 grupos) y el mapeo previsto para R3.3 **simulado** en el navegador, en 1366×768, 1440×900, 1920×1080, tablet 834×1112 y 1112×834, mobile 390×844 y 320×568; además error de carga de grupos, vista Nivel 3, pestaña Grupos, modal de alta y validación, y detalle de turno. Resultado: 0 px de overflow de página, 0 contenido recortado, 0 errores de consola (salvo el 500 provocado a propósito), 0 escrituras, modales dentro de la pantalla. El legajo no se validó en navegador (requiere muchos endpoints del detalle de empleado): cubierto por test de componente. Development verificado después: 0 grupos, 15 plantillas sin grupo, conteos sin cambios.
+
+**Diferencias respecto del plan (§23.5)**: la gestión de grupos vive en una pestaña de la pantalla Turnos (no en Configuración aparte); `categoryName` se mantiene como columna (con tono secundario) en vez de chip junto al nombre, para no romper el orden por categoría ni los tests de la tabla; se agregó el layout `grouped` de la tabla por el problema de ancho a 1366/1440.
 
 ---
 

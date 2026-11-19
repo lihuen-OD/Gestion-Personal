@@ -15,6 +15,8 @@ import { workforceApiService, type ShiftTemplate } from "../services/api/workfor
 import { confirmAction } from "../services/appDialog";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
+import { shiftGroupLabel, shiftGroupSelectOptions } from "../utils/shiftGroups";
 
 const tabItems = [
   { key: "0", label: "1. Datos del turno" },
@@ -32,6 +34,7 @@ export function ShiftDetailPage() {
   const [loadRetry, setLoadRetry] = useState(0);
   const [tab, setTab] = useState(0);
   const [notice, setNotice] = useState(location.state?.created ? "Turno creado correctamente." : "");
+  const { groups, status: groupsStatus } = useShiftGroupsCatalog();
 
   useEffect(() => {
     let alive = true;
@@ -85,6 +88,12 @@ export function ShiftDetailPage() {
     }
   };
 
+  const groupField = {
+    // El grupo actual (aunque esté inactivo) siempre se puede conservar; nunca se ofrece un inactivo como destino nuevo.
+    options: shiftGroupSelectOptions(groups, source?.shiftGroup ?? null),
+    unavailableMessage: groupsStatus === "error" ? "No pudimos cargar los grupos: podés conservar el grupo actual o dejarlo sin grupo." : undefined,
+  };
+
   if (loadStatus === "loading") return <Section title="Turno"><LoadingState text="Cargando turno..." /></Section>;
   if (loadStatus === "error" || !source || !value) return <Section title="Turno"><ErrorState message="No se pudo cargar el turno solicitado." onRetry={() => setLoadRetry((v) => v + 1)} /></Section>;
 
@@ -95,9 +104,13 @@ export function ShiftDetailPage() {
         <div>
           <div className="avatar">{source.code.slice(0, 2).toUpperCase()}</div>
           <div>
-            <p className="eyebrow">{source.code} · {source.categoryName || "Sin categoría"}</p>
+            <p className="eyebrow">{source.code}</p>
             <h1>{source.name}</h1>
             <p>{source.startTime}–{source.endTime}{source.crossesMidnight ? " (cruza medianoche)" : ""}</p>
+            <p className="shift-detail-classification">
+              <span>Grupo: <b>{shiftGroupLabel(source.shiftGroup)}</b>{source.shiftGroup && source.shiftGroup.status !== "ACTIVO" ? " (inactivo)" : ""}</span>
+              {source.categoryName ? <span>Categoría: <b>{source.categoryName}</b></span> : null}
+            </p>
           </div>
         </div>
         <div className="hero-actions">
@@ -116,7 +129,7 @@ export function ShiftDetailPage() {
         subtitle={tab === 0 ? "Horario, tolerancias y reglas de control del turno." : "Empleados con este turno habilitado o deshabilitado."}
         action={tab === 0 && canEdit ? <Button variant="primary" onClick={save} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar cambios"}</Button> : undefined}
       >
-        {tab === 0 ? <ShiftTemplateFormFields value={value} onChange={setValue} disabled={!canEdit} /> : <ShiftEmployeesPanel shiftTemplateId={source.id} canEdit={canEdit} />}
+        {tab === 0 ? <ShiftTemplateFormFields value={value} onChange={setValue} disabled={!canEdit} groupField={groupField} /> : <ShiftEmployeesPanel shiftTemplateId={source.id} canEdit={canEdit} />}
       </Section>
     </>
   );

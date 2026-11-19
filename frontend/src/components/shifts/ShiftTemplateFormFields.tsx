@@ -1,10 +1,15 @@
 import type { ShiftTemplate } from "../../services/api/workforceApiService";
+import { useId } from "react";
+import type { ShiftGroupOption } from "../../utils/shiftGroups";
+import { describedBy, FieldMessages } from "../ui/FieldMessages";
 
 export type ShiftTemplateFormValue = {
   code: string;
   name: string;
   description: string;
   categoryName: string;
+  /** R3: "" = sin grupo. */
+  shiftGroupId: string;
   startTime: string;
   endTime: string;
   entryToleranceBeforeMinutes: number;
@@ -24,6 +29,7 @@ export function emptyShiftTemplate(): ShiftTemplateFormValue {
     name: "",
     description: "",
     categoryName: "",
+    shiftGroupId: "",
     startTime: "08:00",
     endTime: "16:00",
     entryToleranceBeforeMinutes: 10,
@@ -44,6 +50,7 @@ export function shiftTemplateToFormValue(item: ShiftTemplate): ShiftTemplateForm
     name: item.name,
     description: item.description || "",
     categoryName: item.categoryName || "",
+    shiftGroupId: item.shiftGroupId || "",
     startTime: item.startTime,
     endTime: item.endTime,
     entryToleranceBeforeMinutes: item.entryToleranceBeforeMinutes,
@@ -64,6 +71,7 @@ export function shiftTemplateFormToInput(value: ShiftTemplateFormValue) {
     name: value.name.trim(),
     description: value.description.trim() || null,
     categoryName: value.categoryName.trim() || null,
+    shiftGroupId: value.shiftGroupId || null,
     startTime: value.startTime,
     endTime: value.endTime,
     entryToleranceBeforeMinutes: Number(value.entryToleranceBeforeMinutes),
@@ -97,8 +105,18 @@ export function formatMinutes(minutes: number) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
-export function ShiftTemplateFormFields({ value, onChange, disabled }: { value: ShiftTemplateFormValue; onChange: (value: ShiftTemplateFormValue) => void; disabled?: boolean }) {
+/**
+ * `groupField`: opciones del selector "Grupo" (ver shiftGroupSelectOptions) y,
+ * si el catálogo de grupos no cargó, un aviso. Cambiar el grupo es sólo
+ * clasificación: no toca horario, tolerancias ni la categoría.
+ */
+export function ShiftTemplateFormFields({ value, onChange, disabled, groupField }: { value: ShiftTemplateFormValue; onChange: (value: ShiftTemplateFormValue) => void; disabled?: boolean; groupField: { options: ShiftGroupOption[]; unavailableMessage?: string } }) {
   const set = (patch: Partial<ShiftTemplateFormValue>) => onChange({ ...value, ...patch });
+  const baseId = useId();
+  const groupId = `${baseId}-group`;
+  const categoryId = `${baseId}-category`;
+  const groupMessages = { hint: groupField.unavailableMessage };
+  const categoryMessages = { hint: "Función del turno. El lugar se elige en Grupo." };
   const { crossesMidnight, expectedMinutes } = previewShiftSchedule(value.startTime, value.endTime);
 
   return (
@@ -106,7 +124,19 @@ export function ShiftTemplateFormFields({ value, onChange, disabled }: { value: 
       <div className="form-grid">
         <label className="field"><span>Código</span><input required disabled={disabled} spellCheck={false} value={value.code} onChange={(e) => set({ code: e.target.value })} /></label>
         <label className="field"><span>Nombre</span><input required disabled={disabled} value={value.name} onChange={(e) => set({ name: e.target.value })} /></label>
-        <label className="field"><span>Categoría / tipo</span><input disabled={disabled} placeholder="Ej: Administrativo, Cosecha, Sereno" value={value.categoryName} onChange={(e) => set({ categoryName: e.target.value })} /></label>
+        <div className="field-stack">
+          <label className="field">
+            <span>Grupo (lugar)</span>
+            <select id={groupId} disabled={disabled} value={value.shiftGroupId} aria-describedby={describedBy(groupId, groupMessages)} onChange={(e) => set({ shiftGroupId: e.target.value })}>
+              {groupField.options.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <FieldMessages id={groupId} {...groupMessages} />
+        </div>
+        <div className="field-stack">
+          <label className="field"><span>Categoría / tipo</span><input id={categoryId} disabled={disabled} placeholder="Ej: Administrativo, Cosecha, Sereno" value={value.categoryName} aria-describedby={describedBy(categoryId, categoryMessages)} onChange={(e) => set({ categoryName: e.target.value })} /></label>
+          <FieldMessages id={categoryId} {...categoryMessages} />
+        </div>
         <label className="field"><span>Estado</span><select disabled={disabled} value={value.status} onChange={(e) => set({ status: e.target.value as "ACTIVO" | "INACTIVO" })}><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
         <label className="field form-wide"><span>Descripción</span><textarea disabled={disabled} spellCheck lang="es-AR" value={value.description} onChange={(e) => set({ description: e.target.value })} /></label>
       </div>

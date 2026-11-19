@@ -2828,3 +2828,41 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .modal-body .user-form{grid-template-columns:repeat(2,minmax(0,1fr))}
 .user-form>.info-note,.user-form>.supervised-users,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
 @media(max-width:620px){.modal-body .user-form{grid-template-columns:minmax(0,1fr)}}
+
+/* R3.2 — Turnos agrupados por grupo (lugar). docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23. */
+.shift-group-sections{display:grid;gap:12px;padding:14px 16px 16px}
+.shift-group-section{border:1px solid var(--ds-slate-200);border-radius:var(--radius-lg);background:#fff;overflow:hidden}
+.shift-group-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:10px 14px;background:var(--ds-slate-50)}
+.shift-group-section:has(.shift-group-body) .shift-group-head{border-bottom:1px solid var(--ds-slate-200)}
+.shift-group-toggle{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 6px 4px 2px;border:0;border-radius:var(--radius-md);background:transparent;color:var(--ds-slate-800);font-size:14px;font-weight:700;text-align:left;cursor:pointer}
+.shift-group-toggle:hover{background:var(--ds-slate-100)}
+.shift-group-toggle:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px}
+.shift-group-toggle svg{flex:none;color:var(--ds-slate-500)}
+.shift-group-title{overflow-wrap:anywhere}
+.shift-group-meta{display:flex;align-items:center;gap:8px;margin-left:auto}
+.shift-group-count{color:var(--ds-slate-500);font-size:12px;font-weight:600;white-space:nowrap}
+.shift-group-hint{flex-basis:100%;margin:0;color:var(--color-text-muted);font-size:12px}
+.shift-group-section.is-ungrouped .shift-group-head{background:#fff}
+.shift-group-section.is-inactive .shift-group-title{color:var(--ds-slate-500)}
+.shift-group-body .table-shell{border:0;border-radius:0}
+.shift-group-body .empty-compact{padding:12px 14px!important}
+.shift-category-cell{color:var(--color-text-muted)}
+/* Supera a `.table-shell>table{table-layout:auto!important}` sólo en la vista agrupada: columnas alineadas entre grupos. */
+.table-shell>table.shift-table-grouped{table-layout:fixed!important}
+/* Anchos calculados para los textos reales (encabezados en mayúsculas con ícono de orden, códigos y horarios) a ~1024 px útiles (1366). */
+.shift-table-grouped .col-code{width:11%}.shift-table-grouped .col-name{width:10%}.shift-table-grouped .col-category{width:12%}.shift-table-grouped .col-schedule{width:10.5%}.shift-table-grouped .col-midnight{width:10.5%}
+.shift-table-grouped .col-enabled{width:12%}.shift-table-grouped .col-disabled{width:15%}.shift-table-grouped .col-status{width:9%}.shift-table-grouped .col-actions{width:10%}
+.table-shell>table.shift-table-grouped thead th{white-space:normal!important}
+.table-shell>table.shift-table-grouped thead th,.table-shell>table.shift-table-grouped tbody td{padding-left:10px!important;padding-right:10px!important}
+.table-shell>table.shift-table-grouped thead th:first-child,.table-shell>table.shift-table-grouped tbody td:first-child{padding-left:16px!important}
+.table-shell>table.shift-table-grouped thead th,.table-shell>table.shift-table-grouped tbody td{overflow-wrap:normal!important;word-break:normal!important}
+.shift-groups-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:14px 16px 0!important;padding:10px 12px}
+.shift-groups-note p{flex:1 1 280px;margin:0}
+.shift-groups-note b{flex-basis:100%}
+.info-note.warning{border-color:var(--ds-amber-200);border-left-color:var(--ds-amber-600);background:var(--ds-amber-50)}
+.info-note.warning b{color:var(--ds-amber-700)}
+.shift-group-panel-error{margin:12px 16px 0}
+.shift-detail-classification{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px}
+.shift-detail-classification b{color:var(--ds-slate-700);font-weight:600}
+.shift-group-form .form-grid{grid-template-columns:repeat(3,minmax(0,1fr));padding:0}
+@media(max-width:700px){.shift-group-sections{padding:12px}.shift-group-meta{margin-left:0}.shift-group-form .form-grid{grid-template-columns:1fr}}

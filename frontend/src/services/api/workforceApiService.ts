@@ -1,5 +1,6 @@
 import { apiRequest } from "./apiClient";
 import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
+import type { ShiftGroupSummary } from "./shiftGroupApiService";
 
 // Etapa 5 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.7): este cambio puede reinterpretar la cobertura de novedades.
 function invalidateNoveltyCoverageDerivedCaches(reason: string) {
@@ -75,6 +76,9 @@ export type ShiftTemplate = {
   name: string;
   description?: string | null;
   categoryName?: string | null;
+  // R3: grupo (lugar) de la plantilla. null/ausente = sin grupo, estado válido.
+  shiftGroupId?: string | null;
+  shiftGroup?: ShiftGroupSummary | null;
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
@@ -96,6 +100,8 @@ export type ShiftTemplateInput = {
   name: string;
   description?: string | null;
   categoryName?: string | null;
+  // R3: null desasigna; ausente no cambia el grupo.
+  shiftGroupId?: string | null;
   startTime: string;
   endTime: string;
   entryToleranceBeforeMinutes: number;
