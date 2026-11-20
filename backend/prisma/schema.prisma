@@ -2388,10 +2388,21 @@ model ShiftAlert {
   @@index([severity, status])
 }
 
+// R4.3a (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.4): `scheduledStartAt`
+// identifica el BLOQUE de una falta de ingreso (instante programado exacto, el
+// mismo de ExpectedBlock.scheduledStartAt / WorkShift.scheduledStartAt). NULL
+// = incidente de día (todos los históricos, SIN_ACTIVIDAD_REGISTRADA y la falta
+// de ingreso de turnos fijos). Unicidad escrita a mano en la migración (Prisma
+// no modela índices de expresión ni NULLS NOT DISTINCT):
+//   UNIQUE ("employeeId", "operationalDate", COALESCE("scheduledStartAt", '-infinity'))
+// = una fila de día por persona y fecha, y una por bloque. No usar
+// findUnique/upsert sobre esa unicidad: altas con createMany({ skipDuplicates })
+// (ON CONFLICT DO NOTHING) y lecturas/cambios por campos o por id.
 model AttendanceInactivityIncident {
   id               String                 @id @default(uuid())
   employeeId       String
   operationalDate  DateTime               @db.Date
+  scheduledStartAt DateTime?              @db.Timestamptz(3)
   status           AttendanceReviewStatus @default(PENDIENTE)
   observation      String
   detectedAt       DateTime               @default(now()) @db.Timestamptz(3)
@@ -2403,7 +2414,6 @@ model AttendanceInactivityIncident {
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   reviewedBy User?    @relation("InactivityIncidentReviewedBy", fields: [reviewedByUserId], references: [id])
 
-  @@unique([employeeId, operationalDate])
   @@index([status, operationalDate])
   @@index([employeeId, status])
 }

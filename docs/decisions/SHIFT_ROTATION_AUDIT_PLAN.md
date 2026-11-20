@@ -1442,6 +1442,39 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Pendiente para R4.3:** cargador en lote (Prisma → snapshot), obligación y falta de ingreso por bloque, evidencia por bloque con `assignInstantToBlock`, incidente por bloque (R4.3a), Novedades con rotaciones cargadas, recálculo de cobertura, si el CONFLICT se persiste como motivo propio (migración del enum) y la convocatoria con turno en los consumidores.
 
+### 25.4 R4.3a — Persistencia de incidentes por bloque (implementada y validada en local; NO aplicada a ninguna base compartida)
+
+**Estado:** migración `20261121090000_attendance_incident_block_key` creada y validada contra PostgreSQL 18 local; no aplicada a development, pre-development ni producción. **Ningún código productivo cambió**: nadie escribe todavía `scheduledStartAt` (R4.3b).
+
+**Antes (verificado en development, sólo lectura, PostgreSQL 18.7):** `AttendanceInactivityIncident` con 1912 filas y 1912 pares (empleado, fecha) distintos; único `AttendanceInactivityIncident_employeeId_operationalDate_key` (índice); sin columna de tipo (FALTA_INGRESO y SIN_ACTIVIDAD comparten fila). Ningún código usa la clave compuesta de Prisma `employeeId_operationalDate`; la única dependencia de la unicidad es la deduplicación de `createMany({ skipDuplicates: true })` (`ON CONFLICT DO NOTHING` sin target) en `persistAndNotifyInactivityIncidents`.
+
+**Diseño:**
+- Columna `scheduledStartAt TIMESTAMPTZ(3) NULL` sin default ni backfill. NULL = incidente de día (todos los históricos, SIN_ACTIVIDAD_REGISTRADA, falta de ingreso de turnos fijos); NOT NULL = falta de ingreso de un bloque (el mismo instante que `ExpectedBlock.scheduledStartAt` / `WorkShift.scheduledStartAt`).
+- Unicidad: índice único de **expresión** escrito a mano `AttendanceInactivityIncident_block_key` sobre `("employeeId", "operationalDate", COALESCE("scheduledStartAt", '-infinity'::timestamptz))` = una fila de día por persona y fecha, y una por bloque (equivale a `NULLS NOT DISTINCT`). Se eligió sobre `NULLS NOT DISTINCT` porque Prisma 6.19 no modela ese atributo: Prisma ignora los índices de expresión (gate verificado: `migrate diff` vacío) y `skipDuplicates` los respeta.
+- `schema.prisma`: + `scheduledStartAt`; − `@@unique([employeeId, operationalDate])`; el modelo documenta el índice. Regla: nunca `findUnique`/`upsert` sobre esta unicidad (altas con `createMany({ skipDuplicates })`, lecturas y cambios por campos o id).
+- Migración: `LOCK ... ACCESS EXCLUSIVE`; precondiciones (columna inexistente, sin pares repetidos); `ADD COLUMN` (sólo metadata); índice nuevo **antes** de `DROP INDEX` del anterior; postcondiciones (sin filas con bloque, filas = pares, índices esperados). Sin UPDATE, INSERT ni DELETE. Todo en una transacción.
+- Rollback (`prisma/rollbacks/20261121090000_attendance_incident_block_key.down.sql`): transacción + lock; **aborta si existe algún incidente por bloque**; restaura el índice anterior antes de quitar el nuevo; quita la columna; borra su fila de `_prisma_migrations` (P3012). Debe correr antes que los rollbacks de R4.1A y R4.1.
+
+**Compatibilidad:** las filas existentes quedan con `scheduledStartAt = NULL` y la unicidad nueva es, para ellas, idéntica a la anterior. Fijos y SIN_ACTIVIDAD siguen escribiendo filas de día. Francos (`resolvePendingInactivity`) resuelven todas las filas del día (también las de bloque). **Cambio de garantía para R4.3b:** una fila de día ya no colisiona con filas de bloque (coexisten estructuralmente); evitar la duplicación semántica (p. ej. un SIN_ACTIVIDAD además de faltas por bloque) es lógica de R4.3b.
+
+**Validación local** (Postgres.app 18; bases descartables `r43a_*` en `localhost`, destino verificado antes de cada escritura; ningún comando contra Neon; bases eliminadas al terminar):
+1. **Gate Prisma:** historial completo (80 migraciones) en base limpia; `migrate status` al día; `migrate diff` contra `schema.prisma` **No difference detected**.
+2. **Historial preservado:** base en estado previo con incidentes sintéticos de todos los estados (PENDIENTE notificado y sin notificar, RESUELTA por usuario, automática y por franco, DESCARTADA por supervisor) y avisos `SystemNotification` asociados → `migrate deploy` → **hashes idénticos** de las columnas originales (ids, estados, observaciones, fechas, revisión, usuarios) y de los avisos con su incidente; `scheduledStartAt` NULL en todas las filas.
+3. **Unicidad (SQL real):** dos incidentes de día mismo empleado y fecha → 23505; bloques 07:00 y 19:00 el mismo día → admitidos; mismo bloque repetido → 23505; día + dos bloques coexisten; otro empleado u otra fecha → admitidos; pasar un bloque a NULL con un incidente de día existente → 23505; `ON CONFLICT DO NOTHING` descarta duplicados de día y de bloque.
+4. **Prisma real** (cliente regenerado): `createMany({ skipDuplicates: true })` con filas de día y de bloque → 3 la primera vez, 0 al reintentar; `persistAndNotifyInactivityIncidents` (código productivo actual) no duplica el incidente legacy existente, crea el nuevo y un reintento no crea ni vuelve a notificar; `attendanceObservedCount` correcto; el franco resuelve las 3 filas pendientes del día.
+5. **Precondición:** ejecutar la migración sobre una base que ya tiene la columna aborta sin cambios.
+6. **Rollback:** con incidentes por bloque → aborta y datos, índices e historial de migraciones quedan idénticos (hash); sin bloques → revierte conservando todos los registros legacy y avisos (hash idéntico), la migración vuelve a figurar pendiente, `migrate diff` contra el schema anterior **No difference detected**, y re-aplicarla deja los registros idénticos y el schema sin diferencias.
+
+**Tests:** `time-entries/attendanceIncidentBlockKey.migration.test.ts` (9). Caracterización R1/R1.1 76/76 (incluido R1.1-D, que sigue afirmando que el alta actual no escribe `scheduledStartAt`) y resolver R2 24/24 sin cambios; suites de asistencia, turnos, Novedades y francos 1785 verdes; suite backend **4223 verdes**; `typecheck` y `build` verdes.
+
+**Documentación:** `docs/DATABASE_STANDARDS.md` — unicidad con NULL como valor ⇒ índice de expresión `COALESCE` (y por qué no `NULLS NOT DISTINCT` con Prisma); corrección de la instrucción de rollbacks (`resolve --rolled-back` sólo aplica a migraciones fallidas).
+
+**Novedades (`planIssue`)** — decisión del usuario: se mantiene `SCHEDULE_MISSING` + `planIssue` sin nuevo valor de enum. Limitación: `NoveltyDayCoverage` persiste sólo `SCHEDULE_MISSING`; `planIssue` es efímero. Al recalcular no se pierde (se deriva otra vez del plan, determinístico y con historia inmutable), pero en consultas históricas y auditoría no se distingue "falta configurar" de "configuración contradictoria" sin recalcular. Opciones futuras (sin decidir): columna JSON de diagnóstico en `NoveltyDayCoverage` o valor de enum dedicado.
+
+**Pendiente para R4.3b:** cargador de rotaciones; obligación por bloque; `checkMissingExpectedEntries` y catch-up escribiendo `scheduledStartAt` para bloques de rotación (fijos siguen en NULL); evidencia por bloque con `assignInstantToBlock`; auto-resolución por `(employeeId, scheduledStartAt)`; exclusión en `detectAttendanceInactivity` de quien ya tenga incidentes ese día; textos y avisos por bloque.
+
+**Antes de un deploy en development (autorización aparte):** procedimiento de §24.19 (Datasource, rama de respaldo Neon, snapshot lógico de `AttendanceInactivityIncident` con hash, `migrate deploy`, `migrate status`, `migrate diff --exit-code`, catálogos, conteos y hash fila a fila, `prisma generate`, reinicio del backend local). Orden: R4.1A y R4.3a pendientes en development.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
