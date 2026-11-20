@@ -162,6 +162,26 @@ export function previousCalendarDateKey(dateKey: string): string {
 }
 
 /**
+ * Rotaciones (R4.2, docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.3):
+ * diferencia CON SIGNO en días entre dos fechas calendario "YYYY-MM-DD"
+ * (`toKey − fromKey`). Aritmética sobre medianoches UTC: sin huso ni DST.
+ */
+export function calendarDaysBetweenKeys(fromKey: string, toKey: string): number {
+  return Math.round((argentinaCalendarDate(toKey).getTime() - argentinaCalendarDate(fromKey).getTime()) / MS_PER_DAY);
+}
+
+/** Día de la semana de una fecha calendario: 0 = domingo … 6 = sábado (convención de `weekdays`). */
+export function calendarWeekdayOfKey(dateKey: string): number {
+  return argentinaCalendarDate(dateKey).getUTCDay();
+}
+
+/** Lunes de la semana (lunes → domingo) que contiene la fecha: el domingo pertenece a la semana del lunes anterior. */
+export function mondayOfCalendarDateKey(dateKey: string): string {
+  const daysSinceMonday = (calendarWeekdayOfKey(dateKey) + 6) % 7;
+  return calendarDateKey(new Date(argentinaCalendarDate(dateKey).getTime() - daysSinceMonday * MS_PER_DAY));
+}
+
+/**
  * Etapa 15L.5 (docs/decisions/NOVELTY_QUANTITY_SEMANTICS_15L5.md): cantidad
  * de días CALENDARIO, inclusive, entre dos FECHAS CALENDARIO ya normalizadas
  * (ver nota de `periodFromCalendarDate` — ej. `Novelty.fromDate`/`toDate`,

@@ -1401,6 +1401,47 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Antes de autorizar un deploy en development:** mismo procedimiento que §24.19 (línea Datasource, rama de respaldo Neon, verificar `ShiftRotationSlot` vacía, `migrate deploy`, `migrate status`, `migrate diff --exit-code`, catálogos y conteos, `prisma generate`, reinicio del backend local).
 
+### 25.3 R4.2 — Núcleo de rotaciones y `ExpectedDayPlan` (implementado, 2026-11-20)
+
+**Estado:** núcleo **puro** (sin Prisma, sin HTTP) implementado y probado con la especificación real de Planta. Ningún servicio productivo lo usa todavía: obligación, falta de ingreso, incidentes, entrada/salida, alertas, notificaciones, API y frontend sin cambios; sin schema, migraciones ni datos. Los consumidores se conectan en R4.3/R4.4.
+
+**Archivos:**
+
+| Archivo | Contenido |
+|---|---|
+| `shared/datetime/argentinaTime.ts` | `calendarDaysBetweenKeys` (con signo), `calendarWeekdayOfKey` (0 = domingo), `mondayOfCalendarDateKey` (semana lunes→domingo) |
+| `shifts/rotationPlan.ts` | Snapshot de configuración (espejo de las tablas R4.1/R4.1A, sin tipos Prisma), contrato `ExpectedDayPlan` / `ExpectedBlock`, `rotationWeekIndex`, `rotationWeekLabel`, `templateSchedule`, `buildExpectedBlock`, `resolveRotationDayPlan` |
+| `shifts/blockAssignment.ts` | `assignInstantToBlock`, `candidateBlocksAround` |
+| `shifts/rotationValidation.ts` | `validateRotationGrid` |
+| `shifts/expectedShiftResolver.ts` | Input opcional `rotationPlan` / `convocationTemplate`; fuente `ROTATION`; resultado `dayPlan` + `blocks`; camino de rotación separado (`resolveRotationShift`) |
+| `shifts/expectedWorkday.ts` | Caso `ROTATION`, bloques del plan en la cascada de minutos de la convocatoria, `planIssue`; `projectExpectedWorkday` exportada para tests |
+| `shifts/plantaRotation.fixture.ts` | Especificación real de Planta como snapshot (reutilizable en R4.3–R4.9) |
+
+**Contrato.** `resolveRotationDayPlan(employeeId, dateKey, { memberships, rotations })` devuelve:
+- `null` — no es miembro vigente de una rotación ACTIVA (rotación INACTIVA = deja de resolver): rige el legacy.
+- `REST` — descanso programado (`origin`: rotación, versión, equipo, semana, día, fila).
+- `MISSING` + motivo (`ROTATION_NOT_FOUND`, `CREW_NOT_IN_ROTATION`, `CREW_INACTIVE`, `NO_VERSION_IN_EFFECT`, `INVALID_VERSION`, `NO_DAY_ROW`, `SHIFT_DAY_WITHOUT_BLOCKS`, `TEMPLATE_UNAVAILABLE`) — configuración inexistente o incompleta, nunca descanso.
+- `CONFLICT` + motivo (`MULTIPLE_MEMBERSHIPS`, `MULTIPLE_VERSIONS`, `DUPLICATE_DAY_ROWS`, `REST_DAY_WITH_BLOCKS`, `DUPLICATE_BLOCK_INDEX`, `OVERLAPPING_BLOCKS`) + `detail` con los ids y rangos involucrados — configuración contradictoria: **nunca se elige la primera**, no genera obligación ni candidatos y queda lista para mostrarse a un administrador (sin notificaciones en R4.2). La base ya impide estos casos (EXCLUDE y únicos de R4.1/R4.1A); el núcleo se defiende igual, sin schema nuevo.
+- `SHIFTS` — 1..N `ExpectedBlock` ordenados: `obligationKey` (`employeeId|scheduledStartAt ISO`, estable y único por persona; coincide con `WorkShift.scheduledStartAt`), `operationalDate` (fecha del inicio), `blockIndex`, `source` (`ROTATION` | `HOLIDAY_CONVOCATION`), `template`, `scheduledStartAt` (00:00 ART de la fecha + inicio), `scheduledEndAt` (inicio + duración: cruce de medianoche resuelto), `durationMinutes`, `origin`.
+
+**Semanas:** `weekIndex = mod(días(ancla → lunes de la fecha) / 7, ciclo)` con módulo positivo, sobre fechas calendario (sin huso ni DST): continúa entre meses y años y resuelve fechas anteriores al ancla. Planta: 02/11 A, 09/11 B, 16/11 A, 23/11 B, 30/11 A, 07/12 B, 03/01/2027 A, 04/01/2027 B, 26/10 B.
+
+**Asignación de fichadas** (decisión del usuario, 2026-11-20): ventana `[inicio − 240 min, fin)` (240 = `EARLY_ARRIVAL_REVIEW_THRESHOLD_MINUTES`); fuera de todas → `UNASSIGNED` (`NO_CANDIDATES` | `OUTSIDE_ALL_WINDOWS`), que no satisface ninguna obligación y no implica ausencia ni irregularidad. Varias ventanas → el bloque en curso; luego el inicio más cercano; luego el más temprano; con el mismo inicio, el que termina antes (nunca depende del orden recibido). Devuelve a lo sumo un bloque. Asignar no es puntualidad ni cumplimiento definitivo (las tolerancias las aplican los consumidores). `candidateBlocksAround` reúne los bloques de D−1, D y D+1 (sólo planes SHIFTS). El legacy de fijos (`matchShiftForEmployee`, `findEmployeeIdsWithMatchingEntryEvidence`) no cambia: R1.1-D sigue afirmando su comportamiento.
+
+**Resolver.** Sin `rotationPlan` (todos los consumidores actuales) el resultado es el legacy, con `dayPlan: null` y `blocks: []`. Con `rotationPlan`, la rotación reemplaza a los fijos (`fixedCandidates` vacío):
+- **WORK_OBLIGATION:** feriado sin convocatoria → no; SIN_TURNO → no; franco → no; **feriado convocado con plantilla ACTIVA → obligación con un único bloque de la convocatoria, aunque el plan sea REST, MISSING, CONFLICT o SHIFTS**; CONFLICT → no (`ROTATION_CONFIG_CONFLICT`); convocado sin plantilla y plan REST/MISSING → no (`HOLIDAY_CONVOCATION_WITHOUT_SCHEDULE`); REST → no (`ROTATION_REST_DAY`); MISSING → no (`ROTATION_DAY_MISSING`); SHIFTS → obligación con sus bloques (`HOLIDAY_CONVOCATION` si convocado).
+- **EXPECTED_WORKDAY:** franco → DAY_OFF; convocado → HOLIDAY_CONVOCATION (bloques: convocatoria con plantilla → plan); feriado IN_SCOPE → no; historia faltante → no resuelto; SIN_TURNO → no resuelto; CONFLICT → no resuelto; SHIFTS → obligación; REST → no; MISSING → no resuelto.
+- `dayPlan` conserva siempre el plan recibido: **un CONFLICT queda visible aunque una convocatoria decida la obligación**.
+- Los turnos fijos conservan el comportamiento P8 (la convocatoria no aporta su plantilla) hasta que se aborde explícitamente.
+
+**Novedades (proyección pura, inalcanzable hasta R4.3):** SHIFTS → `WORKDAY` con la suma de bloques (José viernes A: 240 + 720 = **960**), `source: SHIFT_ROTATION`, `minutesSource: ROTATION_BLOCKS`; REST → 0 confirmado; MISSING/CONFLICT → `UNRESOLVED`. **Contradicción técnica detectada y resuelta sin schema:** `unresolvedReason` se persiste en el enum de base `NoveltyCoverageScheduleReviewReason` (`noveltyCoverage.engine.ts`), que no tiene un valor de conflicto de rotación; agregar uno es una migración. Por eso la proyección usa el motivo persistible `SCHEDULE_MISSING` y conserva el problema real en el campo opcional `planIssue` (`CONFLICT` con motivo y detalle, o `MISSING` con motivo). Persistirlo como motivo propio de la cobertura es una **decisión de R4.3** (migración del enum). El campo no aparece en el camino legacy (resultado idéntico).
+
+**Validación de grillas** (`validateRotationGrid`, puro): `BLOCKS_OVERLAP` con relación `SAME_DAY` / `NEXT_DAY` / `WEEK_BOUNDARY` / `CYCLE_WRAP` (línea de tiempo del ciclo; los bloques que sólo se tocan no se superponen), `SHIFT_DAY_WITHOUT_BLOCKS`, `REST_DAY_WITH_BLOCKS`, `BLOCK_INDEX_DUPLICATED`, `DUPLICATE_DAY`, `CREW_NOT_IN_ROTATION`, `WEEK_OUT_OF_CYCLE`, `INVALID_WEEKDAY`, `TEMPLATE_NOT_FOUND` / `TEMPLATE_INACTIVE` / `TEMPLATE_INVALID_TIMES`, `INVALID_ANCHOR`, `INVALID_CYCLE_LENGTH` (errores) y `DAY_MISSING` (advertencia: grilla incompleta). La especificación de Planta valida sin problemas; el conflicto de los serenos (domingo B 19–07 → lunes A 03–11) se detecta como `CYCLE_WRAP`. Capas: la base ya garantiza unicidad, rangos, FK y REST sin bloques; el servicio de R4.6 llamará a esta función al guardar/activar.
+
+**Pruebas (105 nuevas):** `argentinaTime.test.ts` (3), `rotationPlan.test.ts` (48: semanas, **tabla completa de la especificación 02/11–15/11 por persona y su repetición 16/11–29/11 y 30/11–13/12**, casos de aceptación, historia de membresías y versiones, cada MISSING y cada CONFLICT), `blockAssignment.test.ts` (24: José 07:02 / 18:55 / 11:30, bordes exactos 03:00, 02:59, 10:59, 11:00, 14:59, 15:00, cruce de medianoche, **barrido minuto a minuto de jueves 12:00 a sábado 12:00**, Carlos jueves → viernes 02:30, Juanchi lunes tras el sereno, desempates en ambos órdenes), `rotationValidation.test.ts` (11), `rotationExpectedShift.test.ts` (19: legacy idéntico, Juanjo, REST/MISSING/CONFLICT/SHIFTS, franco y SIN_TURNO, todas las precedencias de convocatoria, CONFLICT + convocatoria con trazabilidad, proyección de Novedades). Caracterización R1/R1.1 76/76 y resolver R2 24/24 sin cambios; suite backend **4214 verdes** (234 archivos; 15 suites de integración opcionales omitidas como siempre); `typecheck` y `build` verdes.
+
+**Pendiente para R4.3:** cargador en lote (Prisma → snapshot), obligación y falta de ingreso por bloque, evidencia por bloque con `assignInstantToBlock`, incidente por bloque (R4.3a), Novedades con rotaciones cargadas, recálculo de cobertura, si el CONFLICT se persiste como motivo propio (migración del enum) y la convocatoria con turno en los consumidores.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas

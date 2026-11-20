@@ -34,6 +34,7 @@ import { ruleScopeOf } from "../time-entries/specialHourRuleScope";
 import { buildActiveDatesByRule, ruleMatchesDate, type RecurrenceType } from "../workforce-management/doubleHourRuleMatching";
 import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
 import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
+import type { ExpectedDayPlanConflictReason, ExpectedDayPlanMissingReason } from "./rotationPlan";
 
 // ── Resultado ───────────────────────────────────────────────────────────────
 
@@ -60,10 +61,23 @@ export type WorkdaySource =
   | "HOLIDAY_CONVOCATION"
   | "WORK_REGIME"
   | "SHIFT_PLAN"
+  // R4.2: plan de rotación (inalcanzable hasta que R4.3 cargue rotaciones).
+  | "SHIFT_ROTATION"
   | "NONE";
 
 /** De dónde salieron los minutos esperados (sólo WORKDAY o el intento fallido). */
-export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "CONVOCATION_TIMES";
+export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "CONVOCATION_TIMES" | "ROTATION_BLOCKS";
+
+/**
+ * R4.2: problema de configuración de la rotación del día (CONFLICT o MISSING),
+ * conservado para diagnóstico. `unresolvedReason` se persiste en el enum de
+ * base NoveltyCoverageScheduleReviewReason, que no tiene un valor de conflicto
+ * de rotación (agregarlo es una migración, decisión de R4.3): por eso el
+ * motivo propio viaja acá y no se oculta como una ausencia normal.
+ */
+export type WorkdayPlanIssue =
+  | { kind: "CONFLICT"; reason: ExpectedDayPlanConflictReason; detail: string[] }
+  | { kind: "MISSING"; reason: ExpectedDayPlanMissingReason };
 
 export type ExpectedWorkday = {
   dateKey: string;
@@ -76,6 +90,8 @@ export type ExpectedWorkday = {
   convoked: boolean;
   source: WorkdaySource;
   minutesSource: WorkdayMinutesSource | null;
+  /** R4.2: sólo presente en el camino de rotación cuando el plan es CONFLICT o MISSING. */
+  planIssue?: WorkdayPlanIssue;
 };
 
 // ── Contexto (lo arma loadEmployeeWorkdayContext) ───────────────────────────
@@ -275,13 +291,29 @@ export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey
 }
 
 /** Traduce la resolución central al resultado de Novedades, sin cambiar ningún valor respecto de la implementación previa a R2. */
-function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedWorkday {
+export function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedWorkday {
+  // R4.2: un plan de rotación CONFLICT o MISSING queda visible en todos los
+  // resultados (aun si una convocatoria decide la jornada). Ausente en el
+  // camino legacy: el resultado es idéntico al previo.
+  const plan = resolution.dayPlan;
+  const planIssue: WorkdayPlanIssue | undefined =
+    plan?.kind === "CONFLICT" ? { kind: "CONFLICT", reason: plan.reason, detail: plan.detail } : plan?.kind === "MISSING" ? { kind: "MISSING", reason: plan.reason } : undefined;
   const result = (fields: Omit<ExpectedWorkday, "dateKey" | "convoked" | "isHoliday">): ExpectedWorkday => ({
     dateKey: resolution.dateKey,
     convoked: resolution.convoked,
     isHoliday: resolution.isHoliday,
     ...fields,
+    ...(planIssue ? { planIssue } : {}),
   });
+  const rotationBlocksWorkday = (source: WorkdaySource) =>
+    result({
+      obligation: "WORKDAY",
+      unresolvedReason: null,
+      expectedMinutes: resolution.blocks.reduce((sum, block) => sum + block.durationMinutes, 0),
+      shiftTemplateIds: resolution.blocks.map((block) => block.template.id),
+      source,
+      minutesSource: "ROTATION_BLOCKS",
+    });
   const unresolved = (reason: WorkdayUnresolvedReason, source: WorkdaySource, shiftTemplateIds: string[] = [], minutesSource: WorkdayMinutesSource | null = null) =>
     result({ obligation: "UNRESOLVED", unresolvedReason: reason, expectedMinutes: null, shiftTemplateIds, source, minutesSource });
   const confirmedZero = (obligation: "DAY_OFF" | "HOLIDAY_NOT_CONVOKED" | "NO_WORK_OBLIGATION", source: WorkdaySource) =>
@@ -314,6 +346,8 @@ function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedWorkday 
           return unresolved("SHIFT_ASSIGNMENTS_OVERLAP", "HOLIDAY_CONVOCATION", templates.map((template) => template.id), "SHIFT_ASSIGNMENT");
         }
       }
+      // R4.2, camino de rotación (sin asignaciones fijas): bloques del plan.
+      if (resolution.dayPlan && resolution.blocks.length) return rotationBlocksWorkday("HOLIDAY_CONVOCATION");
       const start = parseShiftTime(convocation.expectedStartTime);
       const end = parseShiftTime(convocation.expectedEndTime);
       if (start !== null && end !== null) {
@@ -348,6 +382,15 @@ function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedWorkday 
     case "NONE":
       // Sin planificación vigente (ninguna asignación habilitada en vigencia): falta configuración.
       return unresolved("SCHEDULE_MISSING", "NONE");
+
+    case "ROTATION":
+      // R4.2: plan de rotación. Los bloques pertenecen al mismo plan
+      // autoritativo, así que la suma es válida (José viernes A: 240 + 720).
+      // REST → 0 confirmado. MISSING o CONFLICT → no resuelto, con el motivo
+      // propio en `planIssue` (el enum persistido no tiene uno de rotación).
+      if (resolution.obligation === "SHIFT") return rotationBlocksWorkday("SHIFT_ROTATION");
+      if (resolution.obligation === "NO_OBLIGATION") return confirmedZero("NO_WORK_OBLIGATION", "SHIFT_ROTATION");
+      return unresolved("SCHEDULE_MISSING", "SHIFT_ROTATION");
   }
 }
 

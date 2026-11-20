@@ -4,7 +4,10 @@ import {
   argentinaDateKey,
   argentinaDayRange,
   calendarDateKey,
+  calendarDaysBetweenKeys,
   calendarDaysInclusive,
+  calendarWeekdayOfKey,
+  mondayOfCalendarDateKey,
   dayOfMonthFromCalendarDate,
   dayOfMonthFromInstant,
   formatArgentinaDate,
@@ -245,5 +248,34 @@ describe("humanizePeriodEs", () => {
 
   it("devuelve el valor original si no matchea el formato esperado", () => {
     expect(humanizePeriodEs("no-period")).toBe("no-period");
+  });
+});
+
+// R4.2 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.3): helpers de semana
+// para rotaciones, sobre fechas calendario (sin huso ni DST).
+describe("calendarDaysBetweenKeys / calendarWeekdayOfKey / mondayOfCalendarDateKey", () => {
+  it("diferencia con signo, cruzando meses, años y un 29 de febrero", () => {
+    expect(calendarDaysBetweenKeys("2026-11-02", "2026-11-09")).toBe(7);
+    expect(calendarDaysBetweenKeys("2026-11-09", "2026-11-02")).toBe(-7);
+    expect(calendarDaysBetweenKeys("2026-11-30", "2026-12-01")).toBe(1);
+    expect(calendarDaysBetweenKeys("2026-12-31", "2027-01-01")).toBe(1);
+    expect(calendarDaysBetweenKeys("2028-02-28", "2028-03-01")).toBe(2);
+    expect(calendarDaysBetweenKeys("2026-11-02", "2026-11-02")).toBe(0);
+  });
+
+  it("día de la semana: 0 = domingo … 6 = sábado", () => {
+    expect(calendarWeekdayOfKey("2026-11-02")).toBe(1); // lunes
+    expect(calendarWeekdayOfKey("2026-11-06")).toBe(5); // viernes
+    expect(calendarWeekdayOfKey("2026-11-07")).toBe(6); // sábado
+    expect(calendarWeekdayOfKey("2026-11-08")).toBe(0); // domingo
+  });
+
+  it("lunes de la semana lunes→domingo: el domingo pertenece a la semana del lunes anterior", () => {
+    expect(mondayOfCalendarDateKey("2026-11-02")).toBe("2026-11-02");
+    expect(mondayOfCalendarDateKey("2026-11-06")).toBe("2026-11-02");
+    expect(mondayOfCalendarDateKey("2026-11-08")).toBe("2026-11-02");
+    expect(mondayOfCalendarDateKey("2026-11-09")).toBe("2026-11-09");
+    expect(mondayOfCalendarDateKey("2026-12-01")).toBe("2026-11-30");
+    expect(mondayOfCalendarDateKey("2027-01-01")).toBe("2026-12-28");
   });
 });
