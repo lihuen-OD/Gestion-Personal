@@ -112,15 +112,51 @@ function shiftGroupAuditPhrase(before: { code: string; name: string } | null | u
  * ventana de esas vigencias/fechas (NOVELTY_COVERAGE_ENGINE.md §13.2). Quien
  * llama ya tomó el lock global de cobertura.
  */
+type CoverageRange = { employeeId: string; from: Date; to: Date | null };
+
+/**
+ * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): miembros de
+ * rotación cuyas grillas usan la plantilla, con el período de su membresía
+ * acotado a la vigencia de las versiones que la usan. Sin ninguna membresía
+ * (hoy, todos los entornos) no consulta las tablas de la grilla.
+ */
+async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shiftTemplateId: string): Promise<CoverageRange[]> {
+  if (!(await tx.shiftRotationCrewMember.findFirst({ select: { id: true } }))) return [];
+  const blocks = await tx.shiftRotationBlock.findMany({
+    where: { shiftTemplateId },
+    select: { day: { select: { crewId: true, version: { select: { effectiveFrom: true, effectiveTo: true } } } } },
+  });
+  if (!blocks.length) return [];
+  const spanByCrew = new Map<string, { from: Date; to: Date | null }>();
+  for (const { day } of blocks) {
+    const span = spanByCrew.get(day.crewId);
+    const versionTo = day.version.effectiveTo;
+    spanByCrew.set(day.crewId, span
+      ? { from: span.from < day.version.effectiveFrom ? span.from : day.version.effectiveFrom, to: span.to === null || versionTo === null ? null : span.to > versionTo ? span.to : versionTo }
+      : { from: day.version.effectiveFrom, to: versionTo });
+  }
+  const members = await tx.shiftRotationCrewMember.findMany({ where: { crewId: { in: [...spanByCrew.keys()] } }, select: { employeeId: true, crewId: true, effectiveFrom: true, effectiveTo: true } });
+  const ranges: CoverageRange[] = [];
+  for (const member of members) {
+    const span = spanByCrew.get(member.crewId)!;
+    const from = member.effectiveFrom > span.from ? member.effectiveFrom : span.from;
+    const to = member.effectiveTo === null ? span.to : span.to === null ? member.effectiveTo : member.effectiveTo < span.to ? member.effectiveTo : span.to;
+    if (to === null || to >= from) ranges.push({ employeeId: member.employeeId, from, to });
+  }
+  return ranges;
+}
+
 async function recalculateTemplateCoverage(tx: PrismaTransactionClient, shiftTemplateId: string, label: string) {
-  const [assignments, convocations] = await Promise.all([
+  const [assignments, convocations, rotationRanges] = await Promise.all([
     tx.shiftAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } }),
     tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, date: true } }),
+    rotationTemplateCoverageRanges(tx, shiftTemplateId),
   ]);
   const reason = { source: "SHIFT_TEMPLATE_CHANGED" as const, label };
-  const ranges = [
+  const ranges: CoverageRange[] = [
     ...assignments.map((row) => ({ employeeId: row.employeeId, from: row.effectiveFrom, to: row.effectiveTo })),
     ...convocations.map((row) => ({ employeeId: row.employeeId, from: row.date, to: row.date as Date | null })),
+    ...rotationRanges,
   ];
   if (!ranges.length) return recalculateNoveltyCoverage(tx, { employeeIds: [] }, reason);
   const from = new Date(Math.min(...ranges.map((range) => range.from.getTime())));

@@ -5,11 +5,20 @@ import { resolveActiveWorkRegimesForDate } from "../work-regimes/workRegimes.ser
 import { applicableFixedAssignments, pickEarliestFixedCandidate, resolveExpectedShift, type FixedAssignment } from "./expectedShiftResolver";
 import type { ShiftTemplateRef } from "./workShiftEvaluation.service";
 import { toTemplateRef } from "./workShiftEvaluationRunner";
+import { resolveRotationObligations } from "./rotationObligation.service";
+import type { LoadedRotationTemplate } from "./rotationPlan.loader";
+import type { ExpectedBlock } from "./rotationPlan";
 
 export interface WorkObligationCandidate {
   employeeId: string;
   template: ShiftTemplateRef;
   scheduledStartAt: Date;
+  /**
+   * R4.3b: sólo en obligaciones de ROTACIÓN — el bloque efectivo (identidad
+   * `obligationKey` = empleado + inicio programado). Los candidatos de turnos
+   * fijos NO tienen esta clave (forma idéntica a la previa).
+   */
+  block?: ExpectedBlock<LoadedRotationTemplate>;
 }
 
 export interface WorkObligationResolution {
@@ -67,6 +76,12 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     if (!convokedEmployeeIds.length) return { isHoliday, candidates: [] };
   }
 
+  // R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): miembros
+  // vigentes de rotaciones ACTIVAS — un candidato por bloque efectivo (0..N).
+  // La rotación reemplaza a sus asignaciones fijas ese día. Sin membresías
+  // (hoy, todos los entornos) es una sola consulta vacía y nada más cambia.
+  const { rotation, candidates: rotationCandidates } = await resolveRotationBlockCandidates(dateKey, convokedEmployeeIds ?? undefined);
+
   const assignments = await prisma.shiftAssignment.findMany({
     where: {
       status: "HABILITADO",
@@ -96,7 +111,10 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     applicableByEmployee.set(assignment.employeeId, list);
   }
 
-  if (!applicableByEmployee.size) return { isHoliday, candidates: [] };
+  // La rotación reemplaza a los turnos fijos: quien tiene plan de rotación ese
+  // día no aporta candidatos fijos (defensa de la Opción C, §24.11).
+  for (const employeeId of rotation.keys()) applicableByEmployee.delete(employeeId);
+  if (!applicableByEmployee.size) return { isHoliday, candidates: rotationCandidates };
 
   const [regimes, dayOffs] = await Promise.all([
     resolveActiveWorkRegimesForDate(referenceDate),
@@ -123,5 +141,25 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     if (earliest) candidates.push({ employeeId, template: earliest.template, scheduledStartAt: earliest.scheduledStartAt });
   }
 
-  return { isHoliday, candidates };
+  return { isHoliday, candidates: [...candidates, ...rotationCandidates] };
+}
+
+/**
+ * R4.3b (§25.5): candidatos por BLOQUE de una fecha — un candidato por
+ * bloque efectivo de cada miembro vigente (empleado ACTIVO) de una rotación
+ * ACTIVA. `employeeIds` acota (convocados de un feriado). Devuelve también
+ * el mapa de obligaciones: un miembro con plan de rotación (aun REST,
+ * MISSING o CONFLICT, sin bloques) NO usa sus asignaciones fijas ese día.
+ */
+export async function resolveRotationBlockCandidates(dateKey: string, employeeIds?: string[]) {
+  const rotation = await resolveRotationObligations({ dateKeys: [dateKey], activeEmployeesOnly: true, ...(employeeIds ? { employeeIds } : {}) });
+  const candidates: WorkObligationCandidate[] = [];
+  for (const byDate of rotation.values()) {
+    const obligation = byDate.get(dateKey);
+    if (!obligation) continue;
+    for (const block of obligation.blocks) {
+      candidates.push({ employeeId: obligation.employeeId, template: toTemplateRef(block.template), scheduledStartAt: block.scheduledStartAt, block });
+    }
+  }
+  return { rotation, candidates };
 }

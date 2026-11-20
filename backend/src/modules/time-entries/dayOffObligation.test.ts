@@ -14,6 +14,8 @@ import { detectAttendanceInactivity } from "./attendanceInactivity.service";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
     employeeDayOff: { findMany: vi.fn() },

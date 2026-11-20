@@ -38,6 +38,8 @@ import { toTemplateRef } from "./workShiftEvaluationRunner";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     shiftAssignment: { findMany: vi.fn(), findUnique: vi.fn() },
     shiftTemplate: { findMany: vi.fn(), findUnique: vi.fn() },
     holidayWorkAssignment: { findMany: vi.fn() },
@@ -85,7 +87,7 @@ type MockedPrisma = {
 };
 const db = prisma as unknown as MockedPrisma;
 const holidayDates = workforceService.holidayDatesInRange as unknown as Mock;
-const notificationTx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn() } };
+const notificationTx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
 
 // ── Fechas (lunes 16/11/2026, sábado 21/11/2026, domingo 22/11/2026) ────────
 const MONDAY = "2026-11-16";

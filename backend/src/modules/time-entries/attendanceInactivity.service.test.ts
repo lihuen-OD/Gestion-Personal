@@ -26,6 +26,7 @@ vi.mock("../../shared/prisma/client", () => ({
 // de esta etapa.
 vi.mock("../shifts/workObligation.service", () => ({
   resolveWorkObligationCandidates: vi.fn(),
+  resolveRotationBlockCandidates: vi.fn(async () => ({ rotation: new Map(), candidates: [] })),
 }));
 
 const mockedPrisma = prisma as unknown as {
@@ -64,7 +65,7 @@ beforeEach(() => {
   mockedPrisma.attendanceInactivityIncident.createMany.mockResolvedValue({ count: 0 });
   mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
   mockedPrisma.user.findMany.mockResolvedValue([]);
-  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn() } };
+  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
   mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 });
 
@@ -222,7 +223,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       let capturedNotification: { message: string; title: string } | undefined;
       const tx = {
         systemNotification: { createMany: vi.fn((args: { data: Array<{ message: string; title: string }> }) => { capturedNotification = args.data[0]; }) },
-        attendanceInactivityIncident: { update: vi.fn() },
+        attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
       };
       mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
@@ -242,7 +243,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       let capturedNotification: { message: string } | undefined;
       const tx = {
         systemNotification: { createMany: vi.fn((args: { data: Array<{ message: string }> }) => { capturedNotification = args.data[0]; }) },
-        attendanceInactivityIncident: { update: vi.fn() },
+        attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
       };
       mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
@@ -268,7 +269,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
         for (const row of args.data) (recipientsByIncident[row.entityId] ??= []).push(row.recipientUserId);
         expect(args.data.every((row) => row.type === "SIN_ACTIVIDAD_REGISTRADA")).toBe(true);
       }) },
-      attendanceInactivityIncident: { update: vi.fn() },
+      attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
     };
     mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
@@ -294,7 +295,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     let captured: { eventAt: Date; entityType: string } | undefined;
     const tx = {
       systemNotification: { createMany: vi.fn((args: { data: Array<{ eventAt: Date; entityType: string }> }) => { captured = args.data[0]; }) },
-      attendanceInactivityIncident: { update: vi.fn() },
+      attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
     };
     mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 

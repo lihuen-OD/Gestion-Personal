@@ -21,6 +21,8 @@ import { checkMissingEntriesForElapsedDate, checkMissingExpectedEntries } from "
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
     // EMPLOYEE_DAY_OFF.md §6: el motor de obligación descarta francos activos.
@@ -105,7 +107,7 @@ beforeEach(() => {
   mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: SERENO_ID, employee: serenoRow() }]);
   mockedPrisma.attendanceInactivityIncident.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
-  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn() } };
+  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
   mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 });
 

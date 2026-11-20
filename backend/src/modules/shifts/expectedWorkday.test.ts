@@ -407,6 +407,8 @@ describe("loadEmployeeWorkdayContext — consultas fijas, sin N+1", () => {
       holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
       employeeWorkRegime: { findMany: vi.fn().mockResolvedValue([{ employeeId: "emp-3", effectiveFrom: day("2026-01-01"), effectiveTo: null, workRegime: { kind: "SIN_TURNO" } }]) },
       doubleHourRule: { findMany: vi.fn().mockResolvedValue(rows.feriadoRules ?? []) },
+      // R4.3b: sin membresías de rotación (camino legacy).
+      shiftRotationCrewMember: { findMany: vi.fn().mockResolvedValue([]) },
     };
     return db as unknown as WorkdayContextReader & typeof db;
   }

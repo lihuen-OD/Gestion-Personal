@@ -34,7 +34,8 @@ import { ruleScopeOf } from "../time-entries/specialHourRuleScope";
 import { buildActiveDatesByRule, ruleMatchesDate, type RecurrenceType } from "../workforce-management/doubleHourRuleMatching";
 import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
 import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
-import type { ExpectedDayPlanConflictReason, ExpectedDayPlanMissingReason } from "./rotationPlan";
+import { resolveRotationDayPlan, type ExpectedDayPlanConflictReason, type ExpectedDayPlanMissingReason, type RotationConfiguration } from "./rotationPlan";
+import { loadRotationConfiguration, type LoadedRotationTemplate } from "./rotationPlan.loader";
 
 // ── Resultado ───────────────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ export type ExpectedWorkday = {
 
 export type WorkdayShiftTemplate = {
   id: string;
+  /** R4.3b: lo carga `loadEmployeeWorkdayContext` (bloque de una convocatoria en rotación). */
+  code?: string;
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
@@ -141,6 +144,12 @@ export type EmployeeWorkdayContext = {
   convocations: ReadonlyMap<string, WorkdayConvocation>;
   regimes: WorkdayRegimePeriod[];
   holidays: ReadonlyMap<string, HolidayScopeStatus>;
+  /**
+   * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): configuración
+   * de rotaciones; presente sólo si el legajo tiene alguna membresía en el
+   * rango. Ausente ⇒ resultado idéntico al previo.
+   */
+  rotation?: RotationConfiguration<LoadedRotationTemplate>;
 };
 
 // ── Minutos de uno o varios turnos (P3) ─────────────────────────────────────
@@ -284,10 +293,20 @@ export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey
       holiday: context.holidays.get(dateKey) ?? null,
       convocation: context.convocations.get(dateKey) ?? null,
       regimeKind: activeRegimeKindOn(context.regimes, date),
+      ...rotationInputs(context, dateKey),
     },
     "EXPECTED_WORKDAY",
   );
   return projectExpectedWorkday(resolution);
+}
+
+/** R4.3b: plan del día y plantilla de la convocatoria, sólo para un miembro de rotación (si no, nada: camino legacy). */
+function rotationInputs(context: EmployeeWorkdayContext, dateKey: string) {
+  if (!context.rotation) return {};
+  const rotationPlan = resolveRotationDayPlan(context.employeeId, dateKey, context.rotation);
+  if (!rotationPlan) return {};
+  const template = context.convocations.get(dateKey)?.template ?? null;
+  return { rotationPlan, convocationTemplate: template && template.code !== undefined ? { ...template, code: template.code } : null };
 }
 
 /** Traduce la resolución central al resultado de Novedades, sin cambiar ningún valor respecto de la implementación previa a R2. */
@@ -401,11 +420,11 @@ export const MAX_WORKDAY_RANGE_DAYS = 400;
 
 export type WorkdayContextReader = Pick<
   PrismaTransactionClient,
-  "shiftAssignment" | "employeeDayOff" | "holidayWorkAssignment" | "employeeWorkRegime" | "doubleHourRule"
+  "shiftAssignment" | "employeeDayOff" | "holidayWorkAssignment" | "employeeWorkRegime" | "doubleHourRule" | "shiftRotationCrewMember" | "shiftRotation"
 > &
   HistoryReader;
 
-const templateSelect = { id: true, startTime: true, endTime: true, crossesMidnight: true, expectedMinutes: true, status: true } as const;
+const templateSelect = { id: true, code: true, startTime: true, endTime: true, crossesMidnight: true, expectedMinutes: true, status: true } as const;
 
 export function workdayDateKeys(from: Date, to: Date): string[] {
   const days = calendarDaysInclusive(from, to);
@@ -432,7 +451,7 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
   const result = new Map<string, EmployeeWorkdayContext>();
   if (!ids.length) return result;
 
-  const [assignments, dayOffs, convocations, regimes, feriadoRules] = await Promise.all([
+  const [assignments, dayOffs, convocations, regimes, feriadoRules, rotation] = await Promise.all([
     db.shiftAssignment.findMany({
       where: { employeeId: { in: ids }, status: "HABILITADO", effectiveFrom: { lte: to }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: from } }] },
       select: { employeeId: true, status: true, effectiveFrom: true, effectiveTo: true, weekdays: true, shiftTemplate: { select: templateSelect } },
@@ -464,7 +483,10 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
         employees: { select: { employeeId: true } },
       },
     }),
+    // R4.3b: sin membresías es una sola consulta vacía.
+    loadRotationConfiguration(db, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]!, employeeIds: ids }),
   ]);
+  const rotationMembers = new Set(rotation.memberships.map((membership) => membership.employeeId));
 
   const histories = feriadoRules.some(feriadoRuleRestrictsHistory)
     ? await laborHistoryService.loadEngineScopeHistoryByEmployee(db, ids, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]! })
@@ -486,6 +508,7 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
         .filter((row) => row.employeeId === employeeId)
         .map((row) => ({ effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo, kind: row.workRegime.kind })),
       holidays: resolveEmployeeHolidayStatus({ employeeId, dateKeys, feriadoRules, history: histories?.get(employeeId) ?? null }),
+      ...(rotationMembers.has(employeeId) ? { rotation } : {}),
     });
   }
   return result;

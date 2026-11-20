@@ -19,6 +19,8 @@ import {
 // Sólo para el test de paridad contra la función real de obligación.
 vi.mock("../../../shared/prisma/client", () => ({
   prisma: {
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
     employeeDayOff: { findMany: vi.fn() },
@@ -99,6 +101,8 @@ function fakeReader(input: {
       findMany: vi.fn().mockResolvedValue((input.regimes ?? []).map((row) => ({ employeeId: row.employeeId, effectiveFrom: new Date("2026-01-01T00:00:00.000Z"), effectiveTo: null, workRegime: { kind: row.kind } }))),
     },
     doubleHourRule: { findMany: vi.fn().mockResolvedValue([]) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return reader;
 }

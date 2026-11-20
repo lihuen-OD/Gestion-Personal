@@ -26,6 +26,8 @@ vi.mock("../../shared/prisma/client", () => ({
     shiftGroup: { findUnique: vi.fn() },
     shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findFirst: vi.fn().mockResolvedValue(null) },
     // Advisory locks de los caminos que sí recalculan cobertura (control).
     $executeRaw: vi.fn().mockResolvedValue(0),
     $queryRaw: vi.fn().mockResolvedValue([]),

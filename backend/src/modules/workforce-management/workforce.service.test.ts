@@ -53,6 +53,8 @@ vi.mock("../../shared/prisma/client", () => ({
     // Etapa 5: quién usa la plantilla (recálculo de cobertura al inactivarla).
     shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findFirst: vi.fn().mockResolvedValue(null) },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     sector: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     company: { findMany: vi.fn().mockResolvedValue([]) },
