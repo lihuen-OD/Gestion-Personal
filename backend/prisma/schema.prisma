@@ -424,6 +424,23 @@ enum ShiftAssignmentStatus {
   DESHABILITADO
 }
 
+// R4.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §24): celda explícita de
+// la grilla de una rotación. No hay valor "faltante": una celda ausente es
+// configuración incompleta, nunca "no trabaja".
+enum ShiftRotationCellKind {
+  SHIFT
+  REST
+}
+
+// R4.1: de dónde salió el turno que adoptó una jornada (WorkShift). Null =
+// jornada anterior a R4 (lógica legacy).
+enum ShiftTemplateSource {
+  FIXED_ASSIGNMENT
+  ROTATION
+  OVERRIDE
+  HOLIDAY_CONVOCATION
+}
+
 enum RecurrenceType {
   FECHA
   RANGO
@@ -513,6 +530,14 @@ model User {
   shiftTemplatesUpdated              ShiftTemplate[]                @relation("ShiftTemplateUpdatedBy")
   shiftGroupsCreated                 ShiftGroup[]                   @relation("ShiftGroupCreatedBy")
   shiftGroupsUpdated                 ShiftGroup[]                   @relation("ShiftGroupUpdatedBy")
+  shiftRotationsCreated              ShiftRotation[]                @relation("ShiftRotationCreatedBy")
+  shiftRotationsUpdated              ShiftRotation[]                @relation("ShiftRotationUpdatedBy")
+  shiftRotationVersionsCreated       ShiftRotationVersion[]         @relation("ShiftRotationVersionCreatedBy")
+  shiftRotationVersionsUpdated       ShiftRotationVersion[]         @relation("ShiftRotationVersionUpdatedBy")
+  shiftRotationCrewsCreated          ShiftRotationCrew[]            @relation("ShiftRotationCrewCreatedBy")
+  shiftRotationCrewsUpdated          ShiftRotationCrew[]            @relation("ShiftRotationCrewUpdatedBy")
+  shiftRotationMembershipsCreated    ShiftRotationCrewMember[]      @relation("ShiftRotationCrewMemberCreatedBy")
+  shiftRotationMembershipsClosed     ShiftRotationCrewMember[]      @relation("ShiftRotationCrewMemberClosedBy")
   shiftAssignmentsAssigned           ShiftAssignment[]              @relation("ShiftAssignmentAssignedBy")
   shiftAssignmentsDisabled           ShiftAssignment[]              @relation("ShiftAssignmentDisabledBy")
   holidayWorkAssignmentsCreated      HolidayWorkAssignment[]        @relation("HolidayWorkAssignmentCreatedBy")
@@ -1043,6 +1068,7 @@ model Employee {
   inactivityIncidents       AttendanceInactivityIncident[]
   doubleHourAssignments     DoubleHourRuleEmployee[]
   shiftAssignments          ShiftAssignment[]
+  shiftRotationMemberships  ShiftRotationCrewMember[]
   holidayWorkAssignments    HolidayWorkAssignment[]
   dayOffs                   EmployeeDayOff[]
   workRegimeAssignments     EmployeeWorkRegime[]
@@ -1812,29 +1838,34 @@ model TimeEntry {
 }
 
 model WorkShift {
-  id                String                 @id @default(uuid())
-  employeeId        String
-  hourConceptId     String?
-  hourConceptName   String?
-  startPunchId      String?
-  endPunchId        String?
-  source            WorkShiftSource        @default(ADMIN)
-  status            WorkShiftStatus        @default(PROCESADO)
-  startAt           DateTime               @db.Timestamptz(3)
-  endAt             DateTime?              @db.Timestamptz(3)
-  totalMinutes      Int?
-  crossesMidnight   Boolean                @default(false)
-  maxAllowedMinutes Int                    @default(1200)
-  observation       String?
-  reviewStatus      AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt        DateTime?              @db.Timestamptz(3)
-  reviewedByUserId  String?
-  reviewNote        String?
-  shiftTemplateId   String?
-  createdByUserId   String?
-  createdAt         DateTime               @default(now()) @db.Timestamptz(3)
-  closedAt          DateTime?              @db.Timestamptz(3)
-  updatedAt         DateTime               @updatedAt @db.Timestamptz(3)
+  id                  String                 @id @default(uuid())
+  employeeId          String
+  hourConceptId       String?
+  hourConceptName     String?
+  startPunchId        String?
+  endPunchId          String?
+  source              WorkShiftSource        @default(ADMIN)
+  status              WorkShiftStatus        @default(PROCESADO)
+  startAt             DateTime               @db.Timestamptz(3)
+  endAt               DateTime?              @db.Timestamptz(3)
+  totalMinutes        Int?
+  crossesMidnight     Boolean                @default(false)
+  maxAllowedMinutes   Int                    @default(1200)
+  observation         String?
+  reviewStatus        AttendanceReviewStatus @default(PENDIENTE)
+  reviewedAt          DateTime?              @db.Timestamptz(3)
+  reviewedByUserId    String?
+  reviewNote          String?
+  shiftTemplateId     String?
+  // R4.1 (§24): fuente del turno adoptado y el instante programado exacto de
+  // la ocurrencia elegida al ingresar. Null en las jornadas anteriores (sin
+  // backfill): la salida y la fecha operativa siguen con la lógica legacy.
+  shiftTemplateSource ShiftTemplateSource?
+  scheduledStartAt    DateTime?              @db.Timestamptz(3)
+  createdByUserId     String?
+  createdAt           DateTime               @default(now()) @db.Timestamptz(3)
+  closedAt            DateTime?              @db.Timestamptz(3)
+  updatedAt           DateTime               @updatedAt @db.Timestamptz(3)
 
   employee              Employee                   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept           HourConcept?               @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
@@ -1959,6 +1990,7 @@ model ShiftGroup {
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
   templates ShiftTemplate[]
+  rotations ShiftRotation[]
   createdBy User?           @relation("ShiftGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy User?           @relation("ShiftGroupUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
@@ -2004,6 +2036,7 @@ model ShiftTemplate {
   assignments                   ShiftAssignment[]
   holidayWorkAssignments        HolidayWorkAssignment[]
   noveltyCoverageDays           NoveltyDayCoverage[]
+  rotationSlots                 ShiftRotationSlot[]
   createdBy                     User?                   @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy                     User?                   @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
   shiftGroup                    ShiftGroup?             @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
@@ -2041,6 +2074,135 @@ model ShiftAssignment {
   @@unique([employeeId, shiftTemplateId])
   @@index([employeeId, status])
   @@index([shiftTemplateId, status])
+}
+
+// ── Rotaciones de turnos — R4.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §24) ──
+// Capa inerte hasta R4.2+: ningún código las lee todavía. Para quien es
+// miembro vigente de una rotación, la grilla REEMPLAZA a sus ShiftAssignment
+// ese día (nunca se mezclan). Vigencias @db.Date inclusivas; effectiveTo NULL
+// = abierta. Historia: lo que ya rigió no se edita en el lugar (se cierra y
+// se abre otra fila/versión).
+
+// Identidad estable de una rotación ("Planta Mañana/Tarde"); sobrevive a los
+// cambios de ciclo, que son versiones. Escritos a mano en la migración
+// (Prisma no los modela): índice único sobre lower(code) y CHECK de forma del
+// código (mismo patrón que ShiftGroup). `name` es texto libre, sin unicidad.
+model ShiftRotation {
+  id              String       @id @default(uuid())
+  code            String       @unique
+  name            String
+  shiftGroupId    String
+  status          RecordStatus @default(ACTIVO)
+  observation     String?
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  shiftGroup ShiftGroup             @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
+  versions   ShiftRotationVersion[]
+  crews      ShiftRotationCrew[]
+  createdBy  User?                  @relation("ShiftRotationCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy  User?                  @relation("ShiftRotationUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([shiftGroupId, status])
+}
+
+// Versión histórica del ciclo: longitud, lunes ancla (semana 0) y vigencia;
+// dueña de su grilla. Una versión que ya rigió no se edita: cambiar el ciclo
+// = cerrar la vigente y crear otra desde una fecha. Escritos a mano en la
+// migración: CHECK de ciclo 1..12, ancla en lunes, intervalo válido y EXCLUDE
+// (sin dos versiones superpuestas de la misma rotación).
+model ShiftRotationVersion {
+  id               String    @id @default(uuid())
+  rotationId       String
+  cycleLengthWeeks Int
+  anchorWeekStart  DateTime  @db.Date
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date
+  createdByUserId  String?
+  updatedByUserId  String?
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  rotation  ShiftRotation       @relation(fields: [rotationId], references: [id], onDelete: Restrict)
+  slots     ShiftRotationSlot[]
+  createdBy User?               @relation("ShiftRotationVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User?               @relation("ShiftRotationVersionUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([rotationId, effectiveFrom])
+}
+
+// Equipo estable de una rotación ("A", "B"), compartido por sus versiones.
+// Escritos a mano en la migración: índice único (rotationId, lower(code)) y
+// CHECK de forma del código. El código no es único entre rotaciones.
+model ShiftRotationCrew {
+  id              String       @id @default(uuid())
+  rotationId      String
+  code            String
+  name            String
+  sortOrder       Int          @default(0)
+  status          RecordStatus @default(ACTIVO)
+  createdByUserId String?
+  updatedByUserId String?
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+
+  rotation  ShiftRotation             @relation(fields: [rotationId], references: [id], onDelete: Restrict)
+  members   ShiftRotationCrewMember[]
+  slots     ShiftRotationSlot[]
+  createdBy User?                     @relation("ShiftRotationCrewCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User?                     @relation("ShiftRotationCrewUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([rotationId, code])
+}
+
+// Historia de pertenencia de una persona a un equipo. Entrar, salir o cambiar
+// de equipo cierra una fila y abre otra; nunca se borra. Escritos a mano en
+// la migración: CHECK de intervalo y EXCLUDE GLOBAL por employeeId (una sola
+// membresía de rotación por persona y fecha, en todas las rotaciones).
+model ShiftRotationCrewMember {
+  id              String    @id @default(uuid())
+  crewId          String
+  employeeId      String
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date
+  createdByUserId String?
+  closedByUserId  String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  crew      ShiftRotationCrew @relation(fields: [crewId], references: [id], onDelete: Restrict)
+  employee  Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy User?             @relation("ShiftRotationCrewMemberCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  closedBy  User?             @relation("ShiftRotationCrewMemberClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([crewId])
+}
+
+// Una celda explícita de la grilla: (versión, equipo, semana del ciclo base
+// 0, día 0=domingo..6) → SHIFT con plantilla o REST sin plantilla. La grilla
+// es parte de su versión: borrar una versión FUTURA (nunca vigente) borra sus
+// celdas (Cascade, única excepción al Restrict de este bloque). Que el equipo
+// sea de la misma rotación que la versión y que cycleWeekIndex sea menor que
+// cycleLengthWeeks lo valida el servicio (la base no puede cruzar tablas).
+// Escritos a mano en la migración: CHECK de rangos y CHECK kind ⇔ plantilla.
+model ShiftRotationSlot {
+  id              String                @id @default(uuid())
+  versionId       String
+  crewId          String
+  cycleWeekIndex  Int
+  weekday         Int
+  kind            ShiftRotationCellKind
+  shiftTemplateId String?
+
+  version       ShiftRotationVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  crew          ShiftRotationCrew    @relation(fields: [crewId], references: [id], onDelete: Restrict)
+  shiftTemplate ShiftTemplate?       @relation(fields: [shiftTemplateId], references: [id], onDelete: Restrict)
+
+  @@unique([versionId, crewId, cycleWeekIndex, weekday])
+  @@index([shiftTemplateId])
 }
 
 enum HolidayWorkAssignmentStatus {

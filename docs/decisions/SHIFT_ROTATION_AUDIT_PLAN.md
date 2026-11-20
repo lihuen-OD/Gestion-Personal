@@ -1217,6 +1217,69 @@ Fixture: rotación PLANTA, ciclo 2, ancla lunes 2026-11-23; A = {19, 20}, B = {2
 6. ¿Se permiten cambios retroactivos de rotación o membresía? ¿Quién y hasta qué período?
 7. Planta-01/02: ¿se corrige el máximo informativo 540 frente a turnos de 600?
 
+**Cerradas por el usuario (2026-11-20, antes de R4.1):** 1 → sí, lunes→domingo, con sábado y domingo dentro de la semana que empezó ese lunes. 2 → el lunes **2026-11-23** es la Semana 1 del piloto (dato de tests; no se carga en la base en R4.1). 5 → una convocatoria explícita **con turno** podrá ganar sobre la rotación; sin turno, cae al turno planificado (lógica a implementar después, no en R4.1). 6 → en R4 los cambios retroactivos se bloquean por defecto. Siguen pendientes 3 (fin de semana de Planta), 4 (serenos) y 7; ninguna bloquea R4.1.
+
+### 24.18 R4.1 — Schema + migración aditiva e inerte (implementada, NO aplicada)
+
+**Estado: migración creada y validada en local; NO aplicada a development ni a producción.** R4 no está completa. Sin lógica: no hay lectores ni escritores de las tablas nuevas, ni cambios en el resolver, consumidores, API ni frontend. Con las tablas vacías el comportamiento es idéntico.
+
+**Archivos:** `backend/prisma/schema.prisma`; `backend/prisma/migrations/20261120120000_add_shift_rotations/migration.sql`; `backend/prisma/rollbacks/20261120120000_add_shift_rotations.down.sql`; `backend/src/modules/shifts/shiftRotation.migration.test.ts`. La migración de R3.1 (`20261119120000_add_shift_groups`) no se tocó.
+
+**Modelo implementado** (§24.6, con las diferencias de abajo):
+- Enums `ShiftRotationCellKind { SHIFT, REST }` y `ShiftTemplateSource { FIXED_ASSIGNMENT, ROTATION, OVERRIDE, HOLIDAY_CONVOCATION }`.
+- `ShiftRotation` (code, name, shiftGroupId obligatorio, status, observation, autoría, timestamps); `ShiftRotationVersion` (cycleLengthWeeks, anchorWeekStart, effectiveFrom/To `@db.Date`, autoría, timestamps); `ShiftRotationCrew` (code, name, sortOrder, status, autoría, timestamps); `ShiftRotationCrewMember` (crewId, employeeId, effectiveFrom/To, createdBy/closedBy, timestamps); `ShiftRotationSlot` (versionId, crewId, cycleWeekIndex, weekday, kind, shiftTemplateId nullable).
+- `WorkShift.shiftTemplateSource ShiftTemplateSource?` y `WorkShift.scheduledStartAt DateTime? @db.Timestamptz(3)`, sin default, sin backfill y sin índice (todavía no existe una consulta que lo justifique). No se agregó `scheduledEndAt`: se deriva del inicio y de la duración de la plantilla.
+- Relaciones inversas: `ShiftGroup.rotations`, `ShiftTemplate.rotationSlots`, `Employee.shiftRotationMemberships` y ocho relaciones de autoría en `User` con nombre explícito (`ShiftRotation*CreatedBy/UpdatedBy`, `ShiftRotationCrewMemberCreatedBy/ClosedBy`). `prisma format` sólo realineó espacios dentro de `WorkShift`.
+
+**Diferencias respecto de §24.6:**
+- `ShiftRotationVersion` suma `updatedByUserId`/`updatedAt`: una versión futura sí se puede editar (§24.5).
+- `ShiftRotationCrew` suma autoría y timestamps (convención de `ShiftGroup`: los equipos se renombran o inactivan).
+- `ShiftRotation.name` sin unicidad ni CHECK; sólo el código tiene unicidad fuerte.
+- CHECK de forma en `ShiftRotation.code` y `ShiftRotationCrew.code` (regla de `DATABASE_STANDARDS.md` para unicidad sin mayúsculas).
+- `cycleWeekIndex` con cota global `BETWEEN 0 AND 11` (el máximo de 12 semanas) en vez de sólo `>= 0`; la cota exacta (< `cycleLengthWeeks` de su versión) la valida el servicio.
+- `ShiftRotationSlot` sin autoría ni timestamps: la grilla es parte de su versión, que ya los tiene.
+- Sin índice propio sobre `ShiftRotationSlot.crewId`: el único acceso por equipo es la comprobación del RESTRICT al borrar un equipo (operación rara sobre una tabla chica). El acceso por versión lo cubre el único.
+
+**Constraints escritos a mano** (Prisma no los modela ni los compara en `migrate diff`; documentados en comentarios de cada modelo):
+
+| Constraint | Regla |
+|---|---|
+| `ShiftRotation_code_lower_key` | `UNIQUE (lower(code))` |
+| `ShiftRotationCrew_rotationId_code_lower_key` | `UNIQUE (rotationId, lower(code))`, nunca global |
+| `ShiftRotation_code_shape_check`, `ShiftRotationCrew_code_shape_check` | al menos un carácter visible, sin espacios en los extremos ni repetidos |
+| `ShiftRotationVersion_cycle_length_check` | `cycleLengthWeeks BETWEEN 1 AND 12` |
+| `ShiftRotationVersion_anchor_monday_check` | `EXTRACT(ISODOW FROM anchorWeekStart) = 1` (sobre `DATE`, sin huso) |
+| `ShiftRotationSlot_cycle_week_index_check` | `cycleWeekIndex BETWEEN 0 AND 11` |
+| `ShiftRotationSlot_weekday_check` | `weekday BETWEEN 0 AND 6` (0 = domingo) |
+| `ShiftRotationSlot_kind_template_check` | `(SHIFT AND plantilla) OR (REST AND sin plantilla)` |
+| `ShiftRotationVersion_interval_check`, `ShiftRotationCrewMember_interval_check` | `effectiveTo IS NULL OR effectiveTo >= effectiveFrom` |
+| `ShiftRotationVersion_no_overlap` | `EXCLUDE USING gist (rotationId WITH =, daterange(effectiveFrom, effectiveTo, '[]') WITH &&)` |
+| `ShiftRotationCrewMember_no_overlap` | `EXCLUDE USING gist (employeeId WITH =, daterange(...) WITH &&)`: **global por persona**, en todas las rotaciones |
+
+Rangos abiertos: `daterange(from, NULL, '[]')` no tiene límite superior, así que una vigencia abierta se superpone con cualquier vigencia posterior; `'[]'` hace inclusivos ambos extremos (empezar el mismo día en que termina otra es superposición; el día siguiente, no). Es el mismo patrón que `20261008090000_labor_history_periods`. `CREATE EXTENSION IF NOT EXISTS btree_gist` es un no-op: la extensión existe desde M1.
+
+**FKs:** RESTRICT hacia `ShiftGroup`, `ShiftTemplate`, `Employee`, rotación y equipo; autoría `SET NULL` hacia `User`. **Única cascada:** `ShiftRotationSlot.versionId → ShiftRotationVersion` (`ON DELETE CASCADE`), porque la grilla es parte de su versión y sólo se podrá borrar una versión futura, nunca vigente (servicio, R4.5). Que el equipo de una celda pertenezca a la misma rotación que su versión lo valida el servicio: la base no puede cruzar tablas en un CHECK.
+
+**SQL de la migración** (aditivo): 2 `CREATE TYPE`, 1 `ALTER TABLE "WorkShift" ADD COLUMN` (×2 nullable), 5 `CREATE TABLE`, 8 índices generados + 2 únicos `lower()`, 16 FKs, 9 CHECK y 2 EXCLUDE. Sin `UPDATE`, `INSERT`, `DELETE`, `DROP`, `ALTER COLUMN` ni `RENAME`; no toca `ShiftAssignment` ni modifica columnas de `ShiftTemplate`, `ShiftGroup`, `Employee` o `User`. El cuerpo generado es exactamente `prisma migrate diff --from-schema-datamodel <schema de HEAD> --to-schema-datamodel prisma/schema.prisma --script` (offline, sin base); el bloque manual va al final.
+
+**Rollback** (`prisma/rollbacks/20261120120000_add_shift_rotations.down.sql`, no ejecutado sobre ninguna base compartida): una transacción, `LOCK ... IN ACCESS EXCLUSIVE MODE` de las cinco tablas y de `WorkShift`, y aborto sin cambios si hay cualquier fila en las cinco tablas o alguna jornada con `shiftTemplateSource` o `scheduledStartAt` cargados. Después borra las columnas de `WorkShift`, las tablas en orden de dependencia y los enums. No usa `CASCADE`, no borra filas ni la extensión.
+
+**Validación:**
+- Tests estáticos `shiftRotation.migration.test.ts`: 29 (migración aditiva, enums, tablas, cada CHECK/EXCLUDE/índice/FK, una sola cascada, columnas de `WorkShift` sin default, relaciones y `onDelete` del schema, autoría `SetNull`, rollback con guardas antes de cualquier `DROP`).
+- **PostgreSQL 18 local** (Postgres.app, misma versión mayor que el CI; bases descartables `r41_*` creadas y eliminadas, sin datos reales, sin Neon): historial completo con `scripts/ci/migrate-clean-database.ts` (78 migraciones, `migrate status` al día, `migrate diff` contra `schema.prisma`: **No difference detected**). 58 comprobaciones de comportamiento con datos sintéticos, todas OK: unicidad exacta y sin mayúsculas, forma, grupo obligatorio, ciclo 0/13 rechazado y 12 aceptado, ancla martes/domingo rechazada, intervalos invertidos, versión abierta + posterior rechazada, versiones contiguas aceptadas, empezar el último día de otra rechazado, misma persona en otro equipo de la misma rotación **y de otra rotación** rechazada, cambio de equipo con cierre aceptado, SHIFT sin plantilla / REST con plantilla / `MISSING` / día 7 / semana 12 rechazados, celda duplicada rechazada, RESTRICT al borrar grupo, plantilla, empleado, equipo o rotación usados, cascada que sólo borra las celdas de la versión borrada, `WorkShift` nueva con columnas `NULL` y valor de enum inválido rechazado.
+- Rollback en local: con datos aborta y deja todo intacto; con una sola jornada con `scheduledStartAt` aborta; sobre la base limpia revierte y `migrate diff` contra el schema anterior a R4.1 da **No difference detected** (`btree_gist` se conserva).
+- `prisma validate` y `typecheck` verdes con el cliente regenerado (ningún mock necesitó cambios); `build` verde; suite backend completa **4074 tests verdes** (229 archivos; 15 suites de integración opcionales omitidas como siempre); caracterización R1 65/65 y resolver R2 24/24 sin modificar.
+
+**Riesgos y pendientes:**
+- **Cliente Prisma vs development:** con el cliente regenerado, toda lectura de `WorkShift` sin `select` pide las dos columnas nuevas, que en development no existen hasta `migrate deploy`. Un backend que corra el cliente nuevo contra development antes de aplicar la migración falla al leer jornadas. Desplegar la migración antes (o junto con) cualquier código generado desde este schema.
+- RESTRICT de PostgreSQL responde `23001` (`restrict_violation`), no `23503`. R4.5 debe mapear el error de Prisma a mensajes de dominio y comprobarlo con un test (borrar un grupo con rotaciones, una plantilla usada por celdas: hoy `shiftGroup.service` y `removeShiftTemplate` no cuentan esos usos).
+- `ShiftRotationSlot.crewId` de otra rotación que la versión y `cycleWeekIndex ≥ cycleLengthWeeks` sólo los impide el servicio (R4.5).
+- `migrate deploy` en development: pendiente de autorización.
+
+**Antes de autorizar `migrate deploy` en development:** revisar el SQL completo; verificar el host con `migrate status` (línea Datasource) y que la única pendiente sea `20261120120000_add_shift_rotations`; respaldo según el runbook; aplicar con `migrate deploy` (nunca `db push` ni `migrate dev`); después `migrate status` al día y `migrate diff --from-schema-datasource … --exit-code` vacío; conteos de `WorkShift` y de las tablas nuevas (0) sin cambios; reiniciar el backend local con el cliente nuevo y comprobar que lee jornadas.
+
+**Queda para R4.2:** núcleo puro, sin base: helpers de fecha (`mondayOfCalendarDate`, `calendarDaysBetween` en `argentinaTime.ts`), `rotationWeekIndex` (ancla lunes 2026-11-23, módulo positivo, cambio de año, ciclos 1–12), `resolveRotationCell` (SHIFT / REST / celda faltante) y la fuente `ROTATION` en `resolveExpectedShift` con `shift` único y razones `ROTATION_REST_DAY`/`ROTATION_CELL_MISSING`, con tests; sin cargador, consumidores, entrada/salida ni API.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
