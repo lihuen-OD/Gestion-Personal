@@ -513,7 +513,7 @@ RRHH siempre; N2/N3 con y sin `UserShiftGroupScope`; grupo correcto pero legajo 
 | **R1** ✅ (§21) | Tests de caracterización (§18.1) + diagnóstico de solo lectura: script/consulta que lista (a) empleados con >1 `ShiftAssignment` HABILITADA aplicable el mismo día y su superposición, (b) valores distintos de `categoryName`. Ejecución sobre producción sólo con autorización explícita y en lectura. | No | No |
 | **R2** ✅ (§22) | Resolver central en **modo paridad** (sólo fuentes actuales) y migración de `workObligation`, `expectedWorkday` y entrada a leer a través de él. Caracterización verde sin cambios. | No | No |
 | **R3** | `ShiftGroup` + `ShiftTemplate.shiftGroupId` + UI agrupada por lugar. | Aditivo | No (sólo organización visual) |
-| **R4** | Rotaciones en backend: tablas, resolver con `ROTATION`, `WorkShift.shiftTemplateSource`, salida, recálculo de cobertura, endpoints sólo RRHH, contratos documentados. | Aditivo | Sólo para miembros de rotaciones (ninguno al desplegar) |
+| **R4** | Rotaciones en backend: tablas, resolver con `ROTATION`, `WorkShift.shiftTemplateSource`, salida, recálculo de cobertura, endpoints sólo RRHH, contratos documentados. **Diseño definitivo y subetapas R4.1–R4.8 en §24 (R4-P0, sin implementar).** | Aditivo | Sólo para miembros de rotaciones (ninguno al desplegar) |
 | **R5** | Vista previa del turno esperado (endpoint + calendario de solo lectura). | No | No |
 | **R6** | UI de administración de rotaciones. | No | — |
 | **R7** | Excepciones e intercambios (backend + UI). | Aditivo | Sólo personas con excepción |
@@ -943,6 +943,279 @@ Autorizada por el usuario sólo para development. Producción **no** se tocó. *
 **QA real en navegador** (Playwright, Vite local, API interceptada en el navegador, sin llamadas a ninguna base): estado real de development (15 plantillas leídas en sólo lectura, 0 grupos) y el mapeo previsto para R3.3 **simulado** en el navegador, en 1366×768, 1440×900, 1920×1080, tablet 834×1112 y 1112×834, mobile 390×844 y 320×568; además error de carga de grupos, vista Nivel 3, pestaña Grupos, modal de alta y validación, y detalle de turno. Resultado: 0 px de overflow de página, 0 contenido recortado, 0 errores de consola (salvo el 500 provocado a propósito), 0 escrituras, modales dentro de la pantalla. El legajo no se validó en navegador (requiere muchos endpoints del detalle de empleado): cubierto por test de componente. Development verificado después: 0 grupos, 15 plantillas sin grupo, conteos sin cambios.
 
 **Diferencias respecto del plan (§23.5)**: la gestión de grupos vive en una pestaña de la pantalla Turnos (no en Configuración aparte); `categoryName` se mantiene como columna (con tono secundario) en vez de chip junto al nombre, para no romper el orden por categoría ni los tests de la tabla; se agregó el layout `grouped` de la tabla por el problema de ancho a 1366/1440.
+
+---
+
+## 24. R4-P0 — Diseño definitivo de rotaciones (análisis, SIN implementar)
+
+**Estado: diseño aprobado para planificar R4; R4 NO está iniciada.** Sin cambios de `schema.prisma`, sin migraciones, sin escrituras en ninguna base, sin código ni frontend. Caso piloto: Planta. Esta sección **reemplaza** al modelo de §9, a la precedencia de §10 y a §12–§13 donde difieran; §8 sigue valiendo salvo lo indicado en §24.2.
+
+### 24.1 Estado verificado (2026-11-20)
+
+Rama `feature/shift-rotation-system`, HEAD `f5f0873`. Lectura de development (host `ep-gentle-resonance-aiftcbel-pooler…`) dentro de una transacción `SET TRANSACTION READ ONLY` verificada con `SHOW transaction_read_only = on`; cero escrituras.
+
+- **R3.3 parcial** (hecha a mano por el usuario desde la UI): `OFICINA` (sortOrder 1) → Oficina-01/02 y `PLANTA` (sortOrder 2) → Planta-01/02, ambos ACTIVO. El resto de los grupos no se creó; no bloquea R4.
+- **Planta-01 = Mañana** 07:00–17:00 (`crossesMidnight=false`, 600 min). **Planta-02 = Tarde** 17:00–03:00 (`crossesMidnight=true`, 600 min). Ambas: tolerancia de entrada 10/10, de salida 20/20, mínimo 420, **máximo informativo 540**, aviso de olvido 60, límite absoluto 1200.
+- Sereno-01 23:00–07:00 y Sereno-02 03:00–11:00, sin grupo.
+- Asignaciones fijas: legajos 19 y 20 → Planta-01 L–D desde 2026-08-31; 21 y 22 → Planta-02 L–D desde 2026-06-01; 11 y 12 → Sereno-01; 13 y 14 → Sereno-02. Ninguno tiene régimen vigente y cada uno tiene una sola asignación. Las personas reales del caso (Equipo A, Equipo B, serenos) **no existen en development**: el piloto usará esos legajos de prueba.
+- 0 jornadas con Planta-01/02; 10 convocatorias de feriado con cada una.
+- **Hallazgo de configuración (fuera de R4):** el máximo informativo de Planta-01/02 (540) es menor que su duración (600) ⇒ toda jornada completa genera `JORNADA_EXTENDIDA`. Requiere decisión (§24.15, pregunta 7).
+
+### 24.2 Comparación con el diseño previo (§8–§13)
+
+| Idea previa | Veredicto después de R2/R3 |
+|---|---|
+| Resolver central con `ROTATION` de resultado único | **Se mantiene.** `resolveExpectedShift` ya separa `fixedCandidates` (legacy); se agrega `shift` único. |
+| `resolveExpectedShifts(employeeIds, from, to, db)` con carga propia | **Se ajusta.** R2 mostró que cada consumidor carga distinto (§22.6). Se agrega un **cargador de rotaciones en lote** (`loadRotationPlans`) que llaman los tres cargadores existentes; no un cargador único. |
+| `ShiftRotation` con ciclo/ancla/vigencia en la misma fila; cambiar el ciclo = cerrar y crear otra rotación | **Se reemplaza** por identidad estable `ShiftRotation` + **`ShiftRotationVersion`** (ciclo, ancla, vigencia, grilla). Cambiar el ciclo no rompe la identidad, los equipos ni las membresías. |
+| Equipos colgando de la rotación | **Se mantiene** (A/B estables entre versiones). |
+| Celda ausente = descanso | **Se descarta.** Celda explícita `SHIFT` o `REST`; grilla completa obligatoria para que una versión rija; celda ausente = `ROTATION_CELL_MISSING` (error de configuración, nunca "no trabaja"). |
+| `weekday` 0=domingo | **Se mantiene** (convención de `ShiftAssignment.weekdays`); la semana del ciclo se calcula aparte desde el lunes ancla. |
+| `EmployeeShiftOverride` | **Diseño conservado; implementación en R7.** R4 no crea la tabla. |
+| `WorkShift.shiftTemplateSource` | **Se mantiene y es necesaria** (salida); se suma `scheduledStartAt` (§24.6). |
+| Precedencia §10 | **Se ajusta al orden real de R2** (§22.3): la rotación reemplaza a la "planificación" del día, no es un paso independiente (§24.4). |
+
+### 24.3 Arquitectura
+
+**Planificación del día.** Para (empleado, fecha operativa D) primero se determina la planificación y después se aplican franco, feriado y régimen exactamente como hoy:
+
+```
+plan(employee, D) =
+  membresía vigente en D en un equipo de una rotación ACTIVA con versión vigente en D
+    → ROTATION: celda(version, crew, weekIndex(D), weekday(D)) = SHIFT(template) | REST | MISSING
+  si no
+    → FIXED: applicableFixedAssignments (legacy, puede haber varias)
+```
+
+La rotación **reemplaza** a las asignaciones fijas de esa persona en esa fecha; nunca se mezclan. Quien no está en una rotación recorre exactamente el flujo actual (fijo, SIN_TURNO, TURNO_FLEXIBLE, sin planificación). Una persona en rotación, otra con turno fijo y otra SIN_TURNO conviven sin migrar a nadie.
+
+**Semana del ciclo.** `weekIndex(D) = mod(floor((lunesDe(D) − anchorWeekStart) / 7), cycleLengthWeeks)` con módulo positivo, sobre fechas calendario (`@db.Date`, `argentinaCalendarDate`), sin instantes. Semana = lunes→domingo; el domingo pertenece a la semana que empezó el lunes anterior. Se descartan semana ISO, semana del año y par/impar: con años de 53 semanas ISO o al cruzar el año la paridad se rompe (p. ej. semanas 53 → 1 consecutivas con la misma paridad). El ancla + diferencia de días es independiente del año, sirve igual para ciclos de 2, 3, 4… n semanas y es una función pura testeable. Helpers nuevos en `shared/datetime/argentinaTime.ts` (único helper de fechas del repo): `mondayOfCalendarDate`, `calendarDaysBetween`.
+
+**Componentes nuevos (R4):**
+- `shifts/rotationPlan.ts` (puro): `rotationWeekIndex`, `resolveRotationCell(plans, employeeId, dateKey)`.
+- `shifts/rotationPlan.loader.ts`: `loadRotationPlans(db, { employeeIds?, fromKey, toKey })` → una consulta (membresías vigentes + equipo + rotación + versiones vigentes en el rango + celdas) → mapa en memoria.
+- Resolver: el input gana `rotation: RotationCell | null`; la resolución gana `shift: T | null` (único; sólo ROTATION y, en R7, OVERRIDE); `source` gana `"ROTATION"`; razones nuevas `ROTATION_REST_DAY` y `ROTATION_CELL_MISSING`.
+
+### 24.4 Precedencia (orden real de R2 + rotación)
+
+| Fuente | WORK_OBLIGATION (alertas) | EXPECTED_WORKDAY (Novedades) | Motivo |
+|---|---:|---:|---|
+| Empleado ACTIVO / plantilla ACTIVO | filtro de la consulta | — | Paridad: no se mueve al resolver. |
+| Feriado sin convocatoria | 1 | 3 (IN_SCOPE) / UNRESOLVED (historia faltante) | Paridad: turno habitual (rotativo o fijo) ≠ obligación en feriado. |
+| Planificación (ROTATION o FIXED) | 2 | 5 | ROTATION: SHIFT → un turno; REST → `NO_OBLIGATION (ROTATION_REST_DAY)` (0 confirmado en Novedades); MISSING → sin obligación en alertas y `UNRESOLVED (ROTATION_CELL_MISSING)` en Novedades. FIXED: sin cambios (`fixedCandidates` y desempates legacy). |
+| Régimen SIN_TURNO | 3 | 4 (UNRESOLVED) | Gana sobre la rotación como defensa; además la validación impide la membresía. |
+| Franco `EmployeeDayOff` | 4 | 1 | Anula la rotación en ambas políticas ⇒ `NO_OBLIGATION (DAY_OFF)`. El resultado no depende de su posición en alertas (§22.3). |
+| Feriado con convocatoria | 5 (turno = planificación del día, P8) | 2 (convocatoria → planificación → horario) | Paridad: P8 no se corrige en silencio. |
+| Override (R7) | después de feriado, antes de régimen | ídem | Reservado. |
+| TURNO_FLEXIBLE / sin planificación / planificación que excluye el día | como hoy | como hoy | Paridad. |
+
+### 24.5 Historia y versionado
+
+- **Nunca se edita en el lugar algo que ya rigió.** Vigencias `effectiveFrom`/`effectiveTo` `@db.Date` inclusivas (criterio de `EmployeeWorkRegime` y `ShiftAssignment`).
+- `ShiftRotationVersion` es inmutable una vez que `effectiveFrom ≤ hoy` (ciclo, ancla y grilla). Cambiar el ciclo o la grilla desde X = cerrar la vigente (`effectiveTo = X−1`) y crear una versión desde X, en una transacción. Enero queda intacto si febrero cambia. Una versión futura sí se puede editar o borrar.
+- `ShiftRotationCrewMember`: alta, baja y cambio de equipo cierran una fila y abren otra; nunca se borra historia. Cambiar el Equipo A en diciembre no altera noviembre.
+- Retroactivo (X < hoy): **bloqueado por defecto en R4**; habilitarlo es decisión de negocio (pregunta 6).
+- Toda alta o cierre: auditoría (`auditService`, textos con código/nombre/legajo, sin ids) + `recalculateNoveltyCoverage` en la misma transacción con la nueva fuente `"SHIFT_ROTATION_CHANGED"` (union TS en `noveltyCoverageRecalculation.ts`, no enum de base), respetando períodos protegidos.
+
+### 24.6 Modelo propuesto (no aplicado)
+
+```prisma
+enum ShiftRotationCellKind { SHIFT REST }
+enum ShiftTemplateSource { FIXED_ASSIGNMENT ROTATION OVERRIDE HOLIDAY_CONVOCATION }
+
+model ShiftRotation {                 // identidad estable ("Planta Mañana/Tarde")
+  id              String       @id @default(uuid())
+  code            String       @unique          // + único lower(code) y CHECK de forma (patrón ShiftGroup)
+  name            String
+  shiftGroupId    String                         // FK ShiftGroup Restrict; alcance (permisos en R8)
+  status          RecordStatus @default(ACTIVO)  // INACTIVO ⇒ deja de resolver; no borra historia
+  observation     String?
+  createdByUserId String?                        // FK User SetNull
+  updatedByUserId String?                        // FK User SetNull
+  createdAt       DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
+  @@index([shiftGroupId, status])
+}
+
+model ShiftRotationVersion {          // ciclo + ancla + vigencia; dueña de la grilla
+  id               String    @id @default(uuid())
+  rotationId       String                         // FK Restrict
+  cycleLengthWeeks Int                            // CHECK 1..12
+  anchorWeekStart  DateTime  @db.Date             // CHECK lunes (isodow = 1)
+  effectiveFrom    DateTime  @db.Date
+  effectiveTo      DateTime? @db.Date             // CHECK effectiveTo >= effectiveFrom
+  createdByUserId  String?                        // FK User SetNull
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  @@index([rotationId, effectiveFrom])
+  // EXCLUDE gist (rotationId WITH =, daterange(effectiveFrom, effectiveTo, '[]') WITH &&)
+}
+
+model ShiftRotationCrew {             // "A", "B": estables entre versiones
+  id         String       @id @default(uuid())
+  rotationId String                               // FK Restrict
+  code       String
+  name       String
+  sortOrder  Int          @default(0)
+  status     RecordStatus @default(ACTIVO)
+  @@unique([rotationId, code])
+}
+
+model ShiftRotationCrewMember {       // historia de pertenencia
+  id              String    @id @default(uuid())
+  crewId          String                          // FK Restrict
+  employeeId      String                          // FK Employee Restrict
+  effectiveFrom   DateTime  @db.Date
+  effectiveTo     DateTime? @db.Date              // CHECK effectiveTo >= effectiveFrom
+  createdByUserId String?                         // FK User SetNull
+  closedByUserId  String?                         // FK User SetNull
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+  @@index([employeeId, effectiveFrom])
+  @@index([crewId])
+  // EXCLUDE gist (employeeId WITH =, daterange(effectiveFrom, effectiveTo, '[]') WITH &&):
+  // una sola membresía de rotación por persona y fecha, en TODAS las rotaciones.
+}
+
+model ShiftRotationSlot {             // celda de la grilla
+  id              String                @id @default(uuid())
+  versionId       String                          // FK Cascade (la grilla es parte de la versión)
+  crewId          String                          // FK Restrict
+  cycleWeekIndex  Int                             // 0..cycleLengthWeeks-1 (servicio; CHECK >= 0)
+  weekday         Int                             // 0=domingo..6 (CHECK 0..6)
+  kind            ShiftRotationCellKind
+  shiftTemplateId String?                         // FK ShiftTemplate Restrict
+  // CHECK ((kind = 'SHIFT') = (shiftTemplateId IS NOT NULL))
+  @@unique([versionId, crewId, cycleWeekIndex, weekday])
+  @@index([shiftTemplateId])
+}
+
+// WorkShift (aditivo, nullable; null = jornada histórica ⇒ lógica actual):
+//   shiftTemplateSource ShiftTemplateSource?
+//   scheduledStartAt    DateTime? @db.Timestamptz(3)   // instante de la ocurrencia adoptada
+```
+
+Migración R4.1 puramente aditiva: tablas vacías, dos enums y dos columnas nullable; sin backfill ni cambio de comportamiento; `btree_gist` ya existe (patrón de `20261008090000_labor_history_periods`); rollback `.down.sql` como en R3.1. `ShiftAssignment` no cambia.
+
+### 24.7 Impacto por consumidor
+
+- **Entrada** (`workShiftEvaluationRunner.ts` `loadMatchingContext`/`evaluateShiftEntry`; `workShiftEvaluation.service.ts` `matchShiftForEmployee`). Si la persona tiene membresía en D−1..D+1 (D = día calendario de la fichada): candidatos = celdas SHIFT de esas fechas operativas con **instante concreto** (`scheduledInstantForShiftTime(argentinaDayRange(d).startAt, startTime)`); gana la más cercana y `differenceMinutes` se mide contra ese instante. No se consideran asignaciones fijas ni plantillas ajenas: quien está de Tarde nunca matchea Mañana. Tolerancias, `INGRESO_TARDE`/`INGRESO_ANTICIPADO` y el umbral de 240 min no cambian. Como hoy con los fijos, la entrada no aplica franco ni feriado (paridad A2/A4). Sin celda SHIFT en la ventana ⇒ `NO_MATCH` (`TURNO_NO_IDENTIFICADO`, suprimible por régimen), igual que un fijo que no aplica ese día. Adopta `shiftTemplateId`, `maxAllowedMinutes`, `shiftTemplateSource = ROTATION` y `scheduledStartAt`. Para los fijos se escribe además `FIXED_ASSIGNMENT`, sin tocar su lógica. Resuelve P9 para rotaciones.
+- **Salida** (`resolveMatchForExit`, `evaluateExitPunctuality`, `evaluateOutOfShiftWorkday`). Con `shiftTemplateSource ∈ {ROTATION, OVERRIDE}` ⇒ `ENABLED` sin exigir `ShiftAssignment` (resuelve P6) y salida programada = `scheduledStartAt` + duración del turno (no `startAt` real: un ingreso tardío pasada la medianoche no corre la salida un día). Con `null` o `FIXED_ASSIGNMENT` el código actual queda intacto, incluido §21.3. Sin migración de históricos.
+- **WorkShift.** `shiftTemplateSource` es necesaria: la salida no puede recalcular la rotación (la configuración puede cambiar entre ingreso y salida); congela la decisión y deja trazabilidad de por qué se adoptó el turno. Enum: sí, valores cerrados. `scheduledStartAt` congela la ocurrencia ⇒ salida y fecha operativa determinísticas; `workShiftOperationalDateKey` la usa cuando existe, si no la lógica actual.
+- **Obligación, falta de ingreso, inactividad** (`workObligation.service.ts`, `missingEntry.service.ts`, `attendanceInactivity.service.ts`). `resolveWorkObligationCandidates(D)` suma una consulta en lote a `loadRotationPlans`; universo = empleados con fijo aplicable ∪ miembros vigentes. ROTATION ⇒ un candidato con su `scheduledStartAt` (Tarde: vence 17:10; nada a las 07:10). `findEmployeeIdsWithMatchingEntryEvidence` (ocurrencia más cercana = `scheduledStartAt`) funciona sin cambios. La inactividad hereda el universo; la ventana de evidencia del día calendario sirve para 07:00 y 17:00 (P10 sigue documentado).
+- **Olvido de salida y vencimiento** (`openShiftMonitor.service.ts`, `expireOpenWorkShifts`): sin cambios; usan el turno adoptado.
+- **Novedades** (`expectedWorkday.ts`). `EmployeeWorkdayContext` gana `rotation` (misma tanda, `loadRotationPlans`); `projectExpectedWorkday` con `source = ROTATION` ⇒ minutos de **un** turno (`shiftTemplateExpectedMinutes`), `shiftTemplateIds = [id]`, nuevo `WorkdaySource "SHIFT_ROTATION"`; REST ⇒ 0 confirmado. FIXED sigue con `expectedMinutesForTemplates` (P2/P3 legacy hasta R10). Semana Mañana 600 y semana Tarde 600, nunca 1200.
+- **Recálculo de cobertura.** Membresías, versiones y estado de la rotación lo disparan (personas afectadas × ventana). `recalculateTemplateCoverage` (`workforce.service.ts`) se extiende a los miembros cuyas celdas usan la plantilla modificada.
+- **Candidatos de feriado** (`holidayWorkAssignment.repository.ts`): sin cambio en R4; en R5 mostrar el turno resuelto.
+- **Sin cambios:** PWA del fichador, clasificación de conceptos horarios, cierres.
+
+### 24.8 Cruce de medianoche (17:00 → 03:00)
+
+La celda pertenece a la fecha de inicio. Lunes Tarde: `scheduledStartAt` lunes 17:00, fin martes 03:00. Entrada: candidato "lunes" dentro de D−1..D+1. Salida del martes 02:55: contra `scheduledStartAt` + 600. Falta de ingreso y Novedades: `dateKey` = lunes. Vencimiento: `maxAllowedMinutes` desde `startAt` (sin cambios). Fecha operativa y reportes: lunes, vía `scheduledStartAt`. Validación de grilla: superposición entre la celda de D y la de D+1 del mismo equipo, incluido domingo→lunes y última semana del ciclo → semana 0, es error; descanso corto, advertencia.
+
+### 24.9 Feriados y francos
+
+- **Comportamiento actual (fijos):** feriado sin convocatoria ⇒ sin obligación. Convocado ⇒ alertas con el turno habitual (no el de la convocatoria, P8); Novedades con convocatoria → planificación → horario. Convocado sin planificación aplicable ⇒ alertas sin obligación (P8).
+- **R4 (rotación):** idéntico, con "celda de rotación" en lugar de "turno habitual". Convocado un día REST ⇒ alertas sin obligación (igual que un fijo sin planificación ese día).
+- **Recomendación futura (decisión del negocio):** si la convocatoria tiene `shiftTemplateId`, que gane en todos los consumidores.
+- **Franco:** gana sobre la rotación en ambas políticas ⇒ `NO_OBLIGATION (DAY_OFF)`.
+
+### 24.10 Excepciones (R7) y serenos
+
+- **Overrides:** sin estructura en R4. Quedan reservados la fuente `OVERRIDE` del resolver y de `ShiftTemplateSource`, su lugar en la precedencia y el diseño de `EmployeeShiftOverride` (§9/§13, con `kind REPLACE_SHIFT | NO_OBLIGATION | WORK_SHIFT`; intercambio = dos overrides con `swapGroupId`). Mientras tanto, "no trabaja excepcionalmente" se cubre con un franco. Ningún cambio puntual exige editar la rotación.
+- **Serenos (no en el piloto):** cada persona es una membresía; su equipo tiene grilla completa de ciclo 2 (semana con FDS: V/S/D "Sereno FDS 19–07"; semana sin FDS: horario habitual 03–11 o 07–15, o REST). Representa rotación + horario habitual + FDS alternado sin varias `ShiftAssignment`. El conflicto domingo 19:00→lunes 07:00 contra lunes 03:00–11:00 lo detecta la validación de superposición entre días consecutivos: no se puede activar hasta que el negocio decida. **DECISIÓN DE NEGOCIO PENDIENTE.**
+- **Fin de semana de Planta:** se representa con celdas S/D de cada semana de cada equipo (otra plantilla si el horario difiere; ciclo de 4 semanas si no todas las semanas de Mañana trabajan el FDS). **DECISIÓN DE NEGOCIO PENDIENTE** (pregunta 3); el diseño no depende de ella.
+
+### 24.11 Validaciones
+
+| Validación | Dónde |
+|---|---|
+| Persona en dos membresías superpuestas (cualquier rotación) | DB (EXCLUDE) + servicio (mensaje humano) |
+| Dos celdas para la misma versión/equipo/semana/día | DB (unique) + servicio |
+| `cycleWeekIndex` fuera de 0..n−1; `weekday` fuera de 0..6 | Servicio + CHECK (≥ 0; 0..6) + UI |
+| `SHIFT` sin plantilla o `REST` con plantilla | DB (CHECK) + servicio |
+| Plantilla INACTIVA o de otro `ShiftGroup` | Servicio + UI (filtra) |
+| Ancla ausente o no lunes; ciclo fuera de 1..12 | DB (NOT NULL + CHECK) + servicio |
+| Versiones superpuestas de una rotación | DB (EXCLUDE) + servicio |
+| Grilla incompleta (≠ equipos × semanas × 7) | Servicio (no puede regir); resolver: `ROTATION_CELL_MISSING` como defensa |
+| Superposición entre celdas consecutivas (incl. cambio de semana/ciclo) | Servicio (error); descanso corto: advertencia en preview |
+| Miembro con `ShiftAssignment` HABILITADA superpuesta | **Opción C:** el servicio bloquea (409 con detalle) y ofrece `closeFixedAssignmentsFrom` explícito que las cierra en la misma transacción con auditoría; `shiftAssignment.service` bloquea lo inverso; el resolver hace ganar a la rotación como defensa |
+| Miembro con régimen SIN_TURNO vigente | Servicio bloquea; resolver: SIN_TURNO gana |
+| Cambio retroactivo o edición de una versión ya vigente | Servicio bloquea (R4) |
+| Membresía fuera de la vigencia de la rotación | Servicio |
+
+### 24.12 API propuesta (convenciones reales: `/api/shifts` + `requireAnyRole` + `validateBody` + `asyncHandler`)
+
+Lectura: todos los roles autenticados del módulo; escritura: RRHH (alcance por grupo en R8).
+- `GET/POST /api/shifts/rotations`; `GET/PATCH /api/shifts/rotations/:id` (nombre, observación, `status`); `DELETE` sólo si nunca tuvo una versión vigente.
+- `POST /rotations/:id/crews`; `PATCH /rotations/:id/crews/:crewId`.
+- `POST /rotations/:id/versions` (ciclo, ancla, `effectiveFrom` y grilla completa en un solo body; cierra la anterior en la misma transacción); `GET /rotations/:id/versions/:versionId`; `PATCH`/`DELETE` sólo de versiones futuras.
+- `POST /rotations/:id/crews/:crewId/members` (`employeeId`, `effectiveFrom`, `closeFixedAssignmentsFrom?`); `POST /rotations/:id/members/:memberId/close` (`effectiveTo`); `POST /rotations/:id/members/:memberId/move` (cerrar + alta en una transacción).
+- **Preview de sólo lectura** (R4.6/R5): `GET /api/shifts/expected?employeeIds|groupId|rotationId&from&to` (≤ 42 días) → por persona y fecha `{ obligation, source (ROTATION | FIXED_ASSIGNMENT | DAY_OFF | HOLIDAY_NOT_CONVOKED | HOLIDAY_CONVOCATION | REGIME | NONE), reason, template {code, startTime, endTime} | null, scheduledStartAt, scheduledEndAt, expectedMinutes, warnings[] }`; variante borrador `POST /api/shifts/rotations/preview` con una versión sin guardar.
+- Contratos en `docs/BACKEND_API_CONTRACTS.md` en la misma etapa que los implemente.
+
+### 24.13 Performance (objetivo: ~100 fichadas en pocos minutos)
+
+- Entrada: +1 consulta indexada por fichada (`CrewMember(employeeId, effectiveFrom)` con `include` de equipo, rotación, versión y celdas para D−1..D+1); hoy ya hace 2. Sin N+1.
+- Job de 60 s (falta de ingreso), inactividad diaria y catch-up: +1 consulta en lote por corrida, nunca por persona.
+- Novedades: +1 consulta por tanda de `loadEmployeeWorkdayContext`.
+- Sin caché nueva en R4; si hiciera falta, `backend/src/shared/cache/ttlCache` con invalidación en escrituras. `docs/PERFORMANCE_STANDARDS.md` se lee antes de R4.3/R4.4.
+
+### 24.14 Plan R4 (cada subetapa con tests y `typecheck`/`test`/`build` verdes; los 65 tests de caracterización sin modificar)
+
+| Etapa | Contenido | Esquema | Cambia comportamiento |
+|---|---|---|---|
+| R4.1 | Schema + migración aditiva (5 tablas, 2 enums, 2 columnas nullable en `WorkShift`, CHECK/EXCLUDE/índices) + rollback; sin uso en código. Validación en base limpia como CI; aplicar en development sólo con autorización | Aditivo | No |
+| R4.2 | Núcleo puro: `rotationWeekIndex`, `resolveRotationCell`, resolver con `ROTATION`/`shift` + tests (cambio de año, ancla pasada/futura, ciclos 2/3/4, domingo→lunes) | No | No (sin datos) |
+| R4.3 | `loadRotationPlans` + obligación/falta de ingreso/inactividad + Novedades + recálculo de cobertura | No | Sólo miembros (ninguno) |
+| R4.4 | Entrada/salida/`WorkShift` (`shiftTemplateSource`, `scheduledStartAt`, `resolveMatchForExit`, fecha operativa) | No | Sólo miembros |
+| R4.5 | API de configuración + validaciones + auditoría + contratos | No | — |
+| R4.6 | Endpoint de preview de sólo lectura | No | No |
+| R4.7 | UI básica de rotaciones (`frontend-ui.md`) | No | — |
+| R4.8 | Piloto Planta en development (legajos 19–22, cierre de sus fijos con la opción del alta) + QA | Datos dev | Sólo piloto |
+
+Producción: etapa aparte con autorización explícita.
+
+**Archivos de R4.1:** `backend/prisma/schema.prisma`; `backend/prisma/migrations/<ts>_add_shift_rotations/migration.sql`; `backend/prisma/rollbacks/<ts>_add_shift_rotations.down.sql`; esta ADR. Sin código de aplicación.
+
+### 24.15 Criterio de éxito del piloto Planta
+
+Fixture: rotación PLANTA, ciclo 2, ancla lunes 2026-11-23; A = {19, 20}, B = {21, 22}; semana 0: A = Planta-01 L–V, B = Planta-02 L–V; S/D parametrizados hasta la decisión.
+
+1. A, semana 0 (lunes 23/11): obligación 07:00 (vence 07:10); entrada 07:05 → Planta-01 sin alerta; 07:25 → `INGRESO_TARDE`; salida contra 17:00 ±20; Novedades 600; falta de ingreso a las 07:10 si no fichó.
+2. A, semana 1 (lunes 30/11): ningún incidente a las 07:10; obligación 17:00; entrada 16:55 → Planta-02 (nunca Planta-01, tampoco con una entrada a las 11:30); salida del martes contra 03:00; fecha operativa lunes; Novedades 600 (no 1200).
+3. Domingo 29/11 → lunes 30/11 cambia de semana sin editar nada; lunes 2027-01-04 conserva la alternancia tras el cambio de año.
+4. B es el inverso de A en ambas semanas.
+5. Empleado fijo de Oficina: resultados idénticos (caracterización verde sin tocar).
+6. SIN_TURNO idéntico; un miembro con SIN_TURNO ⇒ sin obligación.
+7. Franco sobre una celda Tarde ⇒ `DAY_OFF` en alertas y Novedades.
+8. Feriado sin convocatoria sobre una celda Mañana ⇒ sin obligación; convocado ⇒ obligación con la celda (alertas) y convocatoria → celda (Novedades).
+9. REST explícito ⇒ 0 confirmado; celda faltante ⇒ UNRESOLVED / sin obligación.
+10. Alta de miembro con fijo superpuesto ⇒ bloqueada; con datos inconsistentes forzados, gana la rotación.
+11. Salida de jornada ROTATION sin `ShiftAssignment` ⇒ `ENABLED` con puntualidad; jornadas históricas (`source = null`) idénticas.
+12. Versión nueva desde X y cambio de equipo desde X no alteran nada antes de X.
+13. Ingreso tardío 00:30 en Tarde ⇒ salida programada martes 03:00 (no miércoles).
+
+### 24.16 Riesgos
+
+- Entrada y salida están en el camino crítico de las fichadas: fuente nullable y rama legacy intacta, tests de paridad.
+- Recálculo de cobertura al activar o cambiar rotaciones: ventanas acotadas y períodos protegidos.
+- Restricciones EXCLUDE en la migración: patrón existente, validado en base limpia como CI.
+- Convivencia temporal fijo + rotación durante el piloto: Opción C.
+- Máximo informativo 540 en Planta ⇒ `JORNADA_EXTENDIDA` en cada jornada completa.
+- Semana con inicio lunes y `weekday` 0=domingo: tests de borde explícitos.
+
+### 24.17 Decisiones
+
+**Técnicas, ya tomadas en este diseño (salvo objeción):** versión separada de la rotación; celdas explícitas SHIFT/REST; Opción C (validar + resolver determinístico); `shiftTemplateSource` + `scheduledStartAt` en `WorkShift`; overrides en R7; sin caché nueva; retroactivo bloqueado por defecto; ancla lunes + diferencia de días.
+
+**De negocio, pendientes:**
+1. ¿La semana del ciclo es lunes→domingo, con sábado y domingo dentro de la semana que empezó ese lunes?
+2. ¿Qué lunes es la "Semana 1" (Equipo A de Mañana) del piloto?
+3. Fin de semana de Planta: ¿qué días (S, D, ¿V?)?, ¿qué horario (Planta-01 u otra plantilla)?, ¿todas las semanas de Mañana o algunas?, ¿el equipo de Tarde descansa S/D?
+4. Serenos: si un sereno hace domingo 19:00 → lunes 07:00, ¿qué pasa con su lunes 03:00–11:00? ¿Cuál es el horario exacto del FDS?
+5. Feriado convocado: ¿manda el turno de la convocatoria o la celda de la rotación? (hoy alertas y Novedades difieren, P8).
+6. ¿Se permiten cambios retroactivos de rotación o membresía? ¿Quién y hasta qué período?
+7. Planta-01/02: ¿se corrige el máximo informativo 540 frente a turnos de 600?
 
 ---
 
