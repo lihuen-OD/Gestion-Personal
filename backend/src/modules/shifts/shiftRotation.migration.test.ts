@@ -183,11 +183,17 @@ describe("schema.prisma: relaciones y onDelete", () => {
     expect(member).toMatch(/crew\s+ShiftRotationCrew\s+@relation\(fields: \[crewId\], references: \[id\], onDelete: Restrict\)/);
   });
 
-  it("celda: versión Cascade; equipo y plantilla Restrict", () => {
-    const slot = modelBlock("ShiftRotationSlot");
-    expect(slot).toMatch(/version\s+ShiftRotationVersion\s+@relation\(fields: \[versionId\], references: \[id\], onDelete: Cascade\)/);
-    expect(slot).toMatch(/crew\s+ShiftRotationCrew\s+@relation\(fields: \[crewId\], references: \[id\], onDelete: Restrict\)/);
-    expect(slot).toMatch(/shiftTemplate\s+ShiftTemplate\?\s+@relation\(fields: \[shiftTemplateId\], references: \[id\], onDelete: Restrict\)/);
+  // R4.1A (§25.2) reemplazó el modelo ShiftRotationSlot por Día + Bloque: este
+  // test describe el schema VIGENTE (el SQL de la migración R4.1 de arriba no
+  // cambia). Antes afirmaba lo mismo sobre ShiftRotationSlot.
+  it("grilla (R4.1A): día con versión Cascade y equipo Restrict; bloque con FK compuesta al día (Cascade / ON UPDATE Restrict) y plantilla Restrict", () => {
+    expect(schema).not.toMatch(/^model ShiftRotationSlot \{/m);
+    const day = modelBlock("ShiftRotationDay");
+    expect(day).toMatch(/version\s+ShiftRotationVersion\s+@relation\(fields: \[versionId\], references: \[id\], onDelete: Cascade\)/);
+    expect(day).toMatch(/crew\s+ShiftRotationCrew\s+@relation\(fields: \[crewId\], references: \[id\], onDelete: Restrict\)/);
+    const block = modelBlock("ShiftRotationBlock");
+    expect(block).toMatch(/day\s+ShiftRotationDay\s+@relation\(fields: \[dayId, dayKind\], references: \[id, kind\], onDelete: Cascade, onUpdate: Restrict\)/);
+    expect(block).toMatch(/shiftTemplate\s+ShiftTemplate\s+@relation\(fields: \[shiftTemplateId\], references: \[id\], onDelete: Restrict\)/);
   });
 
   it("autoría siempre SET NULL hacia User, nunca Cascade", () => {
@@ -225,5 +231,105 @@ describe(`rollback ${MIGRATION}`, () => {
     expect(rollbackStatements).not.toMatch(/^\s*(DELETE|UPDATE|TRUNCATE)\b/im);
     expect(rollbackStatements).not.toMatch(/DROP EXTENSION/i);
     expect(rollbackStatements).not.toMatch(/CASCADE/i);
+  });
+});
+
+// ── R4.1A (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.2) ─────────────
+// ShiftRotationSlot (una celda por día) → ShiftRotationDay + ShiftRotationBlock
+// (día REST | SHIFT con 1..N bloques). El comportamiento real de cada
+// constraint, la guarda y el rollback se validaron contra PostgreSQL 18 local.
+const MIGRATION_A = "20261120180000_replace_rotation_slots_with_days";
+const sqlA = withoutComments(read(`prisma/migrations/${MIGRATION_A}/migration.sql`));
+const rollbackA = withoutComments(read(`prisma/rollbacks/${MIGRATION_A}.down.sql`));
+
+describe(`migración ${MIGRATION_A}: reemplazo guardado de ShiftRotationSlot`, () => {
+  it("bloquea ShiftRotationSlot y aborta si tiene filas ANTES de cualquier DROP", () => {
+    const lock = sqlA.indexOf(`LOCK TABLE "ShiftRotationSlot" IN ACCESS EXCLUSIVE MODE;`);
+    const guard = sqlA.indexOf("RAISE EXCEPTION");
+    const firstDrop = sqlA.search(/\bDROP\b/);
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(sqlA).toMatch(/SELECT count\(\*\) INTO slots FROM "ShiftRotationSlot";\s+IF slots > 0 THEN\s+RAISE EXCEPTION/);
+    expect(lock).toBeLessThan(guard);
+    expect(guard).toBeLessThan(firstDrop);
+  });
+
+  it("sólo elimina ShiftRotationSlot (y sus FKs); sin sentencias de datos ni cambios a otras tablas existentes", () => {
+    expect(sqlA.match(/\bDROP TABLE "([^"]+)"/g)).toEqual([`DROP TABLE "ShiftRotationSlot"`]);
+    for (const dropped of sqlA.match(/ALTER TABLE "([^"]+)" DROP CONSTRAINT/g) ?? []) expect(dropped).toBe(`ALTER TABLE "ShiftRotationSlot" DROP CONSTRAINT`);
+    expect(sqlA).not.toMatch(/^\s*(UPDATE|INSERT|DELETE|TRUNCATE)\b/im);
+    expect(sqlA).not.toMatch(/\bDROP\s+(COLUMN|INDEX|TYPE|EXTENSION)\b/i);
+    expect(sqlA).not.toMatch(/ALTER TABLE "(ShiftRotation|ShiftRotationVersion|ShiftRotationCrew|ShiftRotationCrewMember|WorkShift|ShiftTemplate|ShiftGroup|Employee|User)"/);
+    expect(sqlA).not.toMatch(/CREATE TYPE/);
+  });
+
+  it("día: tabla con kind del enum existente, único por versión/equipo/semana/día y único (id, kind) para la FK compuesta", () => {
+    expect(sqlA).toContain('CREATE TABLE "ShiftRotationDay" (');
+    expect(sqlA).toMatch(/"kind" "ShiftRotationCellKind" NOT NULL,/);
+    expect(sqlA).toContain(
+      `CREATE UNIQUE INDEX "ShiftRotationDay_versionId_crewId_cycleWeekIndex_weekday_key" ON "ShiftRotationDay"("versionId", "crewId", "cycleWeekIndex", "weekday");`,
+    );
+    expect(sqlA).toContain(`CREATE UNIQUE INDEX "ShiftRotationDay_id_kind_key" ON "ShiftRotationDay"("id", "kind");`);
+    expect(sqlA).toContain(`"ShiftRotationDay_cycle_week_index_check" CHECK ("cycleWeekIndex" BETWEEN 0 AND 11)`);
+    expect(sqlA).toContain(`"ShiftRotationDay_weekday_check" CHECK ("weekday" BETWEEN 0 AND 6)`);
+    expect(sqlA).toContain(`"ShiftRotationDay_versionId_fkey" FOREIGN KEY ("versionId") REFERENCES "ShiftRotationVersion"("id") ON DELETE CASCADE`);
+    expect(sqlA).toContain(`"ShiftRotationDay_crewId_fkey" FOREIGN KEY ("crewId") REFERENCES "ShiftRotationCrew"("id") ON DELETE RESTRICT`);
+  });
+
+  it("bloque: plantilla obligatoria, dayKind SHIFT por default y por CHECK, orden no negativo y único en el día", () => {
+    expect(sqlA).toContain('CREATE TABLE "ShiftRotationBlock" (');
+    expect(sqlA).toMatch(/"dayKind" "ShiftRotationCellKind" NOT NULL DEFAULT 'SHIFT',/);
+    expect(sqlA).toMatch(/"shiftTemplateId" TEXT NOT NULL,/);
+    expect(sqlA).toContain(`"ShiftRotationBlock_day_kind_check" CHECK ("dayKind" = 'SHIFT')`);
+    expect(sqlA).toContain(`"ShiftRotationBlock_block_index_check" CHECK ("blockIndex" >= 0)`);
+    expect(sqlA).toContain(`CREATE UNIQUE INDEX "ShiftRotationBlock_dayId_blockIndex_key" ON "ShiftRotationBlock"("dayId", "blockIndex");`);
+    expect(sqlA).toContain(`CREATE INDEX "ShiftRotationBlock_shiftTemplateId_idx" ON "ShiftRotationBlock"("shiftTemplateId");`);
+    expect(sqlA).toContain(`"ShiftRotationBlock_shiftTemplateId_fkey" FOREIGN KEY ("shiftTemplateId") REFERENCES "ShiftTemplate"("id") ON DELETE RESTRICT`);
+  });
+
+  it("FK compuesta (dayId, dayKind) → día (id, kind): CASCADE al borrar el día y RESTRICT al cambiar su tipo", () => {
+    expect(sqlA).toContain(
+      `"ShiftRotationBlock_dayId_dayKind_fkey" FOREIGN KEY ("dayId", "dayKind") REFERENCES "ShiftRotationDay"("id", "kind") ON DELETE CASCADE ON UPDATE RESTRICT;`,
+    );
+  });
+
+  it("las únicas cascadas son versión → día → bloque", () => {
+    expect(sqlA.match(/ON DELETE CASCADE/g)).toHaveLength(2);
+  });
+});
+
+describe(`rollback ${MIGRATION_A}`, () => {
+  it("una transacción que bloquea Día y Bloque y aborta si hay filas antes de cualquier DROP", () => {
+    expect(rollbackA).toMatch(/^BEGIN;/m);
+    expect(rollbackA).toMatch(/COMMIT;\s*$/);
+    expect(rollbackA).toContain(`LOCK TABLE "ShiftRotationBlock", "ShiftRotationDay" IN ACCESS EXCLUSIVE MODE;`);
+    expect(rollbackA).toContain(`FROM "ShiftRotationDay";`);
+    expect(rollbackA).toContain(`FROM "ShiftRotationBlock";`);
+    expect(rollbackA.indexOf("RAISE EXCEPTION")).toBeLessThan(rollbackA.search(/\bDROP\b/));
+  });
+
+  it("recrea ShiftRotationSlot exactamente con los constraints de R4.1", () => {
+    expect(rollbackA).toContain('CREATE TABLE "ShiftRotationSlot" (');
+    for (const fragment of [
+      `CREATE UNIQUE INDEX "ShiftRotationSlot_versionId_crewId_cycleWeekIndex_weekday_key"`,
+      `CREATE INDEX "ShiftRotationSlot_shiftTemplateId_idx"`,
+      `"ShiftRotationSlot_versionId_fkey" FOREIGN KEY ("versionId") REFERENCES "ShiftRotationVersion"("id") ON DELETE CASCADE`,
+      `"ShiftRotationSlot_crewId_fkey" FOREIGN KEY ("crewId") REFERENCES "ShiftRotationCrew"("id") ON DELETE RESTRICT`,
+      `"ShiftRotationSlot_shiftTemplateId_fkey" FOREIGN KEY ("shiftTemplateId") REFERENCES "ShiftTemplate"("id") ON DELETE RESTRICT`,
+      `"ShiftRotationSlot_cycle_week_index_check" CHECK ("cycleWeekIndex" BETWEEN 0 AND 11)`,
+      `"ShiftRotationSlot_weekday_check" CHECK ("weekday" BETWEEN 0 AND 6)`,
+      `"ShiftRotationSlot_kind_template_check" CHECK (`,
+    ]) {
+      expect(rollbackA).toContain(fragment);
+      expect(sql).toContain(fragment); // mismo texto que la migración R4.1
+    }
+  });
+
+  it("sólo borra su propia fila de _prisma_migrations (resolve --rolled-back no aplica a migraciones exitosas, P3012); ningún otro DELETE, UPDATE, TRUNCATE ni CASCADE", () => {
+    const deletes = rollbackA.match(/^\s*DELETE\b.*$/gim) ?? [];
+    expect(deletes).toEqual([`DELETE FROM "_prisma_migrations" WHERE migration_name = '${MIGRATION_A}';`]);
+    expect(rollbackA).not.toMatch(/^\s*(UPDATE|TRUNCATE)\b/im);
+    // Ningún DROP … CASCADE (las FK recreadas de R4.1 sí declaran sus acciones ON DELETE/ON UPDATE).
+    expect(rollbackA).not.toMatch(/\bDROP\b[^;]*\bCASCADE\b/i);
+    expect(rollbackA.match(/\bDROP TABLE "([^"]+)"/g)).toEqual([`DROP TABLE "ShiftRotationBlock"`, `DROP TABLE "ShiftRotationDay"`]);
   });
 });

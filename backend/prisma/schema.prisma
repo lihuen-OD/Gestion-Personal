@@ -2036,7 +2036,7 @@ model ShiftTemplate {
   assignments                   ShiftAssignment[]
   holidayWorkAssignments        HolidayWorkAssignment[]
   noveltyCoverageDays           NoveltyDayCoverage[]
-  rotationSlots                 ShiftRotationSlot[]
+  rotationBlocks                ShiftRotationBlock[]
   createdBy                     User?                   @relation("ShiftTemplateCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy                     User?                   @relation("ShiftTemplateUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
   shiftGroup                    ShiftGroup?             @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
@@ -2125,10 +2125,10 @@ model ShiftRotationVersion {
   createdAt        DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
 
-  rotation  ShiftRotation       @relation(fields: [rotationId], references: [id], onDelete: Restrict)
-  slots     ShiftRotationSlot[]
-  createdBy User?               @relation("ShiftRotationVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  updatedBy User?               @relation("ShiftRotationVersionUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  rotation  ShiftRotation      @relation(fields: [rotationId], references: [id], onDelete: Restrict)
+  days      ShiftRotationDay[]
+  createdBy User?              @relation("ShiftRotationVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy User?              @relation("ShiftRotationVersionUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@index([rotationId, effectiveFrom])
 }
@@ -2150,7 +2150,7 @@ model ShiftRotationCrew {
 
   rotation  ShiftRotation             @relation(fields: [rotationId], references: [id], onDelete: Restrict)
   members   ShiftRotationCrewMember[]
-  slots     ShiftRotationSlot[]
+  days      ShiftRotationDay[]
   createdBy User?                     @relation("ShiftRotationCrewCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   updatedBy User?                     @relation("ShiftRotationCrewUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
@@ -2181,27 +2181,49 @@ model ShiftRotationCrewMember {
   @@index([crewId])
 }
 
-// Una celda explícita de la grilla: (versión, equipo, semana del ciclo base
-// 0, día 0=domingo..6) → SHIFT con plantilla o REST sin plantilla. La grilla
-// es parte de su versión: borrar una versión FUTURA (nunca vigente) borra sus
-// celdas (Cascade, única excepción al Restrict de este bloque). Que el equipo
-// sea de la misma rotación que la versión y que cycleWeekIndex sea menor que
-// cycleLengthWeeks lo valida el servicio (la base no puede cruzar tablas).
-// Escritos a mano en la migración: CHECK de rangos y CHECK kind ⇔ plantilla.
-model ShiftRotationSlot {
-  id              String                @id @default(uuid())
-  versionId       String
-  crewId          String
-  cycleWeekIndex  Int
-  weekday         Int
-  kind            ShiftRotationCellKind
-  shiftTemplateId String?
+// R4.1A (§25.2): configuración de UN día de la grilla — (versión, equipo,
+// semana del ciclo base 0, día 0=domingo..6) → REST (descanso explícito, sin
+// bloques) o SHIFT (1..N bloques). Sin fila = MISSING: configuración
+// incompleta, nunca descanso. Que un día SHIFT tenga al menos un bloque lo
+// valida el servicio; que el equipo sea de la misma rotación que la versión y
+// que cycleWeekIndex sea menor que cycleLengthWeeks, también (la base no
+// puede cruzar tablas). La grilla es parte de su versión: borrar una versión
+// FUTURA (nunca vigente) borra sus días y bloques (Cascade). Escritos a mano
+// en la migración: CHECK de rangos de semana y día.
+model ShiftRotationDay {
+  id             String                @id @default(uuid())
+  versionId      String
+  crewId         String
+  cycleWeekIndex Int
+  weekday        Int
+  kind           ShiftRotationCellKind
 
-  version       ShiftRotationVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  crew          ShiftRotationCrew    @relation(fields: [crewId], references: [id], onDelete: Restrict)
-  shiftTemplate ShiftTemplate?       @relation(fields: [shiftTemplateId], references: [id], onDelete: Restrict)
+  version ShiftRotationVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  crew    ShiftRotationCrew    @relation(fields: [crewId], references: [id], onDelete: Restrict)
+  blocks  ShiftRotationBlock[]
 
   @@unique([versionId, crewId, cycleWeekIndex, weekday])
+  // Destino de la FK compuesta de ShiftRotationBlock (dayId, dayKind).
+  @@unique([id, kind])
+}
+
+// R4.1A (§25.2): un bloque laboral de un día SHIFT, en orden explícito
+// (blockIndex). Ej.: José, viernes A → 0 = 07:00–11:00, 1 = 19:00–07:00.
+// `dayKind` siempre vale SHIFT: con la FK compuesta (dayId, dayKind) →
+// ShiftRotationDay(id, kind) un bloque nunca puede colgar de un día REST, y
+// ON UPDATE RESTRICT impide pasar a REST un día que tiene bloques. Escritos a
+// mano en la migración: CHECK dayKind = 'SHIFT' y blockIndex >= 0.
+model ShiftRotationBlock {
+  id              String                @id @default(uuid())
+  dayId           String
+  dayKind         ShiftRotationCellKind @default(SHIFT)
+  blockIndex      Int
+  shiftTemplateId String
+
+  day           ShiftRotationDay @relation(fields: [dayId, dayKind], references: [id, kind], onDelete: Cascade, onUpdate: Restrict)
+  shiftTemplate ShiftTemplate    @relation(fields: [shiftTemplateId], references: [id], onDelete: Restrict)
+
+  @@unique([dayId, blockIndex])
   @@index([shiftTemplateId])
 }
 

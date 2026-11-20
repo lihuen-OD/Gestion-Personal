@@ -1355,6 +1355,52 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Resultados:** 26 tests nuevos verdes; caracterización R1 76 (65 previos sin cambios + 11); suite backend **4100 verdes** (230 archivos; 15 suites de integración opcionales omitidas como siempre); `typecheck` verde.
 
+### 25.2 R4.1A — Día + Bloque (implementada y validada en local; NO aplicada a ninguna base compartida)
+
+**Estado:** migración nueva `20261120180000_replace_rotation_slots_with_days` creada y validada contra PostgreSQL 18 local; **no aplicada** a development, pre-development ni producción (requiere autorización explícita). La migración de R4.1 (`20261120120000_add_shift_rotations`) no se editó. Sin lógica: ningún código lee las tablas de rotación.
+
+**Precondición verificada (2026-11-20, development, transacción READ ONLY):** `ShiftRotationSlot` y el resto de las tablas de rotación con 0 filas; `WorkShift` sin `shiftTemplateSource` ni `scheduledStartAt` cargados.
+
+**Modelo (reemplaza `ShiftRotationSlot`):**
+- `ShiftRotationDay(id, versionId → ShiftRotationVersion CASCADE, crewId → ShiftRotationCrew RESTRICT, cycleWeekIndex, weekday, kind ShiftRotationCellKind)`; `UNIQUE(versionId, crewId, cycleWeekIndex, weekday)`; `UNIQUE(id, kind)` como destino de la FK compuesta.
+- `ShiftRotationBlock(id, dayId, dayKind ShiftRotationCellKind DEFAULT 'SHIFT', blockIndex, shiftTemplateId NOT NULL → ShiftTemplate RESTRICT)`; FK compuesta `(dayId, dayKind) → ShiftRotationDay(id, kind) ON DELETE CASCADE ON UPDATE RESTRICT`; `UNIQUE(dayId, blockIndex)`; índice `shiftTemplateId`.
+- Relaciones inversas: `ShiftRotationVersion.days`, `ShiftRotationCrew.days`, `ShiftTemplate.rotationBlocks` (reemplazan `slots` / `rotationSlots`). Sin autoría ni timestamps propios (los tiene la versión). Se reutiliza el enum `ShiftRotationCellKind` (SHIFT | REST). Sin cambios en `ShiftRotation`, `ShiftRotationVersion`, `ShiftRotationCrew`, `ShiftRotationCrewMember` ni `WorkShift`.
+
+**Invariantes:**
+
+| Invariante | Garantía |
+|---|---|
+| MISSING = sin fila de día (nunca descanso) | Modelo: no existe valor MISSING persistido |
+| Una configuración por versión/equipo/semana/día | `UNIQUE(versionId, crewId, cycleWeekIndex, weekday)` |
+| Un día REST no tiene bloques | FK compuesta + `CHECK dayKind = 'SHIFT'` |
+| Un día con bloques no puede pasar a REST | `ON UPDATE RESTRICT` de la FK compuesta |
+| Un día SHIFT tiene ≥ 1 bloque | Servicio (R4.6); el núcleo (R4.2) tratará un SHIFT vacío como MISSING. Sin triggers |
+| Orden explícito y único de bloques | `UNIQUE(dayId, blockIndex)` + `CHECK blockIndex >= 0` |
+| Rangos | `CHECK cycleWeekIndex BETWEEN 0 AND 11`, `CHECK weekday BETWEEN 0 AND 6` |
+| Equipo de la misma rotación que la versión; `cycleWeekIndex < cycleLengthWeeks`; sin superposición entre bloques (mismo día, cruce de medianoche, días/semanas consecutivos, fin → inicio del ciclo) | Servicio / núcleo puro (R4.2, R4.6) |
+
+**Migración:** encabezado; `LOCK TABLE "ShiftRotationSlot"` + guarda que **aborta antes de cualquier DROP** si la tabla tiene filas; cuerpo generado offline con `prisma migrate diff` (drop de `ShiftRotationSlot` y sus 3 FKs; create de Día y Bloque, 4 índices, 4 FKs); 4 CHECK escritos a mano. Sin sentencias de datos ni cambios sobre otras tablas existentes; las únicas cascadas son versión → día → bloque.
+
+**Rollback** (`prisma/rollbacks/20261120180000_replace_rotation_slots_with_days.down.sql`): una transacción, `LOCK` de Bloque y Día, aborta si hay filas, `DROP` de ambas tablas, recrea `ShiftRotationSlot` exactamente como en R4.1 (tabla, únicos, índice, 3 FKs, 3 CHECK) y borra su propia fila de `_prisma_migrations` (patrón de `20261009150000_org_location_contract_m2`). Debe correr antes que el rollback de R4.1.
+
+**Hallazgo:** `prisma migrate resolve --rolled-back` sólo acepta migraciones **fallidas** (P3012); después de revertir a mano una migración exitosa, Prisma la sigue considerando aplicada. Los rollbacks de R3.1, R4.1 y otros indican ese comando en su encabezado (instrucción inexacta, deuda preexistente, no corregida en esta etapa); el de R4.1A borra la fila de `_prisma_migrations` dentro de la transacción. `docs/DATABASE_STANDARDS.md` ("Hand-written rollbacks") repite la instrucción inexacta.
+
+**Validación local** (Postgres.app 18, misma versión mayor que el CI; bases descartables `r41a_*` en `localhost`, destino verificado antes de cada operación, línea Datasource de Prisma en `localhost`; ningún comando contra Neon; bases eliminadas al terminar):
+1. `prisma format` / `validate` / `generate` sin errores (Prisma acepta la FK compuesta con columna enum y `onUpdate: Restrict`).
+2. Historial completo (79 migraciones) en base vacía con `scripts/ci/migrate-clean-database.ts`; `migrate status` al día; `migrate diff` contra `schema.prisma`: **No difference detected**.
+3. **32 comprobaciones SQL reales**, todas OK: día REST; día SHIFT; día duplicado (23505); mismo día en otro equipo; semana 12 / −1 y día 7 (23514); `MISSING` inexistente (22P02); versión o equipo inexistentes (23503); **viernes de José con dos bloques** (07–11 y 19–07) y `dayKind` SHIFT por default; **bloque en día REST rechazado** (FK compuesta, 23503) y con `dayKind` REST (CHECK, 23514); `blockIndex` duplicado (23505) y negativo (23514); bloque sin plantilla (23502), plantilla o día inexistentes (23503); **pasar a REST un día con bloques rechazado (23001)** y sin bloques aceptado; cambiar `dayKind` de un bloque (23514); borrar plantilla, equipo o rotación usados (23001); borrar un día borra sus bloques; borrar una versión borra sólo sus días y bloques; `ShiftRotationSlot` eliminada y constraints de R4.1 y columnas de `WorkShift` intactos.
+4. **Guarda:** base en estado R4.1 con una fila en `ShiftRotationSlot` → `migrate deploy` falla (P3018, "Migración abortada: ShiftRotationSlot tiene 1 fila(s)…"); la fila queda intacta y no se crea ninguna tabla. Recuperación probada: vaciar la tabla, `migrate resolve --rolled-back` (ahora sí, migración fallida) y `migrate deploy` → aplicada, al día y sin diferencias.
+5. **Rollback:** con datos → aborta y no cambia nada; sin datos → revierte, la migración vuelve a figurar pendiente, `migrate diff` contra el schema anterior (R4.1) **No difference detected** y `ShiftRotationSlot` recreada con sus 3 CHECK, 3 FKs, PK, índice y único.
+
+**Tests:** `shiftRotation.migration.test.ts` 38 (29 de R4.1 + 9 de R4.1A; el único test previo ajustado es el que describía el modelo `ShiftRotationSlot` en `schema.prisma`, que ahora describe Día + Bloque — las aserciones sobre el SQL congelado de R4.1 no cambian). Suite backend **4109 verdes**; caracterización R1 76/76 y resolver R2 24/24 sin cambios; `typecheck` y `build` verdes.
+
+**Riesgos y notas:**
+- Cliente Prisma local regenerado sin `shiftRotationSlot`; development sigue con la tabla vieja hasta un deploy autorizado. No afecta al backend local: ningún código lee estas tablas (a diferencia de R4.1, no cambian columnas de tablas leídas).
+- Los CHECK escritos a mano no los compara `migrate diff`: cubiertos por los tests estáticos y por las pruebas SQL locales.
+- RESTRICT responde SQLSTATE 23001: los servicios de R4.6 deben mapearlo a mensajes de dominio.
+
+**Antes de autorizar un deploy en development:** mismo procedimiento que §24.19 (línea Datasource, rama de respaldo Neon, verificar `ShiftRotationSlot` vacía, `migrate deploy`, `migrate status`, `migrate diff --exit-code`, catálogos y conteos, `prisma generate`, reinicio del backend local).
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
