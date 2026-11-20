@@ -18,8 +18,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
-import { workforceService } from "../workforce-management/workforce.service";
+import { notifyUsers, workforceService } from "../workforce-management/workforce.service";
 import { checkMissingExpectedEntries } from "../time-entries/missingEntry.service";
+import { findEmployeeIdsWithMatchingEntryEvidence } from "../time-entries/attendanceInactivity.service";
 import { resolveWorkObligationCandidates } from "./workObligation.service";
 import { evaluateShiftEntry, evaluateShiftExit } from "./workShiftEvaluationRunner";
 import { evaluateEmployeeWorkday, type EmployeeWorkdayContext, type HolidayScopeStatus, type WorkdayConvocation, type WorkdayRegimePeriod } from "./expectedWorkday";
@@ -758,5 +759,108 @@ describe("A8 — estado de la asignación (HABILITADO vs DESHABILITADO)", () => 
       obligation: "UNRESOLVED",
       unresolvedReason: "SCHEDULE_MISSING",
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): caracterización de
+// los comportamientos legacy que las etapas R4.x van a cambiar, con el
+// calendario real de Planta (noviembre 2026; lunes 02/11 = Semana A).
+// ═══════════════════════════════════════════════════════════════════════════
+const PLANTA_FRIDAY = "2026-11-06";
+const PLANTA_SATURDAY = "2026-11-07";
+const PLANTA_THURSDAY = "2026-11-05";
+
+describe("R1.1-A — trabajo sin turno programado (Juanjo: fijo L–V 07:00–15:00, ficha un sábado)", () => {
+  const JUANJO_SHIFT = template({ id: "juanjo-07-15", code: "PLANTA-07-15", startTime: "07:00", endTime: "15:00", expectedMinutes: 480, maximumInformativeMinutes: 540 });
+  const rows = [assignment(JUANJO_SHIFT)];
+
+  it("sábado sin fichada: sin obligación, sin incidente de falta de ingreso, y Novedades 0 confirmado", async () => {
+    givenAssignments(rows);
+    expect((await resolveWorkObligationCandidates(PLANTA_SATURDAY)).candidates).toEqual([]);
+    expect(await checkMissingExpectedEntries(art(PLANTA_SATURDAY, "07:10"))).toEqual({ candidates: 0, due: 0, created: 0, resolved: 0 });
+    expect(db.attendanceInactivityIncident.createMany).not.toHaveBeenCalled();
+    expect(evaluateEmployeeWorkday(workdayContext({ assignments: rows }), PLANTA_SATURDAY)).toMatchObject({ obligation: "NO_WORK_OBLIGATION", expectedMinutes: 0, source: "SHIFT_PLAN" });
+  });
+
+  it("COMPORTAMIENTO ACTUAL (cambia en R4.5): la entrada del sábado no adopta plantilla y genera TURNO_NO_IDENTIFICADO (ADVERTENCIA) con aviso ALERTA_FICHADA", async () => {
+    givenAssignments(rows);
+    await evaluateShiftEntry(EMPLOYEE, "shift-sat", art(PLANTA_SATURDAY, "07:00"));
+    expect(adoptedTemplate()).toBeNull();
+    expect(upserted()).toEqual([expect.objectContaining({ type: "TURNO_NO_IDENTIFICADO", severity: "ADVERTENCIA" })]);
+    expect(notifyUsers).toHaveBeenCalledTimes(1);
+    expect((notifyUsers as unknown as Mock).mock.calls[0]![1]).toMatchObject({ type: "ALERTA_FICHADA", entityType: "ShiftAlert", priority: "ALTA" });
+  });
+
+  it.each([
+    ["SIN_TURNO", "SIN_TURNO", true],
+    ["TURNO_FLEXIBLE", "TURNO_FLEXIBLE", true],
+    ["TURNO_OBLIGATORIO con alertOnOutOfShift=false", "TURNO_OBLIGATORIO", false],
+  ] as const)("la alerta del sábado se suprime con régimen %s (sin aviso)", async (_label, kind, alertOnOutOfShift) => {
+    givenAssignments(rows);
+    givenRegime(kind, kind === "TURNO_OBLIGATORIO" ? alertOnOutOfShift : undefined);
+    await evaluateShiftEntry(EMPLOYEE, "shift-sat", art(PLANTA_SATURDAY, "07:00"));
+    expect(alertTypes()).toEqual([]);
+    expect(notifyUsers).not.toHaveBeenCalled();
+  });
+
+  it("salida de la jornada sin plantilla: sin puntualidad ni FUERA_DE_TURNO; JORNADA_EXTENDIDA sólo por encima del default de 600 min; nunca JORNADA_INSUFICIENTE", async () => {
+    const startAt = art(PLANTA_SATURDAY, "07:00");
+    const exit = async (exitAt: Date) => {
+      db.shiftAlert.upsert.mockClear();
+      const totalMinutes = Math.round((exitAt.getTime() - startAt.getTime()) / 60_000);
+      await evaluateShiftExit(EMPLOYEE, "shift-sat", exitAt, [], { startAt, totalMinutes, shiftTemplateId: null }, { rethrow: true });
+      return alertTypes();
+    };
+    expect(await exit(art(PLANTA_SATURDAY, "07:30"))).toEqual([]); // 30 min: sin mínimo que exigir
+    expect(await exit(art(PLANTA_SATURDAY, "17:00"))).toEqual([]); // 600 min: no supera el default
+    expect(await exit(art(PLANTA_SATURDAY, "17:01"))).toEqual(["JORNADA_EXTENDIDA"]); // 601 min
+    expect(db.shiftTemplate.findUnique).not.toHaveBeenCalled();
+    expect(db.shiftAssignment.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("R1.1-D — evidencia de ingreso por plantilla aislada (José viernes A: 07:00–11:00 + 19:00–07:00)", () => {
+  const BLOCK_07 = template({ id: "jose-07-11", code: "PLANTA-07-11", startTime: "07:00", endTime: "11:00", expectedMinutes: 240 });
+  const BLOCK_19 = template({ id: "jose-19-07", code: "PLANTA-19-07", startTime: "19:00", endTime: "07:00", crossesMidnight: true, expectedMinutes: 720 });
+  const candidate07 = { employeeId: EMPLOYEE, template: toTemplateRef(BLOCK_07), scheduledStartAt: art(PLANTA_FRIDAY, "07:00") };
+  const candidate19 = { employeeId: EMPLOYEE, template: toTemplateRef(BLOCK_19), scheduledStartAt: art(PLANTA_FRIDAY, "19:00") };
+
+  it("COMPORTAMIENTO ACTUAL (bug latente, cambia en R4.3b): una fichada a las 07:02 cuenta como ingreso del bloque de las 19:00 (ocurrencia más cercana de 19:00 = viernes 19:00, a 11 h 58 m)", async () => {
+    expect(closestOccurrence(art(PLANTA_FRIDAY, "07:02"), "19:00").scheduledAt).toEqual(art(PLANTA_FRIDAY, "19:00"));
+    givenEntryPunchAt(art(PLANTA_FRIDAY, "07:02"));
+    expect(await findEmployeeIdsWithMatchingEntryEvidence([candidate19])).toEqual(new Set([EMPLOYEE]));
+  });
+
+  it("una fichada a las 06:58 no cuenta para el bloque de las 19:00 (la ocurrencia más cercana es jueves 19:00, a 11 h 58 m)", async () => {
+    expect(closestOccurrence(art(PLANTA_FRIDAY, "06:58"), "19:00").scheduledAt).toEqual(art(PLANTA_THURSDAY, "19:00"));
+    givenEntryPunchAt(art(PLANTA_FRIDAY, "06:58"));
+    expect(await findEmployeeIdsWithMatchingEntryEvidence([candidate19])).toEqual(new Set());
+  });
+
+  it("COMPORTAMIENTO ACTUAL (cambia en R4.3b): el resultado es por empleado — con los dos bloques y una sola fichada 07:00, el empleado figura como satisfecho", async () => {
+    givenEntryPunchAt(art(PLANTA_FRIDAY, "07:00"));
+    const evidence = await findEmployeeIdsWithMatchingEntryEvidence([candidate07, candidate19]);
+    expect(evidence).toBeInstanceOf(Set);
+    expect([...evidence]).toEqual([EMPLOYEE]);
+  });
+
+  it("la búsqueda de fichadas es una sola consulta de INGRESO en ±24 h alrededor de los inicios programados", async () => {
+    givenEntryPunchAt(art(PLANTA_FRIDAY, "07:00"));
+    await findEmployeeIdsWithMatchingEntryEvidence([candidate07, candidate19]);
+    expect(db.attendancePunch.findMany).toHaveBeenCalledTimes(1);
+    expect(db.attendancePunch.findMany.mock.calls[0]![0]).toMatchObject({
+      where: { employeeId: { in: [EMPLOYEE, EMPLOYEE] }, type: "INGRESO", timestamp: { gte: art(PLANTA_THURSDAY, "07:00"), lt: art("2026-11-07", "19:00") } },
+    });
+  });
+
+  it("COMPORTAMIENTO ACTUAL (cambia en R4.3a): el incidente de falta de ingreso es uno por empleado y día — createMany con skipDuplicates sobre (employeeId, operationalDate)", async () => {
+    givenAssignments([assignment(BLOCK_07, { weekdays: [] })]);
+    await checkMissingExpectedEntries(art(PLANTA_FRIDAY, "07:10"));
+    const call = db.attendanceInactivityIncident.createMany.mock.calls[0]![0];
+    expect(call.skipDuplicates).toBe(true);
+    expect(call.data).toHaveLength(1);
+    expect(call.data[0]).toMatchObject({ employeeId: EMPLOYEE, operationalDate: new Date(`${PLANTA_FRIDAY}T00:00:00.000Z`) });
+    expect(Object.keys(call.data[0])).not.toContain("scheduledStartAt");
   });
 });

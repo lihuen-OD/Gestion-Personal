@@ -216,3 +216,39 @@ describe("checkMissingOutRisk — Etapa 10E (hallazgo central: empleado sin turn
     expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
   });
 });
+
+// R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): olvido de salida
+// de un bloque nocturno real de Planta (José, viernes A 19:00 → sábado 07:00).
+// El umbral se mide desde el ingreso real: (salida esperada − ingreso) +
+// tolerancia de salida + aviso; el nivel pasa a MISSING_OUT al alcanzarlo (>=).
+describe("R1.1-C — olvido de salida del bloque 19:00–07:00", () => {
+  const block19to07 = {
+    ...nightTemplate,
+    id: "planta-19-07",
+    code: "PLANTA-19-07",
+    startTime: "19:00",
+    endTime: "07:00",
+    crossesMidnight: true,
+    exitToleranceAfterMinutes: 20,
+    missingOutAlertAfterMinutes: 60,
+  };
+  const startAt = new Date("2026-11-06T19:00:00.000-03:00");
+  const after = (minutes: number) => new Date(startAt.getTime() + minutes * 60_000);
+
+  beforeEach(() => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-19", employeeId: "emp-jose", startAt, shiftTemplate: block19to07 }]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+  });
+
+  it("sábado 07:00 (720 min, salida esperada) y hasta 799 min: sin alerta", async () => {
+    expect((await checkMissingOutRisk(after(720))).created).toBe(0);
+    expect((await checkMissingOutRisk(after(799))).created).toBe(0);
+    expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
+  });
+
+  it("a los 800 min (720 + 20 de tolerancia + 60 de aviso = sábado 08:20) genera POSIBLE_OLVIDO_SALIDA", async () => {
+    const result = await checkMissingOutRisk(after(800));
+    expect(result.created).toBe(1);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "emp-jose", workShiftId: "shift-19", type: "POSIBLE_OLVIDO_SALIDA" }));
+  });
+});

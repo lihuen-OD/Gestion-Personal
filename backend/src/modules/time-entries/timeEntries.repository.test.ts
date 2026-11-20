@@ -2262,6 +2262,102 @@ describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/per
   });
 });
 
+// R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): qué guarda HOY el
+// cierre técnico de una jornada sin salida (Juanjo ficha un sábado y no
+// registra la salida; José olvida la salida de un bloque). Requisito vigente
+// que estos tests congelan: nunca se inventa una salida real (sin endAt ni
+// endPunchId); la jornada queda en FALTA_SALIDA con 0 h para revisión.
+describe("R1.1-C — cierre técnico sin salida: qué se guarda", () => {
+  const SATURDAY_0700 = new Date("2026-11-07T07:00:00.000-03:00");
+  const after = (minutes: number) => new Date(SATURDAY_0700.getTime() + minutes * 60_000);
+  const openShift = (extra: Record<string, unknown> = {}) => ({
+    id: "shift-sat",
+    employeeId: "employee-juanjo",
+    startAt: SATURDAY_0700,
+    maxAllowedMinutes: 1200,
+    source: "KIOSK",
+    hourConcept: { id: "concept-normal", name: "Hora normal" },
+    ...extra,
+  });
+
+  beforeEach(() => {
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+  });
+
+  it("expireOpenWorkShifts: FALTA_SALIDA con 0 h y closedAt = momento del cierre; NO escribe endAt, endPunchId ni reviewStatus", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift()]);
+    const now = after(1201);
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(result.count).toBe(1);
+    const update = mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0] as { where: Record<string, unknown>; data: Record<string, unknown> };
+    expect(update.where).toEqual({ id: "shift-sat", status: "ABIERTO", endAt: null });
+    expect(update.data).toEqual({
+      status: "FALTA_SALIDA",
+      totalMinutes: 0,
+      hourConceptId: "concept-normal",
+      hourConceptName: "Hora normal",
+      observation: "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.",
+      closedAt: now,
+    });
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["endAt"]));
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["endPunchId"]));
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["reviewStatus"]));
+  });
+
+  it("expireOpenWorkShifts: un único TimeEntry de 0 h APROBADO con el source de la jornada; sin tramos (TimeSegment)", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift()]);
+
+    await timeEntriesRepository.expireOpenWorkShifts(after(1201));
+
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0]).toMatchObject({
+      data: { employeeId: "employee-juanjo", workShiftId: "shift-sat", hours: 0, totalMinutes: 0, status: "APROBADO", source: "KIOSK", segmentStartAt: SATURDAY_0700, period: "2026-11", day: 7 },
+    });
+    expect(mockedPrisma.__tx.timeSegment.create).not.toHaveBeenCalled();
+  });
+
+  it("expireOpenWorkShifts respeta `maxAllowedMinutes` de la jornada: 720 → no vence a los 720 min, vence a los 721", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift({ maxAllowedMinutes: 720 })]);
+
+    expect((await timeEntriesRepository.expireOpenWorkShifts(after(720))).count).toBe(0);
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+    expect((await timeEntriesRepository.expireOpenWorkShifts(after(721))).count).toBe(1);
+  });
+
+  it("COMPORTAMIENTO ACTUAL: sin concepto de hora resoluble (ni en la jornada ni NORMAL del legajo), la jornada vencida no se cierra y queda ABIERTA", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift({ hourConcept: null })]);
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(after(1201));
+
+    expect(result.count).toBe(0);
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("COMPORTAMIENTO ACTUAL: el rollover deja la jornada vieja en FALTA_SALIDA sólo con estado + observación (sin endAt, closedAt ni totalMinutes) y le crea su TimeEntry de 0 h", async () => {
+    mockedPrisma.__tx.workShift.findFirst.mockResolvedValue({ id: "shift-0700", startAt: new Date("2026-11-06T07:00:00.000-03:00"), source: "KIOSK", hourConcept: { id: "concept-normal", name: "Hora normal" } });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-new" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+      openWorkShiftId: "shift-0700",
+      employeeId: "employee-jose",
+      source: "KIOSK" as never,
+      startAt: new Date("2026-11-07T04:01:00.000-03:00"),
+      missingOutObservation: "Olvido de salida.",
+    });
+
+    const claim = mockedPrisma.__tx.workShift.updateMany.mock.calls.map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> }).find((call) => call.where.id === "shift-0700")!;
+    expect(claim.data).toEqual({ status: "FALTA_SALIDA", observation: "Olvido de salida." });
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ workShiftId: "shift-0700", hours: 0, totalMinutes: 0 }) }));
+  });
+});
+
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: "Horas contables" = total
 // trabajado = Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL (nunca WITHIN_BASE).
 describe("summary — horas contables = total trabajado (base + horas adicionales)", () => {

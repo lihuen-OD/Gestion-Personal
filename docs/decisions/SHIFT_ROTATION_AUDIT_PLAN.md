@@ -1298,6 +1298,65 @@ Rangos abiertos: `daterange(from, NULL, '[]')` no tiene límite superior, así q
 
 ---
 
+## 25. R4-REAL-P0 — Especificación real de Planta (auditoría aprobada, 2026-11-20)
+
+**La especificación funcional real de Planta es la fuente de verdad de negocio** y corrige hacia adelante a §24 donde difieran. No hubo cambios de código ni de datos en la auditoría.
+
+**Especificación (ciclo de 2 semanas, ancla lunes 02/11/2026 = Semana A; alterna sin reinicios entre meses y años).** Calendario: A = 02–08/11, B = 09–15/11, A = 16–22/11, B = 23–29/11, A = 30/11–06/12, B = 07–13/12. **Reemplaza el ancla "lunes 23/11 = Semana 1" de §24.17** (con el ancla real, 23/11 es B).
+
+| Persona / equipo | Semana A | Semana B |
+|---|---|---|
+| Equipo Roberto + Ariel | L–J 07–17; V–D 07–19 | L–J 17–03; V–D descanso |
+| Equipo Carlos + Walter | L–J 17–03; V–D descanso | L–J 07–17; V–D 07–19 |
+| Juanchi | L descanso; M–V 03–11; S–D descanso | L 07–15; M–J 03–11; V–S–D 19–07 |
+| José | L–J 07–15; **V 07–11 + 19–07**; S–D 19–07 | L descanso; M–V 07–15; S–D descanso |
+| Johanna | L–V 07–15; S–D descanso | L–D 07–15 |
+| Juanjo | fuera de la rotación: `ShiftAssignment` fija L–V 07–15; S/D sin obligación, puede fichar (trabajo no programado) | |
+
+Ningún bloque se superpone con el del día siguiente (verificado en dom→lun, jue→vie y fin de ciclo). Juanchi, José y Johanna son equipos de una persona (patrón rotativo real, no excepciones por nombre).
+
+**Conclusiones:**
+- R1, R2 y R3 siguen válidos. R4.1 es correcta salvo **`ShiftRotationSlot`**: una fila por versión/equipo/semana/día con una plantilla no puede representar el viernes A de José (dos bloques) → **R4.1A: `ShiftRotationDay` + `ShiftRotationBlock`** (día REST | SHIFT; sin fila = MISSING; un día SHIFT tiene 1..N bloques ordenados).
+- La unidad central pasa a ser un **plan diario** (REST | MISSING | bloques 1..N; cada bloque con plantilla, inicio y fin programados, fecha operativa, fuente ROTATION y clave `(employeeId, scheduledStartAt)`), conservando el contrato legacy de fijos (`fixedCandidates`).
+- `WorkShift.shiftTemplateId` + `shiftTemplateSource` + `scheduledStartAt` alcanzan para identificar el bloque de una jornada; no se agregan FKs a versión/día/bloque.
+
+**Brechas (G1–G11):**
+
+| # | Brecha | Tipo | Etapa |
+|---|---|---|---|
+| G1 | Día con 2+ bloques no persistible | Estructural | R4.1A |
+| G2 | Incidente de falta de ingreso único por empleado y día, sin bloque | Estructural (tabla con datos reales) | R4.3a |
+| G3 | Obligación y falta de ingreso indexadas por empleado (un candidato) | Lógica | R4.3b |
+| G4 | Evidencia de ingreso por plantilla aislada (una fichada 07:02 cumple el bloque 19:00) | Lógica (bug latente) | R4.3b |
+| G5 | Segundo bloque rechazado (`CLOCK_ALREADY_OPEN`) si el primero quedó abierto < 1200 min | Lógica + decisión | R4.4 |
+| G6 | Salida exige `ShiftAssignment` y se programa desde el ingreso real | Lógica | R4.4 |
+| G7 | Resolver devuelve "un turno" | Lógica | R4.2 |
+| G8 | `NoveltyDayCoverage.shiftTemplateId` singular | Lógica (NULL con varios bloques) | R4.3b |
+| G9 | Trabajo no programado se informa como `TURNO_NO_IDENTIFICADO` | Lógica + decisión | R4.5 |
+| G10 | `FALTA_SALIDA` no se puede regularizar (close-manual exige ABIERTO) | Preexistente | fuera de R4 salvo decisión |
+| G11 | Faltan plantillas 07–19, 19–07, 07–11; máximo informativo 540 < 600 en Planta-01/02 | Datos | R4.9 |
+
+**Plan:** R1.1 (caracterización) → R4.1A (Día + Bloque) → R4.2 (núcleo puro del plan diario) → R4.3a (incidente por bloque) → R4.3b (cargador, obligación/falta de ingreso/evidencia por bloque, Novedades) → R4.4 (entrada/salida/`WorkShift`) → R4.5 (trabajo no programado) → R4.6 (API) → R4.7 (preview) → R4.8 (UI) → R4.9 (plantillas, máximos y carga de Planta en development + QA). Todo R4 queda en `feature/shift-rotation-system` hasta R4.9 y una auditoría integral; recién después se evalúa promoverlo.
+
+**Decisiones de negocio pendientes:** (1) nuevo ingreso con el bloque anterior abierto (recomendado: aceptarlo y dejar el anterior en falta de salida, sin inventar hora); (2) cómo informar el trabajo no programado; (3) plantillas propias de Planta vs. plantillas de otro grupo en la grilla; (4) máximos/mínimos informativos por plantilla; (5) regularización de `FALTA_SALIDA` (fuera de R4).
+
+### 25.1 R1.1 — Caracterización legacy para el piloto (implementada, 2026-11-20)
+
+**Sólo tests**: sin cambios de código productivo, schema, migraciones ni datos; ningún test ni expectativa existente modificados (en `shiftBehavior.characterization.test.ts` sólo cambia la línea de import para sumar `notifyUsers`). Cada test afirma el comportamiento actual; los que contradicen la especificación de Planta están rotulados "COMPORTAMIENTO ACTUAL (cambia en R4.x)".
+
+| Bloque | Archivo | Qué congela |
+|---|---|---|
+| R1.1-A trabajo sin turno (Juanjo, sábado 07/11) | `shifts/shiftBehavior.characterization.test.ts` (6) | Sin obligación, sin incidente y Novedades 0; la entrada no adopta plantilla y genera `TURNO_NO_IDENTIFICADO` ADVERTENCIA con aviso `ALERTA_FICHADA` (cambia en R4.5); suprimida con SIN_TURNO, TURNO_FLEXIBLE o `alertOnOutOfShift=false`; salida sin plantilla: sin puntualidad ni fuera de turno, `JORNADA_EXTENDIDA` sólo > 600 min, nunca `JORNADA_INSUFICIENTE` |
+| R1.1-B nuevo ingreso con jornada abierta (José, viernes 06/11) | `time-entries/timeEntries.service.test.ts` (5, reloj fijo) | 19:00 con la jornada de las 07:00 abierta (720 min) → 409 `CLOCK_ALREADY_OPEN` sin jornada, rollover, revisión ni evidencia (cambia en R4.4); 1200 min → 409 (umbral inclusivo); 1201 → rollover a FALTA_SALIDA; 1201 con ALERT_ONLY → revisión + 409; el umbral ignora `maxAllowedMinutes` de la jornada |
+| R1.1-C cierre técnico sin salida | `time-entries/timeEntries.repository.test.ts` (5), `shifts/openShiftMonitor.service.test.ts` (2), `time-entries/clockPunchMaintenance.test.ts` (3, archivo nuevo) | `expireOpenWorkShifts` escribe exactamente `{FALTA_SALIDA, totalMinutes 0, concepto, observación, closedAt}` — **nunca `endAt`, `endPunchId` ni `reviewStatus`**; un `TimeEntry` 0 h APROBADO, sin tramos; respeta `maxAllowedMinutes` de la jornada (720 → vence a los 721); sin concepto resoluble no cierra; el rollover deja sólo `{FALTA_SALIDA, observación}` + `TimeEntry` 0 h. Olvido de salida del bloque 19:00–07:00: sin alerta hasta 799 min, alerta a los 800 (720 + 20 + 60; el umbral se alcanza con `>=`). El tick de mantenimiento avisa `FALTA_SALIDA` por jornada con su inicio, y un aviso fallido no corta los demás |
+| R1.1-D evidencia de ingreso (José, viernes A) | `shifts/shiftBehavior.characterization.test.ts` (5) | Fichada 07:02 cuenta como ingreso del bloque 19:00 (bug latente G4, cambia en R4.3b); 06:58 no; el resultado es por empleado (`Set<employeeId>`); una sola consulta de INGRESO en ±24 h; el incidente es uno por empleado y día (`createMany` + `skipDuplicates`, sin bloque; cambia en R4.3a) |
+
+Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanzar** el umbral (800 min), no al superarlo (801).
+
+**Resultados:** 26 tests nuevos verdes; caracterización R1 76 (65 previos sin cambios + 11); suite backend **4100 verdes** (230 archivos; 15 suites de integración opcionales omitidas como siempre); `typecheck` verde.
+
+---
+
 ## Anexo — respuestas directas a las 22 preguntas
 
 1. **Fuente real hoy:** `ShiftAssignment` (+ `ShiftTemplate`), filtrada por estado/vigencia/weekday, con franco, feriado/convocatoria y régimen aplicados por cada consumidor. No hay fuente única.

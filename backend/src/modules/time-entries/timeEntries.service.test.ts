@@ -872,6 +872,68 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     });
   });
 
+  // R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): nuevo ingreso
+  // con una jornada anterior abierta, con el caso real de Planta (José,
+  // viernes A: bloques 07:00–11:00 y 19:00–07:00; olvida la salida de las
+  // 11:00). COMPORTAMIENTO ACTUAL: el umbral es el fijo MAX_SHIFT_MINUTES
+  // (1200 min) del servicio, no `maxAllowedMinutes` de la jornada ni el plan
+  // del día; un segundo bloque programado no se distingue. Cambia en R4.4.
+  describe("R1.1-B — nuevo ingreso con jornada abierta (segundo bloque del día)", () => {
+    const FRIDAY_0700 = new Date("2026-11-06T07:00:00.000-03:00");
+    const openSince0700 = (extra: Record<string, unknown> = {}) => ({ id: "shift-0700", startAt: FRIDAY_0700, hourConcept: normalConcept, ...extra });
+    const at = (minutesAfter0700: number) => new Date(FRIDAY_0700.getTime() + minutesAfter0700 * 60_000);
+
+    beforeEach(() => vi.useFakeTimers({ toFake: ["Date"] }));
+    afterEach(() => vi.useRealTimers());
+
+    it("COMPORTAMIENTO ACTUAL (cambia en R4.4): ingreso a las 19:00 (720 min abierta) → 409 CLOCK_ALREADY_OPEN, sin crear jornada, sin rollover, sin marcar revisión y sin guardar evidencia", async () => {
+      vi.setSystemTime(at(720));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700()]))).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_ALREADY_OPEN" });
+
+      expect(repo.createOpenWorkShift).not.toHaveBeenCalled();
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedFlagOpenShiftOverflowForReview).not.toHaveBeenCalled();
+      expect(mockedUploadManagedObject).not.toHaveBeenCalled();
+    });
+
+    it("el umbral es inclusivo: con exactamente 1200 min abierta sigue respondiendo 409", async () => {
+      vi.setSystemTime(at(1200));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700()]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    });
+
+    it("con 1201 min abierta (sin régimen) hace rollover: la jornada vieja pasa a FALTA_SALIDA con la observación de olvido de salida", async () => {
+      vi.setSystemTime(at(1201));
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(null);
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-new", startAt: at(1201), startPunchId: null });
+
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700()]));
+
+      expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(
+        expect.objectContaining({ openWorkShiftId: "shift-0700", startAt: at(1201), missingOutObservation: expect.stringContaining("Olvido de salida") }),
+      );
+      expect(result).toMatchObject({ previousOpenShift: { id: "shift-0700", status: "FALTA_SALIDA" } });
+    });
+
+    it("con 1201 min abierta y régimen ALERT_ONLY: marca la jornada para revisión y responde 409 (sin rollover)", async () => {
+      vi.setSystemTime(at(1201));
+      mockedResolveActiveWorkRegime.mockResolvedValueOnce(alertOnlyRegime);
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700()]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      expect(mockedFlagOpenShiftOverflowForReview).toHaveBeenCalledWith(activeEmployee.id, "shift-0700", 1201, at(1201));
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    });
+
+    it("COMPORTAMIENTO ACTUAL (cambia en R4.4): el umbral ignora `maxAllowedMinutes` de la jornada — con 300 min configurados, a los 720 min sigue respondiendo 409", async () => {
+      vi.setSystemTime(at(720));
+
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700({ maxAllowedMinutes: 300 })]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+      expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    });
+  });
+
   // PERF-5D: el aviso de falta de salida y la evaluación del ingreso nuevo ya
   // no corren en el request del rollover; quedan en su job durable
   // (ROLLOVER_ENTRY), probado en clockPunchPostProcess.worker.test.ts.
