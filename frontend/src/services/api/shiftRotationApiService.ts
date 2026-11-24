@@ -15,8 +15,8 @@ function invalidateCoverage(reason: string) {
  * "Administración de rotaciones"). R4.8A: listado, detalle y datos de la
  * rotación. R4.8B1: equipos y lectura de versiones. R4.8B2: alta, edición y
  * borrado de versiones. R4.8C: personas (membresías). R4.8D: vista previa
- * (`GET /shifts/expected`, R4.7, sólo lectura). La activación se agrega en
- * R4.8E.
+ * (`GET /shifts/expected`, R4.7, sólo lectura). R4.8E: activar, desactivar y
+ * finalizar (vista previa + confirmación con token).
  *
  * Sin caché: el backend tampoco la tiene ("la configuración se lee al abrirla
  * y cada escritura devuelve el estado nuevo"). `silentErrors` en las
@@ -211,6 +211,25 @@ export type PreviewResponse = {
   meta: { total: number; page: number; pageSize: number; hasMore: boolean };
 };
 
+// ── Finalización (R4.6: vista previa + confirmación con token) ──
+
+type FinalizeMemberRow = { id: string; employeeId: string; employee: string; crew: string; effectiveFrom: string; effectiveTo: string | null };
+
+export type FinalizePreview = {
+  lastDay: string;
+  closeVersions: Array<{ id: string; effectiveFrom: string; effectiveTo: string | null }>;
+  deleteVersions: Array<{ id: string; effectiveFrom: string; effectiveTo: string | null; dayCount: number }>;
+  closeMembers: FinalizeMemberRow[];
+  cancelMembers: FinalizeMemberRow[];
+  withoutFixedShiftAfter: ShiftRotationWithoutFixedShift[];
+  transitionOverlaps: Array<{ employeeId: string; employee: string; outgoing: string; incoming: string }>;
+  /** Informativo: R4.7 no fija un umbral de descanso. */
+  restsAtTransition: Array<{ employeeId: string; employee: string; restMinutes: number }>;
+  requiresConfirmation: true;
+  /** Huella del conjunto de cambios; se devuelve tal cual en la confirmación. */
+  confirmationToken: string;
+};
+
 export type ShiftRotationCrewCreateInput = { code: string; name: string; sortOrder: number };
 export type ShiftRotationCrewUpdateInput = Partial<{ name: string; sortOrder: number; status: ShiftRotationStatus }>;
 
@@ -253,6 +272,27 @@ export const shiftRotationApiService = {
   async updateVersion(rotationId: string, versionId: string, input: ShiftRotationVersionInput & { expectedUpdatedAt: string }) {
     const result = await apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "PATCH", body: input, silentErrors: true }).then((response) => response.data);
     await invalidateCoverage("rotation version updated");
+    return result;
+  },
+  /** Exige diagnóstico sin errores y ninguna membresía iniciada hoy o antes (lo valida el backend). */
+  async activate(rotationId: string) {
+    const result = await apiRequest<{ data: ShiftRotation }>(`/shifts/rotations/${rotationId}/activate`, { method: "POST", silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation activated");
+    return result;
+  },
+  /** Sólo si la rotación nunca rigió. */
+  async deactivate(rotationId: string) {
+    const result = await apiRequest<{ data: ShiftRotation }>(`/shifts/rotations/${rotationId}/deactivate`, { method: "POST", silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation deactivated");
+    return result;
+  },
+  finalizePreview(rotationId: string, lastDay: string) {
+    return apiRequest<{ data: FinalizePreview }>(`/shifts/rotations/${rotationId}/finalize/preview`, { method: "POST", body: { lastDay }, silentErrors: true }).then((response) => response.data);
+  },
+  /** Confirma con el token de la vista previa; si la rotación cambió responde 409 ROTATION_FINALIZE_STALE con la vista previa nueva. */
+  async finalize(rotationId: string, lastDay: string, confirmationToken: string) {
+    const result = await apiRequest<{ data: { rotation: ShiftRotation; applied: FinalizePreview } }>(`/shifts/rotations/${rotationId}/finalize`, { method: "POST", body: { lastDay, confirm: true, confirmationToken }, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation finalized");
     return result;
   },
   /** Vista previa de sólo lectura: hasta 42 días, `take` 1–100 (contrato R4.7). Sin caché: depende de la fecha y de la configuración. */
