@@ -3,8 +3,9 @@ import { apiRequest } from "./apiClient";
 /**
  * Rotaciones de turnos — R4.6 (contratos en docs/BACKEND_API_CONTRACTS.md,
  * "Administración de rotaciones"). R4.8A: listado, detalle y datos de la
- * rotación. R4.8B1: equipos y lectura de versiones. Edición de grillas,
- * personas, vista previa y activación se agregan en sus subetapas.
+ * rotación. R4.8B1: equipos y lectura de versiones. R4.8B2: alta, edición y
+ * borrado de versiones. Personas, vista previa y activación se agregan en sus
+ * subetapas.
  *
  * Sin caché: el backend tampoco la tiene ("la configuración se lee al abrirla
  * y cada escritura devuelve el estado nuevo"). `silentErrors` en las
@@ -125,6 +126,13 @@ export type ShiftRotationVersion = {
   issues: ShiftRotationGridIssue[];
 };
 
+export type ShiftRotationVersionInput = {
+  effectiveFrom: string;
+  cycleLengthWeeks: number;
+  anchorWeekStart: string;
+  days: Array<{ crewId: string; cycleWeekIndex: number; weekday: number; kind: ShiftRotationDayKind; blocks: Array<{ blockIndex: number; shiftTemplateId: string }> }>;
+};
+
 export type ShiftRotationCrewCreateInput = { code: string; name: string; sortOrder: number };
 export type ShiftRotationCrewUpdateInput = Partial<{ name: string; sortOrder: number; status: ShiftRotationStatus }>;
 
@@ -156,5 +164,17 @@ export const shiftRotationApiService = {
   },
   version(rotationId: string, versionId: string) {
     return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`).then((response) => response.data);
+  },
+  /** Grilla completa en un solo cuerpo; crear desde X cierra la versión anterior en X−1. */
+  createVersion(rotationId: string, input: ShiftRotationVersionInput) {
+    return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions`, { method: "POST", body: input, silentErrors: true }).then((response) => response.data);
+  },
+  /** Sólo versiones futuras. `expectedUpdatedAt` = el `updatedAt` leído: si cambió, 409 ROTATION_VERSION_STALE. */
+  updateVersion(rotationId: string, versionId: string, input: ShiftRotationVersionInput & { expectedUpdatedAt: string }) {
+    return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "PATCH", body: input, silentErrors: true }).then((response) => response.data);
+  },
+  /** Sólo versiones futuras; la anterior vuelve a regir hasta la siguiente. */
+  removeVersion(rotationId: string, versionId: string) {
+    return apiRequest<unknown>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "DELETE", silentErrors: true });
   },
 };
