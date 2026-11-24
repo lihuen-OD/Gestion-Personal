@@ -1,13 +1,16 @@
 import { access } from "node:fs/promises";
 import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import { createHash } from "node:crypto";
-import { Prisma, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
+import { Prisma, type AttendanceInactivityIncident, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { shiftRotationRepository } from "../shifts/shiftRotation.repository";
 import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -50,6 +53,7 @@ import {
 } from "./workedTimeAccounting";
 import {
   argentinaCalendarDate,
+  calendarDateKey,
   argentinaDateParts,
   argentinaDayRange,
   formatArgentinaDate,
@@ -1151,13 +1155,41 @@ export const timeEntriesService = {
   async resolveAttendanceObservation(kindValue: string, id: string, input: ResolveAttendanceObservationInput, user: Express.AuthUser, audit?: AuditContext) {
     const kind = kindValue.toUpperCase();
     if (kind !== "SHIFT" && kind !== "PUNCH" && kind !== "INACTIVITY") throw new AppError("Tipo de observación inválido", 400, "ATTENDANCE_REVIEW_KIND_INVALID");
-    const before = await timeEntriesRepository.findAttendanceObservation(kind, id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
-    const reviewStatus = kind === "INACTIVITY" && "status" in before ? before.status : "reviewStatus" in before ? before.reviewStatus : undefined;
-    if (reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+    const accessWhere = employeeAccessWhere(user);
+    let before;
     let item;
     try {
-      item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+      if (kind === "INACTIVITY") {
+        ({ before, item } = await prisma.$transaction(async (tx) => {
+          const initial = await timeEntriesRepository.findAttendanceObservation("INACTIVITY", id, accessWhere, tx) as AttendanceInactivityIncident | null;
+          if (!initial) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+          const dateKey = calendarDateKey(initial.operationalDate);
+          // Orden global: día → cobertura. Alta/activación toman sólo
+          // cobertura, por lo que ningún flujo nuevo invierte este orden.
+          await lockEmployeeDays(tx, [{ employeeId: initial.employeeId, dateKey }]);
+          await lockEmployeeCoverage(tx, [initial.employeeId]);
+          const current = await timeEntriesRepository.findAttendanceObservation("INACTIVITY", id, accessWhere, tx) as AttendanceInactivityIncident | null;
+          if (!current) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+          if (current.status !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+          if (current.scheduledStartAt === null) {
+            const membership = await shiftRotationRepository.activeRotationMembershipOn(current.employeeId, current.operationalDate, tx);
+            if (membership) {
+              throw new AppError(
+                "Esta fecha ya está cubierta por una rotación activa. Revisá las observaciones de cada bloque sin reemplazar la decisión diaria.",
+                409,
+                "ATTENDANCE_DAILY_INCIDENT_ROTATION_CONFLICT",
+              );
+            }
+          }
+          const updated = await timeEntriesRepository.resolveAttendanceObservation("INACTIVITY", id, input.resolution, input.reason, user.id, tx);
+          return { before: current, item: updated };
+        }));
+      } else {
+        before = await timeEntriesRepository.findAttendanceObservation(kind, id, accessWhere);
+        if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+        if (!("reviewStatus" in before) || before.reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+        item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+      }
     } catch (error) {
       mapPrismaError(error);
       throw error;

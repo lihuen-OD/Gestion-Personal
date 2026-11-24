@@ -1,6 +1,7 @@
 import { prisma } from "../../shared/prisma/client";
 import { argentinaDayRange, formatArgentinaDate, previousCalendarDateKey, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
 import { resolveRotationBlockCandidates, resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import {
   claimAndNotifyInactivityIncidents,
@@ -40,6 +41,16 @@ export interface MissingEntryCheckResult {
 const DAY_REPLACED_BY_BLOCKS_NOTE = "Reemplazado por las faltas de ingreso por bloque de la programación por rotación.";
 const BLOCK_RESOLVED_NOTE = "Resuelto automáticamente: se registró el ingreso correspondiente al bloque de la programación por rotación.";
 const ENTRY_RESOLVED_NOTE = "Resuelto automáticamente: se registró el ingreso correspondiente a la obligación.";
+
+function reportAttendanceHistoryConflicts(conflicts: readonly MissingEntryReconciliationRequired[]) {
+  if (!conflicts.length) return;
+  console.error("ROTATION_ATTENDANCE_HISTORY_CONFLICT_DETECTED", {
+    severity: "error",
+    conflicts: conflicts.length,
+    dates: [...new Set(conflicts.map((conflict) => conflict.dateKey))].sort(),
+    suppressedBlockObligations: conflicts.reduce((sum, conflict) => sum + conflict.blockKeys.length, 0),
+  });
+}
 
 function entryDeadline(candidate: WorkObligationCandidate): number {
   return candidate.scheduledStartAt.getTime() + candidate.template.entryToleranceAfterMinutes * 60_000;
@@ -206,6 +217,9 @@ async function createMissingBlockIncidents(due: readonly BlockCandidate[]): Prom
     const starts = group.blocks.map((candidate) => candidate.block.scheduledStartAt);
     const skipped = await prisma.$transaction(async (tx) => {
       await lockEmployeeDays(tx, [{ employeeId: group.employeeId, dateKey: group.dateKey }]);
+      // Orden compartido con francos y revisión humana: día → cobertura.
+      // Las altas/activaciones toman sólo cobertura y releen después de ella.
+      await lockEmployeeCoverage(tx, [group.employeeId]);
       const dayIncident = await tx.attendanceInactivityIncident.findFirst({
         where: { employeeId: group.employeeId, operationalDate, scheduledStartAt: null },
         select: { id: true, status: true, reviewedByUserId: true },
@@ -329,6 +343,7 @@ export async function checkMissingExpectedEntries(now: Date = new Date()): Promi
   const created = await createMissingEntryIncidents(dateKey, due);
   const blockDue = blockCandidates.filter((candidate) => isToleranceExpired(candidate, now));
   const blockOutcome = await createMissingBlockIncidents(blockDue);
+  reportAttendanceHistoryConflicts(blockOutcome.reconciliationRequired);
 
   // Etapa 15M.19B §Lifecycle: resolver también a los candidatos de hoy que
   // NO están "due" en este tick pero pueden tener un incidente PENDIENTE de
@@ -371,6 +386,7 @@ export async function checkMissingEntriesForElapsedDate(
   // (uno que empieza cerca de la medianoche con tolerancia larga lo toma el
   // tick intradía del día siguiente).
   const blockOutcome = await createMissingBlockIncidents(blockCandidates.filter((candidate) => isToleranceExpired(candidate, now)));
+  reportAttendanceHistoryConflicts(blockOutcome.reconciliationRequired);
   const resolved = (await resolvePendingMissingEntries(dateKey, fixedCandidates)) + (await resolvePendingBlockIncidents(blockCandidates));
   return {
     created: created + blockOutcome.created,

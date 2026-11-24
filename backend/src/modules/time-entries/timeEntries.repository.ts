@@ -1652,17 +1652,17 @@ export const timeEntriesRepository = {
     };
   },
 
-  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string) {
+  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string, db: PrismaTransactionClient = prisma) {
     const data = { reviewStatus: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId };
-    if (kind === "SHIFT") return prisma.workShift.update({ where: { id }, data });
-    if (kind === "PUNCH") return prisma.attendancePunch.update({ where: { id }, data });
-    return prisma.attendanceInactivityIncident.update({ where: { id }, data: { status: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId } });
+    if (kind === "SHIFT") return db.workShift.update({ where: { id }, data });
+    if (kind === "PUNCH") return db.attendancePunch.update({ where: { id }, data });
+    return db.attendanceInactivityIncident.update({ where: { id }, data: { status: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId } });
   },
 
-  findAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
-    if (kind === "SHIFT") return prisma.workShift.findFirst({ where: { id, employee: employeeAccessWhere } });
-    if (kind === "PUNCH") return prisma.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
-    return prisma.attendanceInactivityIncident.findFirst({ where: { id, employee: employeeAccessWhere } });
+  findAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput, db: PrismaTransactionClient = prisma) {
+    if (kind === "SHIFT") return db.workShift.findFirst({ where: { id, employee: employeeAccessWhere } });
+    if (kind === "PUNCH") return db.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
+    return db.attendanceInactivityIncident.findFirst({ where: { id, employee: employeeAccessWhere } });
   },
 
   findWorkShiftForAdmin(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
