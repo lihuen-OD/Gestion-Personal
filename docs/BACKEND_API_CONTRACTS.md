@@ -2102,6 +2102,29 @@ Las versiones son contiguas y la grilla se guarda completa: cada día `SHIFT` ti
 
 La finalización es una confirmación de dos pasos. El token SHA-256 no es un secreto: representa el conjunto canónico y sus `updatedAt`. Las versiones/membresías futuras se auditan con snapshot completo antes de borrarse; si auditoría, recálculo o cualquier escritura falla, se revierte toda la operación. La rotación permanece `ACTIVO` y su finalización se deriva de que no tiene versión/membresía abierta.
 
+#### Vista previa de horarios de rotación (`/expected`) — R4.7
+
+`GET /api/shifts/expected?rotationId=<uuid>&from=AAAA-MM-DD&to=AAAA-MM-DD&page=1&take=25` devuelve la programación guardada de los miembros de una rotación para un rango inclusivo de hasta 42 días. `take` admite 1–100. Lectura: RRHH, Supervisión y Carga Horaria; los empleados se filtran **antes de paginar** con `employeeAccessWhere`. La selección incluye cualquier membresía de esa rotación que intersecte `[from,to]`, aunque sea futura, haya terminado o cambie de equipo dentro del rango; un empleado con varias filas históricas aparece una sola vez.
+
+Respuesta: `{ data, context, meta }`. `meta` usa `{ total, page, pageSize, hasMore }`. `context` identifica la rotación y el rango e incluye:
+
+```json
+{
+  "persistedStatus": "INACTIVO",
+  "readOnly": true,
+  "previewMode": "HYPOTHETICAL_INACTIVE",
+  "affectsRealObligations": false
+}
+```
+
+Para una rotación `ACTIVO`, `previewMode` es `CURRENT_CONFIGURATION`. Para una `INACTIVO`, el servidor cambia a `ACTIVO` **sólo una copia en memoria de la rotación solicitada durante ese request**: no escribe, no audita, no recalcula, no cambia obligaciones reales ni modifica el estado de otras rotaciones.
+
+Cada elemento de `data` contiene el empleado y una celda por cada fecha solicitada, nunca por los días vecinos internos. La celda informa membresía/equipo/versión/semana A–B, plan (`SHIFTS | REST | MISSING | CONFLICT | FIXED_ASSIGNMENT | NONE`), resolución operativa, jornada esperada de Novedades, franco/feriado/convocatoria/régimen, transición y advertencias estructuradas. Los problemas `MISSING`/`CONFLICT` no se ocultan aunque otra precedencia suprima la obligación.
+
+Cada bloque devuelve `operationalDate`, `scheduledStartAt`, `scheduledEndAt` y `durationMinutes`. Un bloque nocturno pertenece exclusivamente a su fecha de inicio: el de viernes 19:00–sábado 07:00 se devuelve en la celda del viernes con timestamps reales y **no** se duplica el sábado. El servicio resuelve D−1/D+1 sólo para calcular transiciones de borde. `restMinutes` es un dato factual; R4.7 no declara descanso insuficiente porque no existe un umbral de negocio vigente.
+
+No hay `POST` de borrador en R4.7. La salud y posibilidad de activación continúan siendo responsabilidad de `GET /rotations/:id` y `POST /rotations/:id/activate` de R4.6.
+
 #### Asignaciones de trabajo en feriados (`/holiday-work/*`) — Etapa 12D
 
 - `GET /holiday-work/dates?from=YYYY-MM-DD&to=YYYY-MM-DD` (rango máximo 400 días): delega en `workforceService.holidayDatesInRange` (`workforce-management`, reutiliza `calendarPreview(kind=FERIADO)` sin duplicar el cálculo de calendario — ver `docs/decisions/SPECIAL_HOUR_RULE_CLASSIFICATION_12A.md`). Devuelve `[{ date, rules: [{ id, name }] }]` — nunca `multiplier`/`priority`/`hasOverlap`/`hasConflict` (eso es de liquidación, no de esta pantalla).

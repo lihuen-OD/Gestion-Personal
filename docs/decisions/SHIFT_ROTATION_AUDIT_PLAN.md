@@ -1610,6 +1610,22 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Validación local final (2026-11-24; Postgres.app 18; ningún acceso a Neon):** backend `typecheck` y `build` verdes; suite completa 4365 tests aprobados y 237 omitidos. Las 16 integraciones del CI pasaron 224/224, incluido PERF-5 con los techos vigentes IN 4/11/0, OUT 15/17/0 y ROLLOVER 5/16/0 (pre/transacción/post); `rotationClock` + `rotationAttendance` + administración pasaron 64/64 en tres corridas. El gate aplicó las 82 migraciones sobre una base vacía y obtuvo `migrate status` al día + `migrate diff` vacío. El rollback R4.6 sin snapshots quitó sólo la columna y su fila de historial; con un snapshot abortó y dejó fila, columna y migración intactas. Una base local construida con el estado exacto de development `63d4338` mostró exactamente las cuatro pendientes; `migrate deploy` las aplicó en el orden documentado y terminó sin diferencias. Se usaron bases nuevas `clock_it_r46_codex_*`/`deletion_it_r46_codex`; no se eliminó ninguna base preexistente.
 
+### 25.10 R4.7 — Vista previa de horarios guardados (implementada; sin schema ni escrituras)
+
+**Alcance cerrado.** Se agregó `GET /api/shifts/expected?rotationId&from&to&page&take` para inspeccionar hasta 42 días de la configuración guardada. No hay borrador enviado por `POST`, UI, cache, auditoría, recálculo ni mutación. R4.8 conserva la interfaz y R4.9 la carga/QA de Planta. T-R4-CONC sigue pendiente y bloqueando la carga o activación de rotaciones reales.
+
+**Selección y alcance.** La página se obtiene desde `Employee` con una membresía de la rotación que intersecte el rango solicitado (`effectiveFrom <= to` y fin abierto o `effectiveTo >= from`) y `employeeAccessWhere` aplicado en la misma consulta. Incluye altas futuras, bajas y cambios de equipo; el empleado se pagina una sola vez aunque tenga varias filas. Orden estable: apellido, nombre, legajo e id. La respuesta usa el `meta` paginado estándar.
+
+**Simulación inactiva.** Si la rotación está `INACTIVO`, sólo su snapshot dentro del contexto del request se clona con estado `ACTIVO`; las demás rotaciones y el objeto cargado permanecen intactos. La respuesta declara `readOnly: true`, `previewMode: HYPOTHETICAL_INACTIVE`, el estado persistido y `affectsRealObligations: false`. No se llama ningún job ni servicio mutador: la obligación real continúa resolviendo el legacy mientras la fila siga inactiva.
+
+**Motores reutilizados.** `loadEmployeeWorkdayContext` carga en lote turnos fijos, francos, convocatorias, regímenes, feriados/historia y rotaciones; `resolveEmployeeExpectedShift` es ahora la traducción compartida al resolver central para `WORK_OBLIGATION` y `EXPECTED_WORKDAY`; `resolveRotationDayPlan` conserva A/B, REST, MISSING, CONFLICT, equipos y versiones; `projectExpectedWorkday` conserva la semántica de Novedades; `transitionCheck` compara instantes reales. No hay resolver paralelo ni consultas por empleado/fecha.
+
+**Nocturnos y bordes.** La celda devuelve cada bloque con `operationalDate` y timestamps ISO reales. El bloque que empieza en D pertenece sólo a D aunque termine en D+1. El servicio carga D−1/D+1 para calcular el descanso/superposición de los bordes y recorta la salida exactamente a `[from,to]`; esos vecinos nunca crean celdas adicionales. `restMinutes` es informativo: no se reintrodujo el umbral hardcodeado retirado en 13I.
+
+**Diagnóstico.** Cada celda separa el plan crudo, la obligación operativa y la jornada esperada. MISSING/CONFLICT quedan visibles incluso bajo franco o feriado; también se informan varios fijos, superposición fija, resultado no resuelto y superposición entre bloques consecutivos. La salud global y el bloqueo de activación siguen en R4.6; el preview no devuelve `canActivate`.
+
+**Validación local final (2026-11-24; ningún acceso a Neon):** pruebas focalizadas puras 72/72; `shiftRotationAdmin.integration.test.ts` 17/17 sobre `clock_it_r47_admin`, incluida la simulación inactiva, nocturnos, paginación, `employeeAccessWhere`, cambio futuro de equipo y versión. Regresión backend: 248 archivos aprobados y 18 omitidos; 4373 tests aprobados y 239 omitidos; `typecheck` y `build` verdes. La primera ejecución de la suite HTTP dentro del sandbox falló por `listen EPERM`; la misma regresión fuera del sandbox terminó verde. Sin schema ni migraciones.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
