@@ -395,6 +395,88 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     expect(await holder.shiftRotationCrewMember.count({ where: { crew: { rotationId } } })).toBe(7);
   });
 
+  // ── Protecciones inversas y garantía 1 ────────────────────────────────────
+
+  it("turnos fijos y SIN_TURNO no se pueden superponer; alta fija vs. membresía concurrente tiene un solo ganador", async () => {
+    const { rotationId, crewIds } = await setupPlanta();
+    const jose = employee[PLANTA_EMPLOYEES.JOSE]!;
+    const fixed = await call("POST", "/shifts/assignments", {
+      employeeIds: [jose],
+      shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id],
+      effectiveFrom: MON_B,
+      weekdays: [],
+    });
+    expect([fixed.status, fixed.error?.code]).toEqual([409, "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION"]);
+
+    const regime = await call("POST", "/work-regimes", { code: "SIN-R46", name: "Sin turno R4.6", kind: "SIN_TURNO" });
+    expect(regime.status).toBe(201);
+    const sinTurno = await call("POST", `/employees/${jose}/work-regimes`, { workRegimeId: regime.data.id, effectiveFrom: MON_B });
+    expect([sinTurno.status, sinTurno.error?.code]).toEqual([409, "WORK_REGIME_OVERLAPS_ROTATION"]);
+
+    const concurrent = await holder.employee.create({ data: { legajo: "R46-CONC", cuil: "20-999", dni: "999", firstName: "Con", lastName: "Currente" } });
+    const [assignment, membership] = await Promise.all([
+      call("POST", "/shifts/assignments", { employeeIds: [concurrent.id], shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id], effectiveFrom: MON_B, weekdays: [] }),
+      call("POST", `/shifts/rotations/${rotationId}/crews/${crewIds[PLANTA_CREWS.JOHANNA]}/members`, { employeeIds: [concurrent.id], effectiveFrom: MON_B }),
+    ]);
+    expect([assignment.status, membership.status].sort()).toEqual([201, 409]);
+    expect(await holder.shiftAssignment.count({ where: { employeeId: concurrent.id, status: "HABILITADO" } }) + await holder.shiftRotationCrewMember.count({ where: { employeeId: concurrent.id } })).toBe(1);
+  });
+
+  it("protege grupos y plantillas de rotación aun antes de regir", async () => {
+    await setupPlanta(MON_A, { activate: false });
+    const group = await call("DELETE", `/shifts/groups/${groupId}`);
+    expect([group.status, group.error?.code]).toEqual([409, "SHIFT_GROUP_IN_USE"]);
+    const template = await call("DELETE", `/workforce/shift-templates/${templateId[PLANTA_TEMPLATES.T1907.id]}`);
+    expect([template.status, template.error?.code]).toEqual([409, "SHIFT_TEMPLATE_IN_ROTATION"]);
+  });
+
+  it("una plantilla fija histórica sólo cambia de horario mediante preview + confirmación y conserva dependencias futuras", async () => {
+    const person = await holder.employee.create({ data: { legajo: "R46-FIJO", cuil: "20-777", dni: "777", firstName: "Fija", lastName: "Histórica" } });
+    const old = await holder.shiftTemplate.create({
+      data: {
+        code: "FIJO-OLD", name: "Fijo histórico", shiftGroupId: otherGroupId, startTime: "08:00", endTime: "16:00",
+        entryToleranceBeforeMinutes: 11, entryToleranceAfterMinutes: 12, exitToleranceBeforeMinutes: 13, exitToleranceAfterMinutes: 14,
+      },
+    });
+    await holder.shiftAssignment.create({ data: { employeeId: person.id, shiftTemplateId: old.id, effectiveFrom: day("2026-10-01"), weekdays: [1, 2, 3, 4, 5] } });
+    await holder.holidayWorkAssignment.create({ data: { employeeId: person.id, shiftTemplateId: old.id, date: day("2026-12-08") } });
+
+    for (const body of [{ startTime: "09:00" }, { status: "INACTIVO" }, { shiftGroupId: groupId }]) {
+      const response = await call("PATCH", `/workforce/shift-templates/${old.id}`, body);
+      expect(response.status).toBe(409);
+      expect(response.error?.code).toMatch(/^SHIFT_TEMPLATE_(?:SCHEDULE|HISTORY)_LOCKED$/);
+    }
+    const removed = await call("DELETE", `/workforce/shift-templates/${old.id}`);
+    expect([removed.status, removed.error?.code]).toEqual([409, "SHIFT_TEMPLATE_HISTORY_LOCKED"]);
+
+    const body = { effectiveFrom: MON_B, startTime: "09:00", endTime: "17:00", code: "FIJO-NEW", name: "Fijo nuevo" };
+    const preview = await call("POST", `/workforce/shift-templates/${old.id}/replace-schedule/preview`, body);
+    expect(preview.status, JSON.stringify(preview.error)).toBe(200);
+    expect(preview.data).toMatchObject({ complete: false, assignments: [expect.objectContaining({ action: "SPLIT" })] });
+    expect(preview.data.pendingDependencies.holidayAssignments).toHaveLength(1);
+
+    const noAck = await call("POST", `/workforce/shift-templates/${old.id}/replace-schedule`, { ...body, confirmationToken: preview.data.confirmationToken });
+    expect([noAck.status, noAck.error?.code]).toEqual([409, "SHIFT_TEMPLATE_REPLACEMENT_DEPENDENCIES"]);
+    const holidayHash = await hashRows(`SELECT id, date, "employeeId", "shiftTemplateId", status FROM "HolidayWorkAssignment" WHERE "shiftTemplateId" = '${old.id}'`);
+    const replaced = await call("POST", `/workforce/shift-templates/${old.id}/replace-schedule`, {
+      ...body,
+      confirmationToken: preview.data.confirmationToken,
+      acknowledgePendingDependencies: true,
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(201);
+    expect(replaced.data).toMatchObject({ assignments: 1, complete: false, template: { code: "FIJO-NEW", startTime: "09:00", endTime: "17:00" } });
+    expect(replaced.data.template).toMatchObject({ entryToleranceBeforeMinutes: 11, entryToleranceAfterMinutes: 12, exitToleranceBeforeMinutes: 13, exitToleranceAfterMinutes: 14 });
+    expect(await hashRows(`SELECT id, date, "employeeId", "shiftTemplateId", status FROM "HolidayWorkAssignment" WHERE "shiftTemplateId" = '${old.id}'`)).toBe(holidayHash);
+    const assignments = await holder.shiftAssignment.findMany({ where: { employeeId: person.id }, orderBy: { effectiveFrom: "asc" } });
+    expect(assignments.map((row) => [row.shiftTemplateId, row.effectiveFrom.toISOString().slice(0, 10), row.effectiveTo?.toISOString().slice(0, 10) ?? null])).toEqual([
+      [old.id, "2026-10-01", "2026-11-08"],
+      [replaced.data.template.id, MON_B, null],
+    ]);
+    const listed = await call("GET", "/workforce/shift-templates");
+    expect(listed.data.find((row: { id: string }) => row.id === old.id)).toMatchObject({ inUseFromTomorrow: true });
+    expect(await holder.auditLog.count({ where: { entity: { in: ["ShiftTemplate", "ShiftAssignment"] }, description: { contains: "FIJO-NEW" } } })).toBe(2);
+  });
+
   it("permisos: Supervisión lee pero no escribe", async () => {
     const created = await call("POST", "/shifts/rotations", { code: "X1", name: "Prueba", shiftGroupId: groupId }, supervision);
     expect(created.status).toBe(403);
