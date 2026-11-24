@@ -114,6 +114,7 @@ const shiftAlertTypeValueLabels: Record<string, string> = {
   JORNADA_INSUFICIENTE: "Jornada insuficiente", JORNADA_EXTENDIDA: "Jornada extendida",
   DESCANSO_INSUFICIENTE: "Descanso insuficiente", POSIBLE_OLVIDO_SALIDA: "Posible olvido de salida",
   CONCEPTO_NO_HABILITADO: "Concepto no habilitado", SEGMENTO_SIN_CLASIFICAR: "Segmento sin clasificar",
+  TRABAJO_NO_PROGRAMADO: "Trabajo no programado", INGRESO_FUERA_DE_VENTANA: "Ingreso fuera del horario del turno",
 };
 
 // Última defensa, no presentación: el backend persiste identidad humana

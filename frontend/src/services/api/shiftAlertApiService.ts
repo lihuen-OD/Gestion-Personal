@@ -19,7 +19,12 @@ export type ShiftAlertType =
   // docs/decisions/EMPLOYEE_DAY_OFF.md §9: jornada registrada en un día de franco.
   | "ACTIVIDAD_EN_FRANCO"
   // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a mano.
-  | "ACTIVIDAD_SOBRE_CARGA_MANUAL";
+  | "ACTIVIDAD_SOBRE_CARGA_MANUAL"
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): jornada sin turno programado —
+  // clasificación informativa, llega ya RESUELTA y nunca requiere revisión.
+  | "TRABAJO_NO_PROGRAMADO"
+  // R4.5: ingreso antes del horario en que se toma como ingreso a su turno.
+  | "INGRESO_FUERA_DE_VENTANA";
 
 export type ShiftAlertSeverity = "INFO" | "ADVERTENCIA" | "CRITICA";
 export type ShiftAlertStatus = "PENDIENTE" | "RESUELTA" | "DESCARTADA";
