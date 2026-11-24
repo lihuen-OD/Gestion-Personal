@@ -13,6 +13,22 @@ import { holidayWorkAssignmentController } from "./holidayWorkAssignment.control
 import { holidayDatesQuerySchema, holidayWorkAssignmentsByDateQuerySchema, holidayWorkCandidatesQuerySchema, saveHolidayWorkAssignmentsSchema } from "./holidayWorkAssignment.schemas";
 import { shiftGroupController } from "./shiftGroup.controller";
 import { createShiftGroupSchema, listShiftGroupsQuerySchema, updateShiftGroupSchema } from "./shiftGroup.schemas";
+import { shiftRotationController as rc } from "./shiftRotation.controller";
+import {
+  addMembersSchema,
+  closeMemberSchema,
+  createCrewSchema,
+  createRotationSchema,
+  createVersionSchema,
+  finalizePreviewSchema,
+  finalizeSchema,
+  listMembersQuerySchema,
+  listRotationsQuerySchema,
+  moveMemberSchema,
+  updateCrewSchema,
+  updateRotationSchema,
+  updateVersionSchema,
+} from "./shiftRotation.schemas";
 
 export const shiftsRouter = Router();
 shiftsRouter.use(requireAuth);
@@ -45,3 +61,28 @@ shiftsRouter.get("/groups", requireAnyRole(all), validateQuery(listShiftGroupsQu
 shiftsRouter.post("/groups", requireAnyRole([roles.rrhh]), validateBody(createShiftGroupSchema), asyncHandler(shiftGroupController.create));
 shiftsRouter.patch("/groups/:id", requireAnyRole([roles.rrhh]), validateBody(updateShiftGroupSchema), asyncHandler(shiftGroupController.update));
 shiftsRouter.delete("/groups/:id", requireAnyRole([roles.rrhh]), asyncHandler(shiftGroupController.remove));
+
+// R4.6 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.9): administración de
+// rotaciones. Lectura para los 3 roles operativos; escritura sólo RRHH (mismo
+// criterio que grupos, plantillas y asignaciones). Alcance por grupo: R8.
+const rrhh = requireAnyRole([roles.rrhh]);
+shiftsRouter.get("/rotations", requireAnyRole(all), validateQuery(listRotationsQuerySchema), asyncHandler(rc.list));
+shiftsRouter.post("/rotations", rrhh, validateBody(createRotationSchema), asyncHandler(rc.create));
+shiftsRouter.get("/rotations/:id", requireAnyRole(all), asyncHandler(rc.detail));
+shiftsRouter.patch("/rotations/:id", rrhh, validateBody(updateRotationSchema), asyncHandler(rc.update));
+shiftsRouter.delete("/rotations/:id", rrhh, asyncHandler(rc.remove));
+shiftsRouter.post("/rotations/:id/activate", rrhh, asyncHandler(rc.activate));
+shiftsRouter.post("/rotations/:id/deactivate", rrhh, asyncHandler(rc.deactivate));
+shiftsRouter.post("/rotations/:id/finalize/preview", rrhh, validateBody(finalizePreviewSchema), asyncHandler(rc.finalizePreview));
+shiftsRouter.post("/rotations/:id/finalize", rrhh, validateBody(finalizeSchema), asyncHandler(rc.finalize));
+shiftsRouter.post("/rotations/:id/crews", rrhh, validateBody(createCrewSchema), asyncHandler(rc.createCrew));
+shiftsRouter.patch("/rotations/:id/crews/:crewId", rrhh, validateBody(updateCrewSchema), asyncHandler(rc.updateCrew));
+shiftsRouter.post("/rotations/:id/versions", rrhh, validateBody(createVersionSchema), asyncHandler(rc.createVersion));
+shiftsRouter.get("/rotations/:id/versions/:versionId", requireAnyRole(all), asyncHandler(rc.getVersion));
+shiftsRouter.patch("/rotations/:id/versions/:versionId", rrhh, validateBody(updateVersionSchema), asyncHandler(rc.updateVersion));
+shiftsRouter.delete("/rotations/:id/versions/:versionId", rrhh, asyncHandler(rc.removeVersion));
+shiftsRouter.get("/rotations/:id/members", requireAnyRole(all), validateQuery(listMembersQuerySchema), asyncHandler(rc.listMembers));
+shiftsRouter.post("/rotations/:id/crews/:crewId/members", rrhh, validateBody(addMembersSchema), asyncHandler(rc.addMembers));
+shiftsRouter.post("/rotations/:id/members/:memberId/close", rrhh, validateBody(closeMemberSchema), asyncHandler(rc.closeMember));
+shiftsRouter.post("/rotations/:id/members/:memberId/move", rrhh, validateBody(moveMemberSchema), asyncHandler(rc.moveMember));
+shiftsRouter.delete("/rotations/:id/members/:memberId", rrhh, asyncHandler(rc.cancelMember));
