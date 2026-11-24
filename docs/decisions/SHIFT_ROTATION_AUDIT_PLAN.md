@@ -1671,6 +1671,22 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Límites conocidos:** sin acciones masivas (copiar semana, rellenar fila): cada día se edita por separado. `restsAtTransition` de la respuesta no se muestra (dato informativo; R4.7 no fija umbral de descanso).
 
+### 25.14 R4.8C — UI: personas, equipos y vigencias (implementada; sólo frontend)
+
+**Alcance.** Pestaña "Personas" del detalle (`?vista=personas`) sobre `GET /rotations/:id/members?history=`, `POST /rotations/:id/crews/:crewId/members`, `POST .../members/:memberId/close|move` y `DELETE .../members/:memberId` (R4.6). Sin cambios de backend.
+
+- **Lista:** legajo, persona, equipo, desde, hasta ("Sin fecha de fin") y estado (Vigente / Futura / Finalizada; una futura nunca se muestra como vigente), con insignia "Persona inactiva". Orden por persona y, dentro de cada una, por período. "Vigentes y futuras" o "Historial completo" (lo filtra el backend); búsqueda por nombre o legajo y filtro por equipo. Lectura para los tres roles; acciones sólo RRHH.
+- **Alta:** equipo activo, desde (mínimo mañana), hasta opcional y hasta 50 personas con el selector remoto existente (sólo personas activas, búsqueda desde 2 caracteres). `ROTATION_FIXED_ASSIGNMENT_OVERLAP`: se listan los turnos fijos, se explica el impacto (los vigentes terminan el día anterior al alta, los futuros quedan deshabilitados, todo auditado) y sólo con la casilla marcada se repite el alta con `closeFixedAssignments: true`; cambiar personas o fechas vuelve a pedir la confirmación. Otra rotación superpuesta, régimen sin turno, persona inactiva y transición nocturna se muestran en el modal con la selección y las fechas conservadas.
+- **Cambio de equipo / baja / cancelación:** fechas propuestas dentro del rango que acepta el backend (cambio: desde mañana y después del inicio; baja: desde hoy, no antes del inicio y antes del fin actual). Cancelar sólo se ofrece para un alta que no rigió (rotación inactiva o inicio futuro) y pide confirmación. Los períodos terminados no tienen acciones (historial inmutable). Tras una baja se informa `withoutFixedShiftAfter` (quién queda sin turno fijo ni otra rotación y desde cuándo).
+- **Mensajes:** el mensaje de dominio se toma del cuerpo de la respuesta y se limpia (`SIN_TURNO` → «Sin turno obligatorio», fechas): el cliente global descarta los mensajes con términos técnicos y dejaba un texto genérico. El conflicto de turnos fijos usa un texto propio porque el del backend nombra el parámetro técnico.
+- **Cachés:** versiones (B2) y membresías recalculan la cobertura de Novedades en el backend; el frontend ahora invalida las mismas familias derivadas que invalida un cambio de turno fijo, y `workforce-config` cuando el alta cerró turnos fijos (conteos de Turnos).
+
+**Límite del contrato:** no existe una vista previa de la baja individual; quién queda sin turno se conoce en la respuesta de la baja (la vista previa sólo existe para finalizar la rotación, R4.8E).
+
+**Verificación.** `tsc -b`, `vite build` y `typecheck:e2e` verdes; frontend 146 archivos / 1677 tests (+25). QA en Chromium real contra backend y PostgreSQL locales (`r48_ui_qa`, 60 empleados mínimos de QA, turnos fijos y membresías creados por la API; ningún acceso a Neon) en 1366×768, 1440×900, 1920×1080, 834×1112, 1112×834 y 390×844: lista, historial con todos los estados y nombres largos (intercepción visual), alta con 20 personas, conflicto de turnos fijos, superposición con otra rotación, cambio de equipo y vista Nivel 3. 38 vistas sin desborde ni recortes, modales dentro del viewport. Flujos reales: alta con turno fijo superpuesto → confirmación explícita → turno fijo cerrado el día anterior; 409 por otra rotación con selección conservada; cambio de equipo; cancelación confirmada; historial; foco inicial y Escape. Errores de consola sólo el 409 esperado.
+
+**Defectos encontrados y corregidos durante el QA:** período finalizado con acción "Cancelar alta" en una rotación inactiva (ahora sin acciones); "Sin fecha de fin" con tipografía distinta; doble recuadro alrededor del selector de personas; contador de selección duplicado con el del selector (queda sólo el límite y el aviso de exceso); casilla de cierre de turnos fijos debajo de su texto (estilo global de `label`).
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
