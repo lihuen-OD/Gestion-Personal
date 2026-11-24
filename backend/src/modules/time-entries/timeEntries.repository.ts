@@ -81,6 +81,8 @@ export type WorkShiftBlockAdoption = {
   shiftTemplateSource: "ROTATION" | "HOLIDAY_CONVOCATION";
   scheduledStartAt: Date;
   maxAllowedMinutes: number;
+  /** R4.6 (§25.9): reglas de la plantilla del bloque, congeladas en la apertura. */
+  templateRulesSnapshot: Prisma.InputJsonValue;
 };
 
 export const ROLLOVER_OVERFLOW_RESOLUTION_NOTE = "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.";
@@ -1427,6 +1429,7 @@ export const timeEntriesRepository = {
           reviewStatus: true,
           shiftTemplateId: true,
           scheduledStartAt: true,
+          templateRulesSnapshot: true,
           shiftTemplate: {
             select: {
               id: true,

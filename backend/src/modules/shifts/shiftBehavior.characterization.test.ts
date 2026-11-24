@@ -296,7 +296,7 @@ describe("A1 — turno fijo Oficina (L–V 06:30–15:00, 510 min, tolerancias 1
   it("entrada dentro de tolerancia (06:40 y 06:16): adopta OF-01 sin alertas", async () => {
     givenAssignments(rows);
     await evaluateShiftEntry(EMPLOYEE, "shift-1", art(MONDAY, "06:40"));
-    expect(adoptedTemplate()).toEqual({ shiftTemplateId: "oficina", maxAllowedMinutes: 1200 });
+    expect(adoptedTemplate()).toEqual({ shiftTemplateId: "oficina", maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "oficina" }) }); // R4.6: + snapshot de reglas
     await evaluateShiftEntry(EMPLOYEE, "shift-2", art(MONDAY, "06:16"));
     expect(alertTypes()).toEqual([]);
   });

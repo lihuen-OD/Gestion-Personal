@@ -1104,7 +1104,7 @@ export const timeEntriesService = {
     const now = new Date();
     const openShifts = shifts
       .filter((shift) => shift.status === "ABIERTO")
-      .map((shift) => ({ ...shift, risk: computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now, shift.scheduledStartAt) }))
+      .map((shift) => ({ ...shift, risk: computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now, shift.scheduledStartAt, shift) }))
       .sort((a, b) => compareOpenShiftRisk(a.risk, b.risk));
     const observedShifts = shifts.filter((shift) => shift.status === "OBSERVADO" || shift.status === "FALTA_SALIDA" || shift.status === "FALTA_INGRESO" || shift.status === "INVALIDO");
     const closedShifts = shifts.filter((shift) => shift.status !== "ABIERTO" && !observedShifts.some((observed) => observed.id === shift.id));

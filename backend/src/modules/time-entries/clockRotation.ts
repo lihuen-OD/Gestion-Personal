@@ -17,6 +17,7 @@ import { effectiveBlocksAround, neighborDateKeys, type RotationObligation } from
 import { blockDiagnosis, ROTATION_DIAGNOSIS_VERSION, type OpenBlockShift, type RotationExitClassification } from "../shifts/rotationEntry";
 import type { LoadedRotationTemplate } from "../shifts/rotationPlan.loader";
 import type { ExpectedBlock } from "../shifts/rotationPlan";
+import { buildTemplateRulesSnapshot, effectiveShiftTemplate } from "../shifts/templateRulesSnapshot";
 import type { WorkShiftBlockAdoption } from "./timeEntries.repository";
 
 type Block = ExpectedBlock<LoadedRotationTemplate>;
@@ -35,19 +36,25 @@ export async function loadRotationPunchContext(employeeId: string, now: Date): P
   return { obligationsByDate: obligations.get(employeeId), blocks: blocksByEmployee.get(employeeId) ?? [] };
 }
 
-export function adoptionFor(block: Block): WorkShiftBlockAdoption {
+export function adoptionFor(block: Block, capturedAt: Date = new Date()): WorkShiftBlockAdoption {
   return {
     shiftTemplateId: block.template.id,
     shiftTemplateSource: block.source === "HOLIDAY_CONVOCATION" ? "HOLIDAY_CONVOCATION" : "ROTATION",
     scheduledStartAt: block.scheduledStartAt,
     maxAllowedMinutes: block.template.absoluteOpenShiftLimitMinutes,
+    // R4.6 (§25.9): las reglas del bloque quedan congeladas en la apertura.
+    templateRulesSnapshot: buildTemplateRulesSnapshot(block.template, capturedAt),
   };
 }
 
-/** La jornada abierta con bloque, con su plantilla congelada (una lectura). */
-export async function openBlockShiftOf(shift: Pick<WorkShift, "id" | "startAt" | "maxAllowedMinutes" | "shiftTemplateId"> & { scheduledStartAt: Date }): Promise<OpenBlockShift | null> {
+/**
+ * La jornada abierta con bloque, con su plantilla congelada. R4.6 (§25.9): con
+ * snapshot, sus reglas (sin lectura); sin él (jornadas anteriores), la
+ * plantilla en vivo (una lectura, como antes).
+ */
+export async function openBlockShiftOf(shift: Pick<WorkShift, "id" | "startAt" | "maxAllowedMinutes" | "shiftTemplateId"> & { scheduledStartAt: Date; templateRulesSnapshot?: unknown }): Promise<OpenBlockShift | null> {
   if (!shift.shiftTemplateId) return null;
-  const template = await prisma.shiftTemplate.findUnique({
+  const template = effectiveShiftTemplate(shift, null) ?? await prisma.shiftTemplate.findUnique({
     where: { id: shift.shiftTemplateId },
     select: { code: true, startTime: true, endTime: true, crossesMidnight: true, exitToleranceAfterMinutes: true },
   });

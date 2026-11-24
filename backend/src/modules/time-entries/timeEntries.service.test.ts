@@ -976,7 +976,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, memberContext());
       expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
         openWorkShiftId: "shift-0700",
-        adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200 },
+        adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "tpl-PLANTA-19-07" }) },
         missingOutObservation: expect.stringContaining("Falta registrar la salida del turno de las 07:00 a las 11:00"),
       }));
       expect(result).toMatchObject({ previousOpenShift: { id: "shift-0700", status: "FALTA_SALIDA" } });
@@ -1025,7 +1025,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
         const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, contextWith(openUnblocked(FRIDAY("13:00"))));
         expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
           openWorkShiftId: "shift-early",
-          adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200 },
+          adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "tpl-PLANTA-19-07" }) },
           missingOutObservation: "Falta registrar la salida de la jornada iniciada a las 13:00: se registró el ingreso del turno de las 19:00. Requiere revisión.",
         }));
         expect(openBlockShiftOf).not.toHaveBeenCalled();

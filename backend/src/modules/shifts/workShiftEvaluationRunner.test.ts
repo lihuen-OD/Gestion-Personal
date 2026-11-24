@@ -3,6 +3,7 @@ import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { createShiftAlert, evaluateShiftEntry, evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview, resolveOpenShiftOverflowAlert } from "./workShiftEvaluationRunner";
+import { buildTemplateRulesSnapshot } from "./templateRulesSnapshot";
 
 /**
  * Etapa de logica de Regimen de Trabajo (2026-08-18): un empleado sin
@@ -277,7 +278,7 @@ describe("Etapa 13A — evaluateShiftEntry: ingreso anticipado usa el turno asig
     const call = mockedPrisma.shiftAlert.upsert.mock.calls.find((c) => c[0]?.create?.type === "INGRESO_ANTICIPADO")![0]!;
     expect(call.create.differenceMinutes).toBe(-30);
     expect(call.create.severity).toBe("INFO");
-    expect(mockedPrisma.workShift.update).toHaveBeenCalledWith({ where: { id: "shift-1" }, data: { shiftTemplateId: "shift-0830", maxAllowedMinutes: 1200 } });
+    expect(mockedPrisma.workShift.update).toHaveBeenCalledWith({ where: { id: "shift-1" }, data: { shiftTemplateId: "shift-0830", maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "shift-0830" }) } });
   });
 
   it("Caso 4/E del pedido: turno asignado, entrada antes del horario, sin ningún otro turno en el sistema -> INGRESO_ANTICIPADO (antes de esta etapa daba TURNO_NO_IDENTIFICADO)", async () => {
@@ -1673,7 +1674,7 @@ describe("POSSIBLE_SHIFT_CONFIGURATION_MISSING — Etapa 13E/13E.1 (turno ajeno 
 
     expect(mockedPrisma.workShift.update).toHaveBeenCalledWith({
       where: { id: "shift-1" },
-      data: { shiftTemplateId: "own-shift", maxAllowedMinutes: 1200 },
+      data: { shiftTemplateId: "own-shift", maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "own-shift" }) },
     });
   });
 
@@ -1685,7 +1686,7 @@ describe("POSSIBLE_SHIFT_CONFIGURATION_MISSING — Etapa 13E/13E.1 (turno ajeno 
 
     expect(mockedPrisma.workShift.update).toHaveBeenCalledWith({
       where: { id: "shift-1" },
-      data: { shiftTemplateId: "own-shift", maxAllowedMinutes: 1200 },
+      data: { shiftTemplateId: "own-shift", maxAllowedMinutes: 1200, templateRulesSnapshot: expect.objectContaining({ version: 1, templateId: "own-shift" }) },
     });
   });
 
@@ -2007,5 +2008,53 @@ describe("PERF-5A — consultas redundantes de la evaluación de turnos", () => 
     expect(mockedPrisma.workShift.findUnique).not.toHaveBeenCalled();
     expect(upsertedAlertTypes()).toEqual(fromDatabase);
     expect(vi.mocked(notifyUsers).mock.calls.length).toBe(notifiedFromDatabase);
+  });
+});
+
+// R4.6 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.9, garantía 1): una
+// jornada con snapshot se evalúa al salir con las reglas congeladas al
+// adoptar la plantilla, aunque la plantilla se haya editado mientras estaba
+// abierta. Sin snapshot (jornadas anteriores), la plantilla en vivo como antes.
+describe("R4.6 — salida con reglas congeladas (templateRulesSnapshot)", () => {
+  const startAt = new Date("2026-08-18T10:00:00.000Z"); // 07:00 ART
+  const exitAt = new Date("2026-08-18T18:30:00.000Z"); // 15:30 ART: 30 min después de las 15:00
+  const original = { ...disabledTemplate, exitToleranceAfterMinutes: 20, maximumInformativeMinutes: 600 };
+  const editedLive = { ...disabledTemplate, exitToleranceAfterMinutes: 60, maximumInformativeMinutes: 60 };
+
+  beforeEach(() => {
+    mockedPrisma.shiftAssignment.findUnique.mockResolvedValue({ status: "HABILITADO" });
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(editedLive);
+  });
+
+  it("fijo con snapshot: SALIDA_TARDIA contra la tolerancia original (20) y sin JORNADA_EXTENDIDA por el máximo editado; no lee la plantilla", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({ id: "shift-1", startAt, shiftTemplateId: "t1", totalMinutes: 510, templateRulesSnapshot: buildTemplateRulesSnapshot(original, startAt) });
+
+    await evaluateShiftExit("employee-1", "shift-1", exitAt);
+
+    expect(upsertedAlertTypes()).toContain("SALIDA_TARDIA");
+    expect(upsertedAlertTypes()).not.toContain("JORNADA_EXTENDIDA");
+    expect(mockedPrisma.shiftTemplate.findUnique).not.toHaveBeenCalled();
+    expect(mockedPrisma.shiftAssignment.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("fijo sin snapshot (histórica): la plantilla en vivo, exactamente como antes", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({ id: "shift-1", startAt, shiftTemplateId: "t1", totalMinutes: 510, templateRulesSnapshot: null });
+
+    await evaluateShiftExit("employee-1", "shift-1", exitAt);
+
+    expect(upsertedAlertTypes()).not.toContain("SALIDA_TARDIA");
+    expect(upsertedAlertTypes()).toContain("JORNADA_EXTENDIDA");
+    expect(mockedPrisma.shiftTemplate.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("bloque de rotación con snapshot: las reglas congeladas, sin leer la plantilla", async () => {
+    mockedPrisma.workShift.findUnique.mockResolvedValue({ id: "shift-1", startAt, shiftTemplateId: "t1", totalMinutes: 510, shiftTemplateSource: "ROTATION", scheduledStartAt: startAt, templateRulesSnapshot: buildTemplateRulesSnapshot(original, startAt) });
+
+    await evaluateShiftExit("employee-1", "shift-1", exitAt);
+
+    expect(upsertedAlertTypes()).toContain("SALIDA_TARDIA");
+    expect(upsertedAlertTypes()).not.toContain("JORNADA_EXTENDIDA");
+    expect(mockedPrisma.shiftTemplate.findUnique).not.toHaveBeenCalled();
   });
 });

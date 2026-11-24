@@ -5,6 +5,7 @@ import type { z } from "zod";
 import type { rotationEntryPayloadSchema, exitPayloadSchema } from "../clock/clockPunchPostProcess.payload";
 import { isRotationBlockShift } from "./rotationEntry";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
+import { buildTemplateRulesSnapshot, effectiveShiftTemplate } from "./templateRulesSnapshot";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
 import { classifyFixedEntry, hasNoEnforceableShift, hasVigentEnabledAssignment, loadEntryDayFacts, unscheduledWorkNote, type UnscheduledWorkReason } from "./unscheduledWork";
@@ -451,7 +452,8 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   if (adoptedTemplate) {
     await db.workShift.update({
       where: { id: workShiftId },
-      data: { shiftTemplateId: adoptedTemplate.id, maxAllowedMinutes: adoptedTemplate.absoluteOpenShiftLimitMinutes },
+      // R4.6 (§25.9): las reglas quedan congeladas junto con la adopción.
+      data: { shiftTemplateId: adoptedTemplate.id, maxAllowedMinutes: adoptedTemplate.absoluteOpenShiftLimitMinutes, templateRulesSnapshot: buildTemplateRulesSnapshot(adoptedTemplate, new Date()) },
     });
   }
 
@@ -514,19 +516,27 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // genera ninguna fila nueva.
 }
 
-/** R4.4: la plantilla del bloque congelado es la del turno (sin ShiftAssignment: la rotación es la evidencia). */
-async function resolveMatchForBlock(shiftTemplateId: string): Promise<ShiftMatchResult> {
-  const template = await prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } });
+type ExitShiftRules = { shiftTemplateId: string | null; templateRulesSnapshot?: unknown };
+
+/**
+ * R4.4: la plantilla del bloque congelado es la del turno (sin ShiftAssignment: la rotación es la evidencia).
+ * R4.6 (§25.9): con snapshot, sus reglas congeladas gobiernan la salida (sin leer la plantilla en vivo).
+ */
+async function resolveMatchForBlock(shift: ExitShiftRules & { shiftTemplateId: string }): Promise<ShiftMatchResult> {
+  const template = effectiveShiftTemplate(shift, null) ?? await prisma.shiftTemplate.findUnique({ where: { id: shift.shiftTemplateId } });
   if (!template) return { case: "NO_MATCH", template: null, differenceMinutes: null };
   return { case: "ENABLED", template: toTemplateRef(template), differenceMinutes: null };
 }
 
-async function resolveMatchForExit(employeeId: string, shiftTemplateId: string | null): Promise<ShiftMatchResult> {
+async function resolveMatchForExit(employeeId: string, shift: ExitShiftRules): Promise<ShiftMatchResult> {
+  const { shiftTemplateId } = shift;
   if (!shiftTemplateId) return { case: "NO_MATCH", template: null, differenceMinutes: null };
-  const [template, assignment] = await Promise.all([
-    prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } }),
+  const frozen = effectiveShiftTemplate(shift, null);
+  const [live, assignment] = await Promise.all([
+    frozen ? Promise.resolve(null) : prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } }),
     prisma.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } }),
   ]);
+  const template: ShiftTemplateLike | null = frozen ?? live;
   if (!template) return { case: "NO_MATCH", template: null, differenceMinutes: null };
   const templateRef = toTemplateRef(template);
   if (!assignment) return { case: "GENERAL_UNASSIGNED", template: templateRef, differenceMinutes: null };
@@ -672,7 +682,7 @@ export async function evaluateShiftExit(
   classifiedSegments: ClassifiedSegmentAlertInput[] = [],
   // PERF-5A: la jornada recién cerrada, tal como la devolvió su transacción;
   // sin ella se lee de la base (cierres sin ese dato a mano).
-  closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId"> & Partial<Pick<WorkShift, "shiftTemplateSource" | "scheduledStartAt">>,
+  closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId"> & Partial<Pick<WorkShift, "shiftTemplateSource" | "scheduledStartAt" | "templateRulesSnapshot">>,
   // PERF-5D: el post-proceso durable pasa su transacción y necesita que un
   // fallo se propague (para reintentar el paso) en vez de quedar sólo logueado.
   // R4.4: `rotationExit` = salida señalada como posible olvido de salida.
@@ -690,7 +700,7 @@ export async function evaluateShiftExit(
     // salida sin exigir ShiftAssignment (G6) y la salida programada sale del
     // inicio programado del bloque. Jornadas legacy: exactamente como antes.
     const blockStartAt = isRotationBlockShift(shift) ? shift.scheduledStartAt : null;
-    const match = isRotationBlockShift(shift) ? await resolveMatchForBlock(shift.shiftTemplateId) : await resolveMatchForExit(employeeId, shift.shiftTemplateId);
+    const match = isRotationBlockShift(shift) ? await resolveMatchForBlock(shift) : await resolveMatchForExit(employeeId, shift);
 
     // R4.5 (§25.7): jornada legacy que adoptó su plantilla en un franco o un
     // feriado no convocado — no había turno exigible: sin alertas de turno

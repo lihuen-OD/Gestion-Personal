@@ -1845,34 +1845,41 @@ model TimeEntry {
 }
 
 model WorkShift {
-  id                  String                 @id @default(uuid())
-  employeeId          String
-  hourConceptId       String?
-  hourConceptName     String?
-  startPunchId        String?
-  endPunchId          String?
-  source              WorkShiftSource        @default(ADMIN)
-  status              WorkShiftStatus        @default(PROCESADO)
-  startAt             DateTime               @db.Timestamptz(3)
-  endAt               DateTime?              @db.Timestamptz(3)
-  totalMinutes        Int?
-  crossesMidnight     Boolean                @default(false)
-  maxAllowedMinutes   Int                    @default(1200)
-  observation         String?
-  reviewStatus        AttendanceReviewStatus @default(PENDIENTE)
-  reviewedAt          DateTime?              @db.Timestamptz(3)
-  reviewedByUserId    String?
-  reviewNote          String?
-  shiftTemplateId     String?
+  id                    String                 @id @default(uuid())
+  employeeId            String
+  hourConceptId         String?
+  hourConceptName       String?
+  startPunchId          String?
+  endPunchId            String?
+  source                WorkShiftSource        @default(ADMIN)
+  status                WorkShiftStatus        @default(PROCESADO)
+  startAt               DateTime               @db.Timestamptz(3)
+  endAt                 DateTime?              @db.Timestamptz(3)
+  totalMinutes          Int?
+  crossesMidnight       Boolean                @default(false)
+  maxAllowedMinutes     Int                    @default(1200)
+  observation           String?
+  reviewStatus          AttendanceReviewStatus @default(PENDIENTE)
+  reviewedAt            DateTime?              @db.Timestamptz(3)
+  reviewedByUserId      String?
+  reviewNote            String?
+  shiftTemplateId       String?
   // R4.1 (§24): fuente del turno adoptado y el instante programado exacto de
   // la ocurrencia elegida al ingresar. Null en las jornadas anteriores (sin
   // backfill): la salida y la fecha operativa siguen con la lógica legacy.
-  shiftTemplateSource ShiftTemplateSource?
-  scheduledStartAt    DateTime?              @db.Timestamptz(3)
-  createdByUserId     String?
-  createdAt           DateTime               @default(now()) @db.Timestamptz(3)
-  closedAt            DateTime?              @db.Timestamptz(3)
-  updatedAt           DateTime               @updatedAt @db.Timestamptz(3)
+  shiftTemplateSource   ShiftTemplateSource?
+  scheduledStartAt      DateTime?              @db.Timestamptz(3)
+  // R4.6 (§25.9, garantía 1): reglas de la plantilla adoptada (horario,
+  // tolerancias y límites) CONGELADAS al adoptarla. La salida, el olvido de
+  // salida y los límites de una jornada abierta usan este snapshot; un ajuste
+  // posterior de la plantilla sólo rige para jornadas nuevas. Null en las
+  // jornadas anteriores (sin backfill) y sin plantilla: lógica legacy (la
+  // plantilla en vivo). Forma versionada: shifts/templateRulesSnapshot.ts.
+  templateRulesSnapshot Json?
+  createdByUserId       String?
+  createdAt             DateTime               @default(now()) @db.Timestamptz(3)
+  closedAt              DateTime?              @db.Timestamptz(3)
+  updatedAt             DateTime               @updatedAt @db.Timestamptz(3)
 
   employee              Employee                   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   hourConcept           HourConcept?               @relation(fields: [hourConceptId], references: [id], onDelete: SetNull)
