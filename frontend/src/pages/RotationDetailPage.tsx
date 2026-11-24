@@ -9,6 +9,7 @@ import { Section } from "../components/ui/Section";
 import { Tabs, tabPanelProps } from "../components/ui/Tabs";
 import { RotationCrewsPanel } from "../components/rotations/RotationCrewsPanel";
 import { RotationGridPanel } from "../components/rotations/RotationGridPanel";
+import { RotationMembersPanel } from "../components/rotations/RotationMembersPanel";
 import { RotationFormModal } from "../components/rotations/RotationFormModal";
 import { RotationIssuesPanel } from "../components/rotations/RotationIssuesPanel";
 import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
@@ -37,15 +38,16 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div><dt>{label}</dt><dd>{children}</dd></div>;
 }
 
-type DetailView = "resumen" | "equipos";
+type DetailView = "resumen" | "equipos" | "personas";
 const DETAIL_VIEWS: Array<{ key: DetailView; label: string }> = [
   { key: "resumen", label: "Resumen" },
   { key: "equipos", label: "Equipos y grilla" },
+  { key: "personas", label: "Personas" },
 ];
 const DETAIL_TABS_ID = "rotation-detail";
 
 function viewFromParam(value: string | null): DetailView {
-  return value === "equipos" ? "equipos" : "resumen";
+  return value === "equipos" || value === "personas" ? value : "resumen";
 }
 
 function stateNote(rotation: ShiftRotation): string | null {
@@ -188,6 +190,11 @@ export function RotationDetailPage() {
         <div {...tabPanelProps(DETAIL_TABS_ID, "equipos")} hidden={view !== "equipos"}>
           <RotationCrewsPanel rotation={rotation} canEdit={canEdit} onChanged={refreshAfterCrewChange} />
           <RotationGridPanel rotation={rotation} reloadToken={gridReload} canEdit={canEdit} onVersionsChanged={() => setReload((value) => value + 1)} />
+        </div>
+      ) : null}
+      {view === "personas" ? (
+        <div {...tabPanelProps(DETAIL_TABS_ID, "personas")}>
+          <RotationMembersPanel rotation={rotation} canEdit={canEdit} onChanged={() => setReload((value) => value + 1)} />
         </div>
       ) : null}
       <div {...tabPanelProps(DETAIL_TABS_ID, "resumen")} hidden={view !== "resumen"}>
