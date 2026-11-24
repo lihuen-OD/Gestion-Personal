@@ -1,4 +1,4 @@
-import { Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, CalendarX2, Pencil, Power, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Badge } from "../components/ui/Badge";
@@ -11,15 +11,17 @@ import { RotationCrewsPanel } from "../components/rotations/RotationCrewsPanel";
 import { RotationGridPanel } from "../components/rotations/RotationGridPanel";
 import { RotationMembersPanel } from "../components/rotations/RotationMembersPanel";
 import { RotationPreviewPanel } from "../components/rotations/RotationPreviewPanel";
+import { RotationFinalizeModal } from "../components/rotations/RotationFinalizeModal";
+import { activationBlocked, describeLifecycleError, finalizeResultText, lifecycleActions, type LifecycleError } from "../utils/shiftRotationLifecycle";
 import { RotationFormModal } from "../components/rotations/RotationFormModal";
 import { RotationIssuesPanel } from "../components/rotations/RotationIssuesPanel";
 import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
 import { useAuth } from "../context/AuthContext";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
-import { shiftRotationApiService, type ShiftRotation } from "../services/api/shiftRotationApiService";
+import { shiftRotationApiService, type ShiftRotation, type ShiftRotationWithoutFixedShift } from "../services/api/shiftRotationApiService";
 import { confirmAction } from "../services/appDialog";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
-import { formatInstantDate } from "../utils/date";
+import { formatCalendarDate, formatInstantDate } from "../utils/date";
 import { roleLevel } from "../utils/roles";
 import {
   canDeleteRotation,
@@ -76,6 +78,10 @@ export function RotationDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState(location.state?.created ? "Rotación creada." : "");
   const [actionError, setActionError] = useState("");
+  const [lifecycleError, setLifecycleError] = useState<LifecycleError | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeResult, setFinalizeResult] = useState<{ text: string; withoutFixedShift: ShiftRotationWithoutFixedShift[] } | null>(null);
   const { groups, status: groupsStatus } = useShiftGroupsCatalog();
   const todayKey = argentinaDateKey(new Date());
   const [searchParams, setSearchParams] = useSearchParams();
@@ -129,6 +135,28 @@ export function RotationDetailPage() {
     }
   };
 
+  // Activar / desactivar: confirmación explícita, un solo envío y el backend como autoridad.
+  const changeStatus = async (action: "activate" | "deactivate") => {
+    if (!rotation || lifecycleBusy) return;
+    const people = new Set(rotation.members.map((member) => member.employeeId)).size;
+    const ok = action === "activate"
+      ? await confirmAction(`Al activarla, la rotación empieza a regir para ${people === 1 ? "1 persona" : `${people} personas`} desde la fecha de inicio de cada una: genera sus horarios esperados y obligaciones de asistencia y recalcula sus Novedades.`, { title: "Activar rotación", confirmLabel: "Activar", tone: "primary" })
+      : await confirmAction("La rotación vuelve a quedar inactiva y deja de generar horarios y obligaciones. Es posible porque todavía no rigió para nadie.", { title: "Desactivar rotación", confirmLabel: "Desactivar", tone: "danger" });
+    if (!ok) return;
+    setLifecycleBusy(true);
+    setLifecycleError(null);
+    try {
+      const updated = action === "activate" ? await shiftRotationApiService.activate(rotation.id) : await shiftRotationApiService.deactivate(rotation.id);
+      setRotation(updated);
+      setFinalizeResult(null);
+      setNotice(action === "activate" ? "Rotación activada." : "Rotación desactivada.");
+    } catch (reason) {
+      setLifecycleError(describeLifecycleError(reason, action === "activate" ? "No pudimos activar la rotación." : "No pudimos desactivar la rotación."));
+    } finally {
+      setLifecycleBusy(false);
+    }
+  };
+
   const backLink = <Link to={ROTATIONS_LIST_PATH} className="back-link">← Volver a rotaciones</Link>;
 
   if (loadStatus === "loading") return <Section title="Rotación"><LoadingState text="Cargando rotación..." /></Section>;
@@ -148,6 +176,8 @@ export function RotationDetailPage() {
   const activeCrews = rotation.crews.filter((crew) => crew.status === "ACTIVO").length;
   const note = stateNote(rotation);
   const deletable = canDeleteRotation(rotation);
+  const lifecycle = lifecycleActions(rotation);
+  const blocked = lifecycle.activate && activationBlocked(rotation);
 
   return (
     <>
@@ -167,6 +197,9 @@ export function RotationDetailPage() {
           {canEdit ? (
             <>
               <Button variant="subtle" icon={Pencil} onClick={() => setEditing(true)}>Editar datos</Button>
+              {lifecycle.activate ? <Button variant="primary" icon={Power} loading={lifecycleBusy} disabled={blocked || lifecycleBusy} onClick={() => void changeStatus("activate")}>Activar</Button> : null}
+              {lifecycle.deactivate ? <Button variant="subtle" icon={Power} loading={lifecycleBusy} disabled={lifecycleBusy} onClick={() => void changeStatus("deactivate")}>Desactivar</Button> : null}
+              {lifecycle.finalize ? <Button variant="subtle" icon={CalendarX2} className="rotation-danger-button" disabled={lifecycleBusy} onClick={() => { setLifecycleError(null); setFinalizing(true); }}>Finalizar</Button> : null}
               {deletable ? (
                 <button type="button" className="table-icon-action danger-link" title="Eliminar rotación" aria-label="Eliminar rotación" onClick={() => void remove()} disabled={deleting}>
                   <Trash2 size={14} aria-hidden="true" /><span>Eliminar rotación</span>
@@ -178,6 +211,27 @@ export function RotationDetailPage() {
       </div>
       {notice ? <div className="toast" role="status">{notice}</div> : null}
       {actionError ? <p className="error rotation-action-error" role="alert">{actionError}</p> : null}
+      {lifecycleError ? (
+        <div className="rotation-save-error rotation-lifecycle-error" role="alert">
+          <p className="rotation-save-error-title"><AlertTriangle size={16} aria-hidden="true" />{lifecycleError.message}</p>
+          {lifecycleError.details.length ? <ul>{lifecycleError.details.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+        </div>
+      ) : null}
+      {canEdit && blocked ? (
+        <div className="info-note warning rotation-state-note" role="note"><p><b>Todavía no se puede activar.</b> El diagnóstico tiene errores que impedirían resolver los turnos: revisalos en «Resumen» y corregilos en «Equipos y grilla» o «Personas».</p></div>
+      ) : null}
+      {finalizeResult ? (
+        <div className="info-note rotation-finalize-result" role="status">
+          <p><b>{finalizeResult.text}</b></p>
+          {finalizeResult.withoutFixedShift.length ? (
+            <>
+              <p>Quedan sin turno fijo ni otra rotación:</p>
+              <ul>{finalizeResult.withoutFixedShift.map((row) => <li key={row.employeeId}>{row.employee}: desde el {formatCalendarDate(row.from)}</li>)}</ul>
+            </>
+          ) : null}
+          <Button variant="subtle" onClick={() => setFinalizeResult(null)}>Entendido</Button>
+        </div>
+      ) : null}
       {note ? <div className="info-note rotation-state-note" role="note"><p>{note}</p></div> : null}
 
       <Tabs
@@ -239,6 +293,19 @@ export function RotationDetailPage() {
         </Section>
       </div>
 
+      {finalizing ? (
+        <RotationFinalizeModal
+          rotation={rotation}
+          todayKey={todayKey}
+          close={() => setFinalizing(false)}
+          onFinalized={({ rotation: updated, applied }) => {
+            setFinalizing(false);
+            setRotation(updated);
+            setFinalizeResult({ text: finalizeResultText(applied), withoutFixedShift: applied.withoutFixedShiftAfter });
+            setReload((value) => value + 1);
+          }}
+        />
+      ) : null}
       {editing ? (
         <RotationFormModal
           rotation={rotation}
