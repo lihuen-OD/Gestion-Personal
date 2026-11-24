@@ -1526,6 +1526,55 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Pendiente:** R4.5 (tratamiento informativo de trabajo no programado y de entrada muy anticipada); R4.6–R4.9; deploy de R4.1A + R4.3a en development (autorización aparte).
 
+### 25.7 R4.5 — Trabajo no programado (implementada y validada en local; migración NO aplicada a ninguna base compartida)
+
+**Estado:** plan definitivo aprobado por el usuario el 2026-11-24 (versión simplificada: sin continuidad automática de jornadas). Migración `20261124120000_shift_alert_unscheduled_work_types` validada contra PostgreSQL 18 local; no aplicada a development, pre-development ni producción. **A diferencia de R4.3b/R4.4, cambia el camino legacy** (turnos fijos): el código de R4.5 no se puede desplegar sin su migración.
+
+**Principio:** el motor de obligación decide primero; las alertas que dependen de un turno sólo existen si había obligación. Separación conservada: turno programado ≠ evidencia de fichada ≠ horas ≠ Horas Especiales ≠ Conceptos ≠ alertas/avisos. No cambian horas, Horas Especiales (§15/§16 de `WORKED_TIME_ACCOUNTING_MODEL.md`), Conceptos, Novedades, falta de ingreso ni inactividad.
+
+**Qué ya resolvía R4.4 (sin cambios):** entrada anticipada dentro de la ventana `[inicio − 240, fin)` asignada al bloque sin exigir otra entrada; salidas tardías con tolerancias, límite absoluto, olvido de salida y aviso único (13G); entrada fuera de ventana registrada sin bloque y sin satisfacer el bloque posterior (D3, aviso inmediato); cambio de bloque entre jornadas con bloque; franco de un miembro → sólo `ACTIVIDAD_EN_FRANCO`.
+
+**Precedencia de la entrada (fecha operativa D, igual para fijos y rotación):**
+
+| # | Situación | Resultado | Aviso |
+|---|---|---|---|
+| 1 | Turno exigible y fichada asignada (bloque o turno fijo) | Puntualidad como siempre | Como siempre |
+| 2 | Franco en D | Sólo `ACTIVIDAD_EN_FRANCO` (paso de francos) | Sí, uno |
+| 3 | Feriado no convocado en D | `TRABAJO_NO_PROGRAMADO` (`FERIADO_NO_CONVOCADO`) | No |
+| 4 | Rotación MISSING/CONFLICT en D | `POSSIBLE_SHIFT_CONFIGURATION_MISSING` | Sí, uno por persona y día |
+| 5 | Antes de la ventana de un bloque posterior del mismo día | `INGRESO_FUERA_DE_VENTANA` (ADVERTENCIA, pendiente; antes `TURNO_NO_IDENTIFICADO`) | Sí, inmediato (D3) |
+| 6 | Convocado al feriado sin horario aplicable | Sólo diagnóstico | No |
+| 7 | SIN_TURNO / TURNO_FLEXIBLE / `alertOnOutOfShift = false` | Ninguna fila (D5) | No |
+| 8 | Fijo con asignación HABILITADA vigente que no incluye D (Juanjo sábado/domingo); rotación REST; fuera de los bloques del día | `TRABAJO_NO_PROGRAMADO` (`DIA_NO_PROGRAMADO` / `DESCANSO_ROTACION` / `FUERA_DEL_TURNO`) | No |
+| 9 | Fijo sin ninguna asignación HABILITADA vigente | `TURNO_NO_IDENTIFICADO` (configuración legacy, sin cambios) | Sí |
+
+- **Franco y feriado no convocado antes que la configuración** (decisión 1 del usuario): sin obligación ese día, un MISSING/CONFLICT no se avisa por la fichada; queda en `planIssue` del `rotationDiagnosis` (versión 2) y se detecta en días hábiles y en la vista previa (R4.7). `RotationObligation.dayOff` hace que el franco gane aunque la resolución informe feriado o SIN_TURNO (que la preceden en `WORK_OBLIGATION`).
+- **Un turno asignado nunca oculta un franco:** el franco de D elimina los bloques de D; sólo se asignan bloques de D−1/D+1 cuya fecha operativa no lo tiene.
+- **Fijos (decisión 3):** `matchShiftForEmployee` no cambia (A2/A4). Después del matching se resuelven los hechos de D (`loadEntryDayFacts`: feriado por calendario sin alcance —deuda P7, igual que la obligación—, convocatoria ACTIVA, franco ACTIVO; hasta 3 lecturas, sólo en el post-proceso asíncrono). En franco o feriado no convocado la plantilla **se sigue adoptando** (fija la fecha operativa de la que dependen el paso de francos y la exclusión de horas de §18, y los límites de jornada abierta), pero no hay alertas de puntualidad ni `SHIFT_NOT_ENABLED`; al cerrar, se relee y se omiten fuera de turno, salida anticipada/tardía y jornada insuficiente (un franco cargado después del ingreso también prevalece). Se conservan jornada extendida, conceptos y olvido/falta de salida. Convocado con su turno habitual (P8): sin cambios. Turnos nocturnos: la fecha operativa es la de la ocurrencia adoptada (entrada anticipada 22:00 del domingo → domingo; tardía 00:30 del lunes → domingo).
+
+**Clasificación informativa (`TRABAJO_NO_PROGRAMADO`):** se escribe con `recordInformativeShiftAlert` — `status: RESUELTA`, `severity: INFO`, `resolvedByUserId: null`, `resolvedAt` = alta, `resolutionNote` "Informativa: trabajo sin turno programado el sábado 07/11/2026 (día no incluido en su turno asignado). No requiere revisión." (sin ids). `upsert` con `update` vacío: idempotente ante reintentos del paso, nunca reabre ni avisa (no pasa por `createShiftAlert`, cuyo `update` reabre). No aparece en Pendientes (filtro por defecto) ni ofrece Resolver; en la UI se muestra "Informativa · No requiere revisión" y no cambia el estado del grupo de su jornada. Ningún otro contador lee `ShiftAlert` (verificado).
+
+**Nueva ENTRADA con una jornada abierta sin bloque (decisión 2):** miembro de rotación, jornada abierta sin bloque (fuera de ventana, no programada, franco, sin configuración) y ENTRADA asignada a un bloque válido que empieza después de esa jornada → **el mismo cambio de bloque de R4.4** (`clockBlockChangeEntry`): la anterior pasa a `FALTA_SALIDA` sin `endAt`, `endPunchId` ni horas (`totalMinutes` NULL + `TimeEntry` 0 h, como el rollover), la nueva nace con su bloque congelado y su ENTRADA satisface la obligación. ALERT_ONLY y la carrera con el vencimiento se tratan como en R4.4. Un solo aviso (falta de salida, "No registró la salida de la jornada iniciada a las 11:30; ya ingresó a su turno de las 17:00…"). **Reintento / doble toque:** además del enfriamiento y la idempotencia por `requestId`, `isBlockChangeFromUnblockedShift` exige que el ingreso de la jornada abierta no se asignaría a ese mismo bloque (misma llegada → 409 de siempre). Una ENTRADA que no se asigna a ningún bloque sigue con 409. **Sin continuidad automática** (retirada por el usuario): nunca se adopta el bloque sobre la jornada anterior ni se suman horas entre dos entradas. Fijos: sin cambios.
+
+**Roberto (11:30 / bloque 17:00):** 11:30 → jornada sin bloque, `INGRESO_FUERA_DE_VENTANA` + 1 aviso; sale a las 14:00 → 2 h 30 min reales y a las 17:00 entra normal; si a las 17:00 ficha ENTRADA sin salida → anterior `FALTA_SALIDA` 0 h + 1 aviso, nueva con el bloque de las 17:00, sin falta de ingreso; si no vuelve → `FALTA_INGRESO` del bloque (R4.3b).
+
+**Juanjo (fijo L–V 07–15):** sábado/domingo → jornada y horas reales (DOMINGO según regla), `TRABAJO_NO_PROGRAMADO` resuelta, **0 avisos**, sin falta de ingreso ni SIN_ACTIVIDAD; franco → sólo `ACTIVIDAD_EN_FRANCO` (antes eran 2 avisos); feriado no convocado en día hábil → adopta su turno, sin puntualidad, informativa sin aviso; convocado → como siempre.
+
+**Migración:** dos `ALTER TYPE "ShiftAlertType" ADD VALUE` (`TRABAJO_NO_PROGRAMADO`, `INGRESO_FUERA_DE_VENTANA`); sin datos. Rollback `prisma/rollbacks/20261124120000_shift_alert_unscheduled_work_types.down.sql`: transacción + `LOCK`, **aborta si alguna alerta usa los valores nuevos** (nunca las borra), recrea el tipo con los 16 valores previos en el orden del historial y borra su fila de `_prisma_migrations`. Orden: antes que los rollbacks de R4.3a, R4.1A y R4.1, y con el código anterior a R4.5 ya desplegado.
+
+**Validación local** (Postgres.app 18, bases descartables `r45_mig`, `clock_it_r45_*`, `deletion_it_r45`; ningún comando contra Neon):
+- Historial completo (81 migraciones) en base limpia: `migrate status` al día y `migrate diff` **No difference detected**. Rollback con una alerta `TRABAJO_NO_PROGRAMADO` → aborta, hash de `ShiftAlert` idéntico; sin ella → revierte, legacy intacto (hash), `migrate diff` contra el schema de `4b5f15b` sin diferencias, migración otra vez pendiente; re-aplicada sin diferencias.
+- **Compatibilidad con development:** base local con el historial de `63d4338` (último aplicado en development, hasta `20261120120000`): `'TRABAJO_NO_PROGRAMADO'::"ShiftAlertType"` falla (22P02) ⇒ **el backend de R4.5 contra development sin migrar haría fallar el paso de entrada del post-proceso de un fijo en fin de semana o feriado** (el job reintenta y queda FAILED; la fichada no se pierde). Aplicando sobre ese estado las tres pendientes (`20261120180000`, `20261121090000`, `20261124120000`) con `migrate deploy`: en orden, sin errores y `migrate diff` sin diferencias.
+- Backend 4321 tests (+61), `typecheck`, `build`; 15 suites de integración del CI 201/201 (incluidos PERF-5 de la fichada sin cambios de presupuesto, post-proceso, francos, horas manuales, Novedades); `rotationClock` + `rotationAttendance` 41/41 estables en 3 corridas. Frontend 1564 tests y `build`; QA visual de Alertas (Playwright con API interceptada, sin backend real) en 1366×768, 1440×900, 1920×1080, 768×1024 y 390×844 sin desborde horizontal. Fichador sin cambios: 501 tests, `build` y aislamiento.
+- **Expectativas actualizadas (autorizadas, decisión 4):** caracterización A1 sábado, A2 feriado y R1.1-A (Juanjo); `rotationEntry.test.ts` (configuración vs franco); dos casos Juanjo de `workShiftEvaluationRunner.test.ts`; `rotationClock.integration` (REST, fuera de ventana, `rotationDiagnosis.version` 2). El resto de los cambios en tests existentes son mocks ampliados (franco, convocatoria y feriados por defecto vacíos).
+
+**Pendiente antes de R4.9 (requisito del usuario):** revisar tolerancias y política de avisos de las **entradas anticipadas y salidas tardías habituales** de Planta: hoy una entrada anticipada dentro de la ventana fuera de tolerancia genera `INGRESO_ANTICIPADO` (INFO) con aviso y una salida tardía `SALIDA_TARDIA` con aviso (13G); con la operación real (entrar horas antes, salir después) serían avisos frecuentes. Se suma a límites por plantilla, umbrales de jornada extendida, fichador desplegado y **T-R4-CONC** (sigue bloqueando R4.9).
+
+**Riesgos y notas:**
+- Al promoverse, los fijos dejan de recibir avisos por trabajar en días no asignados y pierden las alertas de turno en francos y feriados no convocados: medir antes con un conteo de sólo lectura (autorización aparte).
+- `POSSIBLE_SHIFT_CONFIGURATION_MISSING` (que R4.4 volvió a generar para rotaciones) sigue rotulado "Registro anterior" en `ShiftAlertsPage` (`LEGACY_ALERT_TYPES`): deuda de R4.4, no corregida.
+- Deploy: R4.1A + R4.3a + R4.5 juntas y antes del código (autorización aparte, procedimiento de §24.19).
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas

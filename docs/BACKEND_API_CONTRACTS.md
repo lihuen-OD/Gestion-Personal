@@ -1499,6 +1499,7 @@ Contrato de empleado en las cuatro respuestas (plan §32, vigente): `{ id, dni, 
 **Rotaciones en el fichador (R4.4, `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.6).** Sólo cambia para miembros de una rotación (o jornadas con bloque); turnos fijos y no miembros responden exactamente igual. Contrato aditivo:
 - Request: `exitConfirmation?: { openShiftId: uuid, nextBlockKey: string }`, sólo con `punchType: "OUT"` (con `IN` → `VALIDATION_ERROR`). Entra en el hash de idempotencia sólo si viene.
 - La entrada se asigna al bloque programado (`assignInstantToBlock`) y la jornada nace con `shiftTemplateId`, `shiftTemplateSource` (`ROTATION`/`HOLIDAY_CONVOCATION`), `scheduledStartAt` y `maxAllowedMinutes` congelados. Una ENTRADA asignada a un bloque **posterior** al de la jornada abierta se acepta siempre (aun `ALERT_ONLY` y < 1200 min): la anterior pasa a `FALTA_SALIDA` sin `endAt`, `endPunchId` ni horas (`TimeEntry` 0 h) y la respuesta trae `previousOpenShift` como en el rollover.
+- (R4.5, §25.7) Lo mismo con una jornada abierta **sin bloque** (abierta antes de la ventana de un bloque, no programada, en franco o sin configuración) cuando la nueva ENTRADA se asigna a un bloque válido que empieza después de esa jornada y el ingreso de la jornada abierta no pertenecía a ese mismo bloque. Nunca adopta el bloque sobre la jornada anterior ni suma sus horas. Una ENTRADA que no se asigna a ningún bloque, un doble toque de la misma llegada y los turnos fijos siguen con `CLOCK_ALREADY_OPEN`. La respuesta y el contrato no cambian; el payload interno del job (`blockChange.previousBlock`) pasa a opcional.
 - `error.clockGuidance` (público, también en production, como `retryAfterSeconds`; se guarda en el intento FAILED y `GET …/attempts/:requestId` lo devuelve en `error.clockGuidance`): `{ kind: "EXIT_CONFIRMATION_REQUIRED" | "SHIFT_LIMIT_EXCEEDED", openShiftId, openShiftStartAt, previousBlock: { startAt, endAt }, nextBlock: { key, startAt } | null, exitAt, exitDurationMinutes }`. El kiosco muestra horas, nunca ids.
 - Confirmar: SALIDA con **otro** `requestId` y `exitConfirmation` de la guía. El servidor revalida: otra jornada abierta → `CLOCK_SHIFT_CHANGED`; otro turno siguiente → vuelve a preguntar; límite, superposición, horas manuales y períodos protegidos se aplican siempre. Reintentar el mismo `requestId` repite exactamente la misma pregunta.
 
@@ -2054,6 +2055,14 @@ Todas las rutas requieren `requireAuth`.
 | POST | `/groups` | RRHH | Crear grupo de turnos |
 | PATCH | `/groups/:id` | RRHH | Editar código, nombre, orden o estado |
 | DELETE | `/groups/:id` | RRHH | Eliminar un grupo sin plantillas |
+
+#### Trabajo no programado en alertas (`/alerts`) — R4.5
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.7. Dos valores nuevos de `type` (aditivos; el filtro `?type=` los acepta):
+- `TRABAJO_NO_PROGRAMADO`: jornada sin turno exigible (día que la asignación fija no incluye, descanso de una rotación, feriado sin convocatoria, fuera de los bloques del día). Clasificación **informativa**: se crea con `status: "RESUELTA"`, `severity: "INFO"`, `resolvedByUserId: null`, `resolvedAt` = alta y `resolutionNote` con el motivo; nunca genera `SystemNotification`, nunca se reabre y `POST /alerts/:id/resolve` responde `SHIFT_ALERT_ALREADY_RESOLVED` como con cualquier alerta no pendiente. No aparece con el filtro por defecto (`PENDIENTE`). Los regímenes `SIN_TURNO`, `TURNO_FLEXIBLE` y `alertOnOutOfShift = false` no la generan.
+- `INGRESO_FUERA_DE_VENTANA`: ingreso de un miembro de rotación antes de la ventana de asignación de su bloque posterior del mismo día (antes `TURNO_NO_IDENTIFICADO`). `PENDIENTE`, `ADVERTENCIA`, con aviso inmediato, no suprimible por régimen; no satisface el bloque.
+
+`TURNO_NO_IDENTIFICADO` queda sólo para quien ficha sin ninguna asignación HABILITADA vigente (configuración legacy). En franco o feriado no convocado no se generan alertas de turno (puntualidad, salida anticipada/tardía, jornada insuficiente o fuera de turno); sí `ACTIVIDAD_EN_FRANCO`, jornada extendida y las de falta u olvido de salida.
 
 #### Grupos de turnos (`/groups`) — R3.1
 
