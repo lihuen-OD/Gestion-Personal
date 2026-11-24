@@ -53,7 +53,8 @@ export function RotationPreviewPanel({ rotation }: { rotation: ShiftRotation }) 
     return () => {
       alive = false;
     };
-  }, [rotation.id, range.from, range.to, page, reload]);
+    // `updatedAt` y `status`: al activar, desactivar o finalizar, la vista previa se vuelve a pedir (deja de ser simulación).
+  }, [rotation.id, rotation.updatedAt, rotation.status, range.from, range.to, page, reload]);
 
   const dates = useMemo(() => (result ? previewDates(result.context.range.from, result.context.range.days) : []), [result]);
   const changeRange = (nextStart: string, nextWeeks = weeks) => {

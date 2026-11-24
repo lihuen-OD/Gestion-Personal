@@ -110,6 +110,17 @@ describe("consulta", () => {
   });
 });
 
+describe("actualización", () => {
+  it("al cambiar el estado de la rotación (p. ej. activarla) vuelve a pedir la vista previa", async () => {
+    const { rerender } = render(<RotationPreviewPanel rotation={rotationFixture()} />);
+    expect(await screen.findByText(SIMULATION_NOTICE)).toBeInTheDocument();
+    vi.mocked(shiftRotationApiService.preview).mockResolvedValue(previewResponse(ROWS, { from: FROM, days: 14, inactive: false }));
+    rerender(<RotationPreviewPanel rotation={rotationFixture({ status: "ACTIVO", updatedAt: "2026-11-24T16:00:00Z" })} />);
+    expect(await screen.findByText(/Configuración vigente de la rotación/)).toBeInTheDocument();
+    expect(screen.queryByText(SIMULATION_NOTICE)).not.toBeInTheDocument();
+  });
+});
+
 describe("celdas", () => {
   it("nocturno con +1 sólo en su día, doble bloque, descanso, sin configurar, conflicto, fijo y sin programación", async () => {
     renderPanel();

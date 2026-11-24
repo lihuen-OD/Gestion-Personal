@@ -3131,3 +3131,6 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .rotation-finalize-check{display:flex;align-items:flex-start;gap:8px;padding:12px 16px;border:1px solid var(--ds-red-200);border-radius:10px;background:#fff}
 .rotation-finalize-check label{color:var(--color-text-primary)!important;font-size:13px!important;font-weight:600!important;cursor:pointer}
 @media(max-width:700px){.rotation-finalize-date .button{width:100%;margin-top:0}}
+/* Una regla global de campos dentro de modales fuerza min-height:40px también en casillas: las de confirmación vuelven a 16 px y quedan alineadas con su texto. */
+.rotation-finalize-check input[type="checkbox"],.rotation-fixed-conflict-check input[type="checkbox"]{width:16px!important;height:16px!important;min-height:16px!important;margin:1px 0 0!important;padding:0!important}
+.rotation-finalize .rotation-grid-note{margin:0!important}
