@@ -51,7 +51,14 @@ export type ShiftAlertTypeValue =
   | "ACTIVIDAD_EN_FRANCO"
   // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: jornada del fichador sobre
   // una fecha con horas cargadas a mano. La crea time-entries (post-proceso).
-  | "ACTIVIDAD_SOBRE_CARGA_MANUAL";
+  | "ACTIVIDAD_SOBRE_CARGA_MANUAL"
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): clasificación informativa de una
+  // jornada sin turno programado. Se crea ya RESUELTA y nunca avisa
+  // (recordInformativeShiftAlert); nunca pasa por createShiftAlert.
+  | "TRABAJO_NO_PROGRAMADO"
+  // R4.5: ingreso de un miembro de rotación antes de la ventana de asignación
+  // de su bloque posterior del mismo día (antes, TURNO_NO_IDENTIFICADO).
+  | "INGRESO_FUERA_DE_VENTANA";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
@@ -71,6 +78,8 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   JORNADA_FUERA_DE_TURNO: "ADVERTENCIA",
   ACTIVIDAD_EN_FRANCO: "ADVERTENCIA",
   ACTIVIDAD_SOBRE_CARGA_MANUAL: "ADVERTENCIA",
+  TRABAJO_NO_PROGRAMADO: "INFO",
+  INGRESO_FUERA_DE_VENTANA: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -96,6 +105,8 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
   ACTIVIDAD_EN_FRANCO: "Actividad registrada en día de franco",
   ACTIVIDAD_SOBRE_CARGA_MANUAL: "Actividad fichada sobre horas cargadas manualmente",
+  TRABAJO_NO_PROGRAMADO: "Trabajo no programado",
+  INGRESO_FUERA_DE_VENTANA: "Ingreso fuera del horario del turno",
 };
 
 // Destino del aviso: Asistencia, salvo los tipos que se deciden en otra pantalla.

@@ -405,6 +405,13 @@ enum ShiftAlertType {
   // computando y la fichada queda como evidencia hasta que un responsable
   // decide cuál conservar.
   ACTIVIDAD_SOBRE_CARGA_MANUAL
+  // R4.5 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.7): jornada sin turno
+  // programado (fin de semana de un fijo, REST de una rotación, feriado no
+  // convocado). Clasificación INFORMATIVA: se crea ya RESUELTA, sin aviso.
+  TRABAJO_NO_PROGRAMADO
+  // R4.5: ingreso de un miembro de rotación antes de la ventana de asignación
+  // de su bloque posterior del mismo día. No satisface ese bloque.
+  INGRESO_FUERA_DE_VENTANA
 }
 
 enum ShiftAlertStatus {
