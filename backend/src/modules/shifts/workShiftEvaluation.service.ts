@@ -92,12 +92,14 @@ export function evaluateOutOfShiftWorkday(input: {
   match: ShiftMatchResult;
   actualStartAt: Date;
   actualEndAt: Date;
+  /** R4.4: inicio programado CONGELADO del bloque de rotación (si no, la ocurrencia más cercana, como siempre). */
+  scheduledStartAt?: Date | null;
 }): OutOfShiftWorkdayResult {
   if (input.match.case !== "ENABLED" || !input.match.template) {
     return { evaluated: false, outsideShift: false, overlapMinutes: null, scheduledStartAt: null, scheduledEndAt: null };
   }
 
-  const scheduledStartAt = closestOccurrence(input.actualStartAt, input.match.template.startTime).scheduledAt;
+  const scheduledStartAt = input.scheduledStartAt ?? closestOccurrence(input.actualStartAt, input.match.template.startTime).scheduledAt;
   const scheduledEndAt = scheduledInstantForShiftTime(scheduledStartAt, input.match.template.endTime, input.match.template.crossesMidnight);
   const overlapMilliseconds = Math.max(
     0,
@@ -236,7 +238,10 @@ export function isEarlyArrivalReviewRequired(differenceMinutes: number): boolean
  * ventana (p. ej. trabajo extra a las 21:00 de alguien con turno 08:00) o sin
  * turno, es la fecha argentina del ingreso.
  */
-export function workShiftOperationalDateKey(startAt: Date, template: Pick<ShiftTemplateRef, "startTime" | "endTime" | "crossesMidnight"> | null): string {
+export function workShiftOperationalDateKey(startAt: Date, template: Pick<ShiftTemplateRef, "startTime" | "endTime" | "crossesMidnight"> | null, scheduledStartAt?: Date | null): string {
+  // R4.4: el bloque de rotación congelado define la fecha operativa (la del
+  // inicio programado), sin depender de la ocurrencia más cercana.
+  if (scheduledStartAt) return argentinaDateKey(scheduledStartAt);
   if (template) {
     const { scheduledAt } = closestOccurrence(startAt, template.startTime);
     const scheduledEndAt = scheduledInstantForShiftTime(scheduledAt, template.endTime, template.crossesMidnight);
@@ -255,12 +260,15 @@ export interface ExitPunctualityResult {
 }
 
 /** Solo se afirma puntualidad de salida cuando el turno coincidente está HABILITADO para el empleado (Caso A). */
-export function evaluateExitPunctuality(input: { match: ShiftMatchResult; startAt: Date; actualExitAt: Date }): ExitPunctualityResult {
+export function evaluateExitPunctuality(input: { match: ShiftMatchResult; startAt: Date; actualExitAt: Date; scheduledStartAt?: Date | null }): ExitPunctualityResult {
   if (input.match.case !== "ENABLED" || !input.match.template) {
     return { evaluated: false, earlyLeave: false, lateLeave: false, differenceMinutes: null, scheduledExitAt: null };
   }
   const template = input.match.template;
-  const scheduledExitAt = scheduledInstantForShiftTime(input.startAt, template.endTime, template.crossesMidnight);
+  // R4.4: con bloque congelado, la salida programada es la del bloque (su
+  // inicio programado + la plantilla): un ingreso tardío pasada la medianoche
+  // no corre la salida un día.
+  const scheduledExitAt = scheduledInstantForShiftTime(input.scheduledStartAt ?? input.startAt, template.endTime, template.crossesMidnight);
   const differenceMinutes = differenceInMinutes(input.actualExitAt, scheduledExitAt);
   return {
     evaluated: true,
@@ -333,11 +341,11 @@ export interface OpenShiftRiskResult {
  * Etapa 15M.7C: este control es universal. La obligación de cumplir un turno
  * no altera el riesgo de que una jornada haya quedado abierta.
  */
-export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null }): OpenShiftRiskResult {
+export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null; scheduledStartAt?: Date | null }): OpenShiftRiskResult {
   const minutesOpen = differenceInMinutes(input.now, input.startAt);
   const absoluteLimitMinutes = input.template?.absoluteOpenShiftLimitMinutes ?? DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES;
 
-  const expectedExitAt = input.template ? scheduledInstantForShiftTime(input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
+  const expectedExitAt = input.template ? scheduledInstantForShiftTime(input.scheduledStartAt ?? input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
 
   let missingOutThresholdMinutes: number | null = null;
   if (input.template && input.template.missingOutAlertAfterMinutes !== null && expectedExitAt) {

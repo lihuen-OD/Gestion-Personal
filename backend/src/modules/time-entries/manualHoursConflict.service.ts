@@ -79,7 +79,7 @@ export function shiftDays(shift: ManualHoursConflictRow["workShift"]): ShiftDays
     const current = segmentsByDate.get(key);
     segmentsByDate.set(key, { minutes: (current?.minutes ?? 0) + segment.minutes, last: { id: segment.id, startAt: segment.fromDateTime, endAt: segment.toDateTime } });
   }
-  const operationalDateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate);
+  const operationalDateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate, shift.scheduledStartAt);
   return { operationalDateKey, dayKeys: [...new Set([...segmentsByDate.keys(), operationalDateKey])].sort(), segmentsByDate };
 }
 

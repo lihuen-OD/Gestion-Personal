@@ -18,7 +18,7 @@ type Db = PrismaTransactionClient;
 type ShiftTemplateTimes = { startTime: string; endTime: string; crossesMidnight: boolean } | null;
 export type DayOffActivityShift = { id: string; employeeId: string; startAt: Date; shiftTemplate: ShiftTemplateTimes };
 
-const activityShiftSelect = { id: true, employeeId: true, startAt: true, shiftTemplate: { select: { startTime: true, endTime: true, crossesMidnight: true } } } as const;
+const activityShiftSelect = { id: true, employeeId: true, startAt: true, scheduledStartAt: true, shiftTemplate: { select: { startTime: true, endTime: true, crossesMidnight: true } } } as const;
 
 /** Jornadas del fichador de esas personas cuya fecha operativa es `dateKey`. */
 export async function findClockWorkShiftsForOperationalDate(db: Db, employeeIds: string[], dateKey: string): Promise<DayOffActivityShift[]> {
@@ -32,7 +32,7 @@ export async function findClockWorkShiftsForOperationalDate(db: Db, employeeIds:
     },
     select: activityShiftSelect,
   });
-  return shifts.filter((shift) => workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate) === dateKey);
+  return shifts.filter((shift) => workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate, shift.scheduledStartAt) === dateKey);
 }
 
 /**
@@ -72,7 +72,7 @@ export async function resolveDayOffActivityAlerts(db: Db, workShiftIds: string[]
 export async function evaluateWorkShiftDayOff(workShiftId: string, options: { db: Db }): Promise<boolean> {
   const shift = await options.db.workShift.findUnique({ where: { id: workShiftId }, select: { ...activityShiftSelect, source: true } });
   if (!shift || shift.source === "ADMIN") return false;
-  const dateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate);
+  const dateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate, shift.scheduledStartAt);
   await lockEmployeeDays(options.db, [{ employeeId: shift.employeeId, dateKey }]);
   const dayOff = await options.db.employeeDayOff.findUnique({
     where: { employeeId_date: { employeeId: shift.employeeId, date: argentinaCalendarDate(dateKey) } },

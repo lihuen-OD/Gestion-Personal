@@ -488,7 +488,7 @@ Los tests existentes de `workObligation`, `workShiftEvaluation`, `workShiftEvalu
 
 - **Falta de ingreso:** rotación semana 2 (Walter de Mañana, Roberto de Tarde): a las 07:10 sólo Walter es candidato; **nunca** se crea FALTA_INGRESO de 07:00 para Roberto; a las 17:10 sin fichada ⇒ FALTA_INGRESO 17:00 para Roberto.
 - **Inactividad:** universo = quienes el resolver da `SHIFT`; FDS sólo el equipo de mañana.
-- **Entrada:** Roberto (Tarde) ficha 16:55 ⇒ referencia 17:00, sin alerta; ficha 11:30 ⇒ INGRESO_ANTICIPADO contra 17:00 (no INGRESO_TARDE contra 07:00); `WorkShift.shiftTemplateSource = ROTATION`.
+- **Entrada:** Roberto (Tarde) ficha 16:55 ⇒ referencia 17:00, sin alerta; `WorkShift.shiftTemplateSource = ROTATION`. **Corregido en R4.4 (§25.6, decisión del usuario):** la entrada de las 11:30 (330 min antes) queda **sin bloque** por la ventana `[inicio − 240, fin)` aprobada en R4.2 — fuera de ventana, alerta de revisión no suprimible; nunca INGRESO_TARDE contra 07:00.
 - **Salida:** jornada con `shiftTemplateSource = ROTATION` ⇒ `ENABLED`, tolerancias de la plantilla esperada; jornada histórica (`null`) ⇒ lógica actual.
 - **Feriado:** turno habitual (fijo o rotación) + sin convocatoria ⇒ sin obligación; + convocatoria ⇒ obligación.
 - **Franco:** activo ⇒ sin obligación en rotación y en fijo.
@@ -1182,7 +1182,7 @@ Producción: etapa aparte con autorización explícita.
 Fixture: rotación PLANTA, ciclo 2, ancla lunes 2026-11-23; A = {19, 20}, B = {21, 22}; semana 0: A = Planta-01 L–V, B = Planta-02 L–V; S/D parametrizados hasta la decisión.
 
 1. A, semana 0 (lunes 23/11): obligación 07:00 (vence 07:10); entrada 07:05 → Planta-01 sin alerta; 07:25 → `INGRESO_TARDE`; salida contra 17:00 ±20; Novedades 600; falta de ingreso a las 07:10 si no fichó.
-2. A, semana 1 (lunes 30/11): ningún incidente a las 07:10; obligación 17:00; entrada 16:55 → Planta-02 (nunca Planta-01, tampoco con una entrada a las 11:30); salida del martes contra 03:00; fecha operativa lunes; Novedades 600 (no 1200).
+2. A, semana 1 (lunes 30/11): ningún incidente a las 07:10; obligación 17:00; entrada 16:55 → Planta-02 (nunca Planta-01; una entrada a las 11:30 queda sin bloque, fuera de ventana — corregido en R4.4, §25.6); salida del martes contra 03:00; fecha operativa lunes; Novedades 600 (no 1200).
 3. Domingo 29/11 → lunes 30/11 cambia de semana sin editar nada; lunes 2027-01-04 conserva la alternancia tras el cambio de año.
 4. B es el inverso de A en ambas semanas.
 5. Empleado fijo de Oficina: resultados idénticos (caracterización verde sin tocar).
@@ -1503,6 +1503,28 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 - Con el cliente de la feature: integraciones existentes afectadas (francos, Novedades ×2, destinatarios, post-proceso, fichada) + la nueva: 109/109. Suite backend **4236 verdes**; `typecheck` y `build` verdes. Tests existentes: sólo mocks ampliados (membresías vacías, `updateMany` en transacciones); ninguna expectativa cambió. Caracterización R1/R1.1 y resolver R2 sin cambios.
 
 **Pendiente:** R4.4 (adopción del bloque en la entrada, salida, cierre, puntualidad); T-R4-CONC; deploy de R4.1A + R4.3a en development (autorización aparte).
+
+### 25.6 R4.4 — Fichador con bloques de rotación (implementada y validada en local; sin schema ni migraciones)
+
+**Estado:** código listo, inerte sin membresías (hoy, todos los entornos). Plan v4 aprobado por el usuario el 2026-11-20. **Retiradas** por el usuario, sin implementar: `SALIDA_EN_REVISION`, `WorkShift.reviewExitPunchId`, `ACCEPT_EXIT`/`REJECT_EXIT`, pantalla obligatoria de aprobación, job `OBSERVED_EXIT` y la 201 de «salida observada». Nada depende de que RRHH apruebe fichadas.
+
+**Motor único:** bloques efectivos de R4.3b (`effectiveBlocksAround`, que ahora también usa la evidencia) + `assignInstantToBlock` (R4.2). `shifts/rotationEntry.ts` (puro) sólo clasifica: entrada `ASSIGNED` (puntualidad con las tolerancias del bloque) | `CONFIGURATION` (MISSING/CONFLICT de la fecha) | `DAY_OFF` | `OUTSIDE_WINDOW` (bloque más tarde la misma fecha) | `UNSCHEDULED`; salida `NORMAL` | `LIKELY_FORGOTTEN_EXIT` | `LIMIT_EXCEEDED`. Miembro detectado con un `_count` filtrado en la MISMA consulta del contexto de la fichada: no miembros, 0 sentencias nuevas (presupuesto PERF-5 idéntico: IN 4/11/0, OUT 15/18/0, ROLLOVER 5/17/0).
+
+**Entrada:** se congela en la apertura (`shiftTemplateId`, `shiftTemplateSource`, `scheduledStartAt`, `maxAllowedMinutes` de la plantilla) y en el payload del job (`rotationEntry`); el post-proceso nunca recalcula ni usa asignaciones fijas. **Cambio de bloque** (entrada asignada a un bloque posterior al de la jornada abierta): rollover existente, siempre aceptado (aun `ALERT_ONLY` y < 1200): anterior `FALTA_SALIDA` sin `endAt`/`endPunchId`/horas (0 h), nueva jornada con su bloque; si el vencimiento cerró la anterior en paralelo, una sola reapertura simple. Con `ALERT_ONLY`, `POSIBLE_OLVIDO_SALIDA` queda CRÍTICA y pendiente (nunca reabre una resuelta). Fijos: `shiftTemplateSource` NULL (no bloquea el rollback de R4.1).
+
+**Salida:** jornada con bloque ⇒ plantilla del bloque sin `ShiftAssignment` (G6) y salida programada = `scheduledStartAt` + plantilla (un ingreso tardío pasada la medianoche no corre la salida). Cuatro valores, todos de configuración existente: salida programada, tolerancia, umbral de jornada extendida (régimen → plantilla → 600 legacy) y límite absoluto. Posible olvido de salida — confirmación previa **sólo** si (a) el instante se asignaría como entrada a un bloque posterior, (b) cae en `[inicio − entryToleranceBefore, fin)` de ese bloque y (c) el anterior ya terminó con su tolerancia. José viernes A: 11:02, 12:30, 15:00 y 18:49 cierran solos; 18:55 y 19:02 preguntan; nocturnos legítimos (Juanchi 07:05, Carlos 03:05) nunca. Nada se persiste antes de confirmar; el fichador ofrece «Registrar ENTRADA» (recomendado) o «Confirmar SALIDA anterior». Confirmar no saltea límite, superposición (`WORK_SHIFT_OVERLAP`), horas manuales ni períodos protegidos. Límite superado: no se registra, AuditLog `REJECT` del intento y `FALTA_SALIDA` por el mantenimiento.
+
+**Avisos (sistema existente):** sólo por anomalías persistidas, al responsable asignado y RRHH: falta de ingreso (R4.3b), falta de salida (texto propio en el cambio de bloque), jornada extendida, salida tardía cerca de otro turno (un solo aviso por jornada, con contexto; nunca por abrir o cancelar la confirmación), D3: `POSSIBLE_SHIFT_CONFIGURATION_MISSING` no suprimible (un aviso por persona y día), `OUTSIDE_WINDOW` con `TURNO_NO_IDENTIFICADO` no suprimible, `UNSCHEDULED` suprimible (provisional, R4.5); franco sólo `ACTIVIDAD_EN_FRANCO`. **D5:** `rotationDiagnosis` versionado en el AuditLog de la transacción de cada fichada de miembro.
+
+**Fichador:** `ExitDecisionDialog` (Modal accesible, foco en ENTRADA, misma foto, cierre automático a los 45 s, sin códigos ni ids); contrato aditivo `exitConfirmation` + `clockGuidance` (ver `BACKEND_API_CONTRACTS.md`). QA visual en 320×568, 390×844, 844×390, 768×1024, 1024×768, 1366×768, 1440×900 y 1920×1080 sin desbordes y con objetivos ≥ 44 px.
+
+**Validación local** (bases descartables en `localhost`; ningún comando contra Neon): backend 4260 tests, `typecheck`, `build`; `clock/rotationClock.integration.test.ts` (opt-in `ROTATION_CLOCK_IT_DATABASE_URL`, en el CI) 20/20 estable en 3 corridas con fichadas reales por HTTP y la grilla de Planta; 12 integraciones (159 tests) con el cliente de la feature; fichador 501 tests, `tsc`, `build` + aislamiento, 14 e2e (3 nuevas). Compatibilidad con development: base local migrada hasta `20261120120000_add_shift_rotations` + el mismo cliente que el checkout principal (schema de e87a53c): 10 integraciones legacy (123 tests) y sonda de 265 consultas reales (fichadas IN/OUT, 409, rollover legacy, tick de mantenimiento) sin ninguna referencia a columnas o tablas inexistentes.
+
+**Recuperación (2026-11-24):** el worktree temporal con R4.4 sin commitear se perdió por un reinicio (scratchpad en `/private/tmp`); se reprodujo desde la transcripción de la sesión (32 operaciones con verificación de coincidencia exacta) en un worktree permanente y se re-validó completo.
+
+**Requisitos antes de R4.9 (cargar Planta):** configurar por plantilla el límite absoluto (`absoluteOpenShiftLimitMinutes`; el 1200 actual es provisional) y el umbral de jornada extendida, tolerancias reales (definen también el disparador), fichador desplegado en los equipos, y **T-R4-CONC** resuelto.
+
+**Pendiente:** R4.5 (tratamiento informativo de trabajo no programado y de entrada muy anticipada); R4.6–R4.9; deploy de R4.1A + R4.3a en development (autorización aparte).
 
 ---
 

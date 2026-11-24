@@ -5,7 +5,7 @@ import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
 import { assignInstantToBlock, DEFAULT_BLOCK_EARLY_WINDOW_MINUTES } from "../shifts/blockAssignment";
-import { resolveRotationObligations } from "../shifts/rotationObligation.service";
+import { effectiveBlocksAround } from "../shifts/rotationObligation.service";
 import type { LoadedRotationTemplate } from "../shifts/rotationPlan.loader";
 import type { ExpectedBlock } from "../shifts/rotationPlan";
 import { calendarDayEventAt } from "../workforce-management/notificationListing";
@@ -146,13 +146,7 @@ export async function findSatisfiedBlockObligationKeys(blocks: ReadonlyArray<Exp
     dates.add(block.operationalDate);
     dates.add(nextCalendarDateKey(block.operationalDate));
   }
-  const effective = await resolveRotationObligations({ dateKeys: [...dates], employeeIds });
-  const candidatesByEmployee = new Map<string, ExpectedBlock<LoadedRotationTemplate>[]>();
-  for (const employeeId of employeeIds) {
-    const byKey = new Map<string, ExpectedBlock<LoadedRotationTemplate>>();
-    for (const obligation of effective.get(employeeId)?.values() ?? []) for (const block of obligation.blocks) byKey.set(block.obligationKey, block);
-    candidatesByEmployee.set(employeeId, [...byKey.values()].sort((left, right) => left.scheduledStartAt.getTime() - right.scheduledStartAt.getTime()));
-  }
+  const { blocksByEmployee: candidatesByEmployee } = await effectiveBlocksAround(employeeIds, [...dates]);
   const allCandidates = [...candidatesByEmployee.values()].flat();
   if (!allCandidates.length) return satisfied;
   const windowStart = new Date(Math.min(...allCandidates.map((block) => block.scheduledStartAt.getTime())) - DEFAULT_BLOCK_EARLY_WINDOW_MINUTES * 60_000);

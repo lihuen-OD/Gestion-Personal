@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus, type HourConceptKind, type WorkShift } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+import type { ClockGuidance } from "../../shared/errors/clockGuidance";
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
@@ -55,6 +56,33 @@ import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 // Etapa 10B: nota de la alerta POSIBLE_OLVIDO_SALIDA resuelta por un rollover (también la usa el post-proceso durable, PERF-5D).
+/** Regla única de superposición de jornadas (WORK_SHIFT_OVERLAP): sólo jornadas con horas (endAt). */
+function findOverlappingWorkShiftWithin(db: Pick<PrismaTransactionClient, "workShift">, employeeId: string, startAt: Date, endAt: Date, excludeId?: string) {
+  return db.workShift.findFirst({
+    where: {
+      employeeId,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      status: { not: "ANULADO" },
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+    },
+    select: { id: true, startAt: true, endAt: true },
+  });
+}
+
+/**
+ * R4.4 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.6): bloque de rotación
+ * adoptado y CONGELADO en la apertura de la jornada (sólo miembros de
+ * rotación con la entrada asignada a un bloque). Sin él, la jornada nace como
+ * siempre (sin plantilla; la adopción legacy la hace el post-proceso).
+ */
+export type WorkShiftBlockAdoption = {
+  shiftTemplateId: string;
+  shiftTemplateSource: "ROTATION" | "HOLIDAY_CONVOCATION";
+  scheduledStartAt: Date;
+  maxAllowedMinutes: number;
+};
+
 export const ROLLOVER_OVERFLOW_RESOLUTION_NOTE = "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.";
 
 const timeEntryListOrderBy: SortOrderByMap<(typeof timeEntryListSortKeys)[number], Prisma.TimeEntryOrderByWithRelationInput> = {
@@ -874,7 +902,7 @@ export const timeEntriesRepository = {
   // F11.1: sólo un intento PROCESSING pasa a FAILED. Un COMPLETED (fichada ya
   // confirmada en su transacción) nunca se pisa. Devuelve el intento tal como
   // quedó, para que el llamador sepa si la fichada se confirmó.
-  async failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number }) {
+  async failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number; clockGuidance?: ClockGuidance }) {
     const response = failedAttemptResponse(error);
     await prisma.clockPunchAttempt.updateMany({
       where: { requestId, status: "PROCESSING" },
@@ -1398,6 +1426,7 @@ export const timeEntriesRepository = {
           observation: true,
           reviewStatus: true,
           shiftTemplateId: true,
+          scheduledStartAt: true,
           shiftTemplate: {
             select: {
               id: true,
@@ -1766,7 +1795,7 @@ export const timeEntriesRepository = {
   // relevante desde ese instante (chequeo PRELIMINAR del cooldown, el mismo
   // criterio que findLatestClockPunchSince); sin él, esa relación viene vacía.
   // La decisión con autoridad sigue siendo guardClockPunchCooldown en la tx.
-  findClockValidationContext(employeeId: string, cooldownSince?: Date | null) {
+  findClockValidationContext(employeeId: string, cooldownSince?: Date | null, rotationRange?: { from: Date; to: Date }) {
     return prisma.employee.findUnique({
       where: { id: employeeId },
       select: {
@@ -1801,6 +1830,11 @@ export const timeEntriesRepository = {
           take: 1,
           select: { timestamp: true },
         },
+        // R4.4: ¿es miembro de una rotación en D−1..D+1? Conteo filtrado en la
+        // MISMA sentencia (subconsulta), sin consultas nuevas para no miembros.
+        ...(rotationRange
+          ? { _count: { select: { shiftRotationMemberships: { where: { effectiveFrom: { lte: rotationRange.to }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: rotationRange.from } }] } } } } }
+          : {}),
       },
     });
   },
@@ -1906,7 +1940,7 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
+  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; adoption?: WorkShiftBlockAdoption; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -1938,6 +1972,7 @@ export const timeEntriesRepository = {
           status: WorkShiftStatus.ABIERTO,
           startAt: input.startAt,
           maxAllowedMinutes: 20 * 60,
+          ...(input.adoption ?? {}),
         },
       });
       if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
@@ -1955,7 +1990,7 @@ export const timeEntriesRepository = {
     return result;
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; entryObservation?: string; adoption?: WorkShiftBlockAdoption; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -2011,7 +2046,7 @@ export const timeEntriesRepository = {
           type: "INGRESO",
           timestamp: input.startAt,
           source: input.source,
-          observation: "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
+          observation: input.entryObservation ?? "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
           ...punchEvidenceData(evidence),
         },
       });
@@ -2027,6 +2062,7 @@ export const timeEntriesRepository = {
           status: WorkShiftStatus.ABIERTO,
           startAt: input.startAt,
           maxAllowedMinutes: 20 * 60,
+          ...(input.adoption ?? {}),
         },
       });
       if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
@@ -2152,15 +2188,7 @@ export const timeEntriesRepository = {
   },
 
   findOverlappingWorkShift(employeeId: string, startAt: Date, endAt: Date) {
-    return prisma.workShift.findFirst({
-      where: {
-        employeeId,
-        status: { not: "ANULADO" },
-        startAt: { lt: endAt },
-        endAt: { gt: startAt },
-      },
-      select: { id: true, startAt: true, endAt: true },
-    });
+    return findOverlappingWorkShiftWithin(prisma, employeeId, startAt, endAt);
   },
 
   // autoApprovedByUserId != null => quien carga (RRHH, Etapa 6L.3) aplica la
@@ -2430,6 +2458,12 @@ export const timeEntriesRepository = {
     // relee cada uno con su include después de escribirlo. El cierre manual de
     // RRHH (default) los sigue devolviendo para su respuesta y su auditoría.
     returnEntries?: boolean;
+    // R4.4: sólo la salida de una jornada con bloque de rotación. Dentro de la
+    // transacción: ninguna otra jornada CON horas (endAt) del empleado puede
+    // superponerse con [inicio, salida) — misma regla que WORK_SHIFT_OVERLAP de
+    // la carga manual (findOverlappingWorkShift). Las jornadas sin endAt
+    // (FALTA_SALIDA) no tienen horas y no cuentan.
+    overlapGuard?: boolean;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -2506,6 +2540,9 @@ export const timeEntriesRepository = {
       });
       if (!workShift) {
         throw new Error("WORK_SHIFT_ALREADY_CLOSED");
+      }
+      if (input.overlapGuard && await findOverlappingWorkShiftWithin(tx, input.employeeId, workShift.startAt, input.endAt, workShift.id)) {
+        throw new Error("WORK_SHIFT_OVERLAP");
       }
       // F7.1 (FICHADOR_STANDALONE_PWA_PLAN.md §26.12): la salida
       // (AttendancePunch) guarda el canal de ESTA request (`input.source`),

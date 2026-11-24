@@ -16,6 +16,17 @@ import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
 import { automaticHourConceptBreakdownsService } from "../employees/automaticHourConceptBreakdowns.service";
 import { storageService } from "../../shared/storage/storage.service";
+import { loadRotationPunchContext, openBlockShiftOf } from "./clockRotation";
+import { buildExpectedBlock } from "../shifts/rotationPlan";
+import type { LoadedRotationTemplate } from "../shifts/rotationPlan.loader";
+
+// R4.4: sólo la carga del contexto de rotación y la jornada abierta con bloque
+// (los empleados legacy de este archivo nunca las usan).
+vi.mock("./clockRotation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./clockRotation")>()),
+  loadRotationPunchContext: vi.fn(),
+  openBlockShiftOf: vi.fn(),
+}));
 
 vi.mock("./timeEntries.repository", () => ({
   // PERF-5B: la salida resuelve Horas Especiales en paralelo con el upload y se
@@ -877,7 +888,8 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
   // viernes A: bloques 07:00–11:00 y 19:00–07:00; olvida la salida de las
   // 11:00). COMPORTAMIENTO ACTUAL: el umbral es el fijo MAX_SHIFT_MINUTES
   // (1200 min) del servicio, no `maxAllowedMinutes` de la jornada ni el plan
-  // del día; un segundo bloque programado no se distingue. Cambia en R4.4.
+  // del día; un segundo bloque programado no se distingue. R4.4: sigue así para
+  // turnos fijos y no miembros; para miembros de rotación ver el bloque R4.4 de abajo.
   describe("R1.1-B — nuevo ingreso con jornada abierta (segundo bloque del día)", () => {
     const FRIDAY_0700 = new Date("2026-11-06T07:00:00.000-03:00");
     const openSince0700 = (extra: Record<string, unknown> = {}) => ({ id: "shift-0700", startAt: FRIDAY_0700, hourConcept: normalConcept, ...extra });
@@ -886,7 +898,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
     beforeEach(() => vi.useFakeTimers({ toFake: ["Date"] }));
     afterEach(() => vi.useRealTimers());
 
-    it("COMPORTAMIENTO ACTUAL (cambia en R4.4): ingreso a las 19:00 (720 min abierta) → 409 CLOCK_ALREADY_OPEN, sin crear jornada, sin rollover, sin marcar revisión y sin guardar evidencia", async () => {
+    it("turnos fijos (R4.4 sólo cambia para miembros de rotación): ingreso a las 19:00 (720 min abierta) → 409 CLOCK_ALREADY_OPEN, sin crear jornada, sin rollover, sin marcar revisión y sin guardar evidencia", async () => {
       vi.setSystemTime(at(720));
 
       await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700()]))).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_ALREADY_OPEN" });
@@ -926,11 +938,80 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
     });
 
-    it("COMPORTAMIENTO ACTUAL (cambia en R4.4): el umbral ignora `maxAllowedMinutes` de la jornada — con 300 min configurados, a los 720 min sigue respondiendo 409", async () => {
+    it("turnos fijos (sin cambios en R4.4): el umbral ignora `maxAllowedMinutes` de la jornada — con 300 min configurados, a los 720 min sigue respondiendo 409", async () => {
       vi.setSystemTime(at(720));
 
       await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, context([openSince0700({ maxAllowedMinutes: 300 })]))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
       expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+    });
+  });
+
+  // R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): miembros de rotación — la
+  // integración real está en clock/rotationClock.integration.test.ts; acá los
+  // caminos que necesitan forzar una carrera o una confirmación vieja.
+  describe("R4.4 — cambio de bloque y confirmación de salida (miembros de rotación)", () => {
+    const FRIDAY = (time: string) => new Date(`2026-11-06T${time}:00-03:00`);
+    const template = (code: string, startTime: string, endTime: string): LoadedRotationTemplate => ({
+      id: `tpl-${code}`, code, startTime, endTime, crossesMidnight: endTime <= startTime, status: "ACTIVO",
+      entryToleranceBeforeMinutes: 10, entryToleranceAfterMinutes: 10, exitToleranceBeforeMinutes: 20, exitToleranceAfterMinutes: 20,
+      minimumMinutesForCompliance: null, maximumInformativeMinutes: null, missingOutAlertAfterMinutes: null, absoluteOpenShiftLimitMinutes: 1200,
+    });
+    const morning = buildExpectedBlock({ employeeId: activeEmployee.id, dateKey: "2026-11-06", blockIndex: 0, template: template("PLANTA-07-11", "07:00", "11:00"), source: "ROTATION", origin: null })!;
+    const night = buildExpectedBlock({ employeeId: activeEmployee.id, dateKey: "2026-11-06", blockIndex: 1, template: template("PLANTA-19-07", "19:00", "07:00"), source: "ROTATION", origin: null })!;
+    const openMorning = { id: "shift-0700", startAt: FRIDAY("07:00"), hourConcept: normalConcept, shiftTemplateId: "tpl-PLANTA-07-11", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("07:00"), maxAllowedMinutes: 1200 };
+    const memberContext = () => ({ ...activeEmployee, workShifts: [openMorning], hourConcepts: [], _count: { shiftRotationMemberships: 1 } }) as never;
+    const openBlock = { id: "shift-0700", startAt: FRIDAY("07:00"), scheduledStartAt: FRIDAY("07:00"), maxAllowedMinutes: 1200, scheduledEndAt: FRIDAY("11:00"), template: { code: "PLANTA-07-11", startTime: "07:00", endTime: "11:00", crossesMidnight: false, exitToleranceAfterMinutes: 20 } };
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      (loadRotationPunchContext as Mock).mockResolvedValue({ obligationsByDate: new Map(), blocks: [morning, night] });
+      (openBlockShiftOf as Mock).mockResolvedValue(openBlock);
+      mockedResolveActiveWorkRegime.mockResolvedValue(null);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("ingreso al bloque de las 19:00 con la jornada de las 07:00 abierta (720 min): cambio de bloque con el bloque congelado y su payload", async () => {
+      vi.setSystemTime(FRIDAY("19:00"));
+      repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-1900", startAt: FRIDAY("19:00"), startPunchId: null });
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, memberContext());
+      expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
+        openWorkShiftId: "shift-0700",
+        adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200 },
+        missingOutObservation: expect.stringContaining("Falta registrar la salida del turno de las 07:00 a las 11:00"),
+      }));
+      expect(result).toMatchObject({ previousOpenShift: { id: "shift-0700", status: "FALTA_SALIDA" } });
+    });
+
+    it("si el vencimiento cerró la jornada anterior en paralelo, reintenta UNA vez como apertura simple (sin error para la persona)", async () => {
+      vi.setSystemTime(FRIDAY("19:00"));
+      repo.rolloverExpiredOpenWorkShift.mockRejectedValueOnce(new Error("WORK_SHIFT_ALREADY_CLOSED"));
+      repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-1900", startAt: FRIDAY("19:00"), startPunchId: null });
+      const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, memberContext());
+      expect(repo.createOpenWorkShift).toHaveBeenCalledTimes(1);
+      expect(repo.createOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({ adoption: expect.objectContaining({ scheduledStartAt: FRIDAY("19:00") }) }));
+      expect(result).not.toHaveProperty("previousOpenShift");
+    });
+
+    it("si también falla la reapertura (otro ingreso ganó), responde el 409 legacy y limpia la evidencia", async () => {
+      vi.setSystemTime(FRIDAY("19:00"));
+      repo.rolloverExpiredOpenWorkShift.mockRejectedValueOnce(new Error("WORK_SHIFT_ALREADY_CLOSED"));
+      repo.createOpenWorkShift.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "test" }));
+      await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, memberContext())).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+    });
+
+    it("salida a las 19:02: pide confirmación SIN escribir nada (ni foto); la guía queda en el error público", async () => {
+      vi.setSystemTime(FRIDAY("19:02"));
+      const error = await timeEntriesService.clockPhotoPunch(punch("OUT"), RECEPTION_CLOCK_ORIGIN, undefined, memberContext()).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ statusCode: 409, code: "CLOCK_EXIT_CONFIRMATION_REQUIRED", clockGuidance: { kind: "EXIT_CONFIRMATION_REQUIRED", openShiftId: "shift-0700", nextBlock: { key: night.obligationKey } } });
+      expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
+      expect(mockedUploadManagedObject).not.toHaveBeenCalled();
+    });
+
+    it("una confirmación para OTRO bloque siguiente vuelve a preguntar; para otra jornada responde CLOCK_SHIFT_CHANGED", async () => {
+      vi.setSystemTime(FRIDAY("19:02"));
+      await expect(timeEntriesService.clockPhotoPunch({ ...punch("OUT"), exitConfirmation: { openShiftId: "shift-0700", nextBlockKey: "otro" } }, RECEPTION_CLOCK_ORIGIN, undefined, memberContext())).rejects.toMatchObject({ code: "CLOCK_EXIT_CONFIRMATION_REQUIRED" });
+      await expect(timeEntriesService.clockPhotoPunch({ ...punch("OUT"), exitConfirmation: { openShiftId: "11111111-1111-1111-1111-111111111111", nextBlockKey: night.obligationKey } }, RECEPTION_CLOCK_ORIGIN, undefined, memberContext())).rejects.toMatchObject({ code: "CLOCK_SHIFT_CHANGED" });
+      expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
     });
   });
 

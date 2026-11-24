@@ -29,6 +29,7 @@ export const manualHoursConflictSelect = {
       observation: true,
       hourConceptId: true,
       shiftTemplate: { select: { startTime: true, endTime: true, crossesMidnight: true } },
+      scheduledStartAt: true,
       timeSegments: { select: { id: true, date: true, minutes: true, fromDateTime: true, toDateTime: true }, orderBy: { fromDateTime: "asc" } },
     },
   },

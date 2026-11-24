@@ -105,6 +105,8 @@ export type ClockPhotoPunchInput = {
     language?: string;
     cameraLabel?: string;
   };
+  /** R4.4: sólo SALIDA, al confirmar una salida dudosa (ligada a esa jornada y a ese turno siguiente). */
+  exitConfirmation?: { openShiftId: string; nextBlockKey: string };
 };
 
 export type ClockPunchResult = ClockInResponse["data"] | ClockOutResponse["data"];
@@ -113,7 +115,7 @@ export type ClockAttemptState = {
   status: "PROCESSING" | "COMPLETED" | "FAILED";
   response: ClockPunchResult | null;
   // F7.1: un FAILED por cooldown conserva el retryAfterSeconds original.
-  error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number } | null;
+  error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number; clockGuidance?: unknown } | null;
 };
 type ClockAttemptStatusResponse = { data: ClockAttemptState };
 

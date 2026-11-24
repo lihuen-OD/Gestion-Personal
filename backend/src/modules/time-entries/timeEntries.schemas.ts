@@ -146,7 +146,16 @@ export const clockPhotoPunchSchema = z.object({
     language: z.string().trim().max(40).optional(),
     cameraLabel: z.string().trim().max(180).optional(),
   }).optional(),
-});
+  // R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): sólo para SALIDA. Confirma la
+  // salida de una jornada abierta cuando el fichador la había señalado como
+  // posible olvido de salida; ligada a esa jornada y a ese bloque siguiente
+  // (el servidor revalida todo con el contexto actual). Sin el campo, el
+  // contrato es idéntico al anterior.
+  exitConfirmation: z.object({
+    openShiftId: z.string().uuid(),
+    nextBlockKey: z.string().min(1).max(120),
+  }).optional(),
+}).refine((value) => !value.exitConfirmation || value.punchType === "OUT", { message: "La confirmación de salida sólo aplica a una salida.", path: ["exitConfirmation"] });
 
 export const clockPunchAttemptParamsSchema = z.object({
   requestId: z.string().uuid(),

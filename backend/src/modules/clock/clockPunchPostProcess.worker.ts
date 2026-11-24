@@ -8,7 +8,8 @@ import { automaticHourConceptBreakdownsService } from "../employees/automaticHou
 import { evaluateWorkShiftDayOff } from "../employee-day-offs/employeeDayOffActivity";
 import { clearEmployeeTimeGridCache } from "../employees/employees.controller";
 import { clearShiftAlertReadCaches } from "../shifts/shiftAlert.cache";
-import { evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { escalateBlockChangeMissingExit, evaluateShiftEntry, evaluateShiftExit, resolveOpenShiftOverflowAlert } from "../shifts/workShiftEvaluationRunner";
+import { argentinaDateParts } from "../../shared/datetime/argentinaTime";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { ROLLOVER_OVERFLOW_RESOLUTION_NOTE } from "../time-entries/timeEntries.repository";
 import { notifyMissingExit } from "../time-entries/timeEntries.service";
@@ -134,11 +135,16 @@ async function runBreakdownStep(job: ClaimedClockPunchPostProcessJob, period: st
   job.stepsCompleted.push(step);
 }
 
+const hhmm = (instant: Date) => {
+  const { hour, minute } = argentinaDateParts(instant);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
 async function runSteps(job: ClaimedClockPunchPostProcessJob) {
   const kind: ClockPunchPostProcessKind = job.kind;
   if (kind === "ENTRY") {
     const payload = parsePayload(entryPayloadSchema, job);
-    await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx, rotationEntry: payload.rotationEntry }));
     await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
@@ -146,9 +152,20 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     // Mismo orden que el post-commit previo a PERF-5D: resolver la alerta de
     // la jornada vencida, avisar la falta de salida y evaluar el ingreso nuevo.
     const payload = parsePayload(rolloverPayloadSchema, job);
-    await runStep(job, POSTPROCESS_STEPS.overflowResolution, (tx) => resolveOpenShiftOverflowAlert(payload.previousShift.id, ROLLOVER_OVERFLOW_RESOLUTION_NOTE, tx));
-    await runStep(job, POSTPROCESS_STEPS.missingExitNotice, (tx) => notifyMissingExit(job.employeeId, payload.previousShift.id, payload.previousShift.startAt, { db: tx, rethrow: true }));
-    await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx }));
+    const blockChange = payload.blockChange;
+    // R4.4: cambio de bloque. Sin ALERT_ONLY, como el rollover de siempre. Con
+    // ALERT_ONLY, la revisión de la jornada anterior queda CRÍTICA y pendiente
+    // (nunca se resuelve sola). En ambos casos, un único aviso: la falta de salida.
+    await runStep(job, POSTPROCESS_STEPS.overflowResolution, (tx) => (
+      blockChange?.alertOnly
+        ? escalateBlockChangeMissingExit(job.employeeId, payload.previousShift.id, payload.actualAt, tx)
+        : resolveOpenShiftOverflowAlert(payload.previousShift.id, ROLLOVER_OVERFLOW_RESOLUTION_NOTE, tx)
+    ));
+    const missingExitMessage = blockChange
+      ? `No registró la salida del turno de las ${hhmm(blockChange.previousBlock.scheduledStartAt)} a las ${hhmm(blockChange.previousBlock.scheduledEndAt)}; ya ingresó a su turno de las ${hhmm(blockChange.nextBlock.scheduledStartAt)}. La jornada anterior quedó sin horas y requiere revisión.`
+      : undefined;
+    await runStep(job, POSTPROCESS_STEPS.missingExitNotice, (tx) => notifyMissingExit(job.employeeId, payload.previousShift.id, payload.previousShift.startAt, { db: tx, rethrow: true, message: missingExitMessage }));
+    await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx, rotationEntry: payload.rotationEntry }));
     await runStep(job, POSTPROCESS_STEPS.dayOffEvaluation, (tx) => evaluateWorkShiftDayOff(job.workShiftId, { db: tx }));
     return;
   }
@@ -159,7 +176,7 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
     const payload = parsePayload(exitPayloadSchema, job);
     const audit = payload.audit ?? undefined;
     for (const period of job.periods) await runBreakdownStep(job, period, audit);
-    await runStep(job, POSTPROCESS_STEPS.exitEvaluation, (tx) => evaluateShiftExit(job.employeeId, job.workShiftId, payload.actualAt, payload.segments, undefined, { db: tx, rethrow: true }));
+    await runStep(job, POSTPROCESS_STEPS.exitEvaluation, (tx) => evaluateShiftExit(job.employeeId, job.workShiftId, payload.actualAt, payload.segments, undefined, { db: tx, rethrow: true, rotationExit: payload.rotationExit }));
     await runStep(job, POSTPROCESS_STEPS.manualHoursNotice, (tx) => notifyManualHoursConflict(job.workShiftId, { db: tx }));
     return;
   }

@@ -1854,3 +1854,64 @@
 :root[data-power="low"] .kiosk-result-time {
   text-shadow: none;
 }
+
+/* ---------- R4.4: salida dudosa (ExitDecisionDialog) ----------
+ * Diálogo de decisión: dos acciones grandes con el mismo lenguaje que la
+ * acción principal del kiosco (entrada cian, salida índigo + ícono) y una
+ * línea que explica la consecuencia de cada una. Sin scroll locks. */
+.modal:has(.exit-decision) {
+  width: min(480px, 100%);
+}
+
+.exit-decision {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.exit-decision-option {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.exit-decision-hint {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.exit-decision-cancel {
+  justify-self: center;
+  min-height: 44px;
+}
+
+.exit-decision-nowrap {
+  white-space: nowrap;
+}
+
+@media (max-width: 420px) {
+  .exit-decision {
+    gap: var(--space-4);
+  }
+}
+
+/* Apaisado bajo (teléfono acostado): todo el diálogo, "Cancelar" incluido,
+ * entra sin desplazar; las acciones conservan ≥ 44 px. */
+@media (orientation: landscape) and (max-height: 540px) {
+  .exit-decision {
+    gap: var(--space-3);
+  }
+  .exit-decision-option {
+    gap: var(--space-1);
+  }
+  .exit-decision .button.kiosk-action {
+    min-height: 48px;
+  }
+  .exit-decision-cancel {
+    min-height: 44px;
+  }
+  .modal:has(.exit-decision) .modal-head {
+    padding-block-end: 0;
+  }
+}

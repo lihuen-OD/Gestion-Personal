@@ -39,7 +39,7 @@ export const resolutionNoteByDecision: Record<ManualHoursDecision, string> = {
 };
 
 type Db = PrismaTransactionClient;
-type ShiftForOperationalDate = { startAt: Date; shiftTemplateId: string | null };
+type ShiftForOperationalDate = { startAt: Date; shiftTemplateId: string | null; scheduledStartAt?: Date | null };
 
 /**
  * La fecha operativa (EMPLOYEE_DAY_OFF.md §4) difiere a lo sumo un día de la
@@ -57,7 +57,7 @@ export async function operationalDateKeyForShift(db: Pick<Db, "shiftTemplate">, 
   const template = shift.shiftTemplateId
     ? await db.shiftTemplate.findUnique({ where: { id: shift.shiftTemplateId }, select: { startTime: true, endTime: true, crossesMidnight: true } })
     : null;
-  return workShiftOperationalDateKey(shift.startAt, template);
+  return workShiftOperationalDateKey(shift.startAt, template, shift.scheduledStartAt);
 }
 
 export type NormalEntryOnDate = { date: Date; source: WorkShiftSource | null };

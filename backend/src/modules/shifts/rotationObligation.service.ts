@@ -16,7 +16,7 @@
  * francos, convocatorias y regímenes (una cada una) — nunca por empleado ni
  * por día.
  */
-import { argentinaCalendarDate, calendarDateKey } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, argentinaDateKey, calendarDateKey, nextCalendarDateKey, previousCalendarDateKey } from "../../shared/datetime/argentinaTime";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { workforceService } from "../workforce-management/workforce.service";
 import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftResolution, type RegimePeriod } from "./expectedShiftResolver";
@@ -123,4 +123,31 @@ export async function resolveRotationObligations(
     }
   }
   return result;
+}
+
+/** Fechas operativas D−1, D y D+1 de un instante (D = fecha argentina del instante). */
+export function neighborDateKeys(instant: Date): [string, string, string] {
+  const dateKey = argentinaDateKey(instant);
+  return [previousCalendarDateKey(dateKey), dateKey, nextCalendarDateKey(dateKey)];
+}
+
+/**
+ * R4.3b/R4.4: bloques EFECTIVOS (todas las precedencias aplicadas) de cada
+ * empleado en las fechas dadas, ordenados por inicio — única fuente para la
+ * evidencia de ingreso (R4.3b) y para la fichada (R4.4). Devuelve también las
+ * obligaciones por fecha, para clasificar lo que no tiene bloque.
+ */
+export async function effectiveBlocksAround(
+  employeeIds: string[],
+  dateKeys: string[],
+  db: RotationObligationReader = prisma,
+): Promise<{ obligations: RotationObligationMap; blocksByEmployee: Map<string, ExpectedBlock<LoadedRotationTemplate>[]> }> {
+  const obligations = await resolveRotationObligations({ dateKeys, employeeIds }, db);
+  const blocksByEmployee = new Map<string, ExpectedBlock<LoadedRotationTemplate>[]>();
+  for (const employeeId of employeeIds) {
+    const byKey = new Map<string, ExpectedBlock<LoadedRotationTemplate>>();
+    for (const obligation of obligations.get(employeeId)?.values() ?? []) for (const block of obligation.blocks) byKey.set(block.obligationKey, block);
+    blocksByEmployee.set(employeeId, [...byKey.values()].sort((left, right) => left.scheduledStartAt.getTime() - right.scheduledStartAt.getTime()));
+  }
+  return { obligations, blocksByEmployee };
 }
