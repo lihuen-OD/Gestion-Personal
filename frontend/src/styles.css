@@ -3046,3 +3046,62 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .rotation-modal-lead{margin:0;color:var(--color-text-secondary);font-size:13px;line-height:1.5}
 .rotation-modal-note{margin:0}
 @media(max-width:700px){.rotation-form .rotation-members-form-grid{grid-template-columns:1fr}}
+/* R4.8D: vista previa. Scroll interno (horizontal y vertical) para que persona y encabezados queden fijos. */
+.rotation-preview-controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 16px;margin:0 0 16px}
+.rotation-preview-controls .field-stack{min-width:160px}
+.rotation-preview-controls input,.rotation-preview-controls select{width:100%}
+.rotation-preview-nav{display:flex;flex-wrap:wrap;gap:8px}
+.rotation-preview-range{display:flex;align-items:center;gap:10px;margin:0 0 10px;color:var(--color-text-secondary);font-size:13px;font-weight:600}
+.rotation-preview-refreshing{color:var(--color-text-muted);font-weight:500}
+.rotation-preview-simulation{margin:0 0 16px!important;padding:12px 16px}
+.rotation-preview-simulation p{margin:0}
+.rotation-legend-sample.is-fixed{border:1px solid var(--ds-slate-300);background:#fff;color:var(--ds-slate-700)}
+.rotation-legend-sample.is-conflict{border:1px solid var(--ds-red-200);background:var(--ds-red-50);color:var(--ds-red-700)}
+.rotation-legend-sample.is-none{border:1px solid var(--ds-slate-200);background:#fff;color:var(--ds-slate-500)}
+.table-shell.rotation-preview-shell{max-height:max(420px,calc(100vh - 260px));overflow:auto!important;transition:opacity .15s ease}
+.table-shell.rotation-preview-shell.is-busy{opacity:.6}
+.table-shell>table.rotation-preview-grid{table-layout:fixed!important}
+.rotation-preview-grid th,.rotation-preview-grid td{border-bottom:1px solid var(--ds-slate-200)}
+/* El encabezado completo es un único bloque fijo: las dos filas se mueven juntas (sin offsets por fila). La regla global `th{position:sticky;top:0}` se anula acá. */
+.table-shell>table.rotation-preview-grid thead{position:sticky;top:0;z-index:3;background:var(--ds-slate-50)}
+.table-shell>table.rotation-preview-grid thead tr{background:var(--ds-slate-50)}
+.table-shell>table.rotation-preview-grid thead th{position:static;padding:6px 4px!important;background:var(--ds-slate-50)!important;text-align:center!important;letter-spacing:.02em!important}
+.table-shell>table.rotation-preview-grid thead th.rotation-preview-person-head{position:sticky;left:0;z-index:4;width:220px;padding-left:16px!important;text-align:left!important}
+.rotation-preview-days abbr{display:block;text-decoration:none}
+.rotation-preview-date{display:block;color:var(--ds-slate-500);font-size:11px;font-weight:500;letter-spacing:0;text-transform:none}
+.rotation-preview-week{display:block;min-height:18px;margin:-2px 0 2px;color:var(--ds-slate-500);font-size:11px;font-weight:700;white-space:nowrap}
+.rotation-preview-week.has-week{color:var(--ds-blue-700)}
+.rotation-preview-week.is-continued{color:var(--ds-slate-400);font-weight:600}
+/* Separador de tramo de semana del ciclo: borde más marcado al empezar cada semana. */
+.rotation-preview-grid .is-week-start{box-shadow:inset 2px 0 0 var(--ds-blue-200)}
+.table-shell>table.rotation-preview-grid thead th.is-today{background:var(--ds-blue-100)!important;color:var(--ds-blue-800,#1e40af)!important}
+.table-shell>table.rotation-preview-grid tbody th.rotation-preview-person{position:sticky;top:auto;left:0;z-index:1;white-space:normal!important;width:220px;padding:8px 12px 8px 16px;background:#fff;text-align:left;vertical-align:top;text-transform:none!important;letter-spacing:normal!important;box-shadow:1px 0 0 var(--ds-slate-200)}
+.rotation-preview-person-name{display:block;color:var(--color-text-primary);font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.rotation-preview-person-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:2px;color:var(--color-text-muted);font-size:12px;font-weight:500}
+.table-shell>table.rotation-preview-grid tbody td.rotation-preview-cell{padding:4px!important;vertical-align:top;white-space:normal!important}
+.rotation-preview-grid tbody tr:hover{background:transparent}
+.rotation-preview-cell.is-today{background:var(--ds-blue-50)}
+.rotation-preview-cell.has-errors .rotation-cell-button{box-shadow:inset 0 0 0 2px var(--ds-red-500)}
+.rotation-preview-blocks{display:grid;gap:3px}
+.rotation-preview-blocks.is-suppressed .rotation-block{border-style:dashed;opacity:.6}
+.rotation-block.is-fixed{border-color:var(--ds-slate-300);background:#fff}
+.rotation-conflict{display:flex;align-items:center;justify-content:center;gap:4px;min-height:38px;padding:4px 6px;border:1px solid var(--ds-red-200);border-radius:6px;background:var(--ds-red-50);color:var(--ds-red-700);font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-preview-none{display:flex;align-items:center;justify-content:center;min-height:38px;color:var(--ds-slate-400);font-size:14px}
+.rotation-preview-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 4px;margin-top:3px}
+.rotation-preview-tag{padding:0 5px;border-radius:4px;background:var(--ds-slate-100);color:var(--ds-slate-700);font-size:10px;font-weight:700;line-height:16px;white-space:nowrap}
+.rotation-preview-alert{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:700}
+.rotation-preview-alert.is-error{color:var(--ds-red-700)}
+.rotation-preview-alert.is-warning{color:var(--ds-amber-700)}
+.rotation-preview-detail{display:grid;gap:18px}
+.rotation-preview-detail section{display:grid;gap:8px}
+.rotation-preview-detail h4{margin:0;padding-bottom:6px;border-bottom:1px solid var(--ds-slate-200);color:var(--color-text-primary);font-size:14px}
+.rotation-preview-detail-blocks{display:grid;gap:6px;margin:0;padding-left:20px;font-size:13px}
+.rotation-preview-detail-blocks li span{display:block;color:var(--color-text-secondary)}
+.rotation-preview-detail-text,.rotation-preview-detail-empty{margin:0;color:var(--color-text-primary);font-size:14px}
+.rotation-preview-detail-empty{color:var(--color-text-secondary)}
+.rotation-preview-detail-warnings{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:13px}
+.rotation-preview-detail-warnings li{display:flex;gap:6px}
+.rotation-preview-detail-warnings svg{flex:none;margin-top:2px}
+.rotation-preview-detail-warnings .is-error svg{color:var(--ds-red-600)}
+.rotation-preview-detail-warnings .is-warning svg{color:var(--ds-amber-700)}
+@media(max-width:700px){.rotation-preview-controls .field-stack{flex:1 1 140px}.table-shell>table.rotation-preview-grid tbody th.rotation-preview-person,.table-shell>table.rotation-preview-grid thead th.rotation-preview-person-head{width:150px}}

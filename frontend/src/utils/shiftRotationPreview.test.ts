@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { previewBlock, previewCell, previewRow } from "../test/shiftRotationPreviewFixtures";
-import { blockSpanText, cycleWeekGroups, dayHeader, defaultPreviewStart, previewCellLabel, previewCellView, previewDates, previewLabels, previewRange } from "./shiftRotationPreview";
+import { blockSpanText, cycleWeekByDate, dayHeader, defaultPreviewStart, previewCellLabel, previewCellView, previewDates, previewLabels, previewRange } from "./shiftRotationPreview";
 
 describe("rango", () => {
   it("de 1 a 6 semanas, nunca más de 42 días, y arranca el lunes de la semana actual", () => {
@@ -14,16 +14,18 @@ describe("rango", () => {
 });
 
 describe("semanas del ciclo (dato del backend)", () => {
-  it("agrupa por la letra devuelta, corta en cada lunes y marca cuando varía entre personas", () => {
+  it("toma la letra devuelta, marca el inicio de cada tramo (lunes o cambio) y cuando varía entre personas", () => {
     const dates = ["2026-11-27", "2026-11-28", "2026-11-29", "2026-11-30", "2026-12-01"];
     const rows = [
       previewRow("1", "A", "a", "1", [previewCell(dates[0]!, { week: "A" }), previewCell(dates[1]!, { week: "A" }), previewCell(dates[2]!, { week: "A" }), previewCell(dates[3]!, { week: "B" }), previewCell(dates[4]!, { week: "B" })]),
       previewRow("2", "B", "b", "2", [previewCell(dates[0]!, { week: null }), previewCell(dates[1]!, { week: "A" }), previewCell(dates[2]!, { week: "A" }), previewCell(dates[3]!, { week: "B" }), previewCell(dates[4]!, { week: "A" })]),
     ];
-    expect(cycleWeekGroups(dates, rows)).toEqual([
-      { label: "A", span: 3, varies: false },
-      { label: "B", span: 1, varies: false },
-      { label: null, span: 1, varies: true },
+    expect(cycleWeekByDate(dates, rows)).toEqual([
+      { label: "A", varies: false, start: true },
+      { label: "A", varies: false, start: false },
+      { label: "A", varies: false, start: false },
+      { label: "B", varies: false, start: true },
+      { label: null, varies: true, start: true },
     ]);
   });
 });

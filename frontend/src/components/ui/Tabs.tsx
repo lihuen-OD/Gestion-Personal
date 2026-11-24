@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 type TabItem = { key: string; label: string };
 
@@ -21,8 +21,20 @@ export function tabPanelProps(idBase: string, key: string) {
  */
 export function Tabs({ tabs, active, onChange, className = "", ariaLabel, idBase }: { tabs: TabItem[]; active: string; onChange: (key: string) => void; className?: string; ariaLabel?: string; idBase?: string }) {
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
+  const list = useRef<HTMLDivElement>(null);
   const activeIndex = tabs.findIndex((tab) => tab.key === active);
   const focusableIndex = activeIndex >= 0 ? activeIndex : 0;
+
+  // En pantallas angostas la lista se desplaza: la pestaña activa siempre queda a la vista (sólo scroll horizontal del contenedor, nunca de la página).
+  useEffect(() => {
+    const container = list.current;
+    const button = buttons.current[focusableIndex];
+    if (!container || !button || container.scrollWidth <= container.clientWidth) return;
+    const left = button.offsetLeft - container.offsetLeft;
+    const right = left + button.offsetWidth;
+    if (left < container.scrollLeft) container.scrollLeft = Math.max(0, left - 12);
+    else if (right > container.scrollLeft + container.clientWidth) container.scrollLeft = right - container.clientWidth + 12;
+  }, [focusableIndex]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const last = tabs.length - 1;
@@ -38,7 +50,7 @@ export function Tabs({ tabs, active, onChange, className = "", ariaLabel, idBase
   };
 
   return (
-    <div className={`tabs ${className}`.trim()} role="tablist" aria-label={ariaLabel}>
+    <div ref={list} className={`tabs ${className}`.trim()} role="tablist" aria-label={ariaLabel}>
       {tabs.map((tab, index) => {
         const selected = tab.key === active;
         const ids = idBase ? tabIds(idBase, tab.key) : null;

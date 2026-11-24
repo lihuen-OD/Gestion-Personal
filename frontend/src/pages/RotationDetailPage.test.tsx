@@ -12,12 +12,13 @@ import { shiftRotationApiService } from "../services/api/shiftRotationApiService
 import { ApiError } from "../services/api/apiClient";
 import { confirmAction } from "../services/appDialog";
 import { OFICINA_GROUP, PLANTA_GROUP, rotationFixture } from "../test/shiftRotationFixtures";
+import { previewBlock, previewCell, previewResponse, previewRow } from "../test/shiftRotationPreviewFixtures";
 
 vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn().mockResolvedValue(true) }));
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({ useAuth: () => mockUseAuth() }));
 vi.mock("../services/api/shiftGroupApiService", () => ({ shiftGroupApiService: { list: vi.fn() } }));
-vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { detail: vi.fn(), update: vi.fn(), remove: vi.fn(), version: vi.fn() } }));
+vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { detail: vi.fn(), update: vi.fn(), remove: vi.fn(), version: vi.fn(), preview: vi.fn() } }));
 
 function authAs(role: string) {
   mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo" } });
@@ -140,6 +141,15 @@ describe("detalle de rotación", () => {
     expect(screen.getByText(/todavía no tiene grilla/)).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Resumen" }));
     expect(screen.getByRole("heading", { name: "Diagnóstico" })).toBeInTheDocument();
+  });
+
+  it.each(["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])("%s consulta la vista previa en sólo lectura", async (role) => {
+    authAs(role);
+    vi.mocked(shiftRotationApiService.preview).mockResolvedValue(previewResponse([previewRow("e1", "Gómez", "José", "19", [previewCell("2026-11-23", { blocks: [previewBlock("2026-11-23", "P-0715", "07:00", "15:00")] })])], { from: "2026-11-23", days: 1 }));
+    renderPage(undefined, "?vista=vista-previa");
+    expect(await screen.findByRole("tab", { name: "Vista previa" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("grid")).toBeInTheDocument();
+    expect(screen.getByText("Esta es una simulación. La rotación está inactiva y no genera obligaciones reales.")).toBeInTheDocument();
   });
 
   it("Nivel 3 ve el detalle sin acciones", async () => {

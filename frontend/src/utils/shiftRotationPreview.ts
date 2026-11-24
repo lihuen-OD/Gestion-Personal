@@ -45,26 +45,23 @@ export function dayHeader(dateKey: string) {
 }
 
 /**
- * Encabezado de semanas del ciclo: cada fecha toma la letra (A, B…) que el
- * backend devolvió para las personas de la página. Si las personas no
- * coinciden (por ejemplo, un cambio de versión), la fecha queda "Varía".
- * Las fechas consecutivas con la misma letra dentro de la misma semana
- * calendario se agrupan.
+ * Semana del ciclo por fecha, para el encabezado: cada fecha toma la letra
+ * (A, B…) que el backend devolvió para las personas de la página. Si no
+ * coinciden (por ejemplo, un cambio de versión) queda "varía"; si nadie de la
+ * página pertenece a la rotación ese día, no tiene letra. `start` marca el
+ * primer día de cada tramo (cambia la letra o empieza una semana, el lunes).
  */
-export function cycleWeekGroups(dates: string[], rows: PreviewRow[]): Array<{ label: string | null; span: number; varies: boolean }> {
-  const labels = dates.map((_date, index) => {
-    const found = new Set(rows.map((row) => row.days[index]?.assignment?.cycleWeekLabel).filter((label): label is string => Boolean(label)));
-    return found.size === 1 ? { label: [...found][0]!, varies: false } : found.size > 1 ? { label: null, varies: true } : { label: null, varies: false };
-  });
-  const groups: Array<{ label: string | null; span: number; varies: boolean }> = [];
+export function cycleWeekByDate(dates: string[], rows: PreviewRow[]): Array<{ label: string | null; varies: boolean; start: boolean }> {
+  const result: Array<{ label: string | null; varies: boolean; start: boolean }> = [];
   dates.forEach((date, index) => {
-    const current = labels[index]!;
-    const last = groups.at(-1);
-    const sameWeek = index > 0 && weekdayOf(date) !== 1;
-    if (last && sameWeek && last.label === current.label && last.varies === current.varies) last.span += 1;
-    else groups.push({ ...current, span: 1 });
+    const found = new Set(rows.map((row) => row.days[index]?.assignment?.cycleWeekLabel).filter((label): label is string => Boolean(label)));
+    const label = found.size === 1 ? [...found][0]! : null;
+    const varies = found.size > 1;
+    const previous = result[index - 1];
+    const start = index === 0 || weekdayOf(date) === 1 || previous!.label !== label || previous!.varies !== varies;
+    result.push({ label, varies, start });
   });
-  return groups;
+  return result;
 }
 
 export type PreviewCellKind = "SHIFTS" | "REST" | "MISSING" | "CONFLICT" | "FIXED" | "NONE";
