@@ -513,7 +513,7 @@ RRHH siempre; N2/N3 con y sin `UserShiftGroupScope`; grupo correcto pero legajo 
 | **R1** ✅ (§21) | Tests de caracterización (§18.1) + diagnóstico de solo lectura: script/consulta que lista (a) empleados con >1 `ShiftAssignment` HABILITADA aplicable el mismo día y su superposición, (b) valores distintos de `categoryName`. Ejecución sobre producción sólo con autorización explícita y en lectura. | No | No |
 | **R2** ✅ (§22) | Resolver central en **modo paridad** (sólo fuentes actuales) y migración de `workObligation`, `expectedWorkday` y entrada a leer a través de él. Caracterización verde sin cambios. | No | No |
 | **R3** | `ShiftGroup` + `ShiftTemplate.shiftGroupId` + UI agrupada por lugar. | Aditivo | No (sólo organización visual) |
-| **R4** | Rotaciones en backend: tablas, resolver con `ROTATION`, `WorkShift.shiftTemplateSource`, salida, recálculo de cobertura, endpoints sólo RRHH, contratos documentados. **Diseño definitivo y subetapas R4.1–R4.8 en §24 (R4-P0, sin implementar).** | Aditivo | Sólo para miembros de rotaciones (ninguno al desplegar) |
+| **R4** | Rotaciones en backend: tablas, resolver con `ROTATION`, `WorkShift.shiftTemplateSource`, salida, recálculo de cobertura, endpoints sólo RRHH, contratos documentados. **Diseño definitivo y subetapas R4.1–R4.9 (numeración ejecutada en §25; la tabla de §24.14 quedó corregida).** | Aditivo | Sólo para miembros de rotaciones (ninguno al desplegar) |
 | **R5** | Vista previa del turno esperado (endpoint + calendario de solo lectura). | No | No |
 | **R6** | UI de administración de rotaciones. | No | — |
 | **R7** | Excepciones e intercambios (backend + UI). | Aditivo | Sólo personas con excepción |
@@ -1168,10 +1168,13 @@ Lectura: todos los roles autenticados del módulo; escritura: RRHH (alcance por 
 | R4.2 | Núcleo puro: `rotationWeekIndex`, `resolveRotationCell`, resolver con `ROTATION`/`shift` + tests (cambio de año, ancla pasada/futura, ciclos 2/3/4, domingo→lunes) | No | No (sin datos) |
 | R4.3 | `loadRotationPlans` + obligación/falta de ingreso/inactividad + Novedades + recálculo de cobertura | No | Sólo miembros (ninguno) |
 | R4.4 | Entrada/salida/`WorkShift` (`shiftTemplateSource`, `scheduledStartAt`, `resolveMatchForExit`, fecha operativa) | No | Sólo miembros |
-| R4.5 | API de configuración + validaciones + auditoría + contratos | No | — |
-| R4.6 | Endpoint de preview de sólo lectura | No | No |
-| R4.7 | UI básica de rotaciones (`frontend-ui.md`) | No | — |
-| R4.8 | Piloto Planta en development (legajos 19–22, cierre de sus fijos con la opción del alta) + QA | Datos dev | Sólo piloto |
+| R4.5 | Trabajo no programado (renumerado en la ejecución, §25.7) | Aditivo | Sólo miembros |
+| R4.6 | API de configuración + validaciones + auditoría + contratos (§25.9) | Aditivo (snapshot de reglas) | — |
+| R4.7 | Endpoint de vista previa de sólo lectura (§25.10) | No | No |
+| R4.8 | UI de rotaciones (`frontend-ui.md`), subetapas A–E (§25.11–§25.16) | No | — |
+| R4.9 | Piloto Planta en development (plantillas, máximos, legajos 19–22, cierre de sus fijos con la opción del alta) + QA | Datos dev | Sólo piloto |
+
+> Nota (cierre de R4.8): la numeración original de esta tabla asignaba la API a R4.5, la vista previa a R4.6, la UI a R4.7 y el piloto a R4.8. En la ejecución se intercaló el trabajo no programado como R4.5 y todo se corrió un lugar; la secuencia vigente es la de §25 (plan en la línea "Plan: R1.1 → … → R4.9").
 
 Producción: etapa aparte con autorización explícita.
 
@@ -1702,6 +1705,28 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 **Verificación.** `tsc -b`, `vite build` y `typecheck:e2e` verdes; frontend 148 archivos / 1696 tests (+19). QA en Chromium real contra backend y PostgreSQL locales (`r48_ui_qa`; ningún acceso a Neon) con la especificación real de Planta cargada por la API: rotación inactiva (simulación) con Roberto/Ariel, Carlos/Walter, Juanchi, José y Johanna, 26 personas más para paginar (33), José con doble bloque 07–11 + 19–07 el viernes de la semana A y nocturnos sábado y domingo, franco de José el domingo 29/11, Johanna con turno fijo hasta el 30/11 y rotación desde el 01/12, versión futura desde el 07/12 y cambio de equipo de Juanchi desde el 14/12; rotación activa (OFI-AB, activada sólo en la base local) para el modo sin simulación. En 1366×768, 1440×900, 1920×1080, 834×1112, 1112×834 y 390×844: 2 y 6 semanas, detalle de José, rotación activa, vacía (sin personas), error 500 y Carga Horaria. 39 vistas sin desborde de página ni recortes, pestaña activa visible, modales dentro del viewport. Flujos: paginación con respuesta lenta (calendario visible y marcado), nocturno sin duplicar, cambio de equipo y de versión visibles en el detalle, teclado y foco. Carga Horaria ve la pestaña sin acciones; el backend filtra por acceso (`employeeAccessWhere`), por eso su calendario puede quedar vacío. Errores de consola sólo el 500 provocado.
 
 **Defectos encontrados y corregidos durante el QA:** dos botones "Siguiente" (navegación de fechas y paginación) → "Período anterior/siguiente"; bloques "17:00–03:00 +1" que invadían la columna vecina (columna de 120 px); unión de encabezados fijos que dejaba ver el contenido (encabezado de una fila); semana del ciclo invisible al desplazar (letra en cada día); nombres largos superpuestos con la primera columna en móvil; pestaña activa fuera de la vista en móvil; texto de estado vacío que afirmaba "nadie pertenece" cuando el backend filtra por acceso.
+
+### 25.16 R4.8E — Activación, desactivación, finalización y cierre de R4.8 (implementada; sólo frontend)
+
+**Alcance.** En la cabecera del detalle, sólo RRHH: "Activar" (rotación inactiva), "Desactivar" (activa que nunca rigió) y "Finalizar" (activa no finalizada), sobre `POST /rotations/:id/activate|deactivate|finalize/preview|finalize` (R4.6). Las acciones se ofrecen sólo con campos del backend (`status`, `hasRuled`, `finalized`, `health`); no hay reglas propias y el backend vuelve a validar todo.
+
+- **Activar:** confirmación que explica el efecto (empieza a regir desde la fecha de inicio de cada persona, genera horarios y obligaciones, recalcula Novedades). Con `health = ERROR` el botón queda deshabilitado y un aviso remite al diagnóstico. Rechazos `ROTATION_ACTIVATION_RETROACTIVE` (con las personas y fechas) y `ROTATION_NOT_READY` (problemas con su título) se muestran bajo la cabecera, sin códigos.
+- **Desactivar:** sólo si nunca rigió; confirmación explícita.
+- **Finalizar:** modal en tres pasos — último día (desde hoy; cambiarlo invalida la vista previa), vista previa real (pertenencias que terminan, altas futuras canceladas, versiones que terminan o se cancelan, personas que quedan sin turno fijo ni otra rotación, superposiciones que impiden finalizar, descansos como dato informativo sin marcarlos como infracción) y confirmación con casilla explícita que envía el `confirmationToken` de esa vista previa. `ROTATION_FINALIZE_STALE`: se reemplaza por la vista previa nueva que trae el backend, se desmarca la casilla y se avisa si el impacto cambió o no; nunca se confirma sobre datos viejos. Resultado persistente en el detalle (cierres, cancelaciones y quién queda sin turno). Un solo envío por acción; el historial no se modifica (el backend cierra en el último día y cancela sólo lo que nunca rigió).
+- **Cachés:** activar, desactivar y finalizar invalidan las familias derivadas de cobertura de Novedades.
+
+**Cierre integral de R4.8 (A–E).** Recorrido completo en Chromium real, por la UI, sobre una base PostgreSQL local descartable (`r48_e2e_qa`, migrada con `migrate-clean-database.ts`, recreada desde cero para la corrida final) con andamiaje **sintético de QA** (usuarios QA, grupo "QA Planta", turnos QA-0719/QA-1907/QA-0711 y empleados QA-01…06; no es la configuración oficial de Planta): 1) crear rotación, 2) equipos A y B, 3) versión A/B de 2 semanas con doble bloque 07–11 + 19–07 y nocturnos, 4) incorporar 5 personas + 1 alta futura, 5) vista previa en simulación (doble bloque el viernes, un solo bloque el sábado), 6) activar (la vista previa deja de ser simulación), 7) versión futura desde el 07/12 con un cambio, 8) finalizar al 14/12 con vista previa (5 cierres, 1 alta cancelada, 1 versión que termina, 5 personas sin turno), cambio concurrente real por la API entre la vista previa y la confirmación → `ROTATION_FINALIZE_STALE` → nueva confirmación → resultado, 9) historial de personas y versiones, 10) Supervisión y Carga Horaria sin acciones en ninguna pestaña. Barrido de listado, resumen, equipos y grilla, personas y vista previa más el modal de finalización en 1366×768, 1440×900, 1920×1080, 834×1112, 1112×834 y 390×844: 42 vistas sin desborde de página, recortes ni controles fuera de pantalla, pestaña activa visible, modales dentro del viewport; error de consola sólo el 409 provocado. Las bases `r48_ui_qa` (QA de A–D, con la especificación real de Planta cargada **sólo localmente** como dato de prueba y una rotación de prueba activada) y `r48_e2e_qa` quedan locales y descartables; ninguna rotación real se activó y no hubo acceso a Neon.
+
+**Verificación final.** `tsc -b`, `vite build` y `typecheck:e2e` verdes; frontend 149 archivos / 1712 tests. Componentes compartidos modificados en R4.8 (`Tabs`: semántica ARIA y pestaña activa visible) cubiertos por su test y por la regresión completa; selectores `button` → `tab` actualizados en 4 tests y en un journey e2e (R4.8A).
+
+**Defectos encontrados y corregidos en R4.8E:** la vista previa seguía en "simulación" después de activar (ahora se vuelve a pedir al cambiar la rotación); casillas de confirmación de finalización y de cierre de turnos fijos con 40 px y desalineadas (regla global de campos en modales); espacio de más bajo el aviso de concurrencia.
+
+**Pendientes para R4.9 y siguientes (no implementados):**
+- T-R4-CONC sigue pendiente y bloquea cargar o activar rotaciones reales.
+- Una rotación activa no finalizada sigue ofreciendo "Nueva versión" y "Finalizar" (permitido por el backend: extender o adelantar el cierre); una política distinta requiere decisión de negocio.
+- Sin vista previa para la baja individual de una persona (el contrato sólo la tiene para finalizar la rotación).
+- Sin acciones masivas en el editor de grilla (copiar semana, rellenar fila).
+- Preexistente, fuera de R4.8: para Nivel 3 la barra superior dice "Dashboard" en las pantallas de Configuración.
 
 ---
 
