@@ -2866,3 +2866,53 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .shift-detail-classification b{color:var(--ds-slate-700);font-weight:600}
 .shift-group-form .form-grid{grid-template-columns:repeat(3,minmax(0,1fr));padding:0}
 @media(max-width:700px){.shift-group-sections{padding:12px}.shift-group-meta{margin-left:0}.shift-group-form .form-grid{grid-template-columns:1fr}}
+/* R4.8A: rotaciones de turnos (listado en Turnos y detalle). Reutiliza panel, tabla, badges e info-note; sólo agrega la distribución propia. */
+.rotations-table .col-rotation{width:22%}.rotations-table .col-group{width:12%}.rotations-table .col-state{width:10%}.rotations-table .col-health{width:15%}.rotations-table .col-count{width:8%;text-align:right}
+/* `thead th` fuerza text-align:left!important en todo el sistema; los conteos se alinean con su encabezado. */
+.rotations-table thead th.col-count{text-align:right!important}.rotations-table .col-version{width:15%}.rotations-table .col-actions{width:10%}
+.rotation-name-link{display:grid;gap:2px;color:var(--color-text-primary)}
+.rotation-name-link span{color:var(--color-text-secondary);font-size:13px}
+.rotation-name-link:hover b{text-decoration:underline}
+.rotation-name-link:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px;border-radius:4px}
+.rotation-muted{display:block;color:var(--color-text-muted);font-size:12px}
+.col-group .rotation-muted{display:inline}
+.rotation-version-label{display:block;white-space:nowrap}
+.rotation-action-error{margin:0 0 16px}
+.rotation-state-note{margin:0 0 20px!important;padding:12px 16px}
+.rotation-state-note p{margin:0}
+.rotation-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:stretch;margin-bottom:20px}
+.rotation-summary-grid>.panel{margin-bottom:0!important}
+.rotation-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin:0}
+.rotation-facts dt{color:var(--color-text-muted);font-size:12px}
+.rotation-facts dd{margin:4px 0 0;color:var(--color-text-primary);font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.rotation-fact-wide{grid-column:1/-1}
+.rotation-fact-wide dd{font-weight:400;white-space:pre-line}
+.rotation-fact-detail{display:block;margin-top:2px;color:var(--color-text-muted);font-size:12px;font-weight:400}
+.rotation-issues-ok{display:flex;align-items:center;gap:8px;color:var(--color-success)}
+.rotation-issues-ok p{margin:0;color:var(--color-text-primary);font-size:14px}
+.rotation-issues-summary{margin:0 0 12px;color:var(--color-text-secondary);font-size:14px}
+.rotation-issue-list{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.rotation-issue{display:flex;gap:12px;padding:12px 16px;border:1px solid var(--ds-slate-200);border-left-width:4px;border-radius:10px;background:#fff}
+.rotation-issue.is-error{border-left-color:var(--ds-red-600);background:var(--ds-red-50)}
+.rotation-issue.is-warning{border-left-color:var(--ds-amber-600);background:var(--ds-amber-50)}
+.rotation-issue-icon{flex:none;margin-top:1px}
+.rotation-issue.is-error .rotation-issue-icon{color:var(--ds-red-600)}
+.rotation-issue.is-warning .rotation-issue-icon{color:var(--ds-amber-700)}
+.rotation-issue-body{min-width:0}
+.rotation-issue-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:0;color:var(--color-text-primary);font-size:14px;font-weight:700}
+.rotation-issue-count{color:var(--color-text-muted);font-size:12px;font-weight:600}
+.rotation-issue-explanation{margin:2px 0 0;color:var(--color-text-secondary);font-size:13px}
+.rotation-issue-messages{margin:8px 0 0;padding-left:18px;color:var(--color-text-primary);font-size:13px;line-height:1.5}
+.rotation-issue-more{margin-top:6px;padding:2px 0;border:0;background:none;color:var(--color-primary);font-size:13px;font-weight:600}
+.rotation-issue-more:hover{text-decoration:underline}
+.rotation-issue-more:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px;border-radius:4px}
+/* `.form-stack>.form-actions{grid-column:span 2}` genera dos columnas implícitas: cada fila del formulario ocupa todo el ancho. */
+.rotation-form{grid-template-columns:minmax(0,1fr)}
+.rotation-form>.form-actions{grid-column:1/-1}
+.rotation-form .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:0}
+.rotation-form-full{grid-column:1/-1}
+/* El estilo global de campos (input,select,textarea{background:#fff!important}) no distingue deshabilitados: un dato bloqueado (código o grupo que ya no se pueden cambiar) debe verse como tal. */
+.rotation-form :is(input,select,textarea):disabled{background:var(--color-bg-muted)!important;color:var(--color-text-secondary)!important;cursor:not-allowed}
+.rotation-form textarea{width:100%;resize:vertical}
+@media(max-width:1100px){.rotation-summary-grid{grid-template-columns:1fr}}
+@media(max-width:700px){.rotation-facts,.rotation-form .form-grid{grid-template-columns:1fr}.rotation-issue{padding:12px}}

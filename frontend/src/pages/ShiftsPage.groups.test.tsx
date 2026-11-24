@@ -104,7 +104,7 @@ describe("estado actual de development: 0 grupos, 15 turnos", () => {
     await screen.findByRole("region", { name: "Sin grupo" });
     expect(screen.getByText("Aún no hay grupos configurados. Los turnos se muestran en «Sin grupo».")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Administrar grupos" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Grupos" }));
+    await user.click(screen.getByRole("tab", { name: "Grupos" }));
     expect(screen.getByText("Aún no hay grupos configurados. Los turnos se muestran en «Sin grupo».")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Crear grupo/ })).not.toBeInTheDocument();
   });

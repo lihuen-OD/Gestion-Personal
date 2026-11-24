@@ -524,7 +524,7 @@ test("workforce management performance journey — recorrido macro de Gestión h
     return { visibleLocator: page.locator("h1").first(), emptyLocator: page.locator(".empty") };
   });
 
-  const porPersonaTab = page.getByRole("button", { name: "Por persona" });
+  const porPersonaTab = page.getByRole("tab", { name: "Por persona" });
   if (await porPersonaTab.count()) {
     await measure('Cambiar a pestaña "Por persona"', ZONE.bandeja, false, async () => {
       await porPersonaTab.click();

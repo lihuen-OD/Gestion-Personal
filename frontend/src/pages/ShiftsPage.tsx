@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { Section } from "../components/ui/Section";
@@ -7,10 +8,11 @@ import { Button } from "../components/ui/Button";
 import { LoadingState } from "../components/ui/LoadingState";
 import { ErrorState } from "../components/ui/ErrorState";
 import { EmptyState } from "../components/ui/EmptyState";
-import { Tabs } from "../components/ui/Tabs";
+import { Tabs, tabPanelProps } from "../components/ui/Tabs";
 import type { ShiftAssignmentCounts } from "../components/shifts/ShiftTable";
 import { ShiftGroupSections } from "../components/shifts/ShiftGroupSections";
 import { NO_GROUPS_TEXT, ShiftGroupsPanel } from "../components/shifts/ShiftGroupsPanel";
+import { ShiftRotationsPanel } from "../components/rotations/ShiftRotationsPanel";
 import { useAuth } from "../context/AuthContext";
 import { workforceApiService, type ShiftTemplate } from "../services/api/workforceApiService";
 import { shiftAssignmentApiService } from "../services/api/shiftAssignmentApiService";
@@ -18,6 +20,19 @@ import { shiftGroupApiService, type ShiftGroup, type ShiftGroupSummary } from ".
 import { buildShiftGroupSections, matchesShiftGroupFilter, sortShiftGroups, UNGROUPED_FILTER, UNGROUPED_LABEL } from "../utils/shiftGroups";
 import { confirmAction } from "../services/appDialog";
 import { roleLevel } from "../utils/roles";
+
+type ShiftsView = "turnos" | "grupos" | "rotaciones";
+const VIEWS: Array<{ key: ShiftsView; label: string }> = [
+  { key: "turnos", label: "Turnos por grupo" },
+  { key: "grupos", label: "Grupos" },
+  { key: "rotaciones", label: "Rotaciones" },
+];
+const TABS_ID = "shifts-view";
+
+/** La pestaña vive en la URL (`?vista=`) para volver a ella desde un detalle. */
+function viewFromParam(value: string | null): ShiftsView {
+  return value === "grupos" || value === "rotaciones" ? value : "turnos";
+}
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
@@ -33,7 +48,9 @@ export function ShiftsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
-  const [tab, setTab] = useState<"turnos" | "grupos">("turnos");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = viewFromParam(searchParams.get("vista"));
+  const setTab = (next: ShiftsView) => setSearchParams(next === "turnos" ? {} : { vista: next }, { replace: true });
   // R3.2: catálogo de grupos aparte — si falla, los turnos se siguen viendo
   // agrupados con el grupo que cada uno ya trae (nunca se oculta el error).
   const [groups, setGroups] = useState<ShiftGroup[] | null>(null);
@@ -120,42 +137,48 @@ export function ShiftsPage() {
       />
       <Tabs
         className="shift-page-tabs"
-        tabs={[{ key: "turnos", label: "Turnos por grupo" }, { key: "grupos", label: "Grupos" }]}
+        ariaLabel="Secciones de turnos"
+        idBase={TABS_ID}
+        tabs={VIEWS}
         active={tab}
-        onChange={(key) => setTab(key === "grupos" ? "grupos" : "turnos")}
+        onChange={(key) => setTab(viewFromParam(key))}
       />
-      {tab === "turnos" ? (
-        <Section title="Listado de turnos" subtitle={loadStatus === "loading" ? "Cargando turnos..." : `${items.length} turno(s) según filtros aplicados.`}>
-          <FilterPanel title="Filtros" search={{ value: search, onChange: setSearch, placeholder: "Código, nombre o categoría" }}>
-            <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos</option><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
-            <label>Grupo<select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}><option value="">Todos</option>{filterGroups.map((group) => <option key={group.id} value={group.id}>{group.status === "ACTIVO" ? group.name : `${group.name} (inactivo)`}</option>)}<option value={UNGROUPED_FILTER}>{UNGROUPED_LABEL}</option></select></label>
-          </FilterPanel>
-          {loadStatus === "success" && groupsStatus === "error" ? (
-            <div className="info-note warning shift-groups-note" role="status">
-              <b>No pudimos cargar la lista de grupos.</b>
-              <p>Los turnos se muestran con el grupo que ya tienen asignado; los grupos sin turnos no aparecen.</p>
-              <Button variant="subtle" onClick={() => setRefresh((value) => value + 1)}>Reintentar</Button>
-            </div>
-          ) : null}
-          {loadStatus === "success" && groupsStatus === "success" && !groups?.length ? (
-            <div className="info-note shift-groups-note" role="status">
-              <p>{NO_GROUPS_TEXT}</p>
-              {canEdit ? <Button variant="subtle" onClick={() => setTab("grupos")}>Administrar grupos</Button> : null}
-            </div>
-          ) : null}
-          {loadStatus === "loading" ? (
-            <LoadingState text="Cargando turnos..." />
-          ) : loadStatus === "error" ? (
-            <ErrorState message="No pudimos cargar los turnos." onRetry={() => setRefresh((value) => value + 1)} />
-          ) : sections.length ? (
-            <ShiftGroupSections sections={sections} counts={counts} canEdit={canEdit} onToggleStatus={toggle} />
-          ) : (
-            <EmptyState text={filtersActive ? "Ningún turno coincide con los filtros aplicados." : "Todavía no hay turnos configurados."} />
-          )}
-        </Section>
-      ) : (
-        <ShiftGroupsPanel groups={groups} status={groupsStatus} canEdit={canEdit} onChanged={() => setRefresh((value) => value + 1)} onRetry={() => setRefresh((value) => value + 1)} />
-      )}
+      <div {...tabPanelProps(TABS_ID, tab)}>
+        {tab === "turnos" ? (
+          <Section title="Listado de turnos" subtitle={loadStatus === "loading" ? "Cargando turnos..." : `${items.length} turno(s) según filtros aplicados.`}>
+            <FilterPanel title="Filtros" search={{ value: search, onChange: setSearch, placeholder: "Código, nombre o categoría" }}>
+              <label>Estado<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos</option><option value="ACTIVO">Activo</option><option value="INACTIVO">Inactivo</option></select></label>
+              <label>Grupo<select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}><option value="">Todos</option>{filterGroups.map((group) => <option key={group.id} value={group.id}>{group.status === "ACTIVO" ? group.name : `${group.name} (inactivo)`}</option>)}<option value={UNGROUPED_FILTER}>{UNGROUPED_LABEL}</option></select></label>
+            </FilterPanel>
+            {loadStatus === "success" && groupsStatus === "error" ? (
+              <div className="info-note warning shift-groups-note" role="status">
+                <b>No pudimos cargar la lista de grupos.</b>
+                <p>Los turnos se muestran con el grupo que ya tienen asignado; los grupos sin turnos no aparecen.</p>
+                <Button variant="subtle" onClick={() => setRefresh((value) => value + 1)}>Reintentar</Button>
+              </div>
+            ) : null}
+            {loadStatus === "success" && groupsStatus === "success" && !groups?.length ? (
+              <div className="info-note shift-groups-note" role="status">
+                <p>{NO_GROUPS_TEXT}</p>
+                {canEdit ? <Button variant="subtle" onClick={() => setTab("grupos")}>Administrar grupos</Button> : null}
+              </div>
+            ) : null}
+            {loadStatus === "loading" ? (
+              <LoadingState text="Cargando turnos..." />
+            ) : loadStatus === "error" ? (
+              <ErrorState message="No pudimos cargar los turnos." onRetry={() => setRefresh((value) => value + 1)} />
+            ) : sections.length ? (
+              <ShiftGroupSections sections={sections} counts={counts} canEdit={canEdit} onToggleStatus={toggle} />
+            ) : (
+              <EmptyState text={filtersActive ? "Ningún turno coincide con los filtros aplicados." : "Todavía no hay turnos configurados."} />
+            )}
+          </Section>
+        ) : tab === "grupos" ? (
+          <ShiftGroupsPanel groups={groups} status={groupsStatus} canEdit={canEdit} onChanged={() => setRefresh((value) => value + 1)} onRetry={() => setRefresh((value) => value + 1)} />
+        ) : (
+          <ShiftRotationsPanel canEdit={canEdit} groups={groups} groupsStatus={groupsStatus} />
+        )}
+      </div>
     </>
   );
 }
