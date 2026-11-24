@@ -30,6 +30,7 @@ const day = (dateKey: string) => new Date(`${dateKey}T00:00:00.000Z`);
 const THU_A = "2026-11-05";
 const FRI_A = "2026-11-06"; // José: 07–11 + 19–07
 const SAT_A = "2026-11-07";
+const SUN_A = "2026-11-08";
 const MON_A = "2026-11-02"; // Carlos/Walter: 17–03
 const TUE_A = "2026-11-03";
 const MON_B = "2026-11-09"; // Roberto: 17–03; Juanchi: 07–15
@@ -74,6 +75,8 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
   const drain = (employeeId: string) => m.worker.drainClockPunchPostProcess({ employeeIds: [employeeId] });
   const shiftsOf = (employeeId: string) => holder.workShift.findMany({ where: { employeeId }, orderBy: { startAt: "asc" } });
   const exitPunchesOf = (employeeId: string) => holder.attendancePunch.count({ where: { employeeId, type: "SALIDA" } });
+  // R4.5: minutos computados (TimeEntry) de una jornada.
+  const minutesOf = async (workShiftId: string) => (await holder.timeEntry.findMany({ where: { workShiftId } })).reduce((sum, entry) => sum + entry.totalMinutes, 0);
   const alertsOf = (workShiftId: string) => holder.shiftAlert.findMany({ where: { workShiftId }, orderBy: { type: "asc" } });
   const noticesFor = async (recipientUserId: string) => holder.systemNotification.findMany({ where: { recipientUserId }, orderBy: { createdAt: "asc" } });
   const auditAfter = async (workShiftId: string) => (await holder.auditLog.findMany({ where: { entity: "WorkShift", entityId: workShiftId }, orderBy: { createdAt: "asc" } })).map((row) => row.after as Record<string, unknown> | null);
@@ -189,7 +192,7 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
     expect(shifts[1]!.shiftTemplateId).toBe(templateId[PLANTA_TEMPLATES.T1907.id]);
     for (const shift of shifts) expect(await alertsOf(shift.id)).toEqual([]);
     const [entryAudit] = await auditAfter(shifts[1]!.id);
-    expect(entryAudit?.rotationDiagnosis).toMatchObject({ version: 1, kind: "ASSIGNED", punctuality: "ON_TIME", block: { obligationKey: `${jose()}|${at(FRI_A, "19:00").toISOString()}`, templateCode: "PLANTA-19-07", operationalDate: FRI_A } });
+    expect(entryAudit?.rotationDiagnosis).toMatchObject({ version: 2, kind: "ASSIGNED", punctuality: "ON_TIME", block: { obligationKey: `${jose()}|${at(FRI_A, "19:00").toISOString()}`, templateCode: "PLANTA-19-07", operationalDate: FRI_A } });
     expect(await noticesFor(users.supervisorJose)).toEqual([]);
   });
 
@@ -398,13 +401,13 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
     expect(asked.error?.code).toBe("CLOCK_EXIT_CONFIRMATION_REQUIRED");
   });
 
-  it("Roberto (semana B, 17–03): 11:30 fuera de ventana → sin bloque, TURNO_NO_IDENTIFICADO no suprimido con el inicio de 17:00; 13:00 → asignado con INGRESO_ANTICIPADO de revisión", async () => {
+  it("Roberto (semana B, 17–03): 11:30 fuera de ventana → sin bloque, INGRESO_FUERA_DE_VENTANA (R4.5, antes TURNO_NO_IDENTIFICADO) no suprimido con el inicio de 17:00; 13:00 → asignado con INGRESO_ANTICIPADO de revisión", async () => {
     let roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
     await punch(roberto, "IN", at(MON_B, "11:30"));
     await drain(roberto);
     const [early] = await shiftsOf(roberto);
     expect(early).toMatchObject({ shiftTemplateId: null, shiftTemplateSource: null, scheduledStartAt: null });
-    expect(await alertsOf(early!.id)).toEqual([expect.objectContaining({ type: "TURNO_NO_IDENTIFICADO", scheduledAt: at(MON_B, "17:00"), differenceMinutes: -330 })]);
+    expect(await alertsOf(early!.id)).toEqual([expect.objectContaining({ type: "INGRESO_FUERA_DE_VENTANA", severity: "ADVERTENCIA", status: "PENDIENTE", scheduledAt: at(MON_B, "17:00"), differenceMinutes: -330 })]);
     await seed();
     roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
     await punch(roberto, "IN", at(MON_B, "13:00"));
@@ -435,13 +438,106 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
     expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["ACTIVIDAD_EN_FRANCO"]);
   });
 
-  it("REST (Carlos viernes A): trabajo no programado, sin bloque, TURNO_NO_IDENTIFICADO provisional", async () => {
+  it("REST (Carlos viernes A): trabajo no programado informativo (R4.5) — sin bloque, ya RESUELTO, sin avisos y con sus horas reales", async () => {
     const carlos = employee[PLANTA_EMPLOYEES.CARLOS]!;
+    const before = (await noticesFor(users.rrhh)).length;
     await punch(carlos, "IN", at(FRI_A, "10:00"));
+    expect((await punch(carlos, "OUT", at(FRI_A, "14:00"))).status).toBe(201);
     await drain(carlos);
     const [shift] = await shiftsOf(carlos);
-    expect(shift).toMatchObject({ shiftTemplateId: null, shiftTemplateSource: null });
-    expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["TURNO_NO_IDENTIFICADO"]);
+    expect(shift).toMatchObject({ status: "PROCESADO", shiftTemplateId: null, shiftTemplateSource: null, totalMinutes: 240 });
+    expect(await alertsOf(shift!.id)).toEqual([expect.objectContaining({ type: "TRABAJO_NO_PROGRAMADO", severity: "INFO", status: "RESUELTA", resolvedByUserId: null, resolutionNote: "Informativa: trabajo sin turno programado el viernes 06/11/2026 (día de descanso de su rotación). No requiere revisión." })]);
+    expect(await minutesOf(shift!.id)).toBe(240);
+    expect((await noticesFor(users.rrhh)).length).toBe(before);
+    const [entryAudit] = await auditAfter(shift!.id);
+    expect(entryAudit?.rotationDiagnosis).toMatchObject({ version: 2, kind: "UNSCHEDULED", reason: "REST" });
+  });
+
+  // ── R4.5 — trabajo no programado y entrada con una jornada sin bloque abierta ──
+
+  it("R4.5 Roberto: 11:30 fuera de ventana y ENTRADA 17:00 sin salida → cambio de bloque de R4.4 (anterior FALTA_SALIDA sin salida ni horas; nueva con su bloque; sin falta de ingreso; un aviso por anomalía)", async () => {
+    const roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
+    expect((await punch(roberto, "IN", at(MON_B, "11:30"))).status).toBe(201);
+    await drain(roberto);
+    const second = await punch(roberto, "IN", at(MON_B, "17:00"));
+    expect(second.status).toBe(201);
+    // Doble toque de la misma llegada: nunca otra entrada.
+    const doubleTap = await punch(roberto, "IN", at(MON_B, "17:00"));
+    expect(doubleTap.status).toBe(409);
+    await drain(roberto);
+    const [early, block] = await shiftsOf(roberto);
+    expect(early).toMatchObject({ status: "FALTA_SALIDA", endAt: null, endPunchId: null, totalMinutes: null, shiftTemplateId: null, scheduledStartAt: null });
+    expect(early!.observation).toBe("Falta registrar la salida de la jornada iniciada a las 11:30: se registró el ingreso del turno de las 17:00. Requiere revisión.");
+    expect(await minutesOf(early!.id)).toBe(0);
+    expect(block).toMatchObject({ status: "ABIERTO", shiftTemplateSource: "ROTATION", scheduledStartAt: at(MON_B, "17:00"), shiftTemplateId: templateId[PLANTA_TEMPLATES.T1703.id] });
+    expect(await alertsOf(block!.id)).toEqual([]);
+    // Evidencias: las dos fichadas de ingreso reales quedan; ninguna salida inventada.
+    expect(await holder.attendancePunch.count({ where: { employeeId: roberto, type: "INGRESO" } })).toBe(2);
+    expect(await exitPunchesOf(roberto)).toBe(0);
+    // La obligación de las 17:00 la satisface la ENTRADA de las 17:00 (nunca la de las 11:30).
+    const { checkMissingExpectedEntries } = await import("../time-entries/missingEntry.service");
+    await checkMissingExpectedEntries(at(MON_B, "17:45"));
+    expect(await holder.attendanceInactivityIncident.count({ where: { employeeId: roberto } })).toBe(0);
+    // Avisos: uno por la entrada fuera de ventana (inmediato, D3) y uno por la falta de salida.
+    const notices = (await noticesFor(users.rrhh)).filter((notice) => notice.entityId === early!.id || notice.title === "Ingreso fuera del horario del turno");
+    expect(notices.map((notice) => notice.title).sort()).toEqual(["Falta registrar la salida", "Ingreso fuera del horario del turno"]);
+    expect(notices.find((notice) => notice.title === "Falta registrar la salida")!.message).toBe("No registró la salida de la jornada iniciada a las 11:30; ya ingresó a su turno de las 17:00. La jornada anterior quedó sin horas y requiere revisión.");
+    const audits = await auditAfter(block!.id);
+    expect(audits[0]?.rotationDiagnosis).toMatchObject({ kind: "ASSIGNED", blockChange: { previousShiftId: early!.id, previousBlock: null } });
+  });
+
+  it("R4.5 Roberto: 11:30 fuera de ventana con SALIDA a las 14:00 → horas reales de esa jornada; la ENTRADA de las 17:00 es normal", async () => {
+    const roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
+    await punch(roberto, "IN", at(MON_B, "11:30"));
+    expect((await punch(roberto, "OUT", at(MON_B, "14:00"))).status).toBe(201);
+    expect((await punch(roberto, "IN", at(MON_B, "17:00"))).status).toBe(201);
+    await drain(roberto);
+    const [early, block] = await shiftsOf(roberto);
+    expect(early).toMatchObject({ status: "PROCESADO", totalMinutes: 150 });
+    expect(await minutesOf(early!.id)).toBe(150);
+    expect(block).toMatchObject({ status: "ABIERTO", shiftTemplateSource: "ROTATION", scheduledStartAt: at(MON_B, "17:00") });
+  });
+
+  it("R4.5 Juanjo (fijo L–V, sin rotación): sábado y domingo con entrada y salida → horas reales, TRABAJO_NO_PROGRAMADO ya RESUELTO y ningún aviso", async () => {
+    const juanjo = employee[PLANTA_EMPLOYEES.JUANJO]!;
+    const before = (await noticesFor(users.rrhh)).length;
+    for (const [date, start, end, minutes] of [[SAT_A, "08:00", "13:00", 300], [SUN_A, "09:00", "12:30", 210]] as const) {
+      expect((await punch(juanjo, "IN", at(date, start))).status).toBe(201);
+      expect((await punch(juanjo, "OUT", at(date, end))).status).toBe(201);
+      await drain(juanjo);
+      const shift = (await shiftsOf(juanjo)).at(-1)!;
+      expect(shift).toMatchObject({ status: "PROCESADO", shiftTemplateId: null, totalMinutes: minutes });
+      expect(await minutesOf(shift.id)).toBe(minutes);
+      expect((await alertsOf(shift.id)).map((alert) => [alert.type, alert.status, alert.severity])).toEqual([["TRABAJO_NO_PROGRAMADO", "RESUELTA", "INFO"]]);
+    }
+    expect((await noticesFor(users.rrhh)).length).toBe(before);
+    expect(await holder.attendanceInactivityIncident.count({ where: { employeeId: juanjo } })).toBe(0);
+  });
+
+  it("R4.5 Juanjo: feriado no convocado en día hábil → adopta su turno (fecha operativa), sin alertas de turno aunque llegue tarde y salga temprano; sólo la informativa", async () => {
+    const juanjo = employee[PLANTA_EMPLOYEES.JUANJO]!;
+    const feriado = await holder.doubleHourRule.create({ data: { name: "Feriado IT", recurrenceType: "FECHA", fromDate: day(MON_B), toDate: day(MON_B), multiplier: 2, kind: "FERIADO", reason: "it" } });
+    await holder.specialHourRuleDate.create({ data: { ruleId: feriado.id, date: day(MON_B) } });
+    const before = (await noticesFor(users.rrhh)).length;
+    await punch(juanjo, "IN", at(MON_B, "08:30"));
+    expect((await punch(juanjo, "OUT", at(MON_B, "11:00"))).status).toBe(201);
+    await drain(juanjo);
+    const [shift] = await shiftsOf(juanjo);
+    expect(shift).toMatchObject({ status: "PROCESADO", shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id], totalMinutes: 150 });
+    expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["TRABAJO_NO_PROGRAMADO"]);
+    expect((await alertsOf(shift!.id))[0]!.resolutionNote).toContain("feriado sin convocatoria");
+    expect((await noticesFor(users.rrhh)).length).toBe(before);
+  });
+
+  it("R4.5 Juanjo: franco el sábado → sólo ACTIVIDAD_EN_FRANCO (un aviso; antes eran dos)", async () => {
+    const juanjo = employee[PLANTA_EMPLOYEES.JUANJO]!;
+    await holder.employeeDayOff.create({ data: { employeeId: juanjo, date: day(SAT_A), createdByUserId: users.rrhh } });
+    const before = (await noticesFor(users.rrhh)).length;
+    await punch(juanjo, "IN", at(SAT_A, "08:00"));
+    await drain(juanjo);
+    const [shift] = await shiftsOf(juanjo);
+    expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["ACTIVIDAD_EN_FRANCO"]);
+    expect((await noticesFor(users.rrhh)).length - before).toBe(1);
   });
 
   it("MISSING y CONFLICT: POSSIBLE_SHIFT_CONFIGURATION_MISSING sin plantilla arbitraria; un solo aviso por persona y día aunque fiche dos veces", async () => {
