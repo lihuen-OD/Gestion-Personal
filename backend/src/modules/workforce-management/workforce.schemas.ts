@@ -67,6 +67,22 @@ export const shiftTemplateSchema = z.object({
   status: z.enum(["ACTIVO", "INACTIVO"]).default("ACTIVO"),
 });
 export const updateShiftTemplateSchema = shiftTemplateSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" });
+const replacementDateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Usá una fecha con formato AAAA-MM-DD").refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "La fecha no existe");
+const replaceShiftTemplateScheduleBase = z.object({
+  effectiveFrom: replacementDateKey,
+  startTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  endTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  code: z.string().trim().min(2).max(30),
+  name: z.string().trim().min(2).max(100),
+});
+export const replaceShiftTemplateSchedulePreviewSchema = replaceShiftTemplateScheduleBase;
+export const replaceShiftTemplateScheduleSchema = replaceShiftTemplateScheduleBase.extend({
+  confirmationToken: z.string().regex(/^[0-9a-f]{64}$/, "Token de confirmación inválido"),
+  acknowledgePendingDependencies: z.boolean().optional().default(false),
+});
 // Etapa 12B: clasificación estructurada, independiente del nombre libre
 // (`name` sigue siendo sólo texto visible, nunca se usa para lógica). Sin
 // `kind` en el body, queda en OTRO — mismo valor seguro que aplica la

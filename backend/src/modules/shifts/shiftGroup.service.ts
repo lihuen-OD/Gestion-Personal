@@ -13,8 +13,8 @@
  *   (normalizados en el schema); los índices únicos son la segunda defensa.
  * - INACTIVO no desclasifica: las plantillas ya asociadas siguen funcionando
  *   igual. Sólo impide asociar plantillas nuevas (`assertShiftGroupAssignable`).
- * - Eliminar sólo si no tiene plantillas; si no, se sugiere inactivar. La FK
- *   RESTRICT de ShiftTemplate.shiftGroupId es la segunda defensa.
+ * - Eliminar sólo si no tiene plantillas ni rotaciones; si no, se sugiere
+ *   inactivar. Ambas FK RESTRICT son la segunda defensa.
  */
 import { Prisma } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
@@ -157,6 +157,13 @@ export const shiftGroupService = {
               "SHIFT_GROUP_IN_USE",
             );
           }
+          if (before._count.rotations > 0) {
+            throw new AppError(
+              `No se puede eliminar el grupo ${describeShiftGroup(before)} porque tiene ${before._count.rotations} rotación(es) asociada(s). Inactivalo para conservar la configuración histórica.`,
+              409,
+              "SHIFT_GROUP_IN_USE",
+            );
+          }
           await shiftGroupRepository.delete(id, tx);
           await auditService.registerWithin(tx, { ...audit, action: "DELETE", entity: "ShiftGroup", entityId: id, description: `Se eliminó el grupo de turnos sin uso ${describeShiftGroup(before)}.`, before: auditSnapshot(before) });
           return { id };
@@ -164,8 +171,8 @@ export const shiftGroupService = {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
-      // FK RESTRICT (segunda defensa): una plantilla asociada en paralelo.
-      if (isKnownError(error, "P2003")) throw new AppError("No se puede eliminar el grupo porque tiene turnos asociados. Inactivalo en su lugar.", 409, "SHIFT_GROUP_IN_USE");
+      // FK RESTRICT (segunda defensa): una plantilla o rotación asociada en paralelo.
+      if (isKnownError(error, "P2003")) throw new AppError("No se puede eliminar el grupo porque tiene turnos o rotaciones asociados. Inactivalo en su lugar.", 409, "SHIFT_GROUP_IN_USE");
       throw error;
     }
   },

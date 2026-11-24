@@ -11,11 +11,10 @@ import type { shiftAssignmentService } from "./shiftAssignment.service";
 // usuario+rol vía `userScopedCacheKey` (shiftAssignment.controller.ts) —
 // `summary()` usa `employeeAccessWhere(user)`, así que dos roles distintos
 // (ej. RRHH vs Supervisión) pueden ver conteos distintos y nunca deben
-// compartir la misma entrada de cache. Write paths verificados exhaustivos
-// (grep de `prisma.shiftAssignment.` en todo backend/src): sólo
-// create/reEnable/update/remove, las 5 llamadas dentro de
-// shiftAssignment.repository.ts, alcanzadas únicamente por
-// shiftAssignmentService.assign/update/remove (shiftAssignment.controller.ts).
+// compartir la misma entrada de cache. Además de assign/update/remove, R4.6
+// puede cerrar fijos al dar de alta una membresía (Opción C) y dividir o
+// reapuntar asignaciones al reemplazar un horario; ambos controladores limpian
+// este resumen después de confirmar su transacción.
 const CACHE_TTL_MS = 30_000;
 
 export const shiftAssignmentSummaryCache = createTtlCache<Awaited<ReturnType<typeof shiftAssignmentService.summary>>>(CACHE_TTL_MS);

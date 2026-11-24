@@ -13,12 +13,12 @@ export const shiftGroupRepository = {
     return db.shiftGroup.findMany({
       where: status ? { status } : undefined,
       orderBy: SHIFT_GROUP_ORDER_BY,
-      include: { _count: { select: { templates: true } } },
+      include: { _count: { select: { templates: true, rotations: true } } },
     });
   },
 
   findById(id: string, db: Db = prisma) {
-    return db.shiftGroup.findUnique({ where: { id }, include: { _count: { select: { templates: true } } } });
+    return db.shiftGroup.findUnique({ where: { id }, include: { _count: { select: { templates: true, rotations: true } } } });
   },
 
   /**
@@ -37,12 +37,12 @@ export const shiftGroupRepository = {
   create(data: { code: string; name: string; sortOrder: number }, userId: string | null, db: Db = prisma) {
     return db.shiftGroup.create({
       data: { ...data, createdByUserId: userId, updatedByUserId: userId },
-      include: { _count: { select: { templates: true } } },
+      include: { _count: { select: { templates: true, rotations: true } } },
     });
   },
 
   update(id: string, data: Prisma.ShiftGroupUncheckedUpdateInput, db: Db = prisma) {
-    return db.shiftGroup.update({ where: { id }, data, include: { _count: { select: { templates: true } } } });
+    return db.shiftGroup.update({ where: { id }, data, include: { _count: { select: { templates: true, rotations: true } } } });
   },
 
   delete(id: string, db: Db = prisma) {

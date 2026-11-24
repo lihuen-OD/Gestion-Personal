@@ -17,6 +17,7 @@ import type { RotationConfiguration, RotationTemplateRef } from "./rotationPlan"
 import { shiftRotationRepository, type RotationFullRow } from "./shiftRotation.repository";
 import { allMembers, keyOf, keyOrNull, membershipFacts, rotationSnapshot } from "./shiftRotation.support";
 import { fixedIntervalsOn, rotationIntervalsOn, transitionCheck, type ScheduledInterval } from "./shiftRotationReadiness";
+import { AppError } from "../../shared/errors/AppError";
 
 type Db = PrismaTransactionClient;
 
@@ -113,5 +114,48 @@ export async function transitionIssuesForEntry(db: Db, input: { rotationId: stri
 export async function rotationIntervalsForEmployee(employeeId: string, dateKey: string, db: Db = prisma): Promise<ScheduledInterval[]> {
   const config = await loadRotationConfiguration(db, { fromKey: dateKey, toKey: dateKey, employeeIds: [employeeId] });
   return config.memberships.length ? rotationIntervalsOn(config, employeeId, dateKey) : [];
+}
+
+/** Protección inversa: un turno fijo no puede coexistir ni solaparse en la frontera con una rotación. */
+export async function assertFixedAssignmentsCompatibleWithRotations(
+  db: Db,
+  inputs: Array<{
+    employeeId: string;
+    employee: string;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    weekdays: number[];
+    template: FixedRef;
+  }>,
+) {
+  if (!inputs.length) return;
+  const first = inputs[0]!;
+  const memberships = await shiftRotationRepository.overlappingMemberships(inputs.map((input) => input.employeeId), first.effectiveFrom, first.effectiveTo, db);
+  if (memberships.length) {
+    const current = memberships[0]!;
+    const input = inputs.find((candidate) => candidate.employeeId === current.employeeId) ?? first;
+    throw new AppError(
+      `El turno fijo de ${input.employee} se superpone con la rotación ${current.crew.rotation.code} - ${current.crew.rotation.name}, equipo ${current.crew.code} - ${current.crew.name}. Cerrá primero la membresía o iniciá el turno después.`,
+      409,
+      "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION",
+    );
+  }
+  const previous = previousCalendarDateKey(first.effectiveFrom);
+  const config = await loadRotationConfiguration(db, { fromKey: previous, toKey: previous, employeeIds: inputs.map((input) => input.employeeId) });
+  for (const input of inputs) {
+    const outgoing = config.memberships.length ? rotationIntervalsOn(config, input.employeeId, previous) : [];
+    if (!outgoing.length) continue;
+    const incoming = fixedIntervalsOn([{
+      status: "HABILITADO",
+      effectiveFrom: argentinaCalendarDate(input.effectiveFrom),
+      effectiveTo: input.effectiveTo ? argentinaCalendarDate(input.effectiveTo) : null,
+      weekdays: input.weekdays,
+      template: input.template,
+    }], input.employeeId, input.effectiveFrom);
+    const transition = transitionCheck(outgoing, incoming);
+    if (transition.overlaps.length) {
+      throw new AppError("El turno fijo se superpone con el bloque nocturno del último día de la rotación.", 409, "ROTATION_TRANSITION_OVERLAP", { overlaps: transition.overlaps });
+    }
+  }
 }
 

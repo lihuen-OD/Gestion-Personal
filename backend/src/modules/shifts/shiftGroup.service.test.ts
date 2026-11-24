@@ -20,9 +20,9 @@ const registerWithin = auditService.registerWithin as unknown as Mock;
 
 const GROUP_ID = "0b6f3f8e-8c1a-4a77-9d3b-2d6f2f1b9a10";
 const createdAt = new Date("2026-11-19T12:00:00.000Z");
-function row(overrides: Partial<{ id: string; code: string; name: string; sortOrder: number; status: "ACTIVO" | "INACTIVO"; templates: number }> = {}) {
-  const { templates = 0, ...rest } = overrides;
-  return { id: GROUP_ID, code: "PLANTA", name: "Planta", sortOrder: 10, status: "ACTIVO" as const, createdByUserId: null, updatedByUserId: null, createdAt, updatedAt: createdAt, _count: { templates }, ...rest };
+function row(overrides: Partial<{ id: string; code: string; name: string; sortOrder: number; status: "ACTIVO" | "INACTIVO"; templates: number; rotations: number }> = {}) {
+  const { templates = 0, rotations = 0, ...rest } = overrides;
+  return { id: GROUP_ID, code: "PLANTA", name: "Planta", sortOrder: 10, status: "ACTIVO" as const, createdByUserId: null, updatedByUserId: null, createdAt, updatedAt: createdAt, _count: { templates, rotations }, ...rest };
 }
 const knownError = (code: string) => new Prisma.PrismaClientKnownRequestError("error", { code, clientVersion: "test" });
 const audit = { userId: "user-1" };
@@ -41,7 +41,7 @@ describe("listar", () => {
   it("ordena por sortOrder y nombre, filtra por estado y devuelve la cantidad de plantillas", async () => {
     db.shiftGroup.findMany.mockResolvedValue([row({ templates: 3 }), row({ id: "g2", code: "TALLER", name: "Taller", sortOrder: 20, status: "INACTIVO" })]);
     const items = await shiftGroupService.list({ status: "ACTIVO" });
-    expect(db.shiftGroup.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVO" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { _count: { select: { templates: true } } } });
+    expect(db.shiftGroup.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVO" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { _count: { select: { templates: true, rotations: true } } } });
     expect(items).toEqual([
       { id: GROUP_ID, code: "PLANTA", name: "Planta", sortOrder: 10, status: "ACTIVO", templateCount: 3, createdAt, updatedAt: createdAt },
       { id: "g2", code: "TALLER", name: "Taller", sortOrder: 20, status: "INACTIVO", templateCount: 0, createdAt, updatedAt: createdAt },

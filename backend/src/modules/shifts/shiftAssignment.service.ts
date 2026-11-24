@@ -8,6 +8,8 @@ import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 import type { CreateShiftAssignmentInput, ListShiftAssignmentsQuery, UpdateShiftAssignmentInput } from "./shiftAssignment.schemas";
+import { assertFixedAssignmentsCompatibleWithRotations } from "./shiftRotationTransitions";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 
 // La asignación y el recálculo de la cobertura de novedades van juntos.
 const SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS = { timeout: 30_000 };
@@ -65,8 +67,9 @@ export const shiftAssignmentService = {
     if (!template) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
 
     const employeeIds = Array.from(new Set(input.employeeIds));
-    const existingEmployees = await prisma.employee.count({ where: { id: { in: employeeIds } } });
-    if (existingEmployees !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
+    const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, legajo: true, firstName: true, lastName: true } });
+    if (employees.length !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
+    const employeeLabels = new Map(employees.map((employee) => [employee.id, formatEmployeeReference(employee)]));
 
     const vigency = { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays };
     const outcome = await execute(() => prisma.$transaction(async (tx) => {
@@ -75,8 +78,19 @@ export const shiftAssignmentService = {
       const audits: RegisterAuditInput[] = [];
       const ranges: Array<{ from: Date; to: Date | null }> = [];
       const changedEmployees: string[] = [];
+      const existingRows = await shiftAssignmentRepository.findExistingMany(employeeIds, input.shiftTemplateId, tx);
+      const existingByEmployee = new Map(existingRows.map((row) => [row.employeeId, row]));
+      const affectedIds = employeeIds.filter((employeeId) => existingByEmployee.get(employeeId)?.status !== "HABILITADO");
+      await assertFixedAssignmentsCompatibleWithRotations(tx, affectedIds.map((employeeId) => ({
+        employeeId,
+        employee: employeeLabels.get(employeeId)!,
+        effectiveFrom: input.effectiveFrom.toISOString().slice(0, 10),
+        effectiveTo: input.effectiveTo?.toISOString().slice(0, 10) ?? null,
+        weekdays: input.weekdays,
+        template,
+      })));
       for (const employeeId of employeeIds) {
-        const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId, tx);
+        const existing = existingByEmployee.get(employeeId) ?? null;
 
         if (!existing) {
           const created = await shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, vigency, user.id, tx);
@@ -168,6 +182,17 @@ export const shiftAssignmentService = {
     const affectsWorkday = data.status !== undefined || data.effectiveFrom !== undefined || data.effectiveTo !== undefined || data.weekdays !== undefined;
     const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
       if (affectsWorkday) await lockEmployeeCoverage(tx, [before.employeeId]);
+      const resultingStatus = input.status ?? before.status;
+      if (affectsWorkday && resultingStatus === "HABILITADO") {
+        await assertFixedAssignmentsCompatibleWithRotations(tx, [{
+          employeeId: before.employeeId,
+          employee: formatEmployeeReference(before.employee),
+          effectiveFrom: effectiveFrom.toISOString().slice(0, 10),
+          effectiveTo: effectiveTo?.toISOString().slice(0, 10) ?? null,
+          weekdays: input.weekdays ?? before.weekdays,
+          template: before.shiftTemplate,
+        }]);
+      }
       const updated = await shiftAssignmentRepository.update(id, data, tx);
       const window = affectsWorkday ? coverageWindowOf([{ from: before.effectiveFrom, to: before.effectiveTo }, { from: updated.effectiveFrom, to: updated.effectiveTo }]) : null;
       const recalculated = window

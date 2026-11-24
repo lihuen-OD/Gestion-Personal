@@ -114,6 +114,10 @@ export const shiftRotationMembershipService = {
       const inactive = employees.filter((employee) => employee.status !== "ACTIVO");
       if (inactive.length) throw new AppError(`No se puede dar de alta a personas inactivas: ${inactive.map(employeeLabel).join("; ")}.`, 409, "ROTATION_EMPLOYEE_INACTIVE");
       const labels = new Map(employees.map((employee) => [employee.id, employeeLabel(employee)]));
+      // Lock compartido con turnos fijos y regímenes: después de tomarlo se
+      // releen TODOS los conflictos. Así, alta de rotación vs. alta fija o
+      // SIN_TURNO concurrentes nunca pueden pasar ambas validaciones.
+      await lockEmployeeCoverage(tx, employeeIds);
 
       const overlapping = await shiftRotationRepository.overlappingMemberships(employeeIds, from, to, tx);
       if (overlapping.length) {
@@ -146,8 +150,6 @@ export const shiftRotationMembershipService = {
         throw new AppError(`El primer turno de la rotación del ${formatDateKey(from)} se superpone con el turno del día anterior.`, 409, "ROTATION_TRANSITION_OVERLAP", { overlaps: transition.overlaps });
       }
       const before = await assessRotationRow(rotation, tx);
-      await lockEmployeeCoverage(tx, employeeIds);
-
       const userId = audit?.userId ?? null;
       const audits: RegisterAuditInput[] = [];
       const previousDay = previousCalendarDateKey(from);

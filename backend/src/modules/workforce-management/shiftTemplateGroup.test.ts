@@ -24,8 +24,11 @@ vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     shiftTemplate: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     shiftGroup: { findUnique: vi.fn() },
-    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
-    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    workShift: { findFirst: vi.fn().mockResolvedValue(null) },
+    shiftRotationBlock: { findFirst: vi.fn().mockResolvedValue(null) },
+    clockPunchPostProcessJob: { count: vi.fn().mockResolvedValue(0) },
     // R4.3b: sin membresías de rotación (camino legacy).
     shiftRotationCrewMember: { findFirst: vi.fn().mockResolvedValue(null) },
     // Advisory locks de los caminos que sí recalculan cobertura (control).
@@ -68,8 +71,9 @@ describe("catálogo (serialización)", () => {
   it("incluye el grupo de cada plantilla; sin grupo = shiftGroup null", async () => {
     db.shiftTemplate.findMany.mockResolvedValue([template(), template({ id: "template-2", shiftGroupId: PLANTA_ID, shiftGroup: PLANTA })]);
     const items = await workforceService.shiftTemplates();
-    expect(db.shiftTemplate.findMany).toHaveBeenCalledWith({ orderBy: { startTime: "asc" }, include: GROUP_INCLUDE });
+    expect(db.shiftTemplate.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { startTime: "asc" }, include: expect.objectContaining(GROUP_INCLUDE) }));
     expect(items.map((item) => item.shiftGroup)).toEqual([null, PLANTA]);
+    expect(items.every((item) => item.inUseFromTomorrow === false)).toBe(true);
   });
 });
 

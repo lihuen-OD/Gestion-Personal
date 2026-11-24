@@ -55,6 +55,10 @@ export const shiftAssignmentRepository = {
     return db.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } });
   },
 
+  findExistingMany(employeeIds: string[], shiftTemplateId: string, db: Db = prisma) {
+    return db.shiftAssignment.findMany({ where: { employeeId: { in: employeeIds }, shiftTemplateId } });
+  },
+
   create(employeeId: string, shiftTemplateId: string, data: ShiftAssignmentVigencyData, userId: string | null, db: Db = prisma) {
     return db.shiftAssignment.create({
       data: {

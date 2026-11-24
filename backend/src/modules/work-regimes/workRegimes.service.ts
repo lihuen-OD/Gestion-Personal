@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import type { OpenShiftOverflowAction, WorkRegimeKind } from "@prisma/client";
 import type { AuditContext } from "../audit/audit.service";
-import { prisma } from "../../shared/prisma/client";
+import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { lockEmployeeCoverage, lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
 import { auditNoveltyCoverageRecalculation, coverageWindowOf, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { auditService } from "../audit/audit.service";
@@ -18,6 +18,8 @@ import type {
   UpdateWorkRegimeAssignmentInput,
   UpdateWorkRegimeInput,
 } from "./workRegimes.schemas";
+import { shiftRotationRepository } from "../shifts/shiftRotation.repository";
+import { rangesOverlap } from "../shifts/shiftRotationReadiness";
 
 export interface ActiveWorkRegime {
   kind: WorkRegimeKind;
@@ -131,14 +133,24 @@ async function assertEmployeeExists(employeeId: string) {
   if (!employee) throw new AppError("No encontramos el empleado solicitado", 404, "EMPLOYEE_NOT_FOUND");
 }
 
-async function assertNoOverlap(employeeId: string, effectiveFrom: Date, effectiveTo: Date | null | undefined, excludeId?: string) {
-  const overlapping = await workRegimesRepository.findOverlappingAssignment(employeeId, effectiveFrom, effectiveTo, excludeId);
+async function assertNoOverlap(employeeId: string, effectiveFrom: Date, effectiveTo: Date | null | undefined, excludeId?: string, db?: PrismaTransactionClient) {
+  const overlapping = await workRegimesRepository.findOverlappingAssignment(employeeId, effectiveFrom, effectiveTo, excludeId, db);
   if (overlapping) {
     throw new AppError(
       `La vigencia se superpone con una asignación existente (${overlapping.workRegime.code} - ${overlapping.workRegime.name}, desde ${formatArgentinaDate(overlapping.effectiveFrom)}${overlapping.effectiveTo ? ` hasta ${formatArgentinaDate(overlapping.effectiveTo)}` : ""}).`,
       409,
       "WORK_REGIME_ASSIGNMENT_OVERLAP",
     );
+  }
+}
+
+const dateKey = (value: Date) => value.toISOString().slice(0, 10);
+
+async function assertSinTurnoWithoutRotation(employeeId: string, effectiveFrom: Date, effectiveTo: Date | null | undefined, db: PrismaTransactionClient) {
+  const memberships = await shiftRotationRepository.overlappingMemberships(employeeId ? [employeeId] : [], dateKey(effectiveFrom), effectiveTo ? dateKey(effectiveTo) : null, db);
+  if (memberships.length) {
+    const row = memberships[0]!;
+    throw new AppError(`El régimen SIN_TURNO se superpone con la rotación ${row.crew.rotation.code} - ${row.crew.rotation.name}, equipo ${row.crew.code} - ${row.crew.name}. Cerrá primero la membresía.`, 409, "WORK_REGIME_OVERLAPS_ROTATION");
   }
 }
 
@@ -172,8 +184,20 @@ export const workRegimesService = {
     const { item, coverage } = kindChanged
       ? await execute(() => prisma.$transaction(async (tx) => {
           await lockNoveltyCoverageGlobally(tx);
-          const updated = await workRegimesRepository.update(id, normalizedData, audit?.userId, tx);
           const assignments = await tx.employeeWorkRegime.findMany({ where: { workRegimeId: id }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } });
+          if (normalizedData.kind === "SIN_TURNO" && assignments.length) {
+            const byEmployee = new Map(assignments.map((row) => [row.employeeId, row]));
+            const memberships = await tx.shiftRotationCrewMember.findMany({
+              where: { employeeId: { in: [...byEmployee.keys()] } },
+              include: { crew: { include: { rotation: { select: { code: true, name: true } } } } },
+            });
+            const conflict = memberships.find((member) => {
+              const assignment = byEmployee.get(member.employeeId)!;
+              return rangesOverlap(dateKey(assignment.effectiveFrom), assignment.effectiveTo ? dateKey(assignment.effectiveTo) : null, dateKey(member.effectiveFrom), member.effectiveTo ? dateKey(member.effectiveTo) : null);
+            });
+            if (conflict) throw new AppError(`No se puede convertir el régimen a SIN_TURNO porque una asignación se superpone con la rotación ${conflict.crew.rotation.code} - ${conflict.crew.rotation.name}.`, 409, "WORK_REGIME_OVERLAPS_ROTATION");
+          }
+          const updated = await workRegimesRepository.update(id, normalizedData, audit?.userId, tx);
           const window = coverageWindowOf(assignments.map((row) => ({ from: row.effectiveFrom, to: row.effectiveTo })));
           const recalculated = window
             ? await recalculateNoveltyCoverage(tx, { employeeIds: [...new Set(assignments.map((row) => row.employeeId))], ...window }, { source: "WORK_REGIME_CHANGED", label: `cambio del tipo del régimen ${updated.code} - ${updated.name}` })
@@ -209,6 +233,11 @@ export const workRegimesService = {
 
     const { item, coverage } = await prisma.$transaction(async (tx) => {
       await lockEmployeeCoverage(tx, [employeeId]);
+      await assertNoOverlap(employeeId, data.effectiveFrom, data.effectiveTo, undefined, tx);
+      // Releer después del lock compartido con rotaciones: el catálogo pudo
+      // cambiar de kind mientras esta asignación esperaba la transacción.
+      const lockedRegime = await execute(() => workRegimesRepository.findById(data.workRegimeId, tx));
+      if (lockedRegime.kind === "SIN_TURNO") await assertSinTurnoWithoutRotation(employeeId, data.effectiveFrom, data.effectiveTo, tx);
       const created = await workRegimesRepository.createAssignment({
         employeeId,
         workRegimeId: data.workRegimeId,
@@ -245,9 +274,8 @@ export const workRegimesService = {
     const before = await workRegimesRepository.findAssignmentById(employeeId, assignmentId);
     if (!before) throw new AppError("No encontramos la asignación de régimen solicitada", 404, "WORK_REGIME_ASSIGNMENT_NOT_FOUND");
 
-    if (data.workRegimeId) {
-      await execute(() => workRegimesRepository.findById(data.workRegimeId!));
-    }
+    const requestedRegimeId = data.workRegimeId;
+    if (requestedRegimeId) await execute(() => workRegimesRepository.findById(requestedRegimeId));
 
     const effectiveFrom = data.effectiveFrom ?? before.effectiveFrom;
     const effectiveTo = data.effectiveTo !== undefined ? data.effectiveTo : before.effectiveTo;
@@ -255,6 +283,10 @@ export const workRegimesService = {
 
     const { item, coverage } = await prisma.$transaction(async (tx) => {
       await lockEmployeeCoverage(tx, [employeeId]);
+      await assertNoOverlap(employeeId, effectiveFrom, effectiveTo, assignmentId, tx);
+      const targetRegimeId = requestedRegimeId ?? before.workRegimeId;
+      const lockedRegime = await execute(() => workRegimesRepository.findById(targetRegimeId, tx));
+      if (lockedRegime.kind === "SIN_TURNO") await assertSinTurnoWithoutRotation(employeeId, effectiveFrom, effectiveTo, tx);
       const updated = await workRegimesRepository.updateAssignment(assignmentId, {
         ...(data.workRegimeId ? { workRegimeId: data.workRegimeId } : {}),
         ...(data.effectiveFrom ? { effectiveFrom: data.effectiveFrom } : {}),

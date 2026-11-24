@@ -7,7 +7,7 @@ import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
 import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { workforceController as c } from "./workforce.controller";
-import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, correctionsQuerySchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
+import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, correctionsQuerySchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, replaceShiftTemplateSchedulePreviewSchema, replaceShiftTemplateScheduleSchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
 export const workforceRouter=Router();
 workforceRouter.use(requireAuth);
@@ -27,6 +27,8 @@ workforceRouter.get("/shift-templates",requireAnyRole(all),asyncHandler(c.shiftT
 workforceRouter.post("/shift-templates",requireAnyRole([roles.rrhh]),validateBody(shiftTemplateSchema),asyncHandler(c.createShiftTemplate));
 workforceRouter.patch("/shift-templates/:id",requireAnyRole([roles.rrhh]),validateBody(updateShiftTemplateSchema),asyncHandler(c.updateShiftTemplate));
 workforceRouter.delete("/shift-templates/:id",requireAnyRole([roles.rrhh]),asyncHandler(c.removeShiftTemplate));
+workforceRouter.post("/shift-templates/:id/replace-schedule/preview",requireAnyRole([roles.rrhh]),validateBody(replaceShiftTemplateSchedulePreviewSchema),asyncHandler(c.previewShiftTemplateScheduleReplacement));
+workforceRouter.post("/shift-templates/:id/replace-schedule",requireAnyRole([roles.rrhh]),validateBody(replaceShiftTemplateScheduleSchema),asyncHandler(c.replaceShiftTemplateSchedule));
 workforceRouter.get("/double-hour-rules",requireAnyRole(all),asyncHandler(c.doubleRules));
 workforceRouter.get("/double-hour-rules/calendar",requireAnyRole(all),validateQuery(calendarRangeQuerySchema),asyncHandler(c.doubleRulesCalendar));
 workforceRouter.post("/double-hour-rules",requireAnyRole([roles.rrhh]),validateBody(doubleRuleSchema),asyncHandler(c.createDoubleRule));
