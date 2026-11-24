@@ -43,6 +43,7 @@ export const rotationFullInclude = {
 export type RotationFullRow = Prisma.ShiftRotationGetPayload<{ include: typeof rotationFullInclude }>;
 export type RotationVersionRow = Prisma.ShiftRotationVersionGetPayload<{ include: typeof versionInclude }>;
 export type RotationMemberRow = RotationFullRow["crews"][number]["members"][number];
+export type RotationMembershipCoverage = { employeeId: string; effectiveFrom: string; effectiveTo: string | null };
 
 export type VersionDayData = { crewId: string; cycleWeekIndex: number; weekday: number; kind: "SHIFT" | "REST"; blocks: Array<{ blockIndex: number; shiftTemplateId: string }> };
 
@@ -146,6 +147,45 @@ export const shiftRotationRepository = {
 
   employeesByIds(ids: string[], db: Db = prisma) {
     return db.employee.findMany({ where: { id: { in: ids } }, select: employeeLabelSelect });
+  },
+
+  /**
+   * Decisiones humanas legacy que quedarían dentro de una cobertura de
+   * rotación. Se consulta siempre después del lock de cobertura del legajo.
+   * No devuelve notas, revisor ni observación: esos datos no forman parte del
+   * error de dominio y nunca deben salir de este límite.
+   */
+  reviewedDailyIncidentConflicts(coverages: RotationMembershipCoverage[], db: Db) {
+    if (!coverages.length) return Promise.resolve([]);
+    return db.attendanceInactivityIncident.findMany({
+      where: {
+        scheduledStartAt: null,
+        OR: [{ reviewedByUserId: { not: null } }, { status: "DESCARTADA" }],
+        AND: [{
+          OR: coverages.map((coverage) => ({
+            employeeId: coverage.employeeId,
+            operationalDate: {
+              gte: argentinaCalendarDate(coverage.effectiveFrom),
+              ...(coverage.effectiveTo ? { lte: argentinaCalendarDate(coverage.effectiveTo) } : {}),
+            },
+          })),
+        }],
+      },
+      select: { employeeId: true, operationalDate: true },
+      orderBy: [{ operationalDate: "asc" }, { employeeId: "asc" }],
+    });
+  },
+
+  activeRotationMembershipOn(employeeId: string, date: Date, db: Db) {
+    return db.shiftRotationCrewMember.findFirst({
+      where: {
+        employeeId,
+        effectiveFrom: { lte: date },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
+        crew: { rotation: { status: "ACTIVO" } },
+      },
+      select: { id: true },
+    });
   },
 
   /** Membresías de estas personas en CUALQUIER rotación que se superpongan con el rango. */

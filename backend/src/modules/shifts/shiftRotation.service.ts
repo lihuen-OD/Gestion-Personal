@@ -19,7 +19,7 @@ import { auditService, type AuditContext } from "../audit/audit.service";
 import { auditNoveltyCoverageRecalculationWithin } from "../novelties/noveltyCoverageRecalculation";
 import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
 import { assertShiftGroupAssignable } from "./shiftGroup.service";
-import { shiftRotationRepository, type RotationFullRow } from "./shiftRotation.repository";
+import { shiftRotationRepository, type RotationFullRow, type RotationMembershipCoverage } from "./shiftRotation.repository";
 import type { CreateCrewInput, CreateRotationInput, ListRotationsQuery, UpdateCrewInput, UpdateRotationInput } from "./shiftRotation.schemas";
 import {
   allMembers,
@@ -71,6 +71,33 @@ export async function assessRotationRow(rotation: RotationFullRow, db: PrismaTra
     templates: templatesOf(rotation),
     todayKey: today,
   });
+}
+
+/**
+ * T-R4-CONC: una cobertura nueva nunca puede reinterpretar una decisión
+ * humana tomada sobre el incidente diario legacy. El llamador ya tomó el
+ * lock de cobertura de todos los legajos y sólo aporta identidades que el
+ * actor está autorizado a administrar.
+ */
+export async function assertNoAttendanceHistoryConflicts(
+  coverages: RotationMembershipCoverage[],
+  employeeLabels: ReadonlyMap<string, string>,
+  db: PrismaTransactionClient,
+) {
+  const conflicts = await shiftRotationRepository.reviewedDailyIncidentConflicts(coverages, db);
+  if (!conflicts.length) return;
+  throw new AppError(
+    "No se puede aplicar la rotación: hay decisiones de asistencia ya revisadas dentro de la vigencia solicitada.",
+    409,
+    "ROTATION_ATTENDANCE_HISTORY_CONFLICT",
+    {
+      total: conflicts.length,
+      conflicts: conflicts.map((conflict) => ({
+        employee: employeeLabels.get(conflict.employeeId) ?? "Persona autorizada",
+        operationalDate: keyOf(conflict.operationalDate),
+      })),
+    },
+  );
 }
 
 function versionSummary(rotation: RotationFullRow, today: string) {
@@ -281,14 +308,23 @@ export const shiftRotationService = {
           { members: started.map((member) => ({ id: member.id, employee: employeeLabel(member.employee), effectiveFrom: keyOf(member.effectiveFrom) })) },
         );
       }
+      const members = allMembers(rotation);
+      const employeeIds = [...new Set(members.map((member) => member.employeeId))];
+      // Orden compatible con los escritores por día: ellos toman día →
+      // cobertura; este flujo nunca toma día, por lo que no introduce el
+      // orden inverso ni un ciclo de espera.
+      await lockEmployeeCoverage(tx, employeeIds);
+      await assertNoAttendanceHistoryConflicts(
+        members.map((member) => ({ employeeId: member.employeeId, effectiveFrom: keyOf(member.effectiveFrom), effectiveTo: keyOrNull(member.effectiveTo) })),
+        new Map(members.map((member) => [member.employeeId, employeeLabel(member.employee)])),
+        tx,
+      );
       const issues = await assessRotationRow(rotation, tx);
       if (hasBlockingIssues(issues)) {
         throw new AppError("No se puede activar: la configuración tiene problemas que impedirían resolver los turnos. Corregilos y volvé a intentar.", 409, "ROTATION_NOT_READY", { issues: issues.filter((issue) => issue.severity === "ERROR") });
       }
       const updated = await shiftRotationRepository.updateRotation(id, { status: "ACTIVO", updatedByUserId: audit?.userId ?? null }, tx);
-      const members = allMembers(rotation);
       const firstStart = members.map((member) => keyOf(member.effectiveFrom)).sort()[0];
-      await lockEmployeeCoverage(tx, members.map((member) => member.employeeId));
       const coverage = firstStart ? await recalculateRotationCoverage(tx, members.map((member) => member.employeeId), [{ from: firstStart, to: null }], `activación de la rotación ${describeRotation(rotation)}`) : null;
       await auditService.registerWithin(tx, { ...audit, action: "ACTIVATE", entity: "ShiftRotation", entityId: id, description: `Se activó la rotación ${describeRotation(rotation)}${firstStart ? `; rige desde el ${formatDateKey(firstStart)} para ${new Set(members.map((member) => member.employeeId)).size} persona(s)` : " (todavía sin membresías)"}.`, before: rotationAuditSnapshot(rotation), after: rotationAuditSnapshot(updated) });
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);

@@ -25,7 +25,7 @@ import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
 import { clearShiftAssignmentSummaryCache } from "./shiftAssignment.cache";
 import { shiftRotationRepository, type RotationFullRow } from "./shiftRotation.repository";
 import type { AddMembersInput, CloseMemberInput, ListMembersQuery, MoveMemberInput } from "./shiftRotation.schemas";
-import { assessRotationRow } from "./shiftRotation.service";
+import { assertNoAttendanceHistoryConflicts, assessRotationRow } from "./shiftRotation.service";
 import {
   allMembers,
   assertNoNewBlockingIssues,
@@ -118,6 +118,12 @@ export const shiftRotationMembershipService = {
       // releen TODOS los conflictos. Así, alta de rotación vs. alta fija o
       // SIN_TURNO concurrentes nunca pueden pasar ambas validaciones.
       await lockEmployeeCoverage(tx, employeeIds);
+
+      await assertNoAttendanceHistoryConflicts(
+        employeeIds.map((employeeId) => ({ employeeId, effectiveFrom: from, effectiveTo: to })),
+        labels,
+        tx,
+      );
 
       const overlapping = await shiftRotationRepository.overlappingMemberships(employeeIds, from, to, tx);
       if (overlapping.length) {
