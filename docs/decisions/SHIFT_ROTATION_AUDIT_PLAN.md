@@ -1575,6 +1575,21 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 - `POSSIBLE_SHIFT_CONFIGURATION_MISSING` (que R4.4 volvió a generar para rotaciones) sigue rotulado "Registro anterior" en `ShiftAlertsPage` (`LEGACY_ALERT_TYPES`): deuda de R4.4, no corregida.
 - Deploy: R4.1A + R4.3a + R4.5 juntas y antes del código (autorización aparte, procedimiento de §24.19).
 
+### 25.8 R4.5.1 — Sin rotación efectiva en la fecha: rige el legacy (implementada y validada en local; sin schema)
+
+**Causa (auditoría final de R4.5, 2026-11-24):** la fichada considera "miembro de rotación" a quien tenga una membresía que se superponga con D−1..D+1 (`_count` del contexto, R4.4), sin mirar si en la fecha hay plan. Si D no tiene plan efectivo —membresía vencida el día anterior, membresía que empieza después, o rotación INACTIVA (el núcleo devuelve `null`, §25.3)— el mapa de obligaciones no tiene D y `classifyRotationEntry` caía en `UNSCHEDULED/NO_BLOCKS`: se ignoraba el turno fijo y, desde R4.5, la jornada quedaba como `TRABAJO_NO_PROGRAMADO` silenciosa. Contradecía "rotación INACTIVA = deja de resolver: rige el legacy" y la obligación (que ese día ya usaba los turnos fijos).
+
+**Corrección:** después de intentar la asignación a un bloque, si la fecha de la fichada no tiene obligación de rotación (y no hay bloques de esa fecha) la clasificación es `NO_EFFECTIVE_ROTATION` y el servicio de fichada la descarta: sin bloque, sin payload de rotación (el post-proceso evalúa con los turnos fijos: adopción, puntualidad, franco, feriado, `TRABAJO_NO_PROGRAMADO` o `TURNO_NO_IDENTIFICADO` según §25.7) y sin cambio de bloque. Para trazabilidad, el AuditLog de la fichada guarda `rotationDiagnosis: { version: 2, kind: "NO_EFFECTIVE_ROTATION" }`; este tipo nunca viaja en el payload del job. Sin schema ni migraciones.
+
+**Límites verificados:**
+- **Fecha:** la de la fichada (la misma que usa el legacy para una entrada sin turno y el paso de francos).
+- **Nocturnos:** la asignación va primero — el bloque 19–07 de D−1 sigue siendo de la rotación aunque la membresía termine en D−1 (ingreso tardío 00:30 incluido), y una entrada dentro de la ventana de un bloque de D+1 se asigna a ese bloque.
+- **Bordes de membresía:** vigencia inclusiva (`isInEffect`); vencida el día anterior → legacy; empieza mañana → hoy legacy, mañana rotación.
+- **MISSING/CONFLICT ≠ sin rotación:** `null` sólo si no hay membresía vigente o la rotación está INACTIVA. Equipo inactivo, sin versión, versión inválida, sin fila de día y todos los CONFLICT tienen plan ⇒ siguen siendo `POSSIBLE_SHIFT_CONFIGURATION_MISSING`: una rotación ACTIVA mal configurada nunca cae al legacy.
+- REST, feriados, francos, trabajo no programado y las reglas de R4.4 no cambian.
+
+**Validación local** (PostgreSQL 18, bases `clock_it_r45_*`): unitarias (`rotationEntry.test.ts` +5, `timeEntries.service.test.ts` +1); `rotationClock.integration` +8 con PostgreSQL real: membresía vencida (turno fijo adoptado, `INGRESO_TARDE`, diagnóstico en el AuditLog), membresía futura (viernes legacy, sábado REST de la rotación), rotación INACTIVA (con y sin turno fijo), nocturno con membresía que termina, equipo inactivo (sigue configuración) y **concurrencia** del cambio de bloque desde una jornada sin bloque: dos ENTRADAS simultáneas con `requestId` distintos (201 + 409; una jornada nueva, una sola `FALTA_SALIDA`, 2 fichadas, una evidencia por fichada, un aviso), el mismo `requestId` en paralelo y reintentado (una fichada, mismo resultado; el otro recibe el resultado o `CLOCK_ATTEMPT_PROCESSING`) y la carrera con `expireOpenWorkShifts` (siempre `FALTA_SALIDA` + una jornada nueva, sin error). Quitar la corrección hace fallar 6 de esos tests. Backend 4327, `typecheck` y `build`; 15 suites de integración del CI 209/209; rotación 49/49 en 3 corridas.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas

@@ -22,7 +22,7 @@ import { failedAttemptClockGuidance, failedAttemptRetryAfterSeconds } from "./cl
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
-import { blockDiagnosis, isBlockChangeFromUnblockedShift, isRotationBlockShift, classifyRotationEntry, classifyRotationExit, entryDiagnosis, type OpenBlockShift, type RotationEntryClassification, type RotationExitClassification } from "../shifts/rotationEntry";
+import { blockDiagnosis, isBlockChangeFromUnblockedShift, isRotationBlockShift, classifyRotationEntry, classifyRotationExit, entryDiagnosis, noEffectiveRotationDiagnosis, type EffectiveRotationEntryClassification, type OpenBlockShift, type RotationEntryClassification, type RotationExitClassification } from "../shifts/rotationEntry";
 import {
   adoptionFor,
   exitConfirmationRequired,
@@ -1661,16 +1661,23 @@ export const timeEntriesService = {
     const isRotationMember = (context._count?.shiftRotationMemberships ?? 0) > 0;
     const openBlockShift = currentOpenShift && isRotationBlockShift(currentOpenShift) ? currentOpenShift : null;
     const rotationContext = isRotationMember || (input.punchType === "OUT" && openBlockShift) ? await loadRotationPunchContext(employee.id, now) : null;
-    let rotationEntry: RotationEntryClassification | null = null;
+    let rotationEntry: EffectiveRotationEntryClassification | null = null;
+    // R4.5.1: diagnóstico sólo para el AuditLog cuando la fecha no tiene rotación efectiva.
+    let rotationAuditOnly: ReturnType<typeof noEffectiveRotationDiagnosis> | undefined;
     let blockChange: { open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>> | null; alertOnly: boolean } | null = null;
     if (input.punchType === "IN" && rotationContext && isRotationMember) {
-      rotationEntry = classifyRotationEntry(now, rotationContext.obligationsByDate, rotationContext.blocks);
+      const classified = classifyRotationEntry(now, rotationContext.obligationsByDate, rotationContext.blocks);
+      // R4.5.1 (SHIFT_ROTATION_AUDIT_PLAN.md §25.8): una membresía cercana (D−1..D+1)
+      // no alcanza. Sin rotación efectiva en la fecha rige el legacy: sin bloque,
+      // sin payload de rotación y con sus turnos fijos en el post-proceso.
+      if (classified.kind === "NO_EFFECTIVE_ROTATION") rotationAuditOnly = noEffectiveRotationDiagnosis(now);
+      else rotationEntry = classified;
       // Cambio de bloque: entrada asignada inequívocamente a un bloque POSTERIOR
       // al de la jornada abierta → se acepta siempre (aun ALERT_ONLY y < 1200).
-      if (openBlockShift && rotationEntry.kind === "ASSIGNED" && rotationEntry.block.scheduledStartAt.getTime() > openBlockShift.scheduledStartAt.getTime()) {
+      if (openBlockShift && rotationEntry?.kind === "ASSIGNED" && rotationEntry.block.scheduledStartAt.getTime() > openBlockShift.scheduledStartAt.getTime()) {
         const open = await openBlockShiftOf(openBlockShift);
         if (open) blockChange = { open, alertOnly: (await resolveActiveWorkRegime(employee.id, now))?.openShiftOverflowAction === "ALERT_ONLY" };
-      } else if (currentOpenShift && !openBlockShift && rotationEntry.kind === "ASSIGNED" && isBlockChangeFromUnblockedShift(currentOpenShift.startAt, rotationEntry.block, rotationContext.blocks)) {
+      } else if (currentOpenShift && !openBlockShift && rotationEntry?.kind === "ASSIGNED" && isBlockChangeFromUnblockedShift(currentOpenShift.startAt, rotationEntry.block, rotationContext.blocks)) {
         // R4.5 (§25.7): jornada abierta SIN bloque (fuera de ventana, no
         // programada, franco, sin configuración) y ENTRADA válida a un bloque
         // posterior: mismo cambio de bloque de R4.4 — la anterior queda en
@@ -1783,7 +1790,7 @@ export const timeEntriesService = {
               adoption,
               prepareEvidence: clockEvidenceWriter(evidence),
               cooldown,
-              audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload),
+              audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload ?? rotationAuditOnly),
               completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
               postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift, { rotationEntry: rotationEntryPayload })),
               timingRequestId: input.requestId,
@@ -1824,7 +1831,7 @@ export const timeEntriesService = {
           adoption,
           prepareEvidence: clockEvidenceWriter(evidence),
           cooldown,
-          audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload),
+          audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload ?? rotationAuditOnly),
           completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
           postProcess: clockPostProcessWriter(employee.id, entryPostProcess(now, rotationEntryPayload)),
           timingRequestId: input.requestId,

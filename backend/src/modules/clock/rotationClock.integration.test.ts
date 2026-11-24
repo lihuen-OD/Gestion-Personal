@@ -573,4 +573,138 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
     expect(shift).toMatchObject({ status: "PROCESADO", shiftTemplateSource: null, scheduledStartAt: null, shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id] });
     expect((await auditAfter(shift!.id)).every((after) => after && !("rotationDiagnosis" in after))).toBe(true);
   });
+
+  // ── R4.5.1 — sin rotación efectiva en la fecha: rige el legacy (§25.8) ──────
+
+  const johanna = () => employee[PLANTA_EMPLOYEES.JOHANNA]!;
+  const membershipOf = (employeeId: string) => holder.shiftRotationCrewMember.findFirstOrThrow({ where: { employeeId } });
+  const giveFixed = (employeeId: string, template: { id: string }, weekdays = [0, 1, 2, 3, 4, 5, 6]) =>
+    holder.shiftAssignment.create({ data: { employeeId, shiftTemplateId: templateId[template.id]!, effectiveFrom: day(PLANTA_ANCHOR), weekdays } });
+
+  it("R4.5.1 membresía vencida el día anterior: la fichada usa su turno fijo (adopción y puntualidad legacy), nunca trabajo no programado", async () => {
+    const member = await membershipOf(johanna());
+    await holder.shiftRotationCrewMember.update({ where: { id: member.id }, data: { effectiveTo: day(THU_A) } });
+    await giveFixed(johanna(), PLANTA_TEMPLATES.T0717);
+    expect((await punch(johanna(), "IN", at(FRI_A, "07:30"))).status).toBe(201);
+    await drain(johanna());
+    const [shift] = await shiftsOf(johanna());
+    expect(shift).toMatchObject({ shiftTemplateId: templateId[PLANTA_TEMPLATES.T0717.id], shiftTemplateSource: null, scheduledStartAt: null });
+    expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["INGRESO_TARDE"]);
+    const [entryAudit] = await auditAfter(shift!.id);
+    expect(entryAudit?.rotationDiagnosis).toMatchObject({ version: 2, kind: "NO_EFFECTIVE_ROTATION" });
+  });
+
+  it("R4.5.1 membresía que empieza mañana: hoy rige su turno fijo; desde el primer día de la membresía, la rotación (REST del sábado → informativa)", async () => {
+    const member = await membershipOf(johanna());
+    await holder.shiftRotationCrewMember.update({ where: { id: member.id }, data: { effectiveFrom: day(SAT_A) } });
+    await giveFixed(johanna(), PLANTA_TEMPLATES.T0717);
+    await punch(johanna(), "IN", at(FRI_A, "07:00"));
+    expect((await punch(johanna(), "OUT", at(FRI_A, "17:00"))).status).toBe(201);
+    await punch(johanna(), "IN", at(SAT_A, "08:00"));
+    await drain(johanna());
+    const [friday, saturday] = await shiftsOf(johanna());
+    expect(friday).toMatchObject({ status: "PROCESADO", shiftTemplateId: templateId[PLANTA_TEMPLATES.T0717.id], shiftTemplateSource: null, totalMinutes: 600 });
+    expect(await alertsOf(friday!.id)).toEqual([]);
+    expect(saturday).toMatchObject({ shiftTemplateId: null, shiftTemplateSource: null });
+    expect((await alertsOf(saturday!.id)).map((alert) => [alert.type, alert.status])).toEqual([["TRABAJO_NO_PROGRAMADO", "RESUELTA"]]);
+  });
+
+  it("R4.5.1 rotación INACTIVA: sus miembros vuelven al legacy — con turno fijo lo adoptan; sin turno fijo, TURNO_NO_IDENTIFICADO con aviso (nunca fuera de ventana ni informativa)", async () => {
+    await holder.shiftRotation.update({ where: { id: rotationId }, data: { status: "INACTIVO" } });
+    await giveFixed(jose(), PLANTA_TEMPLATES.T0715, [1, 2, 3, 4, 5]);
+    await punch(jose(), "IN", at(FRI_A, "07:05"));
+    const roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
+    await punch(roberto, "IN", at(MON_B, "11:30"));
+    await drain(jose());
+    await drain(roberto);
+    const [joseShift] = await shiftsOf(jose());
+    expect(joseShift).toMatchObject({ shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id], shiftTemplateSource: null, scheduledStartAt: null });
+    expect(await alertsOf(joseShift!.id)).toEqual([]);
+    const [robertoShift] = await shiftsOf(roberto);
+    expect(robertoShift).toMatchObject({ shiftTemplateId: null, shiftTemplateSource: null });
+    expect((await alertsOf(robertoShift!.id)).map((alert) => alert.type)).toEqual(["TURNO_NO_IDENTIFICADO"]);
+    expect((await noticesFor(users.rrhh)).some((notice) => notice.title === "Turno no identificado")).toBe(true);
+  });
+
+  it("R4.5.1 nocturno: membresía que termina el viernes — el bloque 19–07 del viernes sigue siendo de la rotación (también con ingreso tardío el sábado 00:30); el sábado 10:00 rige el legacy", async () => {
+    const member = await membershipOf(jose());
+    await holder.shiftRotationCrewMember.update({ where: { id: member.id }, data: { effectiveTo: day(FRI_A) } });
+    await punch(jose(), "IN", at(SAT_A, "00:30"));
+    expect((await punch(jose(), "OUT", at(SAT_A, "07:05"))).status).toBe(201);
+    await punch(jose(), "IN", at(SAT_A, "10:00"));
+    await drain(jose());
+    const [night, saturday] = await shiftsOf(jose());
+    expect(night).toMatchObject({ shiftTemplateSource: "ROTATION", scheduledStartAt: at(FRI_A, "19:00"), shiftTemplateId: templateId[PLANTA_TEMPLATES.T1907.id] });
+    expect((await alertsOf(night!.id)).map((alert) => alert.type)).toContain("INGRESO_TARDE");
+    expect(saturday).toMatchObject({ shiftTemplateId: null, shiftTemplateSource: null });
+    expect((await alertsOf(saturday!.id)).map((alert) => alert.type)).toEqual(["TURNO_NO_IDENTIFICADO"]);
+    expect((await auditAfter(saturday!.id))[0]?.rotationDiagnosis).toMatchObject({ kind: "NO_EFFECTIVE_ROTATION" });
+  });
+
+  it("R4.5.1 rotación ACTIVA con equipo inactivo (MISSING CREW_INACTIVE): sigue siendo configuración — nunca cae al legacy aunque tenga turno fijo", async () => {
+    await holder.shiftRotationCrew.update({ where: { id: crewId[PLANTA_CREWS.JOHANNA]! }, data: { status: "INACTIVO" } });
+    await giveFixed(johanna(), PLANTA_TEMPLATES.T0717);
+    await punch(johanna(), "IN", at(FRI_A, "07:00"));
+    await drain(johanna());
+    const [shift] = await shiftsOf(johanna());
+    expect(shift!.shiftTemplateId).toBeNull();
+    expect((await alertsOf(shift!.id)).map((alert) => alert.type)).toEqual(["POSSIBLE_SHIFT_CONFIGURATION_MISSING"]);
+    expect((await auditAfter(shift!.id))[0]?.rotationDiagnosis).toMatchObject({ kind: "CONFIGURATION", planReason: "CREW_INACTIVE" });
+  });
+
+  // ── R4.5.1 — concurrencia del cambio de bloque desde una jornada sin bloque ──
+
+  const robertoEarly = async () => {
+    const roberto = employee[PLANTA_EMPLOYEES.ROBERTO]!;
+    expect((await punch(roberto, "IN", at(MON_B, "11:30"))).status).toBe(201);
+    await drain(roberto);
+    return roberto;
+  };
+  const missingExitNotices = async (workShiftId: string) => (await noticesFor(users.rrhh)).filter((notice) => notice.entityId === workShiftId && notice.title === "Falta registrar la salida");
+
+  it("concurrencia R4.5: dos ENTRADAS simultáneas con requestId distintos → una sola jornada nueva, una sola transición a FALTA_SALIDA, sin fichadas, evidencias ni avisos duplicados", async () => {
+    const roberto = await robertoEarly();
+    const results = await Promise.all([punch(roberto, "IN", at(MON_B, "17:00")), punch(roberto, "IN", at(MON_B, "17:00"))]);
+    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
+    await drain(roberto);
+    const shifts = await shiftsOf(roberto);
+    expect(shifts.map((shift) => [shift.status, shift.shiftTemplateSource])).toEqual([["FALTA_SALIDA", null], ["ABIERTO", "ROTATION"]]);
+    expect(await holder.attendancePunch.count({ where: { employeeId: roberto } })).toBe(2);
+    expect(await holder.storageFile.count()).toBe(await holder.attendancePunch.count());
+    expect(await holder.timeEntry.count({ where: { workShiftId: shifts[0]!.id } })).toBe(1);
+    expect(await missingExitNotices(shifts[0]!.id)).toHaveLength(1);
+  });
+
+  it("concurrencia R4.5: el mismo requestId en paralelo y reintentado → una sola fichada y el mismo resultado", async () => {
+    const roberto = await robertoEarly();
+    const requestId = randomUUID();
+    const parallel = await Promise.all([punch(roberto, "IN", at(MON_B, "17:00"), {}, requestId), punch(roberto, "IN", at(MON_B, "17:00"), {}, requestId)]);
+    const winner = parallel.find((result) => result.status === 201)!;
+    expect(winner).toBeDefined();
+    for (const result of parallel) expect(result.status === 201 ? result.data : result.error?.code).toEqual(result.status === 201 ? winner.data : "CLOCK_ATTEMPT_PROCESSING");
+    const retry = await punch(roberto, "IN", at(MON_B, "17:03"), {}, requestId);
+    expect(retry.status).toBe(201);
+    expect(retry.data).toEqual(winner.data);
+    await drain(roberto);
+    const shifts = await shiftsOf(roberto);
+    expect(shifts.map((shift) => shift.status)).toEqual(["FALTA_SALIDA", "ABIERTO"]);
+    expect(await holder.attendancePunch.count({ where: { employeeId: roberto } })).toBe(2);
+    expect(await holder.storageFile.count()).toBe(await holder.attendancePunch.count());
+    expect(await missingExitNotices(shifts[0]!.id)).toHaveLength(1);
+  });
+
+  it("concurrencia R4.5: cambio de bloque en carrera con el vencimiento de la jornada sin bloque → siempre una FALTA_SALIDA y una jornada nueva, sin error para la persona", async () => {
+    const roberto = await robertoEarly();
+    const [early] = await shiftsOf(roberto);
+    await holder.workShift.update({ where: { id: early!.id }, data: { maxAllowedMinutes: 300 } });
+    vi.setSystemTime(at(MON_B, "17:00"));
+    const [entry] = await Promise.all([punch(roberto, "IN", at(MON_B, "17:00")), m.repo.expireOpenWorkShifts(at(MON_B, "17:00"))]);
+    expect(entry.status).toBe(201);
+    await drain(roberto);
+    const shifts = await shiftsOf(roberto);
+    expect(shifts.map((shift) => shift.status)).toEqual(["FALTA_SALIDA", "ABIERTO"]);
+    expect(shifts[1]).toMatchObject({ shiftTemplateSource: "ROTATION", scheduledStartAt: at(MON_B, "17:00") });
+    expect(await holder.timeEntry.count({ where: { workShiftId: shifts[0]!.id } })).toBe(1);
+    expect((await missingExitNotices(shifts[0]!.id)).length).toBeLessThanOrEqual(1);
+  });
 });

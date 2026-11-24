@@ -1057,6 +1057,19 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
         expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
       });
 
+      it("R4.5.1: miembro sin rotación efectiva en la fecha → camino legacy: sin bloque ni payload de rotación; el AuditLog conserva el diagnóstico", async () => {
+        vi.setSystemTime(new Date("2026-11-07T10:00:00-03:00"));
+        (loadRotationPunchContext as Mock).mockResolvedValue({ obligationsByDate: new Map(), blocks: [] });
+        repo.createOpenWorkShift.mockResolvedValueOnce({ id: "shift-legacy", startAt: new Date("2026-11-07T10:00:00-03:00"), startPunchId: null });
+        const memberWithoutPlan = { ...activeEmployee, workShifts: [], hourConcepts: [], _count: { shiftRotationMemberships: 1 } } as never;
+        await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, memberWithoutPlan);
+        const call = repo.createOpenWorkShift.mock.calls[0]![0] as { adoption?: unknown };
+        expect(call.adoption).toBeUndefined();
+        const job = await postProcessJobWrittenBy(repo.createOpenWorkShift, { attendancePunchId: "punch-in", workShiftId: "shift-legacy" });
+        expect(job).toMatchObject({ kind: "ENTRY" });
+        expect(job.payload).not.toHaveProperty("rotationEntry");
+      });
+
       it("no miembros (turnos fijos): sin cambios — jornada sin bloque abierta y nueva ENTRADA → 409", async () => {
         vi.setSystemTime(FRIDAY("19:00"));
         const fixed = { ...activeEmployee, workShifts: [openUnblocked(FRIDAY("13:00"))], hourConcepts: [], _count: { shiftRotationMemberships: 0 } } as never;

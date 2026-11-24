@@ -36,6 +36,13 @@ export type RotationEntryClassification =
   | { kind: "DAY_OFF"; planIssue?: RotationPlanIssue }
   | { kind: "OUTSIDE_WINDOW"; nearestBlock: Block; minutesBefore: number }
   | { kind: "CONVOKED_WITHOUT_SCHEDULE" }
+  /**
+   * R4.5.1: la fecha de la fichada no tiene rotación efectiva (sin membresía
+   * vigente ese día —vencida o futura— o rotación INACTIVA: el núcleo devuelve
+   * `null`). Rige el legacy: el servicio de fichada descarta esta clasificación
+   * (sin payload de rotación) y la jornada se evalúa con sus turnos fijos.
+   */
+  | { kind: "NO_EFFECTIVE_ROTATION" }
   | { kind: "UNSCHEDULED"; reason: "REST" | "HOLIDAY_NOT_CONVOKED" | "REGIME_SIN_TURNO" | "NO_BLOCKS"; planIssue?: RotationPlanIssue };
 
 function planIssueOf(obligation: RotationObligation | undefined): RotationPlanIssue | undefined {
@@ -47,7 +54,7 @@ function planIssueOf(obligation: RotationObligation | undefined): RotationPlanIs
 
 /**
  * Precedencia determinística (R4.5, SHIFT_ROTATION_AUDIT_PLAN.md §25.7):
- * bloque asignado → franco de la fecha → feriado no convocado → configuración
+ * bloque asignado → sin rotación efectiva en la fecha (legacy, R4.5.1) → franco de la fecha → feriado no convocado → configuración
  * faltante o contradictoria → fuera de ventana de un bloque posterior de esa
  * misma fecha → convocado sin horario → no programado (régimen SIN_TURNO,
  * descanso de la rotación o fuera de los bloques del día).
@@ -67,6 +74,13 @@ export function classifyRotationEntry(instant: Date, obligationsByDate: Readonly
   }
   const dateKey = argentinaDateKey(instant);
   const obligation = obligationsByDate?.get(dateKey);
+  // R4.5.1: sin plan efectivo en la fecha (no es miembro vigente ese día o la
+  // rotación está INACTIVA) → legacy. Va DESPUÉS de la asignación: un bloque
+  // nocturno de D−1 todavía en curso, o la ventana anticipada de un bloque de
+  // D+1, siguen siendo de la rotación. MISSING/CONFLICT tienen plan y nunca
+  // llegan acá (una rotación ACTIVA mal configurada no cae al legacy). Un
+  // bloque de la misma fecha implica plan; la condición es sólo defensiva.
+  if (!obligation && !blocks.some((block) => block.operationalDate === dateKey)) return { kind: "NO_EFFECTIVE_ROTATION" };
   const reason = obligation?.resolution.reason;
   const planIssue = planIssueOf(obligation);
   const withIssue = planIssue ? { planIssue } : {};
@@ -149,7 +163,15 @@ export function blockDiagnosis(block: Block) {
   };
 }
 
-export function entryDiagnosis(classification: RotationEntryClassification, evaluatedAt: Date) {
+/** Clasificación de una fecha CON rotación efectiva (la única que viaja en el payload del post-proceso). */
+export type EffectiveRotationEntryClassification = Exclude<RotationEntryClassification, { kind: "NO_EFFECTIVE_ROTATION" }>;
+
+/** R4.5.1: diagnóstico sólo para el AuditLog de la fichada (nunca en el payload: rige el legacy). */
+export function noEffectiveRotationDiagnosis(evaluatedAt: Date) {
+  return { version: ROTATION_DIAGNOSIS_VERSION, evaluatedAt: evaluatedAt.toISOString(), kind: "NO_EFFECTIVE_ROTATION" as const };
+}
+
+export function entryDiagnosis(classification: EffectiveRotationEntryClassification, evaluatedAt: Date) {
   const base = { version: ROTATION_DIAGNOSIS_VERSION, evaluatedAt: evaluatedAt.toISOString(), kind: classification.kind };
   switch (classification.kind) {
     case "ASSIGNED":

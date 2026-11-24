@@ -127,6 +127,36 @@ describe("classifyRotationEntry — motor único y precedencias", () => {
   });
 });
 
+// R4.5.1 (SHIFT_ROTATION_AUDIT_PLAN.md §25.8): una membresía cercana no alcanza.
+describe("classifyRotationEntry — R4.5.1 sin rotación efectiva en la fecha", () => {
+  const rest = (dateKey: string) => new Map([[dateKey, obligation(dateKey, { kind: "REST" } as never, "ROTATION_REST_DAY")]]);
+
+  it("sin plan para la fecha (membresía vencida o futura, rotación INACTIVA) y sin bloque asignable → NO_EFFECTIVE_ROTATION (rige el legacy)", () => {
+    expect(classifyRotationEntry(at(SAT, "10:00"), new Map(), [])).toEqual({ kind: "NO_EFFECTIVE_ROTATION" });
+    expect(classifyRotationEntry(at(SAT, "10:00"), undefined, [])).toEqual({ kind: "NO_EFFECTIVE_ROTATION" });
+    // Sólo hay plan para el viernes: el sábado no lo hereda.
+    expect(classifyRotationEntry(at(SAT, "10:00"), rest(FRI), [])).toEqual({ kind: "NO_EFFECTIVE_ROTATION" });
+  });
+
+  it("bloque nocturno de D−1 todavía en curso: sigue siendo de la rotación aunque D no tenga plan", () => {
+    expect(classifyRotationEntry(at(SAT, "00:30"), new Map(), [B2])).toMatchObject({ kind: "ASSIGNED", block: { obligationKey: B2.obligationKey }, punctuality: "LATE" });
+  });
+
+  it("bloque de D+1 (membresía que empieza mañana): fuera de su ventana rige el legacy; dentro de la ventana, asignada al bloque", () => {
+    expect(classifyRotationEntry(at(FRI, "18:30"), new Map(), [SAT_NIGHT])).toMatchObject({ kind: "NO_EFFECTIVE_ROTATION" });
+    expect(classifyRotationEntry(at(SAT, "16:00"), new Map(), [SAT_NIGHT])).toMatchObject({ kind: "ASSIGNED", block: { obligationKey: SAT_NIGHT.obligationKey } });
+  });
+
+  it("MISSING y CONFLICT tienen plan: siguen siendo CONFIGURATION (una rotación ACTIVA mal configurada nunca cae al legacy)", () => {
+    expect(classifyRotationEntry(at(FRI, "08:00"), new Map([[FRI, obligation(FRI, { kind: "MISSING", reason: "CREW_INACTIVE" } as never, "ROTATION_DAY_MISSING")]]), [])).toMatchObject({ kind: "CONFIGURATION", reason: "MISSING", planReason: "CREW_INACTIVE" });
+    expect(classifyRotationEntry(at(FRI, "08:00"), new Map([[FRI, obligation(FRI, { kind: "MISSING", reason: "NO_VERSION_IN_EFFECT" } as never, "ROTATION_DAY_MISSING")]]), [])).toMatchObject({ kind: "CONFIGURATION", planReason: "NO_VERSION_IN_EFFECT" });
+  });
+
+  it("con plan efectivo nada cambia: REST sigue siendo trabajo no programado", () => {
+    expect(classifyRotationEntry(at(FRI, "08:00"), rest(FRI), [])).toEqual({ kind: "UNSCHEDULED", reason: "REST" });
+  });
+});
+
 describe("isBlockChangeFromUnblockedShift — R4.5 (jornada abierta sin bloque)", () => {
   it("abierta antes de la ventana del bloque (13:00) y ENTRADA asignada a B2 → cambio de bloque", () => {
     expect(isBlockChangeFromUnblockedShift(at(FRI, "13:00"), B2, BLOCKS)).toBe(true);
