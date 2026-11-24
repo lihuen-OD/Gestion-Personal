@@ -14,8 +14,9 @@ function invalidateCoverage(reason: string) {
  * Rotaciones de turnos — R4.6 (contratos en docs/BACKEND_API_CONTRACTS.md,
  * "Administración de rotaciones"). R4.8A: listado, detalle y datos de la
  * rotación. R4.8B1: equipos y lectura de versiones. R4.8B2: alta, edición y
- * borrado de versiones. R4.8C: personas (membresías). Vista previa y
- * activación se agregan en sus subetapas.
+ * borrado de versiones. R4.8C: personas (membresías). R4.8D: vista previa
+ * (`GET /shifts/expected`, R4.7, sólo lectura). La activación se agrega en
+ * R4.8E.
  *
  * Sin caché: el backend tampoco la tiene ("la configuración se lee al abrirla
  * y cada escritura devuelve el estado nuevo"). `silentErrors` en las
@@ -148,6 +149,68 @@ export type ShiftRotationAddMembersInput = { employeeIds: string[]; effectiveFro
 /** Personas que, tras la baja, no tienen turno fijo ni otra rotación desde `from` (dato informativo del backend). */
 export type ShiftRotationWithoutFixedShift = { employeeId: string; employee: string; from: string };
 
+// ── Vista previa (R4.7, docs/BACKEND_API_CONTRACTS.md "Vista previa de horarios de rotación") ──
+
+export type PreviewBlock = {
+  /** Fecha operativa: el día en que empieza el bloque (un nocturno pertenece sólo a ese día). */
+  operationalDate: string;
+  blockIndex: number;
+  source: "ROTATION" | "FIXED_ASSIGNMENT" | "HOLIDAY_CONVOCATION";
+  template: { id: string; code: string; startTime: string; endTime: string; crossesMidnight: boolean };
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  durationMinutes: number;
+};
+
+export type PreviewPlanningKind = "SHIFTS" | "REST" | "MISSING" | "CONFLICT" | "FIXED_ASSIGNMENT" | "NONE";
+
+export type PreviewWarning = { code: string; severity: "ERROR" | "WARNING"; message: string; relatedDate?: string };
+
+export type PreviewCell = {
+  date: string;
+  assignment: null | {
+    membershipId: string;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    crew: { id: string; code: string; name: string } | null;
+    version: { id: string; effectiveFrom: string; effectiveTo: string | null } | null;
+    cycleWeekIndex: number | null;
+    cycleWeekLabel: string | null;
+  };
+  planning: { kind: PreviewPlanningKind; reason: string | null; detail: string[]; origin: unknown; blocks: PreviewBlock[] };
+  effective: { obligation: "SHIFT" | "NO_OBLIGATION" | "UNRESOLVED"; source: string; reason: string | null; blocks: PreviewBlock[] };
+  expectedWorkday: {
+    obligation: "WORKDAY" | "NO_WORK_OBLIGATION" | "HOLIDAY_NOT_CONVOKED" | "DAY_OFF" | "UNRESOLVED";
+    unresolvedReason: string | null;
+    expectedMinutes: number | null;
+    isHoliday: boolean;
+    convoked: boolean;
+    source: string;
+    planIssue?: { kind: "CONFLICT" | "MISSING"; reason: string };
+  };
+  facts: { dayOff: boolean; holidayScope: "IN_SCOPE" | "OUT_OF_SCOPE" | "SCOPE_HISTORY_MISSING" | null; convoked: boolean; regimeKind: string | null };
+  transitionFromPrevious: null | { previousOperationalDate: string; restMinutes: number | null; overlap: boolean };
+  warnings: PreviewWarning[];
+};
+
+export type PreviewRow = {
+  employee: { id: string; legajo: string; firstName: string; lastName: string; status: string };
+  days: PreviewCell[];
+};
+
+export type PreviewResponse = {
+  data: PreviewRow[];
+  context: {
+    rotation: { id: string; code: string; name: string };
+    range: { from: string; to: string; days: number };
+    persistedStatus: ShiftRotationStatus;
+    readOnly: true;
+    previewMode: "HYPOTHETICAL_INACTIVE" | "CURRENT_CONFIGURATION";
+    affectsRealObligations: false;
+  };
+  meta: { total: number; page: number; pageSize: number; hasMore: boolean };
+};
+
 export type ShiftRotationCrewCreateInput = { code: string; name: string; sortOrder: number };
 export type ShiftRotationCrewUpdateInput = Partial<{ name: string; sortOrder: number; status: ShiftRotationStatus }>;
 
@@ -191,6 +254,11 @@ export const shiftRotationApiService = {
     const result = await apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "PATCH", body: input, silentErrors: true }).then((response) => response.data);
     await invalidateCoverage("rotation version updated");
     return result;
+  },
+  /** Vista previa de sólo lectura: hasta 42 días, `take` 1–100 (contrato R4.7). Sin caché: depende de la fecha y de la configuración. */
+  preview(query: { rotationId: string; from: string; to: string; page: number; take: number }) {
+    const params = new URLSearchParams({ rotationId: query.rotationId, from: query.from, to: query.to, page: String(query.page), take: String(query.take) });
+    return apiRequest<PreviewResponse>(`/shifts/expected?${params.toString()}`);
   },
   /** Membresías vigentes o futuras (`history` = también las terminadas). */
   members(rotationId: string, history: boolean) {
