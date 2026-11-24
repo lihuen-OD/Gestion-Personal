@@ -84,7 +84,9 @@ describe("checkMissingExpectedEntries — camino por bloque (R4.3b)", () => {
     const result = await checkMissingExpectedEntries(at("07:10"));
     expect(result).toEqual({ candidates: 2, due: 1, created: 1, resolved: 0 });
     expect(result).not.toHaveProperty("reconciliationRequired");
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1); // lock de jornada antes de leer/escribir
+    // lock de jornada → lock global compartido de cobertura → lock del legajo.
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(tx.$executeRaw.mock.invocationCallOrder[2]).toBeLessThan(tx.attendanceInactivityIncident.findFirst.mock.invocationCallOrder[0]!);
     expect(tx.attendanceInactivityIncident.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ employeeId: "jose", scheduledStartAt: MORNING.scheduledStartAt })],
       skipDuplicates: true,
@@ -129,7 +131,8 @@ describe("checkMissingExpectedEntries — camino por bloque (R4.3b)", () => {
     ["revisado por una persona", { id: "day-1", status: "RESUELTA", reviewedByUserId: "user-1" }],
     ["revisado por una persona y aún PENDIENTE", { id: "day-1", status: "PENDIENTE", reviewedByUserId: "user-1" }],
     ["DESCARTADO", { id: "day-1", status: "DESCARTADA", reviewedByUserId: null }],
-  ])("incidente de día %s: ni faltas por bloque, ni cambios, ni avisos; se informa la conciliación (interino)", async (_label, dayIncident) => {
+  ])("incidente de día %s: ni faltas por bloque, ni cambios, ni avisos; preserva la decisión y emite telemetría sin PII", async (_label, dayIncident) => {
+    const telemetry = vi.spyOn(console, "error").mockImplementation(() => undefined);
     tx.attendanceInactivityIncident.findFirst.mockResolvedValue(dayIncident);
     const result = await checkMissingExpectedEntries(at("19:10"));
     expect(result.reconciliationRequired).toEqual([{ employeeId: "jose", dateKey: FRI, dayIncidentId: "day-1", blockKeys: [MORNING.block!.obligationKey, NIGHT.block!.obligationKey] }]);
@@ -137,6 +140,15 @@ describe("checkMissingExpectedEntries — camino por bloque (R4.3b)", () => {
     expect(tx.attendanceInactivityIncident.createMany).not.toHaveBeenCalled();
     expect(tx.attendanceInactivityIncident.updateMany).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    expect(telemetry).toHaveBeenCalledWith("ROTATION_ATTENDANCE_HISTORY_CONFLICT_DETECTED", {
+      severity: "error",
+      conflicts: 1,
+      dates: [FRI],
+      suppressedBlockObligations: 2,
+    });
+    expect(JSON.stringify(telemetry.mock.calls)).not.toContain("jose");
+    expect(JSON.stringify(telemetry.mock.calls)).not.toContain("day-1");
+    telemetry.mockRestore();
   });
 
   it("resolución por bloque: sólo el incidente cuyo bloque tiene evidencia; un incidente de día se resuelve con cualquier bloque cumplido", async () => {

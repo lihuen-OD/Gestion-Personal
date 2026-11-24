@@ -284,6 +284,113 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     expect(await holder.shiftRotationCrewMember.count({ where: { employeeId: juanjo } })).toBe(1);
   });
 
+  it("T-R4-CONC: una decisión diaria humana bloquea el alta antes de cerrar el turno fijo y no expone el incidente", async () => {
+    const { rotationId, crewIds } = await setupPlanta();
+    const juanjo = employee[PLANTA_EMPLOYEES.JUANJO]!;
+    const assignmentBefore = await holder.shiftAssignment.findFirstOrThrow({ where: { employeeId: juanjo } });
+    const incident = await holder.attendanceInactivityIncident.create({
+      data: {
+        employeeId: juanjo,
+        operationalDate: day(MON_B),
+        status: "RESUELTA",
+        observation: "Decisión histórica privada",
+        reviewedAt: at(MON_B, "12:00"),
+        reviewedByUserId: rrhh.id,
+        reviewNote: "Contenido que no debe salir del dominio de asistencia",
+      },
+    });
+    const incidentHash = await hashRows(`SELECT * FROM "AttendanceInactivityIncident" WHERE id = '${incident.id}'`);
+
+    const response = await call("POST", `/shifts/rotations/${rotationId}/crews/${crewIds[PLANTA_CREWS.JOHANNA]}/members`, {
+      employeeIds: [juanjo], effectiveFrom: MON_B, closeFixedAssignments: true,
+    });
+
+    expect([response.status, response.error?.code]).toEqual([409, "ROTATION_ATTENDANCE_HISTORY_CONFLICT"]);
+    expect(response.error?.details).toMatchObject({ total: 1, conflicts: [{ employee: expect.any(String), operationalDate: MON_B }] });
+    expect(JSON.stringify(response.error)).not.toContain(incident.id);
+    expect(JSON.stringify(response.error)).not.toContain("Decisión histórica privada");
+    expect(JSON.stringify(response.error)).not.toContain("Contenido que no debe salir");
+    expect(await holder.shiftRotationCrewMember.count({ where: { employeeId: juanjo } })).toBe(0);
+    expect(await holder.shiftAssignment.findUniqueOrThrow({ where: { id: assignmentBefore.id } })).toMatchObject({
+      status: assignmentBefore.status, effectiveTo: assignmentBefore.effectiveTo,
+    });
+    expect(await hashRows(`SELECT * FROM "AttendanceInactivityIncident" WHERE id = '${incident.id}'`)).toBe(incidentHash);
+  });
+
+  it("T-R4-CONC: respeta vigencia; PENDIENTE y resolución automática no bloquean, DESCARTADA sí", async () => {
+    const { rotationId, crewIds } = await setupPlanta();
+    const allowed = await holder.employee.create({ data: { legajo: "R49-ALLOW", cuil: "20-490", dni: "490", firstName: "Caso", lastName: "Permitido" } });
+    await holder.attendanceInactivityIncident.createMany({ data: [
+      { employeeId: allowed.id, operationalDate: day(FRI_A), status: "RESUELTA", observation: "Anterior", reviewedByUserId: rrhh.id, reviewedAt: at(FRI_A, "12:00") },
+      { employeeId: allowed.id, operationalDate: day(MON_B), status: "PENDIENTE", observation: "Pendiente sin intervención" },
+      { employeeId: allowed.id, operationalDate: day(MON_A2), status: "RESUELTA", observation: "Resolución automática" },
+      { employeeId: allowed.id, operationalDate: day("2026-11-17"), status: "DESCARTADA", observation: "Posterior" },
+    ] });
+    const added = await call("POST", `/shifts/rotations/${rotationId}/crews/${crewIds[PLANTA_CREWS.JOHANNA]}/members`, {
+      employeeIds: [allowed.id], effectiveFrom: MON_B, effectiveTo: MON_A2,
+    });
+    expect(added.status, JSON.stringify(added.error)).toBe(201);
+
+    const blocked = await holder.employee.create({ data: { legajo: "R49-BLOCK", cuil: "20-491", dni: "491", firstName: "Caso", lastName: "Bloqueado" } });
+    await holder.attendanceInactivityIncident.create({
+      data: { employeeId: blocked.id, operationalDate: day(MON_B), status: "DESCARTADA", observation: "Decisión humana legacy sin revisor importado" },
+    });
+    const rejected = await call("POST", `/shifts/rotations/${rotationId}/crews/${crewIds[PLANTA_CREWS.JOHANNA]}/members`, {
+      employeeIds: [blocked.id], effectiveFrom: MON_B,
+    });
+    expect([rejected.status, rejected.error?.code]).toEqual([409, "ROTATION_ATTENDANCE_HISTORY_CONFLICT"]);
+    expect(await holder.shiftRotationCrewMember.count({ where: { employeeId: blocked.id } })).toBe(0);
+  });
+
+  it("T-R4-CONC: activar relee y rechaza un conflicto incorporado después del alta, también en fecha nocturna/doble bloque", async () => {
+    const { rotationId } = await setupPlanta(MON_A, { activate: false });
+    const jose = employee[PLANTA_EMPLOYEES.JOSE]!;
+    await holder.attendanceInactivityIncident.create({
+      data: {
+        employeeId: jose,
+        operationalDate: day(FRI_A),
+        status: "RESUELTA",
+        observation: "Decisión diaria previa para la fecha con bloques 07–11 y 19–07",
+        reviewedAt: at(FRI_A, "12:00"),
+        reviewedByUserId: rrhh.id,
+      },
+    });
+
+    const response = await call("POST", `/shifts/rotations/${rotationId}/activate`);
+
+    expect([response.status, response.error?.code]).toEqual([409, "ROTATION_ATTENDANCE_HISTORY_CONFLICT"]);
+    expect((await holder.shiftRotation.findUniqueOrThrow({ where: { id: rotationId } })).status).toBe("INACTIVO");
+    expect(await holder.shiftRotationCrewMember.count({ where: { crew: { rotationId } } })).toBe(7);
+    expect(await holder.auditLog.count({ where: { entity: "ShiftRotation", entityId: rotationId, action: "ACTIVATE" } })).toBe(0);
+  });
+
+  it("T-R4-CONC: alta concurrente vs. revisión diaria deja un solo resultado compatible y ninguna escritura parcial", async () => {
+    const { rotationId, crewIds } = await setupPlanta();
+    const person = await holder.employee.create({ data: { legajo: "R49-RACE", cuil: "20-492", dni: "492", firstName: "Carrera", lastName: "Real" } });
+    const incident = await holder.attendanceInactivityIncident.create({
+      data: { employeeId: person.id, operationalDate: day(MON_B), status: "PENDIENTE", observation: "Pendiente concurrente" },
+    });
+
+    const [membershipResponse, reviewResponse] = await Promise.all([
+      call("POST", `/shifts/rotations/${rotationId}/crews/${crewIds[PLANTA_CREWS.JOHANNA]}/members`, { employeeIds: [person.id], effectiveFrom: MON_B }),
+      call("POST", `/time-entries/attendance/observations/INACTIVITY/${incident.id}/resolve`, { resolution: "RESUELTA", reason: "Revisión concurrente válida" }),
+    ]);
+
+    expect([membershipResponse.status, reviewResponse.status].filter((status) => status === 409)).toHaveLength(1);
+    expect([membershipResponse.status, reviewResponse.status].filter((status) => status === 200 || status === 201)).toHaveLength(1);
+    expect([membershipResponse.error?.code, reviewResponse.error?.code].filter(Boolean)).toEqual([
+      expect.stringMatching(/^(?:ROTATION_ATTENDANCE_HISTORY_CONFLICT|ATTENDANCE_DAILY_INCIDENT_ROTATION_CONFLICT)$/),
+    ]);
+    const [membershipCount, storedIncident] = await Promise.all([
+      holder.shiftRotationCrewMember.count({ where: { employeeId: person.id } }),
+      holder.attendanceInactivityIncident.findUniqueOrThrow({ where: { id: incident.id } }),
+    ]);
+    const humanDecisionPersisted = storedIncident.reviewedByUserId !== null;
+    expect(membershipCount === 1).toBe(!humanDecisionPersisted);
+    expect(membershipCount + Number(humanDecisionPersisted)).toBe(1);
+    expect(await holder.auditLog.count({ where: { entityId: incident.id, action: "UPDATE" } })).toBe(Number(humanDecisionPersisted));
+  });
+
   it("los constraints reales se traducen a errores de dominio (23P01 EXCLUDE, 23001 RESTRICT)", async () => {
     const { crewIds } = await setupPlanta();
     try {
@@ -481,6 +588,27 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     const created = await call("POST", "/shifts/rotations", { code: "X1", name: "Prueba", shiftGroupId: groupId }, supervision);
     expect(created.status).toBe(403);
     expect((await call("GET", "/shifts/rotations", undefined, supervision)).status).toBe(200);
+  });
+
+  it("T-R4-CONC: la revisión fuera del alcance del usuario responde 404 sin revelar el conflicto de rotación", async () => {
+    await setupPlanta();
+    const incident = await holder.attendanceInactivityIncident.create({
+      data: { employeeId: employee[PLANTA_EMPLOYEES.JOSE]!, operationalDate: day(FRI_A), status: "PENDIENTE", observation: "Dato restringido" },
+    });
+
+    const response = await call(
+      "POST",
+      `/time-entries/attendance/observations/INACTIVITY/${incident.id}/resolve`,
+      { resolution: "RESUELTA", reason: "Intento fuera de alcance" },
+      supervision,
+    );
+
+    expect([response.status, response.error?.code]).toEqual([404, "ATTENDANCE_REVIEW_NOT_FOUND"]);
+    expect(JSON.stringify(response.error)).not.toContain("rotación");
+    expect(JSON.stringify(response.error)).not.toContain("Dato restringido");
+    expect(await holder.attendanceInactivityIncident.findUniqueOrThrow({ where: { id: incident.id } })).toMatchObject({
+      status: "PENDIENTE", reviewedByUserId: null, reviewNote: null,
+    });
   });
 
   // ── R4.7: vista previa guardada, hipotética y de sólo lectura ───────────────
