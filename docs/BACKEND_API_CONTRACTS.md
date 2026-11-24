@@ -1434,7 +1434,8 @@ Sin endpoints nuevos ni cambios de forma en las respuestas. Estos endpoints reca
 - `POST /api/employees/:id/labor-movements` (ALTA/BAJA) y `PATCH /api/employees/:id` con cambio de datos laborales;
 - `PATCH /api/positions/:id` con cambio de alcance y las eliminaciones controladas que retiran datos laborales;
 - `POST/PATCH/DELETE /api/shifts/assignments` (asignaciones de turno; ahora transaccionales);
-- `PATCH /api/workforce/shift-templates/:id` (horario, minutos o estado) y `DELETE` cuando la plantilla se inactiva;
+- `PATCH /api/workforce/shift-templates/:id` cuando cambia la jornada y `POST /api/workforce/shift-templates/:id/replace-schedule` desde la fecha efectiva;
+- escrituras de rotaciones que alteran versión, membresía, activación o finalización (`source: SHIFT_ROTATION_CHANGED`);
 - `POST/PATCH /api/employees/:employeeId/work-regimes` (asignación, edición y cierre de vigencia) y `PATCH /api/work-regimes/:id` cuando cambia el tipo (ahora transaccionales);
 - `PUT /api/employee-day-offs` (francos) y `PUT /api/shifts/holiday-work/assignments` (convocatorias a feriado);
 - alta, edición, inactivación y eliminación de reglas de Horas Especiales (`/api/workforce/double-hour-rules`);
@@ -2030,8 +2031,8 @@ WorkRegime es 100% configurable por RRHH — `kind` (`TURNO_OBLIGATORIO`/`TURNO_
 | PATCH | `/work-regimes/:id/status` | RRHH | Activar/inactivar (audita `ACTIVATE`/`DEACTIVATE`) |
 | GET | `/employees/:employeeId/work-regimes` | cualquiera autenticado | Historial de asignaciones, orden `effectiveFrom desc` |
 | GET | `/employees/:employeeId/work-regimes/current?date=YYYY-MM-DD` | cualquiera autenticado | Régimen vigente a esa fecha (`data: null` si no hay ninguno) |
-| POST | `/employees/:employeeId/work-regimes` | RRHH | Asignar régimen con vigencia (404 si `employeeId`/`workRegimeId` no existen; 409 si se solapa) |
-| PATCH | `/employees/:employeeId/work-regimes/:assignmentId` | RRHH | Editar una asignación (re-chequea solapamiento) |
+| POST | `/employees/:employeeId/work-regimes` | RRHH | Asignar régimen con vigencia (404 si `employeeId`/`workRegimeId` no existen; 409 si se solapa). R4.6: un `SIN_TURNO` superpuesto con una membresía de rotación responde `409 WORK_REGIME_OVERLAPS_ROTATION` |
+| PATCH | `/employees/:employeeId/work-regimes/:assignmentId` | RRHH | Editar una asignación (re-chequea solapamiento y la incompatibilidad `SIN_TURNO`/rotación) |
 | PATCH | `/employees/:employeeId/work-regimes/:assignmentId/close` | RRHH | Cerrar vigencia (`effectiveTo`) |
 
 ### Turnos (`shifts`, montado en `/api/shifts`)
@@ -2042,8 +2043,8 @@ Todas las rutas requieren `requireAuth`.
 |---|---|---|---|
 | GET | `/assignments` | RRHH/Supervisión/Carga Horaria | Listar asignaciones de turno |
 | GET | `/assignments/summary` | RRHH/Supervisión/Carga Horaria | Conteos agregados por turno (`total`, `enabled`, `disabled`, `other`), respetando alcance por empleado |
-| POST | `/assignments` | RRHH | Asignar turno a un empleado |
-| PATCH | `/assignments/:id` | RRHH | Editar una asignación |
+| POST | `/assignments` | RRHH | Asignar turno a un empleado. R4.6: `409 SHIFT_ASSIGNMENT_OVERLAPS_ROTATION` si la vigencia coincide con una membresía; `409 ROTATION_TRANSITION_OVERLAP` si el primer turno fijo invade un bloque nocturno del último día de la rotación |
+| PATCH | `/assignments/:id` | RRHH | Editar una asignación, con las mismas protecciones contra rotaciones cuando queda `HABILITADO` |
 | DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
 | GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
 | POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
@@ -2054,7 +2055,7 @@ Todas las rutas requieren `requireAuth`.
 | GET | `/groups?status` | RRHH/Supervisión/Carga Horaria | Grupos de turnos (lugar), ver abajo |
 | POST | `/groups` | RRHH | Crear grupo de turnos |
 | PATCH | `/groups/:id` | RRHH | Editar código, nombre, orden o estado |
-| DELETE | `/groups/:id` | RRHH | Eliminar un grupo sin plantillas |
+| DELETE | `/groups/:id` | RRHH | Eliminar un grupo sin plantillas ni rotaciones |
 
 #### Trabajo no programado en alertas (`/alerts`) — R4.5
 
@@ -2072,9 +2073,34 @@ Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §23. Un grupo (`ShiftGrou
 - `GET /groups?status=ACTIVO|INACTIVO`: `status` opcional (sin él, todos). Los 3 roles operativos. El alcance por grupo para Nivel 2/3 (`UserShiftGroupScope`) es una etapa posterior (R8); hoy la escritura es sólo RRHH.
 - `POST /groups` — body `{ code, name, sortOrder? }` (`sortOrder` entero 0–9999, default 0). `code` (2–30) y `name` (2–60) se normalizan (sin espacios en los extremos, espacios internos colapsados); `code` se guarda además en MAYÚSCULAS. Ambos deben ser únicos **sin distinguir mayúsculas** («Planta» y «PLANTA» son el mismo nombre): `409 SHIFT_GROUP_DUPLICATE`. El servicio valida antes de escribir y la base lo garantiza con índices únicos sobre `lower(code)` y `lower(name)` (una carrera entre dos altas también termina en 409). Un grupo nace `ACTIVO`.
 - `PATCH /groups/:id` — body parcial `{ code?, name?, sortOrder?, status? }` (al menos un campo). `404 SHIFT_GROUP_NOT_FOUND`; duplicados → `409 SHIFT_GROUP_DUPLICATE`. **Inactivar no desclasifica**: las plantillas ya asociadas conservan el grupo y siguen funcionando igual; sólo deja de poder asociarse a plantillas nuevas.
-- `DELETE /groups/:id`: sólo si el grupo no tiene ninguna plantilla asociada; si tiene, `409 SHIFT_GROUP_IN_USE` con un mensaje que sugiere inactivarlo. La FK `ShiftTemplate.shiftGroupId → ShiftGroup` es `RESTRICT` (segunda defensa: una asociación concurrente también responde 409). Cuando existan rotaciones o alcances por grupo (R4/R8), la eliminación pasará al protocolo de eliminación controlada.
+- `DELETE /groups/:id`: sólo si el grupo no tiene plantillas ni rotaciones asociadas; si tiene alguna, `409 SHIFT_GROUP_IN_USE` con un mensaje que sugiere inactivarlo. Las FK `ShiftTemplate.shiftGroupId` y `ShiftRotation.shiftGroupId` son `RESTRICT` (segunda defensa: una asociación concurrente también responde 409).
 - Auditoría: entidad `ShiftGroup` (`CREATE`, `UPDATE`, `ACTIVATE`, `DEACTIVATE`, `DELETE`) con código y nombre en la descripción, nunca el id.
 - Caché: toda escritura de grupos invalida la caché backend del catálogo de plantillas (`GET /workforce/shift-templates`), que incluye el grupo de cada plantilla.
+
+#### Administración de rotaciones (`/rotations`) — R4.6
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.9. Lecturas: RRHH, Supervisión y Carga Horaria. Escrituras: sólo RRHH. Las fechas son calendario `AAAA-MM-DD`, inclusivas; alta, cambio de equipo y cambios de una rotación activa empiezan como mínimo mañana. No hay alcance por grupo todavía (R8).
+
+| Método | Ruta | Contrato principal |
+|---|---|---|
+| GET / POST | `/rotations` | Lista con `health`; alta `{ code, name, shiftGroupId, observation? }`, siempre `INACTIVO` |
+| GET / PATCH / DELETE | `/rotations/:id` | Detalle con `issues`; código/grupo sólo antes de regir; borrado sólo `INACTIVO` y sin membresías |
+| POST | `/rotations/:id/activate` | Exige diagnóstico sin errores y ninguna membresía iniciada hoy o antes |
+| POST | `/rotations/:id/deactivate` | Sólo si nunca rigió; en otro caso debe finalizarse con fecha |
+| POST | `/rotations/:id/finalize/preview` | Body `{ lastDay }`; devuelve cierres, cancelaciones futuras, transiciones y `confirmationToken` |
+| POST | `/rotations/:id/finalize` | Body `{ lastDay, confirm: true, confirmationToken }`; recalcula bajo lock, token viejo → `ROTATION_FINALIZE_STALE` |
+| POST / PATCH | `/rotations/:id/crews`, `/rotations/:id/crews/:crewId` | Crear/editar equipos; `INACTIVO` sólo si nunca tuvieron membresías |
+| POST | `/rotations/:id/versions` | Crea versión completa `{ effectiveFrom, cycleLengthWeeks, anchorWeekStart, days[] }` y cierra la anterior en X−1 |
+| GET / PATCH / DELETE | `/rotations/:id/versions/:versionId` | Grilla completa; PATCH/DELETE sólo futuras. PATCH admite `expectedUpdatedAt` y responde `ROTATION_VERSION_STALE` si cambió |
+| GET | `/rotations/:id/members?at=&history=` | Membresías con legajo, equipo y vigencia |
+| POST | `/rotations/:id/crews/:crewId/members` | `{ employeeIds, effectiveFrom, effectiveTo?, closeFixedAssignments? }`; la opción explícita cierra fijos en X−1 dentro de la misma transacción |
+| POST | `/rotations/:id/members/:memberId/close` | `{ lastDay }`; conserva completo ese día, incluidos bloques nocturnos |
+| POST | `/rotations/:id/members/:memberId/move` | `{ toCrewId, effectiveFrom }`; cierre X−1 + alta X atómicos |
+| DELETE | `/rotations/:id/members/:memberId` | Cancela únicamente un alta futura que nunca rigió |
+
+Las versiones son contiguas y la grilla se guarda completa: cada día `SHIFT` tiene bloques, cada `REST` no los tiene, todos los turnos están `ACTIVO` y pertenecen al mismo `ShiftGroup`. `DAY_MISSING` es bloqueante para un equipo con miembros. Las escrituras toman lock de la rotación, revalidan el estado, serializan la cobertura por legajo, recalculan Novedades y auditan en la misma transacción. Conflictos de vigencia, `SIN_TURNO`, fijo superpuesto, configuración incompleta y transiciones nocturnas responden 409 con código de dominio. Restricciones reales P2002/P2003, SQLSTATE 23P01/23001 quedan como última defensa y se traducen, nunca se exponen como errores Prisma/PostgreSQL.
+
+La finalización es una confirmación de dos pasos. El token SHA-256 no es un secreto: representa el conjunto canónico y sus `updatedAt`. Las versiones/membresías futuras se auditan con snapshot completo antes de borrarse; si auditoría, recálculo o cualquier escritura falla, se revierte toda la operación. La rotación permanece `ACTIVO` y su finalización se deriva de que no tiene versión/membresía abierta.
 
 #### Asignaciones de trabajo en feriados (`/holiday-work/*`) — Etapa 12D
 
@@ -2134,9 +2160,27 @@ Todas las rutas requieren `requireAuth`.
 | POST | `/closures/:id/return` | RRHH | Devolver un cierre |
 | GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
-| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno. R3.1: cada plantilla del `GET` incluye `shiftGroupId` y `shiftGroup: { id, code, name, status, sortOrder } \| null` (`null` = todavía no clasificada en un grupo, nunca "inválida"). `POST`/`PATCH` aceptan `shiftGroupId` (uuid o `null`; en `PATCH`, `null` desasigna y ausente no lo toca): debe existir (`404 SHIFT_GROUP_NOT_FOUND`) y, si es un grupo nuevo para la plantilla, estar `ACTIVO` (`409 SHIFT_GROUP_INACTIVE`); conservar un grupo que se inactivó después está permitido. Cambiar el grupo no recalcula la cobertura de Novedades (no cambia la jornada); la auditoría nombra el grupo anterior y el nuevo. |
+| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno. Cada item del `GET` incluye grupo e `inUseFromTomorrow`. R4.6 protege historia y ofrece reemplazo fechado; ver abajo. |
+| POST | `/shift-templates/:id/replace-schedule/preview` | RRHH | Vista previa determinística de reemplazo fechado, sin escrituras |
+| POST | `/shift-templates/:id/replace-schedule` | RRHH | Confirma el reemplazo con token; divide/reapunta asignaciones y devuelve dependencias pendientes |
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
 | GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
+
+#### Plantillas: historia y reemplazo de horario — R4.6
+
+`GET /shift-templates` conserva `shiftGroupId` y `shiftGroup: { id, code, name, status, sortOrder } | null` y agrega `inUseFromTomorrow: boolean`, calculado en la misma consulta a partir de asignaciones habilitadas, convocatorias activas y versiones de rotación vigentes/futuras.
+
+Una plantilla **ya rigió** si existe una asignación fija (cualquier estado) con `effectiveFrom <= hoy`, una convocatoria con fecha `<= hoy`, una `WorkShift`, o un bloque de versión con `effectiveFrom <= hoy`. En ese caso:
+
+- cambiar `startTime`/`endTime` → `409 SHIFT_TEMPLATE_SCHEDULE_LOCKED`;
+- inactivar, cambiar de grupo o borrar → `409 SHIFT_TEMPLATE_HISTORY_LOCKED`;
+- tolerancias y límites sí pueden cambiar para el futuro, excepto si hay entradas fijas sin postprocesar (`PENDING`, `PROCESSING` o `FAILED`): `409 SHIFT_TEMPLATE_RULES_PENDING_PUNCHES`.
+
+Una plantilla que aún no rigió se edita normalmente. Borrarla si aparece en cualquier bloque de rotación responde `409 SHIFT_TEMPLATE_IN_ROTATION`, aunque la versión sea futura. Las asignaciones y convocatorias siguen usando sus errores de referencia existentes.
+
+Preview de reemplazo: body `{ effectiveFrom, startTime, endTime, code, name }`, con `effectiveFrom >= mañana`. Devuelve la plantilla origen, asignaciones con acción `SPLIT` o `REPOINT`, `pendingDependencies` (`holidayAssignments`, `rotationVersions`), `complete` y `confirmationToken`. Confirmación: el mismo body más `{ confirmationToken, acknowledgePendingDependencies? }`. Token desactualizado → `409 SHIFT_TEMPLATE_REPLACEMENT_STALE`; dependencias sin reconocimiento → `409 SHIFT_TEMPLATE_REPLACEMENT_DEPENDENCIES`.
+
+Al confirmar se crea una plantilla `ACTIVO` que copia grupo, tolerancias, límites y umbrales; las asignaciones habilitadas que atraviesan X se cierran en X−1 y recrean desde X, y las futuras se reapuntan. Convocatorias y versiones de rotación se informan pero nunca se modifican en silencio; si se reconocen, la respuesta queda `complete: false` hasta resolverlas. Todo ocurre en una transacción SERIALIZABLE, con lock de plantilla y legajos, auditoría y recálculo de cobertura desde X.
 
 #### Notificaciones (`/notifications`) — fecha efectiva, filtros, cursor y enriquecimiento de `employee`
 
