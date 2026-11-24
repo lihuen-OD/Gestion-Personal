@@ -2,9 +2,9 @@ import { apiRequest } from "./apiClient";
 
 /**
  * Rotaciones de turnos — R4.6 (contratos en docs/BACKEND_API_CONTRACTS.md,
- * "Administración de rotaciones"). R4.8A sólo usa el listado, el detalle y el
- * alta/edición/borrado de la rotación; equipos, grillas, personas, vista
- * previa y activación se agregan en sus subetapas.
+ * "Administración de rotaciones"). R4.8A: listado, detalle y datos de la
+ * rotación. R4.8B1: equipos y lectura de versiones. Edición de grillas,
+ * personas, vista previa y activación se agregan en sus subetapas.
  *
  * Sin caché: el backend tampoco la tiene ("la configuración se lee al abrirla
  * y cada escritura devuelve el estado nuevo"). `silentErrors` en las
@@ -80,6 +80,54 @@ export type ShiftRotation = {
   updatedAt: string;
 };
 
+export type ShiftRotationDayKind = "SHIFT" | "REST";
+
+export type ShiftRotationBlock = {
+  blockIndex: number;
+  shiftTemplateId: string;
+  template: { code: string; name: string; startTime: string; endTime: string };
+};
+
+export type ShiftRotationDay = {
+  id: string;
+  crewId: string;
+  crew: string | null;
+  cycleWeekIndex: number;
+  weekLabel: string;
+  /** 0 = domingo … 6 = sábado (convención del backend). */
+  weekday: number;
+  weekdayName: string | null;
+  kind: ShiftRotationDayKind;
+  blocks: ShiftRotationBlock[];
+};
+
+/** Problema estructural de la grilla (`validateRotationGrid`). El código nunca se muestra. */
+export type ShiftRotationGridIssue = {
+  code: string;
+  severity: "ERROR" | "WARNING";
+  crewId?: string;
+  cycleWeekIndex?: number;
+  weekday?: number;
+  blockIndex?: number;
+  message: string;
+};
+
+export type ShiftRotationVersion = {
+  id: string;
+  rotationId: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  cycleLengthWeeks: number;
+  anchorWeekStart: string;
+  locked: boolean;
+  updatedAt: string;
+  days: ShiftRotationDay[];
+  issues: ShiftRotationGridIssue[];
+};
+
+export type ShiftRotationCrewCreateInput = { code: string; name: string; sortOrder: number };
+export type ShiftRotationCrewUpdateInput = Partial<{ name: string; sortOrder: number; status: ShiftRotationStatus }>;
+
 export type ShiftRotationCreateInput = { code: string; name: string; shiftGroupId: string; observation?: string | null };
 export type ShiftRotationUpdateInput = Partial<ShiftRotationCreateInput>;
 
@@ -98,5 +146,15 @@ export const shiftRotationApiService = {
   },
   remove(id: string) {
     return apiRequest<unknown>(`/shifts/rotations/${id}`, { method: "DELETE", silentErrors: true });
+  },
+  /** Devuelve el equipo; el llamador vuelve a leer el detalle (conteos y diagnóstico). */
+  createCrew(rotationId: string, input: ShiftRotationCrewCreateInput) {
+    return apiRequest<{ data: unknown }>(`/shifts/rotations/${rotationId}/crews`, { method: "POST", body: input, silentErrors: true });
+  },
+  updateCrew(rotationId: string, crewId: string, input: ShiftRotationCrewUpdateInput) {
+    return apiRequest<{ data: unknown }>(`/shifts/rotations/${rotationId}/crews/${crewId}`, { method: "PATCH", body: input, silentErrors: true });
+  },
+  version(rotationId: string, versionId: string) {
+    return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`).then((response) => response.data);
   },
 };

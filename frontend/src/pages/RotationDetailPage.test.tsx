@@ -17,7 +17,7 @@ vi.mock("../services/appDialog", () => ({ confirmAction: vi.fn().mockResolvedVal
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({ useAuth: () => mockUseAuth() }));
 vi.mock("../services/api/shiftGroupApiService", () => ({ shiftGroupApiService: { list: vi.fn() } }));
-vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { detail: vi.fn(), update: vi.fn(), remove: vi.fn() } }));
+vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { detail: vi.fn(), update: vi.fn(), remove: vi.fn(), version: vi.fn() } }));
 
 function authAs(role: string) {
   mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo" } });
@@ -29,9 +29,9 @@ function ListProbe() {
   return <p>Listado {location.search} {state?.notice}</p>;
 }
 
-const renderPage = (state?: unknown) =>
+const renderPage = (state?: unknown, search = "") =>
   render(
-    <MemoryRouter initialEntries={[{ pathname: "/configuracion/turnos/rotaciones/rot-1", state }]}>
+    <MemoryRouter initialEntries={[{ pathname: "/configuracion/turnos/rotaciones/rot-1", search, state }]}>
       <Routes>
         <Route path="/configuracion/turnos/rotaciones/:id" element={<RotationDetailPage />} />
         <Route path="/configuracion/turnos" element={<ListProbe />} />
@@ -129,6 +129,17 @@ describe("detalle de rotación", () => {
     renderPage();
     expect(await screen.findByText("No encontramos la rotación. Puede haber sido eliminada.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reintentar/ })).not.toBeInTheDocument();
+  });
+
+  it("la pestaña «Equipos y grilla» se abre desde la URL y las pestañas son accesibles", async () => {
+    const user = userEvent.setup();
+    renderPage(undefined, "?vista=equipos");
+    expect(await screen.findByRole("tab", { name: "Equipos y grilla" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Equipos" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Grilla del ciclo" })).toBeInTheDocument();
+    expect(screen.getByText(/todavía no tiene grilla/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Resumen" }));
+    expect(screen.getByRole("heading", { name: "Diagnóstico" })).toBeInTheDocument();
   });
 
   it("Nivel 3 ve el detalle sin acciones", async () => {

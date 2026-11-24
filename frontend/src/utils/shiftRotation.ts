@@ -159,9 +159,13 @@ export function rotationGroupOptions(groups: readonly ShiftGroup[] | null, curre
 }
 
 /** Semanas del ciclo con sus letras, igual que la vista previa del backend (A, B, C…). */
+export function rotationWeekLabel(cycleWeekIndex: number) {
+  return String.fromCharCode(65 + cycleWeekIndex);
+}
+
 export function rotationCycleLabel(cycleLengthWeeks: number): string {
   if (cycleLengthWeeks <= 1) return "1 semana";
-  const letters = Array.from({ length: cycleLengthWeeks }, (_, index) => String.fromCharCode(65 + index));
+  const letters = Array.from({ length: cycleLengthWeeks }, (_, index) => rotationWeekLabel(index));
   return `${cycleLengthWeeks} semanas (${letters.slice(0, -1).join(", ")} y ${letters[letters.length - 1]})`;
 }
 

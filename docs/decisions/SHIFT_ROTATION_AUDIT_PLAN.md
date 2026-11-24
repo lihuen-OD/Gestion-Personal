@@ -1641,6 +1641,20 @@ Corrección respecto del plan de R1.1: el olvido de salida se genera **al alcanz
 
 **Pendiente fuera de alcance:** el modal de grupos (`ShiftGroupFormModal`) usa la misma estructura `.form-stack` y podría tener el mismo ancho reducido; no se tocó.
 
+### 25.12 R4.8B1 — UI: equipos y grilla en sólo lectura (implementada; sólo frontend)
+
+**Alcance.** Pestaña "Equipos y grilla" en el detalle (`?vista=equipos`). Usa `POST/PATCH /rotations/:id/crews[/:crewId]` y `GET /rotations/:id/versions/:versionId`; sin cambios de backend. El editor de versiones es R4.8B2.
+
+- **Verificación previa (R4.8A):** el bloqueo del grupo en la UI (`rotation.versions.length > 0`) coincide con `PATCH /rotations/:id` (`before.versions.length`, todas las versiones). Sin cambios.
+- **Equipos:** tabla orden/código/nombre/personas/estado; alta y edición en modal (código hasta 20, sólo en el alta; nombre 2–80; orden 0–9999, sugerido máx.+10); la edición envía sólo lo cambiado. Inactivar sólo se ofrece si el equipo nunca tuvo personas (`everHadMembers`, misma regla que `ROTATION_CREW_HAS_MEMBERS`). Tras cada cambio se releen el detalle y la grilla sin blanquear la pantalla.
+- **Grilla:** selector de versión (vigente por defecto, si no la próxima, si no la más reciente; "Vigente / Futura / Anterior" con su vigencia), datos de la versión (ciclo con letras, lunes ancla = semana A) y aviso si ya rigió. Tabla de lunes a domingo (`weekday` 0 = domingo del backend), un grupo por equipo con una fila por semana. Cada celda tiene texto propio: bloque con horario y código, "+1" si termina al día siguiente (mismo criterio que el backend: `endTime <= startTime`), doble bloque apilado ("Bloque 1 de 2…" para lectores de pantalla), "Descanso", "Sin configurar" (día sin fila). Los problemas de `version.issues` marcan su celda ("Revisar") y se listan debajo; los días faltantes se resumen por equipo. Equipos inactivos sólo aparecen si todavía tienen días en la versión. Columna "Semana" y nombre de equipo fijos al desplazar la grilla en pantallas angostas.
+
+**Verificación.** `tsc -b`, `vite build` y `typecheck:e2e` verdes; frontend 142 archivos / 1625 tests (+21: utilidades de grilla, equipos, grilla, pestaña por URL). QA en Chromium real contra backend y PostgreSQL locales (`r48_ui_qa`, ningún acceso a Neon) en 1366×768, 1440×900, 1920×1080, 834×1112, 1112×834 y 390×844: Planta 2 semanas con nocturnos y doble bloque, Oficina 4 semanas con equipo inactivo que conserva días, ciclo de 12 semanas, versión vigente con problemas y días sin configurar (intercepción), rotación sin equipos ni versiones, error 500 de la grilla, modal de equipo con validación y vista Nivel 3. 46 vistas con 0 px de desborde de página, 0 bloques recortados, modales dentro del viewport. Flujos reales contra la API: alta de equipo (aparecen 14 días "Sin configurar" y el resumen), edición, inactivación (desaparecen), código duplicado (409 mostrado en el modal), cambio de versión y pestañas con teclado. Errores de consola sólo los provocados (500/409).
+
+**Defectos encontrados y corregidos durante el QA:** cabeceras de equipo y semana en mayúsculas por la regla global de `th`; "Equipo A - Equipo A" redundante (ahora nombre + "Código A"); al desplazar la grilla en tablet/móvil se perdían la columna "Semana" y el nombre del equipo (columna y etiqueta fijas); el encabezado "Semana" quedaba tapado por los de los días (`th{position:sticky;z-index:1}` global).
+
+**Pendiente fuera de alcance:** para Nivel 3 la barra superior muestra "Dashboard" en pantallas de Configuración (título derivado del menú del rol; preexistente).
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas

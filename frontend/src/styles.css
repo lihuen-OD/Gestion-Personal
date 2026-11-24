@@ -2916,3 +2916,60 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .rotation-form textarea{width:100%;resize:vertical}
 @media(max-width:1100px){.rotation-summary-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.rotation-facts,.rotation-form .form-grid{grid-template-columns:1fr}.rotation-issue{padding:12px}}
+/* R4.8B1: equipos y grilla del ciclo (sólo lectura). Mismo patrón de tabla del sistema; los !important sólo superan los de `tbody td`/`thead th` globales. */
+.rotation-crews-table .col-order{width:80px}.rotation-crews-table .col-code{width:120px}.rotation-crews-table .col-count{width:110px;text-align:right}.rotation-crews-table .col-state{width:120px}.rotation-crews-table .col-actions{width:120px}
+.rotation-crews-table thead th.col-count{text-align:right!important}
+.rotation-section-error{margin:0 0 12px}
+.rotation-section-footnote{margin:12px 0 0;color:var(--color-text-muted);font-size:12px}
+.rotation-version-select{display:flex;align-items:center;gap:8px}
+.rotation-version-select label{color:var(--color-text-secondary);font-size:13px;font-weight:600;white-space:nowrap}
+.rotation-version-select select{width:min(340px,60vw)}
+.rotation-version-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px 24px;margin:0 0 16px}
+.rotation-version-facts dt{color:var(--color-text-muted);font-size:12px}
+.rotation-version-facts dd{margin:4px 0 0;color:var(--color-text-primary);font-size:14px;font-weight:600}
+.rotation-grid-note{margin:0 0 16px!important;padding:10px 14px}
+.rotation-grid-note p{margin:0}
+.rotation-grid-legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin:0 0 12px;padding:0;list-style:none;color:var(--color-text-secondary);font-size:12px}
+.rotation-grid-legend li{display:flex;align-items:center;gap:8px}
+.rotation-legend-sample{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-legend-sample.is-shift{border:1px solid var(--ds-blue-200);background:var(--ds-blue-50);color:var(--ds-slate-800)}
+.rotation-legend-sample.is-rest{border:1px solid var(--ds-slate-200);background:var(--ds-slate-100);color:var(--ds-slate-600)}
+.rotation-legend-sample.is-missing{border:1px dashed var(--ds-amber-600);background:var(--ds-amber-50);color:var(--ds-amber-700)}
+.table-shell>table.rotation-grid{table-layout:fixed!important}
+.table-shell>table.rotation-grid thead th{text-align:center!important;padding:10px 8px!important}
+.table-shell>table.rotation-grid thead th.rotation-grid-week{text-align:left!important;padding-left:16px!important}
+.rotation-grid abbr{text-decoration:none}
+.rotation-grid th.rotation-grid-week{width:96px}
+.rotation-grid tbody th.rotation-grid-week{padding:10px 8px 10px 16px;color:var(--ds-slate-600);font-size:13px;font-weight:600;text-align:left;vertical-align:top;white-space:nowrap}
+.rotation-grid-crew th{padding:10px 16px;border-top:1px solid var(--ds-slate-200);background:var(--ds-slate-50);color:var(--color-text-primary);font-size:13px;font-weight:700;text-align:left}
+/* La etiqueta del equipo acompaña a la columna fija al desplazar. */
+.rotation-grid-crew-label{position:sticky;left:16px;display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px;max-width:calc(100vw - 96px)}
+.rotation-grid-crew-code{color:var(--color-text-muted);font-size:12px;font-weight:600}
+/* Las cabeceras de fila no son encabezados de columna: sin las mayúsculas globales de `th`. */
+.table-shell>table.rotation-grid tbody th{text-transform:none!important;letter-spacing:normal!important}
+/* La columna "Semana" queda fija al desplazar la grilla en pantallas angostas. */
+.rotation-grid .rotation-grid-week{position:sticky;left:0;z-index:1;background:#fff}
+.rotation-grid thead .rotation-grid-week{z-index:2;background:var(--ds-slate-50)}
+.rotation-grid tbody tr:hover{background:transparent}
+.table-shell>table.rotation-grid tbody td.rotation-grid-cell{padding:6px!important;vertical-align:top;white-space:normal!important}
+.rotation-grid-cell.has-issues{box-shadow:inset 0 0 0 2px var(--ds-red-500)}
+.rotation-blocks{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.rotation-block{display:grid;gap:1px;padding:4px 6px;border:1px solid var(--ds-blue-200);border-radius:6px;background:var(--ds-blue-50);text-align:center}
+.rotation-block.is-overnight{border-color:var(--ds-purple-200);background:var(--ds-purple-50)}
+.rotation-block-time{color:var(--ds-slate-800);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rotation-block-code{overflow:hidden;color:var(--ds-slate-600);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.rotation-next-day{display:inline-block;margin-left:3px;padding:0 4px;border-radius:4px;background:var(--ds-purple-700);color:#fff;font-size:10px;font-weight:700;line-height:15px;vertical-align:1px;text-decoration:none;cursor:help}
+.rotation-legend-sample .rotation-next-day{margin-left:4px}
+.rotation-rest,.rotation-missing{display:flex;align-items:center;justify-content:center;gap:4px;min-height:38px;padding:4px 6px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-rest{border:1px solid var(--ds-slate-200);background:var(--ds-slate-100);color:var(--ds-slate-600)}
+.rotation-missing{border:1px dashed var(--ds-amber-600);background:var(--ds-amber-50);color:var(--ds-amber-700)}
+.rotation-cell-issue{display:flex;align-items:center;justify-content:center;gap:3px;margin-top:4px;color:var(--ds-red-700);font-size:11px;font-weight:700}
+.rotation-grid-issues{margin-top:16px;padding:12px 16px;border:1px solid var(--ds-slate-200);border-radius:10px;background:#fff}
+.rotation-grid-issues h4{margin:0 0 8px;color:var(--color-text-primary);font-size:14px}
+.rotation-grid-issues ul{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:13px}
+.rotation-grid-issues li{display:flex;align-items:flex-start;gap:8px;color:var(--color-text-primary)}
+.rotation-grid-issues li svg{flex:none;margin-top:2px}
+.rotation-grid-issues li.is-error svg{color:var(--ds-red-600)}
+.rotation-grid-issues li.is-warning svg{color:var(--ds-amber-700)}
+.rotation-form .rotation-crew-form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:700px){.rotation-version-select{flex-wrap:wrap}.rotation-version-select select{width:100%}.rotation-form .rotation-crew-form-grid{grid-template-columns:1fr}}
