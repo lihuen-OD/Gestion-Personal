@@ -50,6 +50,17 @@ export const PLANTA_EMPLOYEES = {
   JUANJO: "emp-juanjo",
 } as const;
 
+/** Resultado esperado lunes→domingo de A y luego B, independiente del resolver. */
+export const PLANTA_EXPECTED_TWO_WEEKS: Record<string, string[]> = {
+  [PLANTA_EMPLOYEES.ROBERTO]: ["07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19", "17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST"],
+  [PLANTA_EMPLOYEES.ARIEL]: ["07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19", "17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST"],
+  [PLANTA_EMPLOYEES.CARLOS]: ["17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST", "07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19"],
+  [PLANTA_EMPLOYEES.WALTER]: ["17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST", "07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19"],
+  [PLANTA_EMPLOYEES.JUANCHI]: ["REST", "03-11", "03-11", "03-11", "03-11", "REST", "REST", "07-15", "03-11", "03-11", "03-11", "19-07", "19-07", "19-07"],
+  [PLANTA_EMPLOYEES.JOSE]: ["07-15", "07-15", "07-15", "07-15", "07-11+19-07", "19-07", "19-07", "REST", "07-15", "07-15", "07-15", "07-15", "REST", "REST"],
+  [PLANTA_EMPLOYEES.JOHANNA]: ["07-15", "07-15", "07-15", "07-15", "07-15", "REST", "REST", "07-15", "07-15", "07-15", "07-15", "07-15", "07-15", "07-15"],
+};
+
 /** Semana del ciclo: lista lunes→domingo; cada día = descanso (vacío) o 1..N plantillas en orden. */
 type WeekSpec = [RotationTemplateRef[], RotationTemplateRef[], RotationTemplateRef[], RotationTemplateRef[], RotationTemplateRef[], RotationTemplateRef[], RotationTemplateRef[]];
 const REST: RotationTemplateRef[] = [];

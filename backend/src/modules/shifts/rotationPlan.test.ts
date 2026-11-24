@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextCalendarDateKey } from "../../shared/datetime/argentinaTime";
-import { PLANTA_ANCHOR, PLANTA_CREWS, PLANTA_EMPLOYEES, PLANTA_ROTATION_ID, PLANTA_TEMPLATES, PLANTA_VERSION_ID, plantaConfiguration, plantaDays, plantaRotation, plantaVersion } from "./plantaRotation.fixture";
+import { PLANTA_ANCHOR, PLANTA_CREWS, PLANTA_EMPLOYEES, PLANTA_EXPECTED_TWO_WEEKS, PLANTA_ROTATION_ID, PLANTA_TEMPLATES, PLANTA_VERSION_ID, plantaConfiguration, plantaDays, plantaRotation, plantaVersion } from "./plantaRotation.fixture";
 import { resolveRotationDayPlan, rotationWeekIndex, rotationWeekLabel, type ExpectedDayPlan, type RotationConfiguration, type RotationTemplateRef } from "./rotationPlan";
 
 // R4.2 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.3): núcleo puro de
@@ -53,24 +53,14 @@ describe("semana del ciclo (ancla lunes 02/11/2026 = A, ciclo de 2 semanas)", ()
 });
 
 // Tabla de la especificación (§25), lunes 02/11 → domingo 15/11 (semanas A y B), escrita a mano.
-const EXPECTED_TWO_WEEKS: Record<string, string[]> = {
-  [PLANTA_EMPLOYEES.ROBERTO]: ["07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19", "17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST"],
-  [PLANTA_EMPLOYEES.ARIEL]: ["07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19", "17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST"],
-  [PLANTA_EMPLOYEES.CARLOS]: ["17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST", "07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19"],
-  [PLANTA_EMPLOYEES.WALTER]: ["17-03", "17-03", "17-03", "17-03", "REST", "REST", "REST", "07-17", "07-17", "07-17", "07-17", "07-19", "07-19", "07-19"],
-  [PLANTA_EMPLOYEES.JUANCHI]: ["REST", "03-11", "03-11", "03-11", "03-11", "REST", "REST", "07-15", "03-11", "03-11", "03-11", "19-07", "19-07", "19-07"],
-  [PLANTA_EMPLOYEES.JOSE]: ["07-15", "07-15", "07-15", "07-15", "07-11+19-07", "19-07", "19-07", "REST", "07-15", "07-15", "07-15", "07-15", "REST", "REST"],
-  [PLANTA_EMPLOYEES.JOHANNA]: ["07-15", "07-15", "07-15", "07-15", "07-15", "REST", "REST", "07-15", "07-15", "07-15", "07-15", "07-15", "07-15", "07-15"],
-};
-
 describe("calendario real de noviembre 2026", () => {
   const firstTwoWeeks = datesFrom("2026-11-02", 14);
 
-  it.each(Object.entries(EXPECTED_TWO_WEEKS))("%s: 02/11–15/11 coincide con la especificación", (employeeId, expected) => {
+  it.each(Object.entries(PLANTA_EXPECTED_TWO_WEEKS))("%s: 02/11–15/11 coincide con la especificación", (employeeId, expected) => {
     expect(firstTwoWeeks.map((key) => summary(plan(employeeId, key)))).toEqual(expected);
   });
 
-  it.each(Object.entries(EXPECTED_TWO_WEEKS))("%s: 16/11–29/11 repite el ciclo y 30/11–13/12 también (sin reinicios entre meses)", (employeeId, expected) => {
+  it.each(Object.entries(PLANTA_EXPECTED_TWO_WEEKS))("%s: 16/11–29/11 repite el ciclo y 30/11–13/12 también (sin reinicios entre meses)", (employeeId, expected) => {
     expect(datesFrom("2026-11-16", 14).map((key) => summary(plan(employeeId, key)))).toEqual(expected);
     expect(datesFrom("2026-11-30", 14).map((key) => summary(plan(employeeId, key)))).toEqual(expected);
   });

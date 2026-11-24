@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { PLANTA_ANCHOR, PLANTA_CREWS, PLANTA_EMPLOYEES, PLANTA_TEMPLATES, plantaDays } from "./plantaRotation.fixture";
+import { PLANTA_ANCHOR, PLANTA_CREWS, PLANTA_EMPLOYEES, PLANTA_EXPECTED_TWO_WEEKS, PLANTA_TEMPLATES, plantaDays } from "./plantaRotation.fixture";
 
 const url = process.env.ROTATION_ADMIN_IT_DATABASE_URL;
 
@@ -35,6 +35,7 @@ type Modules = {
   env: typeof import("../../config/env").env;
   prisma: typeof import("../../shared/prisma/client").prisma;
   obligations: typeof import("./rotationObligation.service");
+  workObligation: typeof import("./workObligation.service");
   errors: typeof import("./shiftRotationErrors");
 };
 type Api = { status: number; data: any; context?: any; meta?: any; error: { code: string; message: string; details?: any } | undefined };
@@ -122,19 +123,45 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     const supRow = await holder.user.create({ data: { name: "Supervisión IT", email: "sup-r46@example.com", passwordHash: "x", role: "NIVEL_2_SUPERVISION" } });
     rrhh = { id: rrhhRow.id, email: rrhhRow.email, role: rrhhRow.role };
     supervision = { id: supRow.id, email: supRow.email, role: supRow.role };
-    groupId = (await holder.shiftGroup.create({ data: { code: "PLANTA", name: "Planta" } })).id;
-    otherGroupId = (await holder.shiftGroup.create({ data: { code: "OFICINA", name: "Oficina" } })).id;
+    const plantaGroup = await call("POST", "/shifts/groups", { code: "PLANTA", name: "Planta" });
+    const oficinaGroup = await call("POST", "/shifts/groups", { code: "OFICINA", name: "Oficina" });
+    expect(plantaGroup.status, JSON.stringify(plantaGroup.error)).toBe(201);
+    expect(oficinaGroup.status, JSON.stringify(oficinaGroup.error)).toBe(201);
+    groupId = plantaGroup.data.id;
+    otherGroupId = oficinaGroup.data.id;
     for (const [index, key] of Object.values(PLANTA_EMPLOYEES).entries()) {
       employee[key] = (await holder.employee.create({ data: { legajo: `R46-${index + 1}`, cuil: `20-8${index + 1}`, dni: `8${index + 1}`, firstName: "Prueba", lastName: key.replace("emp-", "") } })).id;
     }
     for (const template of Object.values(PLANTA_TEMPLATES)) {
-      templateId[template.id] = (await holder.shiftTemplate.create({
-        data: { code: template.code, name: template.code, startTime: template.startTime, endTime: template.endTime, crossesMidnight: template.crossesMidnight, shiftGroupId: groupId, entryToleranceBeforeMinutes: 10, entryToleranceAfterMinutes: 10, exitToleranceBeforeMinutes: 20, exitToleranceAfterMinutes: 20 },
-      })).id;
+      const created = await call("POST", "/workforce/shift-templates", {
+        code: template.code,
+        name: template.code,
+        startTime: template.startTime,
+        endTime: template.endTime,
+        shiftGroupId: groupId,
+        // R4.9C.1: sólo los 30 minutos previos son decisión operativa. Los
+        // demás valores son datos técnicos de QA, no política aprobada.
+        entryToleranceBeforeMinutes: 30,
+        entryToleranceAfterMinutes: 10,
+        exitToleranceBeforeMinutes: 20,
+        exitToleranceAfterMinutes: 20,
+        minimumMinutesForCompliance: null,
+        maximumInformativeMinutes: null,
+        missingOutAlertAfterMinutes: null,
+        absoluteOpenShiftLimitMinutes: 1200,
+      });
+      expect(created.status, JSON.stringify(created.error)).toBe(201);
+      templateId[template.id] = created.data.id;
     }
     templateId.OFICINA = (await holder.shiftTemplate.create({ data: { code: "OF-08-16", name: "Oficina", startTime: "08:00", endTime: "16:00", shiftGroupId: otherGroupId } })).id;
     // Juanjo: turno fijo L–V 07–15 (fuera de la rotación).
-    await holder.shiftAssignment.create({ data: { employeeId: employee[PLANTA_EMPLOYEES.JUANJO]!, shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id]!, effectiveFrom: day("2026-10-01"), weekdays: [1, 2, 3, 4, 5] } });
+    const fixed = await call("POST", "/shifts/assignments", {
+      employeeIds: [employee[PLANTA_EMPLOYEES.JUANJO]],
+      shiftTemplateId: templateId[PLANTA_TEMPLATES.T0715.id],
+      effectiveFrom: MON_A,
+      weekdays: [1, 2, 3, 4, 5],
+    });
+    expect(fixed.status, JSON.stringify(fixed.error)).toBe(201);
   }
 
   beforeAll(async () => {
@@ -144,14 +171,15 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     }
     process.env.DATABASE_URL = url;
     delete (globalThis as { prisma?: unknown }).prisma;
-    const [{ createApp }, { env }, { prisma }, obligations, errors] = await Promise.all([
+    const [{ createApp }, { env }, { prisma }, obligations, workObligation, errors] = await Promise.all([
       import("../../app"),
       import("../../config/env"),
       import("../../shared/prisma/client"),
       import("./rotationObligation.service"),
+      import("./workObligation.service"),
       import("./shiftRotationErrors"),
     ]);
-    m = { env, prisma, obligations, errors };
+    m = { env, prisma, obligations, workObligation, errors };
     const [connected] = await prisma.$queryRawUnsafe<Array<{ db: string }>>("SELECT current_database() AS db");
     if (!connected?.db.startsWith("clock_it")) throw new Error(`La app quedó conectada a ${connected?.db}, no a clock_it*: se aborta sin escribir.`);
     holder = new PrismaClient({ datasourceUrl: url });
@@ -668,5 +696,66 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     expect(scoped.status).toBe(200);
     expect(scoped.data).toEqual([]);
     expect(scoped.meta.total).toBe(0);
+  });
+
+  it("R4.9C.1: carga Planta real por API, valida A/B completo e inactivo, Juanjo fijo y continuidad anual", async () => {
+    const { rotationId } = await setupPlanta(MON_A, { activate: false });
+    const detail = await call("GET", `/shifts/rotations/${rotationId}`);
+    expect(detail.status, JSON.stringify(detail.error)).toBe(200);
+    expect(detail.data).toMatchObject({ status: "INACTIVO", health: "OK", hasRuled: false });
+    expect(detail.data.members).toHaveLength(7);
+
+    const templates = await holder.shiftTemplate.findMany({ where: { id: { in: Object.values(templateId).filter((id) => id !== templateId.OFICINA) } } });
+    expect(templates).toHaveLength(7);
+    expect(templates.every((template) => template.entryToleranceBeforeMinutes === 30)).toBe(true);
+    expect(templates.every((template) => template.minimumMinutesForCompliance === null && template.maximumInformativeMinutes === null)).toBe(true);
+
+    const preview = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_A2}&page=1&take=25`);
+    expect(preview.status, JSON.stringify(preview.error)).toBe(200);
+    expect(preview.context).toMatchObject({ persistedStatus: "INACTIVO", previewMode: "HYPOTHETICAL_INACTIVE", affectsRealObligations: false, readOnly: true });
+    expect(preview.meta).toMatchObject({ total: 7, page: 1, pageSize: 25, hasMore: false });
+    expect(preview.data).toHaveLength(7);
+    expect(preview.data.some((row: { employee: { id: string } }) => row.employee.id === employee[PLANTA_EMPLOYEES.JUANJO])).toBe(false);
+
+    const summary = (cell: { planning: { kind: string; blocks: Array<{ template: { code: string } }> } }) =>
+      cell.planning.kind === "REST" ? "REST" : cell.planning.blocks.map((block) => block.template.code.replace("PLANTA-", "")).join("+");
+    for (const [person, expected] of Object.entries(PLANTA_EXPECTED_TWO_WEEKS)) {
+      const row = preview.data.find((item: { employee: { id: string } }) => item.employee.id === employee[person]);
+      expect(row, person).toBeTruthy();
+      expect(row.days.slice(0, 14).map(summary), person).toEqual(expected);
+      expect(summary(row.days[14]), `${person} reinicia A el 16/11`).toBe(expected[0]);
+      expect(row.days.every((cell: { planning: { kind: string }; warnings: Array<{ code: string }>; transitionFromPrevious: { overlap: boolean } | null }) =>
+        !["MISSING", "CONFLICT"].includes(cell.planning.kind)
+        && cell.warnings.length === 0
+        && cell.transitionFromPrevious?.overlap !== true,
+      ), `${person} sin faltantes, conflictos ni superposiciones`).toBe(true);
+    }
+
+    const jose = preview.data.find((row: { employee: { id: string } }) => row.employee.id === employee[PLANTA_EMPLOYEES.JOSE]);
+    expect(jose.days[4].planning.blocks.map((block: { operationalDate: string; scheduledEndAt: string }) => [block.operationalDate, block.scheduledEndAt])).toEqual([
+      [FRI_A, "2026-11-06T14:00:00.000Z"],
+      [FRI_A, "2026-11-07T10:00:00.000Z"],
+    ]);
+    expect(jose.days[6].planning.blocks[0]).toMatchObject({ operationalDate: "2026-11-08", scheduledEndAt: "2026-11-09T10:00:00.000Z" });
+    expect(jose.days[7].planning.kind).toBe("REST");
+    const roberto = preview.data.find((row: { employee: { id: string } }) => row.employee.id === employee[PLANTA_EMPLOYEES.ROBERTO]);
+    expect(roberto.days[7].transitionFromPrevious).toMatchObject({ previousOperationalDate: "2026-11-08", overlap: false });
+
+    const yearPreview = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=2026-12-28&to=2027-01-10&page=1&take=25`);
+    expect(yearPreview.status, JSON.stringify(yearPreview.error)).toBe(200);
+    for (const [person, expected] of Object.entries(PLANTA_EXPECTED_TWO_WEEKS)) {
+      const row = yearPreview.data.find((item: { employee: { id: string } }) => item.employee.id === employee[person]);
+      expect(row.days.map(summary), `${person} sin reinicio anual`).toEqual(expected);
+      expect(row.days[0].assignment.cycleWeekLabel).toBe("A");
+      expect(row.days[7].assignment.cycleWeekLabel).toBe("B");
+    }
+
+    expect(await Promise.all(Object.keys(PLANTA_EXPECTED_TWO_WEEKS).map((person) => blocksOf(person, MON_A)))).toEqual(Array(7).fill(null));
+    const realObligations = await m.workObligation.resolveWorkObligationCandidates(MON_A);
+    expect(realObligations.candidates.map((candidate) => ({ employeeId: candidate.employeeId, schedule: `${candidate.template.startTime}-${candidate.template.endTime}` }))).toEqual([
+      { employeeId: employee[PLANTA_EMPLOYEES.JUANJO], schedule: "07:00-15:00" },
+    ]);
+    expect(await holder.workShift.count()).toBe(0);
+    expect(await holder.attendanceInactivityIncident.count()).toBe(0);
   });
 });

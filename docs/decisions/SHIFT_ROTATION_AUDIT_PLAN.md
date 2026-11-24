@@ -1732,6 +1732,16 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 - Sin acciones masivas en el editor de grilla (copiar semana, rellenar fila).
 - Preexistente, fuera de R4.8: para Nivel 3 la barra superior dice "Dashboard" en las pantallas de Configuración.
 
+### 25.17 R4.9C.1 — Configuración real de Planta en PostgreSQL local (validada; rotación INACTIVA)
+
+**Alcance.** La fixture aprobada de Planta se cargó por las API existentes de administración sobre `clock_it_r49_admin`, base local descartable con las 82 migraciones vigentes: rotación `PLANTA` INACTIVA, cinco equipos, ciclo de dos semanas con ancla lunes 02/11/2026, una versión con 70 celdas y 57 bloques, siete membresías ficticias y Juanjo ficticio con turno fijo L–V 07–15 fuera de la rotación. No se usaron identidades ni datos reales.
+
+**Parámetros de QA.** Las siete plantillas tienen `entryToleranceBeforeMinutes = 30`, única decisión operativa aplicada. Permanecen los defaults técnicos locales —entrada posterior 10, salida anterior/posterior 20 y límite absoluto 1200—, que **no constituyen política aprobada**. Mínimo de cumplimiento y máximo informativo siguen `NULL`; no se definió tolerancia real de salida ni otros límites.
+
+**Resultado.** `GET /api/shifts/expected` devolvió los siete perfiles y las semanas A/B completas: Roberto/Ariel y Carlos/Walter en alternancia opuesta; José con 07–11 + 19–07 el viernes A y nocturnos asociados a su fecha operativa; Juanchi con descansos, 03–11, lunes B 07–15 y noches V–D; Johanna L–V en A y L–D en B. No hubo `MISSING`, `CONFLICT`, advertencias ni superposiciones. El cruce domingo→lunes no superpone bloques y 28/12/2026–10/01/2027 conserva A→B sin reinicio anual. Juanjo no aparece entre miembros y el resolver operativo real sólo devuelve su turno fijo; para los siete rotativos devuelve cero obligaciones porque la rotación permanece INACTIVA.
+
+**Evidencia.** `shiftRotationAdmin.integration.test.ts` 23/23 (incluye el caso R4.9C.1); `rotationPlan.test.ts` + `rotationValidation.test.ts` 59/59; `typecheck` verde. Estado operativo final de la base: 0 `WorkShift`, 0 `AttendancePunch`, 0 `AttendanceInactivityIncident`. No se simularon fichadas ni notificaciones y no hubo acceso a bases compartidas.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
