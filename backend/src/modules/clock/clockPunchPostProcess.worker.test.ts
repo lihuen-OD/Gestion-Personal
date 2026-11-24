@@ -193,6 +193,30 @@ describe("PERF-5D — pasos del post-proceso por tipo", () => {
     expect(evaluateWorkShiftDayOff).toHaveBeenCalledWith("shift-1", { db: STEP_TX });
   });
 
+  it("R4.5: cambio de bloque desde una jornada SIN bloque (sin previousBlock): un solo aviso de falta de salida con la hora de inicio de la jornada", async () => {
+    const nextBlock = { obligationKey: "employee-1|x", operationalDate: "2026-10-16", templateCode: "PLANTA-17-03", scheduledStartAt: "2026-10-16T20:00:00.000Z", scheduledEndAt: "2026-10-17T06:00:00.000Z" };
+    const claimed = job({ kind: "ROLLOVER_ENTRY", payload: { actualAt: ACTUAL_AT, previousShift: { id: "shift-old", startAt: PREVIOUS_START }, blockChange: { nextBlock, alertOnly: false } } });
+
+    await expect(processClaimedClockPunchPostProcessJob(claimed)).resolves.toMatchObject({ status: "COMPLETED" });
+
+    expect(notifyMissingExit).toHaveBeenCalledTimes(1);
+    expect(notifyMissingExit).toHaveBeenCalledWith("employee-1", "shift-old", new Date(PREVIOUS_START), {
+      db: STEP_TX,
+      rethrow: true,
+      message: "No registró la salida de la jornada iniciada a las 07:00; ya ingresó a su turno de las 17:00. La jornada anterior quedó sin horas y requiere revisión.",
+    });
+    expect(resolveOpenShiftOverflowAlert).toHaveBeenCalledWith("shift-old", "nota-rollover", STEP_TX);
+  });
+
+  it("R4.4 (sin cambios): con previousBlock el aviso nombra el turno anterior", async () => {
+    const block = (start: string, end: string) => ({ obligationKey: `employee-1|${start}`, operationalDate: "2026-10-16", templateCode: "T", scheduledStartAt: start, scheduledEndAt: end });
+    const claimed = job({ kind: "ROLLOVER_ENTRY", payload: { actualAt: ACTUAL_AT, previousShift: { id: "shift-old", startAt: PREVIOUS_START }, blockChange: { previousBlock: block("2026-10-16T10:00:00.000Z", "2026-10-16T14:00:00.000Z"), nextBlock: block("2026-10-16T22:00:00.000Z", "2026-10-17T10:00:00.000Z"), alertOnly: false } } });
+
+    await expect(processClaimedClockPunchPostProcessJob(claimed)).resolves.toMatchObject({ status: "COMPLETED" });
+
+    expect(vi.mocked(notifyMissingExit).mock.calls[0]![3]).toMatchObject({ message: "No registró la salida del turno de las 07:00 a las 11:00; ya ingresó a su turno de las 19:00. La jornada anterior quedó sin horas y requiere revisión." });
+  });
+
   it("EXIT: Motor B por período (auditoría y marca en su transacción) y después la evaluación de salida, que relee la jornada y propaga sus fallos", async () => {
     const claimed = exitJob();
 

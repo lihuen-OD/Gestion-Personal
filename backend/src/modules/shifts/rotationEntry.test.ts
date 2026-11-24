@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { publicClockGuidance } from "../../shared/errors/clockGuidance";
-import { classifyRotationEntry, classifyRotationExit, isRotationBlockShift, type OpenBlockShift } from "./rotationEntry";
+import { classifyRotationEntry, classifyRotationExit, isBlockChangeFromUnblockedShift, isRotationBlockShift, type OpenBlockShift } from "./rotationEntry";
 import type { RotationObligation } from "./rotationObligation.service";
 import { buildExpectedBlock, type ExpectedDayPlan } from "./rotationPlan";
 import type { LoadedRotationTemplate } from "./rotationPlan.loader";
 
 /** R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): clasificación pura de fichadas de miembros de rotación. */
 const at = (dateKey: string, time: string) => new Date(`${dateKey}T${time}:00-03:00`);
+const THU = "2026-11-05";
 const FRI = "2026-11-06";
 const SAT = "2026-11-07";
 
@@ -123,6 +124,18 @@ describe("classifyRotationEntry — motor único y precedencias", () => {
     expect(classifyRotationEntry(at(FRI, "08:00"), new Map([[FRI, obligation(FRI, { kind: "SHIFTS" } as never, "HOLIDAY_NOT_CONVOKED")]]), [])).toMatchObject({ kind: "UNSCHEDULED", reason: "HOLIDAY_NOT_CONVOKED" });
     expect(classifyRotationEntry(at(FRI, "08:00"), new Map([[FRI, obligation(FRI, { kind: "SHIFTS" } as never, "REGIME_SIN_TURNO")]]), [])).toMatchObject({ kind: "UNSCHEDULED", reason: "REGIME_SIN_TURNO" });
     expect(classifyRotationEntry(at(FRI, "08:00"), new Map([[FRI, obligation(FRI, { kind: "REST" } as never, "ROTATION_REST_DAY")]]), [])).toMatchObject({ kind: "UNSCHEDULED", reason: "REST" });
+  });
+});
+
+describe("isBlockChangeFromUnblockedShift — R4.5 (jornada abierta sin bloque)", () => {
+  it("abierta antes de la ventana del bloque (13:00) y ENTRADA asignada a B2 → cambio de bloque", () => {
+    expect(isBlockChangeFromUnblockedShift(at(FRI, "13:00"), B2, BLOCKS)).toBe(true);
+    // Una jornada no programada de la víspera también.
+    expect(isBlockChangeFromUnblockedShift(at(THU, "20:00"), B1, BLOCKS)).toBe(true);
+  });
+  it("la jornada abierta ya se asignaría al mismo bloque (misma llegada) o empezó después → no", () => {
+    expect(isBlockChangeFromUnblockedShift(at(FRI, "15:01"), B2, BLOCKS)).toBe(false);
+    expect(isBlockChangeFromUnblockedShift(at(FRI, "19:30"), B2, BLOCKS)).toBe(false);
   });
 });
 

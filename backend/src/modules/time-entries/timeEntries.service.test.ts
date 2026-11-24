@@ -1013,6 +1013,57 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
       await expect(timeEntriesService.clockPhotoPunch({ ...punch("OUT"), exitConfirmation: { openShiftId: "11111111-1111-1111-1111-111111111111", nextBlockKey: night.obligationKey } }, RECEPTION_CLOCK_ORIGIN, undefined, memberContext())).rejects.toMatchObject({ code: "CLOCK_SHIFT_CHANGED" });
       expect(repo.closeOpenWorkShift).not.toHaveBeenCalled();
     });
+
+    // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): jornada abierta SIN bloque.
+    describe("R4.5 — ENTRADA a un bloque con una jornada abierta sin bloque", () => {
+      const openUnblocked = (startAt: Date) => ({ id: "shift-early", startAt, hourConcept: normalConcept, shiftTemplateId: null, shiftTemplateSource: null, scheduledStartAt: null, maxAllowedMinutes: 1200 });
+      const contextWith = (shift: ReturnType<typeof openUnblocked>) => ({ ...activeEmployee, workShifts: [shift], hourConcepts: [], _count: { shiftRotationMemberships: 1 } }) as never;
+
+      it("abierta a las 13:00 (fuera de ventana) y ENTRADA 19:00 asignada: cambio de bloque de R4.4 — la anterior sin salida ni horas, la nueva con el bloque congelado", async () => {
+        vi.setSystemTime(FRIDAY("19:00"));
+        repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-1900", startAt: FRIDAY("19:00"), startPunchId: null });
+        const result = await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, contextWith(openUnblocked(FRIDAY("13:00"))));
+        expect(repo.rolloverExpiredOpenWorkShift).toHaveBeenCalledWith(expect.objectContaining({
+          openWorkShiftId: "shift-early",
+          adoption: { shiftTemplateId: "tpl-PLANTA-19-07", shiftTemplateSource: "ROTATION", scheduledStartAt: FRIDAY("19:00"), maxAllowedMinutes: 1200 },
+          missingOutObservation: "Falta registrar la salida de la jornada iniciada a las 13:00: se registró el ingreso del turno de las 19:00. Requiere revisión.",
+        }));
+        expect(openBlockShiftOf).not.toHaveBeenCalled();
+        const job = await postProcessJobWrittenBy(repo.rolloverExpiredOpenWorkShift, { attendancePunchId: "punch-in", workShiftId: "shift-1900" });
+        expect(job).toMatchObject({ kind: "ROLLOVER_ENTRY", payload: { previousShift: { id: "shift-early" }, blockChange: { nextBlock: { obligationKey: night.obligationKey }, alertOnly: false } } });
+        expect(job.payload.blockChange).not.toHaveProperty("previousBlock");
+        expect(result).toMatchObject({ previousOpenShift: { id: "shift-early", status: "FALTA_SALIDA" } });
+      });
+
+      it("ALERT_ONLY: se acepta igual (como R4.4) y queda marcado en el payload", async () => {
+        vi.setSystemTime(FRIDAY("19:00"));
+        mockedResolveActiveWorkRegime.mockResolvedValue({ openShiftOverflowAction: "ALERT_ONLY" } as never);
+        repo.rolloverExpiredOpenWorkShift.mockResolvedValueOnce({ id: "shift-1900", startAt: FRIDAY("19:00"), startPunchId: null });
+        await timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, contextWith(openUnblocked(FRIDAY("13:00"))));
+        const job = await postProcessJobWrittenBy(repo.rolloverExpiredOpenWorkShift, { attendancePunchId: "punch-in", workShiftId: "shift-1900" });
+        expect(job).toMatchObject({ payload: { blockChange: { alertOnly: true } } });
+      });
+
+      it("ENTRADA que no se asigna a ningún bloque (13:30, sigue fuera de ventana): 409 de siempre, sin escribir nada", async () => {
+        vi.setSystemTime(FRIDAY("13:30"));
+        await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, contextWith(openUnblocked(FRIDAY("13:00"))))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+        expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+        expect(mockedUploadManagedObject).not.toHaveBeenCalled();
+      });
+
+      it("la jornada abierta ya pertenecía a ese bloque (misma llegada: doble toque o reintento con otro requestId): 409, nunca una entrada nueva", async () => {
+        vi.setSystemTime(FRIDAY("15:05"));
+        await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, contextWith(openUnblocked(FRIDAY("15:01"))))).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+        expect(repo.rolloverExpiredOpenWorkShift).not.toHaveBeenCalled();
+      });
+
+      it("no miembros (turnos fijos): sin cambios — jornada sin bloque abierta y nueva ENTRADA → 409", async () => {
+        vi.setSystemTime(FRIDAY("19:00"));
+        const fixed = { ...activeEmployee, workShifts: [openUnblocked(FRIDAY("13:00"))], hourConcepts: [], _count: { shiftRotationMemberships: 0 } } as never;
+        await expect(timeEntriesService.clockPhotoPunch(punch("IN"), RECEPTION_CLOCK_ORIGIN, undefined, fixed)).rejects.toMatchObject({ code: "CLOCK_ALREADY_OPEN" });
+        expect(loadRotationPunchContext).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // PERF-5D: el aviso de falta de salida y la evaluación del ingreso nuevo ya

@@ -22,7 +22,7 @@ import { failedAttemptClockGuidance, failedAttemptRetryAfterSeconds } from "./cl
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
-import { blockDiagnosis, isRotationBlockShift, classifyRotationEntry, classifyRotationExit, entryDiagnosis, type OpenBlockShift, type RotationEntryClassification, type RotationExitClassification } from "../shifts/rotationEntry";
+import { blockDiagnosis, isBlockChangeFromUnblockedShift, isRotationBlockShift, classifyRotationEntry, classifyRotationExit, entryDiagnosis, type OpenBlockShift, type RotationEntryClassification, type RotationExitClassification } from "../shifts/rotationEntry";
 import {
   adoptionFor,
   exitConfirmationRequired,
@@ -779,7 +779,8 @@ const clockHhmm = (instant: Date) => {
 
 /**
  * R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6, decisión del usuario): ingreso a un
- * bloque POSTERIOR con la jornada del bloque anterior abierta. Atómico (el
+ * bloque POSTERIOR con la jornada del bloque anterior abierta. R4.5 (§25.7):
+ * también con una jornada abierta SIN bloque (`open` null) — mismo mecanismo. Atómico (el
  * rollover existente): la anterior pasa a FALTA_SALIDA sin endAt, endPunchId
  * ni horas (TimeEntry 0 h), y se abre la del bloque nuevo con su bloque
  * congelado. Vale con ALERT_ONLY. Si el vencimiento (u otra fichada) cerró la
@@ -798,11 +799,14 @@ async function clockBlockChangeEntry(args: {
   deviceLabel: string;
   selectedConcept: { id: string; name: string };
   openShift: { id: string; startAt: Date };
-  blockChange: { open: OpenBlockShift; alertOnly: boolean };
+  blockChange: { open: OpenBlockShift | null; alertOnly: boolean };
   rotationEntry: RotationEntryClassification & { kind: "ASSIGNED" };
 }) {
   const { input, origin, audit, employee, now, evidence, cooldown, cooldownSeconds, attemptKey, deviceLabel, selectedConcept, openShift, blockChange, rotationEntry } = args;
-  const previousBlock = openShiftBlockDiagnosis(employee.id, blockChange.open);
+  const previousBlock = blockChange.open ? openShiftBlockDiagnosis(employee.id, blockChange.open) : null;
+  const previousStretch = blockChange.open
+    ? `del turno de las ${clockHhmm(blockChange.open.scheduledStartAt)} a las ${clockHhmm(blockChange.open.scheduledEndAt)}`
+    : `de la jornada iniciada a las ${clockHhmm(openShift.startAt)}`;
   const nextBlock = blockDiagnosis(rotationEntry.block);
   const entryPayload = entryDiagnosis(rotationEntry, now);
   const description = `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`;
@@ -822,11 +826,11 @@ async function clockBlockChangeEntry(args: {
     const workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
       ...common,
       openWorkShiftId: openShift.id,
-      missingOutObservation: `Falta registrar la salida del turno de las ${clockHhmm(blockChange.open.scheduledStartAt)} a las ${clockHhmm(blockChange.open.scheduledEndAt)}: se registró el ingreso del turno de las ${clockHhmm(rotationEntry.block.scheduledStartAt)}. Requiere revisión.`,
+      missingOutObservation: `Falta registrar la salida ${previousStretch}: se registró el ingreso del turno de las ${clockHhmm(rotationEntry.block.scheduledStartAt)}. Requiere revisión.`,
       entryObservation: `Ingreso al turno de las ${clockHhmm(rotationEntry.block.scheduledStartAt)}; la jornada anterior quedó sin salida registrada.`,
       audit: clockPunchAuditWriter(audit, description, employee.id, origin, { ...entryPayload, blockChange: { previousShiftId: openShift.id, previousBlock, alertOnly: blockChange.alertOnly } }),
       completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
-      postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift, { rotationEntry: entryPayload, blockChange: { previousBlock, nextBlock, alertOnly: blockChange.alertOnly } })),
+      postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift, { rotationEntry: entryPayload, blockChange: { ...(previousBlock ? { previousBlock } : {}), nextBlock, alertOnly: blockChange.alertOnly } })),
     });
     clearAuditDerivedCaches();
     return clockEntryResult(employee, workShift, openShift);
@@ -1658,7 +1662,7 @@ export const timeEntriesService = {
     const openBlockShift = currentOpenShift && isRotationBlockShift(currentOpenShift) ? currentOpenShift : null;
     const rotationContext = isRotationMember || (input.punchType === "OUT" && openBlockShift) ? await loadRotationPunchContext(employee.id, now) : null;
     let rotationEntry: RotationEntryClassification | null = null;
-    let blockChange: { open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>>; alertOnly: boolean } | null = null;
+    let blockChange: { open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>> | null; alertOnly: boolean } | null = null;
     if (input.punchType === "IN" && rotationContext && isRotationMember) {
       rotationEntry = classifyRotationEntry(now, rotationContext.obligationsByDate, rotationContext.blocks);
       // Cambio de bloque: entrada asignada inequívocamente a un bloque POSTERIOR
@@ -1666,6 +1670,13 @@ export const timeEntriesService = {
       if (openBlockShift && rotationEntry.kind === "ASSIGNED" && rotationEntry.block.scheduledStartAt.getTime() > openBlockShift.scheduledStartAt.getTime()) {
         const open = await openBlockShiftOf(openBlockShift);
         if (open) blockChange = { open, alertOnly: (await resolveActiveWorkRegime(employee.id, now))?.openShiftOverflowAction === "ALERT_ONLY" };
+      } else if (currentOpenShift && !openBlockShift && rotationEntry.kind === "ASSIGNED" && isBlockChangeFromUnblockedShift(currentOpenShift.startAt, rotationEntry.block, rotationContext.blocks)) {
+        // R4.5 (§25.7): jornada abierta SIN bloque (fuera de ventana, no
+        // programada, franco, sin configuración) y ENTRADA válida a un bloque
+        // posterior: mismo cambio de bloque de R4.4 — la anterior queda en
+        // FALTA_SALIDA sin salida ni horas inventadas; nunca se adopta el bloque
+        // sobre la jornada anterior ni se suman sus horas.
+        blockChange = { open: null, alertOnly: (await resolveActiveWorkRegime(employee.id, now))?.openShiftOverflowAction === "ALERT_ONLY" };
       }
     }
     let rotationExit: { classification: RotationExitClassification & { kind: "LIKELY_FORGOTTEN_EXIT" }; open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>>; confirmed: boolean } | null = null;

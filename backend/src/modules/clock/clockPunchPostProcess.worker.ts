@@ -161,8 +161,12 @@ async function runSteps(job: ClaimedClockPunchPostProcessJob) {
         ? escalateBlockChangeMissingExit(job.employeeId, payload.previousShift.id, payload.actualAt, tx)
         : resolveOpenShiftOverflowAlert(payload.previousShift.id, ROLLOVER_OVERFLOW_RESOLUTION_NOTE, tx)
     ));
+    // R4.5: la jornada anterior puede no tener bloque (abierta fuera de ventana o no programada).
+    const previousStretch = blockChange?.previousBlock
+      ? `del turno de las ${hhmm(blockChange.previousBlock.scheduledStartAt)} a las ${hhmm(blockChange.previousBlock.scheduledEndAt)}`
+      : `de la jornada iniciada a las ${hhmm(payload.previousShift.startAt)}`;
     const missingExitMessage = blockChange
-      ? `No registró la salida del turno de las ${hhmm(blockChange.previousBlock.scheduledStartAt)} a las ${hhmm(blockChange.previousBlock.scheduledEndAt)}; ya ingresó a su turno de las ${hhmm(blockChange.nextBlock.scheduledStartAt)}. La jornada anterior quedó sin horas y requiere revisión.`
+      ? `No registró la salida ${previousStretch}; ya ingresó a su turno de las ${hhmm(blockChange.nextBlock.scheduledStartAt)}. La jornada anterior quedó sin horas y requiere revisión.`
       : undefined;
     await runStep(job, POSTPROCESS_STEPS.missingExitNotice, (tx) => notifyMissingExit(job.employeeId, payload.previousShift.id, payload.previousShift.startAt, { db: tx, rethrow: true, message: missingExitMessage }));
     await runStep(job, POSTPROCESS_STEPS.entryEvaluation, (tx) => evaluateShiftEntry(job.employeeId, job.workShiftId, payload.actualAt, { db: tx, rotationEntry: payload.rotationEntry }));

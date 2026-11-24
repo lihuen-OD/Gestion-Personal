@@ -81,6 +81,21 @@ export function classifyRotationEntry(instant: Date, obligationsByDate: Readonly
   return { kind: "UNSCHEDULED", reason: "NO_BLOCKS" };
 }
 
+/**
+ * R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): ¿una ENTRADA asignada a `block`
+ * con una jornada abierta SIN bloque (abierta fuera de ventana, no programada,
+ * en franco o sin configuración) es un cambio de bloque de R4.4? Sólo si la
+ * jornada empezó antes que el bloque y su propio ingreso no se asignaría a ese
+ * mismo bloque: así un reintento, un doble toque o la misma llegada nunca
+ * cuentan como una entrada nueva (además del enfriamiento y la idempotencia
+ * por requestId de siempre).
+ */
+export function isBlockChangeFromUnblockedShift(openShiftStartAt: Date, block: Block, blocks: readonly Block[]): boolean {
+  if (openShiftStartAt.getTime() >= block.scheduledStartAt.getTime()) return false;
+  const openAssignment = assignInstantToBlock(openShiftStartAt, blocks);
+  return !(openAssignment.kind === "ASSIGNED" && openAssignment.block.obligationKey === block.obligationKey);
+}
+
 /** La jornada abierta con bloque, tal como quedó congelada en su ingreso. */
 export type OpenBlockShift = {
   id: string;

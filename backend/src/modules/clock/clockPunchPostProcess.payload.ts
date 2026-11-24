@@ -46,7 +46,8 @@ export const rolloverPayloadSchema = entryPayloadSchema.extend({
   previousShift: z.object({ id: z.string().min(1), startAt: z.coerce.date() }),
   // R4.4: el ingreso a un bloque posterior dejó la jornada anterior (con
   // bloque) sin salida. `alertOnly`: régimen ALERT_ONLY congelado en la fichada.
-  blockChange: z.object({ previousBlock: rotationBlockPayloadSchema, nextBlock: rotationBlockPayloadSchema, alertOnly: z.boolean() }).optional(),
+  // R4.5: sin `previousBlock` cuando la jornada anterior no tenía bloque.
+  blockChange: z.object({ previousBlock: rotationBlockPayloadSchema.optional(), nextBlock: rotationBlockPayloadSchema, alertOnly: z.boolean() }).optional(),
 });
 export const exitPayloadSchema = z.object({
   actualAt: z.coerce.date(),
