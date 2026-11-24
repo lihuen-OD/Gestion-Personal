@@ -1,11 +1,21 @@
 import { apiRequest } from "./apiClient";
+import { invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
+
+/**
+ * Versiones y membresías recalculan en el backend la cobertura de Novedades
+ * de las personas afectadas: se invalidan las mismas familias derivadas que
+ * invalida `shiftAssignmentApiService` al cambiar un turno fijo.
+ */
+function invalidateCoverage(reason: string) {
+  return Promise.all(NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
+}
 
 /**
  * Rotaciones de turnos — R4.6 (contratos en docs/BACKEND_API_CONTRACTS.md,
  * "Administración de rotaciones"). R4.8A: listado, detalle y datos de la
  * rotación. R4.8B1: equipos y lectura de versiones. R4.8B2: alta, edición y
- * borrado de versiones. Personas, vista previa y activación se agregan en sus
- * subetapas.
+ * borrado de versiones. R4.8C: personas (membresías). Vista previa y
+ * activación se agregan en sus subetapas.
  *
  * Sin caché: el backend tampoco la tiene ("la configuración se lee al abrirla
  * y cada escritura devuelve el estado nuevo"). `silentErrors` en las
@@ -133,6 +143,11 @@ export type ShiftRotationVersionInput = {
   days: Array<{ crewId: string; cycleWeekIndex: number; weekday: number; kind: ShiftRotationDayKind; blocks: Array<{ blockIndex: number; shiftTemplateId: string }> }>;
 };
 
+export type ShiftRotationAddMembersInput = { employeeIds: string[]; effectiveFrom: string; effectiveTo?: string | null; closeFixedAssignments?: boolean };
+
+/** Personas que, tras la baja, no tienen turno fijo ni otra rotación desde `from` (dato informativo del backend). */
+export type ShiftRotationWithoutFixedShift = { employeeId: string; employee: string; from: string };
+
 export type ShiftRotationCrewCreateInput = { code: string; name: string; sortOrder: number };
 export type ShiftRotationCrewUpdateInput = Partial<{ name: string; sortOrder: number; status: ShiftRotationStatus }>;
 
@@ -166,15 +181,49 @@ export const shiftRotationApiService = {
     return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`).then((response) => response.data);
   },
   /** Grilla completa en un solo cuerpo; crear desde X cierra la versión anterior en X−1. */
-  createVersion(rotationId: string, input: ShiftRotationVersionInput) {
-    return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions`, { method: "POST", body: input, silentErrors: true }).then((response) => response.data);
+  async createVersion(rotationId: string, input: ShiftRotationVersionInput) {
+    const result = await apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions`, { method: "POST", body: input, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation version created");
+    return result;
   },
   /** Sólo versiones futuras. `expectedUpdatedAt` = el `updatedAt` leído: si cambió, 409 ROTATION_VERSION_STALE. */
-  updateVersion(rotationId: string, versionId: string, input: ShiftRotationVersionInput & { expectedUpdatedAt: string }) {
-    return apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "PATCH", body: input, silentErrors: true }).then((response) => response.data);
+  async updateVersion(rotationId: string, versionId: string, input: ShiftRotationVersionInput & { expectedUpdatedAt: string }) {
+    const result = await apiRequest<{ data: ShiftRotationVersion }>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "PATCH", body: input, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation version updated");
+    return result;
+  },
+  /** Membresías vigentes o futuras (`history` = también las terminadas). */
+  members(rotationId: string, history: boolean) {
+    return apiRequest<{ data: ShiftRotationMember[] }>(`/shifts/rotations/${rotationId}/members${history ? "?history=true" : ""}`).then((response) => response.data);
+  },
+  /** Alta en un equipo (hasta 50). `closeFixedAssignments` sólo si RRHH lo confirmó explícitamente. */
+  async addMembers(rotationId: string, crewId: string, input: ShiftRotationAddMembersInput) {
+    const result = await apiRequest<{ data: { members: ShiftRotationMember[]; closedFixedAssignments: number } }>(`/shifts/rotations/${rotationId}/crews/${crewId}/members`, { method: "POST", body: input, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation members added");
+    // La opción explícita puede cerrar o deshabilitar turnos fijos (conteos de Turnos).
+    if (result.closedFixedAssignments) await invalidateCacheFamily("workforce-config", "rotation closed fixed assignments");
+    return result;
+  },
+  async closeMember(rotationId: string, memberId: string, lastDay: string) {
+    const result = await apiRequest<{ data: { member: ShiftRotationMember; withoutFixedShiftAfter: ShiftRotationWithoutFixedShift[] } }>(`/shifts/rotations/${rotationId}/members/${memberId}/close`, { method: "POST", body: { lastDay }, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation member closed");
+    return result;
+  },
+  async moveMember(rotationId: string, memberId: string, toCrewId: string, effectiveFrom: string) {
+    const result = await apiRequest<{ data: { closed: ShiftRotationMember; opened: ShiftRotationMember } }>(`/shifts/rotations/${rotationId}/members/${memberId}/move`, { method: "POST", body: { toCrewId, effectiveFrom }, silentErrors: true }).then((response) => response.data);
+    await invalidateCoverage("rotation member moved");
+    return result;
+  },
+  /** Sólo un alta que todavía no rigió. */
+  async cancelMember(rotationId: string, memberId: string) {
+    const result = await apiRequest<unknown>(`/shifts/rotations/${rotationId}/members/${memberId}`, { method: "DELETE", silentErrors: true });
+    await invalidateCoverage("rotation member cancelled");
+    return result;
   },
   /** Sólo versiones futuras; la anterior vuelve a regir hasta la siguiente. */
-  removeVersion(rotationId: string, versionId: string) {
-    return apiRequest<unknown>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "DELETE", silentErrors: true });
+  async removeVersion(rotationId: string, versionId: string) {
+    const result = await apiRequest<unknown>(`/shifts/rotations/${rotationId}/versions/${versionId}`, { method: "DELETE", silentErrors: true });
+    await invalidateCoverage("rotation version removed");
+    return result;
   },
 };
