@@ -30,7 +30,7 @@ const openB1 = (overrides: Partial<OpenBlockShift> = {}): OpenBlockShift => ({
 });
 
 const obligation = (dateKey: string, plan: Partial<ExpectedDayPlan> & { kind: ExpectedDayPlan["kind"] }, reason: string | null = null): RotationObligation =>
-  ({ employeeId: "jose", dateKey, plan: { dateKey, employeeId: "jose", source: "ROTATION", ...plan }, resolution: { reason } as never, blocks: [] }) as unknown as RotationObligation;
+  ({ employeeId: "jose", dateKey, plan: { dateKey, employeeId: "jose", source: "ROTATION", ...plan }, resolution: { reason } as never, blocks: [], dayOff: reason === "DAY_OFF" }) as unknown as RotationObligation;
 
 describe("classifyRotationExit — disparador excepcional de la confirmación (José viernes A)", () => {
   it.each([
@@ -83,11 +83,39 @@ describe("classifyRotationEntry — motor único y precedencias", () => {
     expect(classifyRotationEntry(at(FRI, "13:00"), undefined, BLOCKS)).toMatchObject({ kind: "OUTSIDE_WINDOW", nearestBlock: { obligationKey: B2.obligationKey }, minutesBefore: 360 });
   });
 
-  it("configuración faltante o contradictoria de la fecha gana sobre franco y no programado", () => {
+  it("configuración faltante o contradictoria de la fecha (sin franco ni feriado) → CONFIGURATION", () => {
     const missing = new Map([[FRI, obligation(FRI, { kind: "MISSING", reason: "NO_DAY_ROW" } as never, "ROTATION_DAY_MISSING")]]);
     expect(classifyRotationEntry(at(FRI, "08:00"), missing, [])).toMatchObject({ kind: "CONFIGURATION", reason: "MISSING", planReason: "NO_DAY_ROW" });
-    const conflict = new Map([[FRI, obligation(FRI, { kind: "CONFLICT", reason: "OVERLAPPING_BLOCKS", detail: ["x"] } as never, "DAY_OFF")]]);
+    const conflict = new Map([[FRI, obligation(FRI, { kind: "CONFLICT", reason: "OVERLAPPING_BLOCKS", detail: ["x"] } as never, "ROTATION_CONFIG_CONFLICT")]]);
     expect(classifyRotationEntry(at(FRI, "08:00"), conflict, [])).toMatchObject({ kind: "CONFIGURATION", reason: "CONFLICT", detail: ["x"] });
+  });
+
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): cambio aprobado — antes la
+  // configuración ganaba sobre el franco. Sin obligación ese día, el problema
+  // de configuración no se informa por la fichada pero queda en `planIssue`.
+  it("R4.5: franco y feriado no convocado ganan sobre MISSING/CONFLICT, conservando el problema en planIssue", () => {
+    const conflictDayOff = new Map([[FRI, { ...obligation(FRI, { kind: "CONFLICT", reason: "OVERLAPPING_BLOCKS", detail: ["x"] } as never, "DAY_OFF"), dayOff: true }]]);
+    expect(classifyRotationEntry(at(FRI, "08:00"), conflictDayOff, [])).toEqual({ kind: "DAY_OFF", planIssue: { kind: "CONFLICT", planReason: "OVERLAPPING_BLOCKS", detail: ["x"] } });
+    const missingHoliday = new Map([[FRI, obligation(FRI, { kind: "MISSING", reason: "NO_DAY_ROW" } as never, "HOLIDAY_NOT_CONVOKED")]]);
+    expect(classifyRotationEntry(at(FRI, "08:00"), missingHoliday, [])).toEqual({ kind: "UNSCHEDULED", reason: "HOLIDAY_NOT_CONVOKED", planIssue: { kind: "MISSING", planReason: "NO_DAY_ROW", detail: [] } });
+  });
+
+  it("R4.5: el franco gana aunque la resolución informe otro motivo (feriado no convocado o SIN_TURNO preceden en la obligación)", () => {
+    for (const reason of ["HOLIDAY_NOT_CONVOKED", "REGIME_SIN_TURNO"]) {
+      const map = new Map([[FRI, { ...obligation(FRI, { kind: "REST" } as never, reason), dayOff: true }]]);
+      expect(classifyRotationEntry(at(FRI, "08:00"), map, []).kind).toBe("DAY_OFF");
+    }
+  });
+
+  it("R4.5: un bloque asignado de D−1 (fecha operativa sin franco) no se oculta por el franco de D", () => {
+    const dayOffSaturday = new Map([[SAT, { ...obligation(SAT, { kind: "SHIFTS" } as never, "DAY_OFF"), dayOff: true }]]);
+    // El bloque 19:00 del viernes sigue abierto el sábado 02:00: la fichada es del viernes.
+    expect(classifyRotationEntry(at(SAT, "02:00"), dayOffSaturday, [B2])).toMatchObject({ kind: "ASSIGNED", block: { obligationKey: B2.obligationKey } });
+  });
+
+  it("R4.5: convocado al feriado sin horario → CONVOKED_WITHOUT_SCHEDULE (sólo diagnóstico)", () => {
+    const map = new Map([[FRI, obligation(FRI, { kind: "REST" } as never, "HOLIDAY_CONVOCATION_WITHOUT_SCHEDULE")]]);
+    expect(classifyRotationEntry(at(FRI, "08:00"), map, [])).toEqual({ kind: "CONVOKED_WITHOUT_SCHEDULE" });
   });
 
   it("franco, feriado no convocado, régimen sin turno y REST", () => {

@@ -311,11 +311,13 @@ describe("A1 — turno fijo Oficina (L–V 06:30–15:00, 510 min, tolerancias 1
     ]);
   });
 
-  it("entrada de sábado (sin turno aplicable ese día, sin régimen): TURNO_NO_IDENTIFICADO y no adopta turno", async () => {
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): cambio aprobado — antes TURNO_NO_IDENTIFICADO con aviso.
+  it("entrada de sábado (sin turno aplicable ese día, sin régimen): TRABAJO_NO_PROGRAMADO informativo y no adopta turno (R4.5)", async () => {
     givenAssignments(rows);
     await evaluateShiftEntry(EMPLOYEE, "shift-1", art(SATURDAY, "06:30"));
     expect(adoptedTemplate()).toBeNull();
-    expect(alertTypes()).toEqual(["TURNO_NO_IDENTIFICADO"]);
+    expect(alertTypes()).toEqual(["TRABAJO_NO_PROGRAMADO"]);
+    expect(notifyUsers).not.toHaveBeenCalled();
   });
 
   it("salida: usa las tolerancias de salida del turno adoptado (±15 sobre 15:00)", async () => {
@@ -384,11 +386,15 @@ describe("A2 — feriado sin convocatoria", () => {
     });
   });
 
-  it("la entrada no mira feriados: fichar 06:35 en feriado adopta OF-01 sin alertas", async () => {
+  // R4.5 (§25.7): el matching sigue sin mirar feriados (adopta OF-01, que fija
+  // la fecha operativa), pero sin convocatoria no hay turno exigible: sólo la
+  // clasificación informativa, sin alertas de turno ni aviso.
+  it("la entrada no mira feriados: fichar 06:35 en feriado adopta OF-01 sin alertas de turno; trabajo no programado informativo (R4.5)", async () => {
     givenAssignments(rows);
     await evaluateShiftEntry(EMPLOYEE, "shift-1", art(MONDAY, "06:35"));
     expect(adoptedTemplate()?.shiftTemplateId).toBe("oficina");
-    expect(alertTypes()).toEqual([]);
+    expect(alertTypes()).toEqual(["TRABAJO_NO_PROGRAMADO"]);
+    expect(notifyUsers).not.toHaveBeenCalled();
   });
 });
 
@@ -785,13 +791,14 @@ describe("R1.1-A — trabajo sin turno programado (Juanjo: fijo L–V 07:00–15
     expect(evaluateEmployeeWorkday(workdayContext({ assignments: rows }), PLANTA_SATURDAY)).toMatchObject({ obligation: "NO_WORK_OBLIGATION", expectedMinutes: 0, source: "SHIFT_PLAN" });
   });
 
-  it("COMPORTAMIENTO ACTUAL (cambia en R4.5): la entrada del sábado no adopta plantilla y genera TURNO_NO_IDENTIFICADO (ADVERTENCIA) con aviso ALERTA_FICHADA", async () => {
+  // R4.5 (§25.7): cambio previsto desde R1.1 — antes TURNO_NO_IDENTIFICADO (ADVERTENCIA) con aviso ALERTA_FICHADA.
+  it("R4.5: la entrada del sábado no adopta plantilla y queda clasificada TRABAJO_NO_PROGRAMADO (INFO, ya RESUELTA, sin aviso)", async () => {
     givenAssignments(rows);
     await evaluateShiftEntry(EMPLOYEE, "shift-sat", art(PLANTA_SATURDAY, "07:00"));
     expect(adoptedTemplate()).toBeNull();
-    expect(upserted()).toEqual([expect.objectContaining({ type: "TURNO_NO_IDENTIFICADO", severity: "ADVERTENCIA" })]);
-    expect(notifyUsers).toHaveBeenCalledTimes(1);
-    expect((notifyUsers as unknown as Mock).mock.calls[0]![1]).toMatchObject({ type: "ALERTA_FICHADA", entityType: "ShiftAlert", priority: "ALTA" });
+    expect(upserted()).toEqual([expect.objectContaining({ type: "TRABAJO_NO_PROGRAMADO", severity: "INFO", status: "RESUELTA" })]);
+    expect((upserted()[0] as { resolutionNote?: string }).resolutionNote).toMatch(/^Informativa: trabajo sin turno programado el sábado 07\/11\/2026 \(día no incluido en su turno asignado\)\. No requiere revisión\.$/);
+    expect(notifyUsers).not.toHaveBeenCalled();
   });
 
   it.each([

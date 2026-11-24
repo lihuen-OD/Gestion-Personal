@@ -30,6 +30,12 @@ export type RotationObligation = {
   resolution: ExpectedShiftResolution<object, { employeeId: string }>;
   /** Bloques que efectivamente obligan (los del plan o el de una convocatoria con plantilla); vacío sin obligación. */
   blocks: ExpectedBlock<LoadedRotationTemplate>[];
+  /**
+   * R4.5: franco ACTIVO en la fecha. La resolución puede informar otro motivo
+   * (feriado no convocado o SIN_TURNO preceden en WORK_OBLIGATION), pero para
+   * clasificar una fichada el franco gana a todo (§25.7).
+   */
+  dayOff: boolean;
 };
 
 export type RotationObligationReader = Pick<
@@ -118,7 +124,7 @@ export async function resolveRotationObligations(
       // convocatoria (misma selección): ambos son LoadedRotationTemplate.
       const blocks = (resolution.obligation === "SHIFT" ? resolution.blocks : []) as ExpectedBlock<LoadedRotationTemplate>[];
       const byDate = result.get(employeeId) ?? new Map<string, RotationObligation>();
-      byDate.set(dateKey, { employeeId, dateKey, plan, resolution, blocks });
+      byDate.set(dateKey, { employeeId, dateKey, plan, resolution, blocks, dayOff: dayOffKeys.has(key) });
       result.set(employeeId, byDate);
     }
   }

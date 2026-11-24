@@ -20,12 +20,17 @@ vi.mock("../../shared/prisma/client", () => ({
     shiftAlert: { upsert: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
     employeeWorkRegime: { findFirst: vi.fn() },
     employeeHourConcept: { findFirst: vi.fn() },
+    // R4.5: hechos de la fecha operativa (franco, convocatoria) — por defecto, ninguno.
+    employeeDayOff: { findMany: vi.fn(async () => []) },
+    holidayWorkAssignment: { findMany: vi.fn(async () => []) },
   },
 }));
 
 vi.mock("../workforce-management/workforce.service", () => ({
   attendanceRecipients: vi.fn().mockResolvedValue([]),
   notifyUsers: vi.fn().mockResolvedValue(undefined),
+  // R4.5: feriados de la fecha operativa — por defecto, ninguno.
+  workforceService: { holidayDatesInRange: vi.fn(async () => []) },
 }));
 
 const mockedPrisma = prisma as unknown as {
@@ -542,7 +547,11 @@ describe("Caso F — régimen laboral + vigencia/weekdays de la asignación (Eta
     expect(upsertedAlertTypes()).not.toContain("TURNO_NO_IDENTIFICADO");
   });
 
-  it("misma asignación fuera de vigencia por weekday, pero régimen TURNO_OBLIGATORIO: la alerta se mantiene (el régimen es ortogonal al filtro de vigencia)", async () => {
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): una asignación HABILITADA
+  // vigente que no incluye ese día es trabajo no programado (caso Juanjo), no
+  // falta de configuración: clasificación informativa, ya RESUELTA y sin aviso
+  // (antes: TURNO_NO_IDENTIFICADO con aviso).
+  it("misma asignación fuera de vigencia por weekday, pero régimen TURNO_OBLIGATORIO: trabajo no programado informativo, sin aviso (R4.5)", async () => {
     mockedPrisma.shiftAssignment.findMany.mockResolvedValue([mondayOnlyAssignment]);
     mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
     mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue({
@@ -551,17 +560,20 @@ describe("Caso F — régimen laboral + vigencia/weekdays de la asignación (Eta
 
     await evaluateShiftEntry("employee-1", "shift-1", tuesdayFarFromShift);
 
-    expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
+    expect(upsertedAlertTypes()).toEqual(["TRABAJO_NO_PROGRAMADO"]);
+    expect(mockedPrisma.shiftAlert.upsert.mock.calls[0]![0]).toMatchObject({ create: { status: "RESUELTA", severity: "INFO" }, update: {} });
+    expect(notifyUsers).not.toHaveBeenCalled();
   });
 
-  it("sin régimen vigente, el filtro de weekday se sigue aplicando igual (comportamiento por defecto, sin excepciones)", async () => {
+  it("sin régimen vigente, el filtro de weekday se sigue aplicando igual: trabajo no programado informativo, sin aviso (R4.5)", async () => {
     mockedPrisma.shiftAssignment.findMany.mockResolvedValue([mondayOnlyAssignment]);
     mockedPrisma.shiftTemplate.findMany.mockResolvedValue([disabledTemplate]);
     mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
 
     await evaluateShiftEntry("employee-1", "shift-1", tuesdayFarFromShift);
 
-    expect(upsertedAlertTypes()).toContain("TURNO_NO_IDENTIFICADO");
+    expect(upsertedAlertTypes()).toEqual(["TRABAJO_NO_PROGRAMADO"]);
+    expect(notifyUsers).not.toHaveBeenCalled();
   });
 
   it("Etapa 8K — asignación DESHABILITADO que no aplica hoy por weekday, con la fichada cerca del horario general del mismo turno, bajo régimen alertOnOutOfShift=false: no genera ruido (POSSIBLE_SHIFT_CONFIGURATION_MISSING ahora también es suprimible)", async () => {

@@ -15,7 +15,8 @@ import type { RotationObligation } from "./rotationObligation.service";
 import type { LoadedRotationTemplate } from "./rotationPlan.loader";
 import type { ExpectedBlock } from "./rotationPlan";
 
-export const ROTATION_DIAGNOSIS_VERSION = 1;
+/** 2 = R4.5: precedencia franco/feriado antes que configuración, `planIssue` y CONVOKED_WITHOUT_SCHEDULE. */
+export const ROTATION_DIAGNOSIS_VERSION = 2;
 
 /** ¿La jornada tiene un bloque de rotación congelado en su ingreso? (null en jornadas legacy). */
 export function isRotationBlockShift<S extends { shiftTemplateSource?: string | null; scheduledStartAt?: Date | null; shiftTemplateId: string | null }>(shift: S): shift is S & { scheduledStartAt: Date; shiftTemplateId: string } {
@@ -26,17 +27,35 @@ type Block = ExpectedBlock<LoadedRotationTemplate>;
 
 const minutesBetween = (later: Date, earlier: Date) => Math.round((later.getTime() - earlier.getTime()) / 60_000);
 
+/** Configuración faltante o contradictoria de la fecha, conservada aunque otra regla decida la clasificación (trazabilidad, R4.5). */
+export type RotationPlanIssue = { kind: "MISSING" | "CONFLICT"; planReason: string; detail: string[] };
+
 export type RotationEntryClassification =
   | { kind: "ASSIGNED"; block: Block; differenceMinutes: number; punctuality: "ON_TIME" | "EARLY" | "LATE" }
   | { kind: "CONFIGURATION"; reason: "MISSING" | "CONFLICT"; planReason: string; detail: string[] }
-  | { kind: "DAY_OFF" }
+  | { kind: "DAY_OFF"; planIssue?: RotationPlanIssue }
   | { kind: "OUTSIDE_WINDOW"; nearestBlock: Block; minutesBefore: number }
-  | { kind: "UNSCHEDULED"; reason: "REST" | "HOLIDAY_NOT_CONVOKED" | "REGIME_SIN_TURNO" | "NO_BLOCKS" };
+  | { kind: "CONVOKED_WITHOUT_SCHEDULE" }
+  | { kind: "UNSCHEDULED"; reason: "REST" | "HOLIDAY_NOT_CONVOKED" | "REGIME_SIN_TURNO" | "NO_BLOCKS"; planIssue?: RotationPlanIssue };
+
+function planIssueOf(obligation: RotationObligation | undefined): RotationPlanIssue | undefined {
+  const plan = obligation?.plan;
+  if (plan?.kind === "MISSING") return { kind: "MISSING", planReason: plan.reason, detail: [] };
+  if (plan?.kind === "CONFLICT") return { kind: "CONFLICT", planReason: plan.reason, detail: plan.detail };
+  return undefined;
+}
 
 /**
- * Precedencia determinística: bloque asignado → configuración faltante o
- * contradictoria de la fecha de la fichada → franco → fuera de ventana de un
- * bloque de esa misma fecha operativa → no programado.
+ * Precedencia determinística (R4.5, SHIFT_ROTATION_AUDIT_PLAN.md §25.7):
+ * bloque asignado → franco de la fecha → feriado no convocado → configuración
+ * faltante o contradictoria → fuera de ventana de un bloque posterior de esa
+ * misma fecha → convocado sin horario → no programado (régimen SIN_TURNO,
+ * descanso de la rotación o fuera de los bloques del día).
+ * Franco y feriado no convocado no tienen obligación: un problema de
+ * configuración de esa fecha no se informa por la fichada, pero queda en
+ * `planIssue` (diagnóstico). Un bloque asignado nunca oculta un franco: el
+ * franco de D elimina los bloques de D; sólo se asignan bloques de D−1/D+1 cuya
+ * fecha operativa no lo tiene.
  */
 export function classifyRotationEntry(instant: Date, obligationsByDate: ReadonlyMap<string, RotationObligation> | undefined, blocks: readonly Block[]): RotationEntryClassification {
   const assignment = assignInstantToBlock(instant, blocks);
@@ -48,16 +67,17 @@ export function classifyRotationEntry(instant: Date, obligationsByDate: Readonly
   }
   const dateKey = argentinaDateKey(instant);
   const obligation = obligationsByDate?.get(dateKey);
-  const plan = obligation?.plan;
-  if (plan?.kind === "MISSING") return { kind: "CONFIGURATION", reason: "MISSING", planReason: plan.reason, detail: [] };
-  if (plan?.kind === "CONFLICT") return { kind: "CONFIGURATION", reason: "CONFLICT", planReason: plan.reason, detail: plan.detail };
-  if (obligation?.resolution.reason === "DAY_OFF") return { kind: "DAY_OFF" };
+  const reason = obligation?.resolution.reason;
+  const planIssue = planIssueOf(obligation);
+  const withIssue = planIssue ? { planIssue } : {};
+  if (obligation?.dayOff || reason === "DAY_OFF") return { kind: "DAY_OFF", ...withIssue };
+  if (reason === "HOLIDAY_NOT_CONVOKED") return { kind: "UNSCHEDULED", reason: "HOLIDAY_NOT_CONVOKED", ...withIssue };
+  if (planIssue) return { kind: "CONFIGURATION", reason: planIssue.kind, planReason: planIssue.planReason, detail: planIssue.detail };
   const nextSameDay = blocks.find((block) => block.operationalDate === dateKey && block.scheduledStartAt > instant);
   if (nextSameDay) return { kind: "OUTSIDE_WINDOW", nearestBlock: nextSameDay, minutesBefore: minutesBetween(nextSameDay.scheduledStartAt, instant) };
-  const reason = obligation?.resolution.reason;
-  if (reason === "HOLIDAY_NOT_CONVOKED") return { kind: "UNSCHEDULED", reason: "HOLIDAY_NOT_CONVOKED" };
+  if (reason === "HOLIDAY_CONVOCATION_WITHOUT_SCHEDULE") return { kind: "CONVOKED_WITHOUT_SCHEDULE" };
   if (reason === "REGIME_SIN_TURNO") return { kind: "UNSCHEDULED", reason: "REGIME_SIN_TURNO" };
-  if (plan?.kind === "REST") return { kind: "UNSCHEDULED", reason: "REST" };
+  if (obligation?.plan.kind === "REST") return { kind: "UNSCHEDULED", reason: "REST" };
   return { kind: "UNSCHEDULED", reason: "NO_BLOCKS" };
 }
 
@@ -124,7 +144,9 @@ export function entryDiagnosis(classification: RotationEntryClassification, eval
     case "OUTSIDE_WINDOW":
       return { ...base, nearestBlock: blockDiagnosis(classification.nearestBlock), minutesBefore: classification.minutesBefore };
     case "UNSCHEDULED":
-      return { ...base, reason: classification.reason };
+      return { ...base, reason: classification.reason, ...(classification.planIssue ? { planIssue: classification.planIssue } : {}) };
+    case "DAY_OFF":
+      return classification.planIssue ? { ...base, planIssue: classification.planIssue } : base;
     default:
       return base;
   }

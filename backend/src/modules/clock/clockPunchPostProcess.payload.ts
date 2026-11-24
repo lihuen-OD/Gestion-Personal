@@ -27,7 +27,9 @@ export const rotationBlockPayloadSchema = z.object({
 }).passthrough();
 export const rotationEntryPayloadSchema = z.object({
   version: z.number().int(),
-  kind: z.enum(["ASSIGNED", "CONFIGURATION", "DAY_OFF", "OUTSIDE_WINDOW", "UNSCHEDULED"]),
+  // R4.5: + CONVOKED_WITHOUT_SCHEDULE y `planIssue` (versión 2). Los jobs v1 ya
+  // encolados siguen siendo válidos con este mismo schema.
+  kind: z.enum(["ASSIGNED", "CONFIGURATION", "DAY_OFF", "OUTSIDE_WINDOW", "UNSCHEDULED", "CONVOKED_WITHOUT_SCHEDULE"]),
   evaluatedAt: isoDate,
   block: rotationBlockPayloadSchema.optional(),
   differenceMinutes: z.number().optional(),
@@ -37,6 +39,7 @@ export const rotationEntryPayloadSchema = z.object({
   detail: z.array(z.string()).optional(),
   nearestBlock: rotationBlockPayloadSchema.optional(),
   minutesBefore: z.number().optional(),
+  planIssue: z.object({ kind: z.enum(["MISSING", "CONFLICT"]), planReason: z.string(), detail: z.array(z.string()) }).optional(),
 }).passthrough();
 export const entryPayloadSchema = z.object({ actualAt: z.coerce.date(), rotationEntry: rotationEntryPayloadSchema.optional() });
 export const rolloverPayloadSchema = entryPayloadSchema.extend({

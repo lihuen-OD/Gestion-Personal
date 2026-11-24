@@ -7,6 +7,7 @@ import { isRotationBlockShift } from "./rotationEntry";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
+import { classifyFixedEntry, hasNoEnforceableShift, hasVigentEnabledAssignment, loadEntryDayFacts, unscheduledWorkNote, type UnscheduledWorkReason } from "./unscheduledWork";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
@@ -14,6 +15,7 @@ import {
   evaluateWorkedDuration,
   isEarlyArrivalReviewRequired,
   matchShiftForEmployee,
+  workShiftOperationalDateKey,
   type EmployeeShiftAssignmentRef,
   type ShiftMatchResult,
   type ShiftTemplateRef,
@@ -246,6 +248,38 @@ export async function notifyShiftAlert(alert: { id: string; employeeId: string; 
   }
 }
 
+/**
+ * R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): clasificación INFORMATIVA de una
+ * jornada sin turno programado. Se persiste ya RESUELTA (patrón de resolución
+ * automática: `resolvedByUserId` NULL + nota), con severidad INFO y sin aviso:
+ * no queda pendiente para nadie, se consulta en Alertas (Resueltas/Todas, por
+ * tipo) y la fila es su trazabilidad. Idempotente: el `update` vacío nunca
+ * reabre, re-clasifica ni avisa (a diferencia de `createShiftAlert`).
+ */
+export async function recordInformativeShiftAlert(input: { employeeId: string; workShiftId: string; actualAt: Date; reason: UnscheduledWorkReason; dateKey: string; db?: PrismaTransactionClient }) {
+  const db = input.db ?? prisma;
+  return db.shiftAlert.upsert({
+    where: { workShiftId_type: { workShiftId: input.workShiftId, type: "TRABAJO_NO_PROGRAMADO" } },
+    create: {
+      employeeId: input.employeeId,
+      workShiftId: input.workShiftId,
+      type: "TRABAJO_NO_PROGRAMADO",
+      severity: severityByAlertType.TRABAJO_NO_PROGRAMADO,
+      status: "RESUELTA",
+      actualAt: input.actualAt,
+      resolvedAt: new Date(),
+      resolutionNote: unscheduledWorkNote(input.reason, input.dateKey),
+    },
+    update: {},
+  });
+}
+
+const ROTATION_UNSCHEDULED_REASON: Record<"REST" | "HOLIDAY_NOT_CONVOKED" | "NO_BLOCKS", UnscheduledWorkReason> = {
+  REST: "DESCANSO_ROTACION",
+  HOLIDAY_NOT_CONVOKED: "FERIADO_NO_CONVOCADO",
+  NO_BLOCKS: "FUERA_DEL_TURNO",
+};
+
 // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
 // matchShiftForEmployee (entrada, único llamador de esta función) ya nunca
 // produce GENERAL_UNASSIGNED — la búsqueda contra turnos ajenos se eliminó
@@ -356,16 +390,23 @@ async function evaluateRotationEntry(employeeId: string, workShiftId: string, ac
     const minutesBefore = entry.minutesBefore ?? 0;
     const message = `La persona ingresó ${minutesBefore} min antes de su turno de las ${hhmm(entry.nearestBlock.scheduledStartAt)}, fuera del horario en que se toma como ingreso a ese turno. Revisá si fue un ingreso muy anticipado o trabajo no programado.`;
     await db.workShift.update({ where: { id: workShiftId }, data: { observation: `Ingreso ${minutesBefore} min antes del turno de las ${hhmm(entry.nearestBlock.scheduledStartAt)}, fuera de la ventana de asignación; requiere revisión.` } });
-    await createShiftAlert({ employeeId, workShiftId, type: "TURNO_NO_IDENTIFICADO", actualAt, scheduledAt: entry.nearestBlock.scheduledStartAt, differenceMinutes: -minutesBefore, message, db: options.db });
+    // R4.5: tipo propio (antes TURNO_NO_IDENTIFICADO); mismo aviso inmediato (D3).
+    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_FUERA_DE_VENTANA", actualAt, scheduledAt: entry.nearestBlock.scheduledStartAt, differenceMinutes: -minutesBefore, message, db: options.db });
     return;
   }
   if (entry.kind === "UNSCHEDULED") {
-    // Tratamiento provisional (R4.5): como hoy, suprimible por régimen.
-    if (!(await isOutOfShiftAlertSuppressed(employeeId, actualAt, "TURNO_NO_IDENTIFICADO"))) {
-      await createShiftAlert({ employeeId, workShiftId, type: "TURNO_NO_IDENTIFICADO", actualAt, db: options.db });
-    }
+    // R4.5: trabajo no programado — informativo, ya resuelto y sin aviso. Los
+    // regímenes sin obligación de turno (SIN_TURNO, TURNO_FLEXIBLE,
+    // alertOnOutOfShift=false) no dejan fila (D5): sus fichadas, horas y
+    // auditoría siguen trazables por sí mismas.
+    if (entry.reason === "REGIME_SIN_TURNO") return;
+    if (await isOutOfShiftAlertSuppressed(employeeId, actualAt, "TURNO_NO_IDENTIFICADO")) return;
+    const reason = ROTATION_UNSCHEDULED_REASON[entry.reason as keyof typeof ROTATION_UNSCHEDULED_REASON] ?? "FUERA_DEL_TURNO";
+    await recordInformativeShiftAlert({ employeeId, workShiftId, actualAt, reason, dateKey: argentinaDateKey(actualAt), db: options.db });
+    return;
   }
   // DAY_OFF: sólo ACTIVIDAD_EN_FRANCO (paso de francos) — nunca dos alertas por la misma situación.
+  // CONVOKED_WITHOUT_SCHEDULE: la convocatoria autoriza el trabajo; sólo diagnóstico (AuditLog).
 }
 
 /**
@@ -406,13 +447,36 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // La condición `match.case !== "GENERAL_UNASSIGNED"` de acá abajo queda
   // como defensa en profundidad (nunca hace daño, documenta la invariante) —
   // no como el mecanismo que evita la adopción, que ahora es estructural.
-  if (match.template && match.case !== "GENERAL_UNASSIGNED") {
+  const adoptedTemplate = match.template && match.case !== "GENERAL_UNASSIGNED" ? match.template : null;
+  if (adoptedTemplate) {
     await db.workShift.update({
       where: { id: workShiftId },
-      data: { shiftTemplateId: match.template.id, maxAllowedMinutes: match.template.absoluteOpenShiftLimitMinutes },
+      data: { shiftTemplateId: adoptedTemplate.id, maxAllowedMinutes: adoptedTemplate.absoluteOpenShiftLimitMinutes },
     });
   }
 
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): la obligación decide primero.
+  // La fecha operativa es la misma que usan el paso de francos y la exclusión
+  // de horas (con la plantilla adoptada). En franco o feriado no convocado la
+  // plantilla se sigue adoptando (fija la fecha operativa y los límites de
+  // jornada abierta), pero no hay turno exigible: sin alertas de turno.
+  const dateKey = workShiftOperationalDateKey(actualAt, adoptedTemplate, null);
+  const facts = await loadEntryDayFacts(employeeId, dateKey);
+  const classification = classifyFixedEntry({
+    match,
+    facts,
+    hasVigentEnabledAssignment: hasVigentEnabledAssignment(employeeAssignments, new Set(activeTemplates.map((template) => template.id)), dateKey),
+  });
+  if (classification.kind === "UNSCHEDULED") {
+    if (!(await isOutOfShiftAlertSuppressed(employeeId, actualAt, "TURNO_NO_IDENTIFICADO"))) {
+      await recordInformativeShiftAlert({ employeeId, workShiftId, actualAt, reason: classification.reason, dateKey, db: options.db });
+    }
+    return;
+  }
+  // Franco: sólo ACTIVIDAD_EN_FRANCO (paso de francos). Convocado sin turno: sólo diagnóstico.
+  if (classification.kind === "DAY_OFF" || classification.kind === "CONVOKED_WITHOUT_SCHEDULE") return;
+
+  // ASSIGNED / NO_ASSIGNMENTS: exactamente como antes.
   const configurationAlertType = alertTypeForMatch(match);
   if (configurationAlertType && !(await isOutOfShiftAlertSuppressed(employeeId, actualAt, configurationAlertType))) {
     await createShiftAlert({ employeeId, workShiftId, type: configurationAlertType, actualAt, differenceMinutes: match.differenceMinutes, db: options.db });
@@ -628,14 +692,24 @@ export async function evaluateShiftExit(
     const blockStartAt = isRotationBlockShift(shift) ? shift.scheduledStartAt : null;
     const match = isRotationBlockShift(shift) ? await resolveMatchForBlock(shift.shiftTemplateId) : await resolveMatchForExit(employeeId, shift.shiftTemplateId);
 
-    const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt, scheduledStartAt: blockStartAt });
+    // R4.5 (§25.7): jornada legacy que adoptó su plantilla en un franco o un
+    // feriado no convocado — no había turno exigible: sin alertas de turno
+    // (fuera de turno, salida anticipada/tardía, jornada insuficiente). Se
+    // relee al cerrar: un franco cargado después del ingreso también prevalece.
+    // Jornada extendida y conceptos siguen evaluándose (anomalías propias).
+    const legacyTemplate = !blockStartAt && match.template && match.case !== "GENERAL_UNASSIGNED" ? match.template : null;
+    const withoutEnforceableShift = legacyTemplate
+      ? hasNoEnforceableShift(await loadEntryDayFacts(employeeId, workShiftOperationalDateKey(shift.startAt, legacyTemplate, null)))
+      : false;
+    const punctualityResult = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt, scheduledStartAt: blockStartAt });
+    const punctuality = withoutEnforceableShift ? { ...punctualityResult, lateLeave: false, earlyLeave: false } : punctualityResult;
 
     // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
     // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
     // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
     const regime = await resolveActiveWorkRegime(employeeId, shift.startAt);
     const overlap = evaluateOutOfShiftWorkday({ match, actualStartAt: shift.startAt, actualEndAt: actualAt, scheduledStartAt: blockStartAt });
-    const outsideShift = regime?.kind !== "SIN_TURNO" && overlap.evaluated && overlap.outsideShift;
+    const outsideShift = !withoutEnforceableShift && regime?.kind !== "SIN_TURNO" && overlap.evaluated && overlap.outsideShift;
     if (outsideShift) {
       // La alerta temprana de ingreso puede haber sido notificada y no puede
       // "desenviarse". Se conserva el historial, pero deja de quedar activa
@@ -652,7 +726,8 @@ export async function evaluateShiftExit(
     // futuro que vuelva a resolver GENERAL_UNASSIGNED acá. Sin cambios para
     // ENABLED/DISABLED_FOR_EMPLOYEE (evidencia real de una asignación).
     const durationTemplate = match.case === "GENERAL_UNASSIGNED" ? null : match.template;
-    const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    const durationResult = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    const duration = withoutEnforceableShift ? { ...durationResult, insufficientHours: false } : durationResult;
 
     const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => classifiedSegments.filter((segment) => segment.conceptStatus === status);
     const noHabilitadoCount = byStatus("CONCEPTO_NO_HABILITADO").length;
