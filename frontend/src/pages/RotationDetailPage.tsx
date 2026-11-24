@@ -76,6 +76,8 @@ export function RotationDetailPage() {
   const todayKey = argentinaDateKey(new Date());
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromParam(searchParams.get("vista"));
+  const [teamsVisited, setTeamsVisited] = useState(view === "equipos");
+  if (view === "equipos" && !teamsVisited) setTeamsVisited(true);
   // Cambios de equipos: se relee el detalle (conteos, diagnóstico) y la grilla, sin blanquear la pantalla.
   const [gridReload, setGridReload] = useState(0);
   const refreshAfterCrewChange = () => {
@@ -181,48 +183,46 @@ export function RotationDetailPage() {
         active={view}
         onChange={(key) => setSearchParams(key === "resumen" ? {} : { vista: key }, { replace: true })}
       />
-      <div {...tabPanelProps(DETAIL_TABS_ID, view)}>
-        {view === "equipos" ? (
-          <>
-            <RotationCrewsPanel rotation={rotation} canEdit={canEdit} onChanged={refreshAfterCrewChange} />
-            <RotationGridPanel rotation={rotation} reloadToken={gridReload} />
-          </>
-        ) : (
-          <>
-            <div className="rotation-summary-grid">
-              <Section title="Datos de la rotación" subtitle="Identificación y lugar de trabajo.">
-                <dl className="rotation-facts">
-                  <Fact label="Código">{rotation.code}</Fact>
-                  <Fact label="Nombre">{rotation.name}</Fact>
-                  <Fact label="Grupo (lugar)">{rotation.shiftGroup.name}{rotation.shiftGroup.status === "ACTIVO" ? "" : " (inactivo)"}</Fact>
-                  <Fact label="Estado">{state.label}</Fact>
-                  <Fact label="Creada">{formatInstantDate(rotation.createdAt)}</Fact>
-                  <Fact label="Última modificación">{formatInstantDate(rotation.updatedAt)}</Fact>
-                  <div className="rotation-fact-wide"><dt>Observación</dt><dd>{rotation.observation || "Sin observaciones."}</dd></div>
-                </dl>
-              </Section>
-              <Section title="Configuración" subtitle="Resumen de equipos, grilla y personas.">
-                <dl className="rotation-facts">
-                  <Fact label="Equipos activos">{rotation.crews.length ? `${activeCrews} de ${rotation.crews.length}` : "Sin equipos"}</Fact>
-                  <Fact label="Ciclo">{cycleVersion ? rotationCycleLabel(cycleVersion.cycleLengthWeeks) : rotation.versions.length ? "Sin grilla vigente" : "Sin grilla configurada"}</Fact>
-                  <Fact label="Versión de la grilla">
-                    {version.label}
-                    {version.detail ? <span className="rotation-fact-detail">{version.detail}</span> : null}
-                  </Fact>
-                  <Fact label="Versiones registradas">{countLabel(rotation.versions.length, "versión", "versiones")}</Fact>
-                  <Fact label="Personas asignadas">
-                    {countLabel(rotation.members.length, "persona", "personas")}
-                    <span className="rotation-fact-detail">Vigentes o con inicio futuro.</span>
-                  </Fact>
-                </dl>
-              </Section>
-            </div>
+      {/* La pestaña de equipos, una vez abierta, queda montada (oculta) para no perder un borrador de grilla al cambiar de pestaña. */}
+      {teamsVisited ? (
+        <div {...tabPanelProps(DETAIL_TABS_ID, "equipos")} hidden={view !== "equipos"}>
+          <RotationCrewsPanel rotation={rotation} canEdit={canEdit} onChanged={refreshAfterCrewChange} />
+          <RotationGridPanel rotation={rotation} reloadToken={gridReload} canEdit={canEdit} onVersionsChanged={() => setReload((value) => value + 1)} />
+        </div>
+      ) : null}
+      <div {...tabPanelProps(DETAIL_TABS_ID, "resumen")} hidden={view !== "resumen"}>
+        <div className="rotation-summary-grid">
+          <Section title="Datos de la rotación" subtitle="Identificación y lugar de trabajo.">
+            <dl className="rotation-facts">
+              <Fact label="Código">{rotation.code}</Fact>
+              <Fact label="Nombre">{rotation.name}</Fact>
+              <Fact label="Grupo (lugar)">{rotation.shiftGroup.name}{rotation.shiftGroup.status === "ACTIVO" ? "" : " (inactivo)"}</Fact>
+              <Fact label="Estado">{state.label}</Fact>
+              <Fact label="Creada">{formatInstantDate(rotation.createdAt)}</Fact>
+              <Fact label="Última modificación">{formatInstantDate(rotation.updatedAt)}</Fact>
+              <div className="rotation-fact-wide"><dt>Observación</dt><dd>{rotation.observation || "Sin observaciones."}</dd></div>
+            </dl>
+          </Section>
+          <Section title="Configuración" subtitle="Resumen de equipos, grilla y personas.">
+            <dl className="rotation-facts">
+              <Fact label="Equipos activos">{rotation.crews.length ? `${activeCrews} de ${rotation.crews.length}` : "Sin equipos"}</Fact>
+              <Fact label="Ciclo">{cycleVersion ? rotationCycleLabel(cycleVersion.cycleLengthWeeks) : rotation.versions.length ? "Sin grilla vigente" : "Sin grilla configurada"}</Fact>
+              <Fact label="Versión de la grilla">
+                {version.label}
+                {version.detail ? <span className="rotation-fact-detail">{version.detail}</span> : null}
+              </Fact>
+              <Fact label="Versiones registradas">{countLabel(rotation.versions.length, "versión", "versiones")}</Fact>
+              <Fact label="Personas asignadas">
+                {countLabel(rotation.members.length, "persona", "personas")}
+                <span className="rotation-fact-detail">Vigentes o con inicio futuro.</span>
+              </Fact>
+            </dl>
+          </Section>
+        </div>
 
-            <Section title="Diagnóstico" subtitle="Revisión automática de la configuración guardada." className="rotation-diagnostics">
-              <RotationIssuesPanel issues={rotation.issues} inactive={rotation.status === "INACTIVO"} />
-            </Section>
-          </>
-        )}
+        <Section title="Diagnóstico" subtitle="Revisión automática de la configuración guardada." className="rotation-diagnostics">
+          <RotationIssuesPanel issues={rotation.issues} inactive={rotation.status === "INACTIVO"} />
+        </Section>
       </div>
 
       {editing ? (

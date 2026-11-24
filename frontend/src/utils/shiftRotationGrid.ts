@@ -15,6 +15,14 @@ import type {
 import { formatCalendarDate } from "./date";
 import { humanizeRotationMessage, rotationWeekLabel } from "./shiftRotation";
 
+/**
+ * Mensaje de un problema de grilla: el backend numera los bloques desde 0
+ * ("el bloque 0"); RRHH los ve desde 1, igual que en el editor ("Bloque 1").
+ */
+export function humanizeGridIssueMessage(message: string) {
+  return humanizeRotationMessage(message.replace(/\bbloque (\d+)\b/g, (_match, index: string) => `bloque ${Number(index) + 1}`));
+}
+
 /** Columnas de lunes a domingo, con el `weekday` del backend (0 = domingo). */
 export const GRID_WEEKDAYS: Array<{ weekday: number; short: string; long: string }> = [
   { weekday: 1, short: "Lun", long: "lunes" },
@@ -37,6 +45,13 @@ export function blockDescription(block: ShiftRotationBlock, position: { index: n
   const prefix = position.total > 1 ? `Bloque ${position.index + 1} de ${position.total}: ` : "";
   const end = blockCrossesMidnight(template) ? `${template.endTime} del día siguiente` : template.endTime;
   return `${prefix}${template.name} (${template.code}), de ${template.startTime} a ${end}`;
+}
+
+/** Resumen en texto de una celda (etiqueta accesible del botón de edición). */
+export function cellDescription(cell: GridCell) {
+  if (cell.kind === "REST") return "Descanso";
+  if (cell.kind === "MISSING") return "Sin configurar";
+  return cell.blocks.map((block, index) => blockDescription(block, { index, total: cell.blocks.length })).join("; ");
 }
 
 export type GridCell =
@@ -75,7 +90,7 @@ export function buildGridModel(version: Pick<ShiftRotationVersion, "cycleLengthW
     if (issue.code === "DAY_MISSING") continue;
     if (issue.crewId === undefined || issue.cycleWeekIndex === undefined || issue.weekday === undefined) continue;
     const key = cellKey(issue.crewId, issue.cycleWeekIndex, issue.weekday);
-    cellIssues.set(key, [...(cellIssues.get(key) ?? []), humanizeRotationMessage(issue.message)]);
+    cellIssues.set(key, [...(cellIssues.get(key) ?? []), humanizeGridIssueMessage(issue.message)]);
   }
   const crewsWithDays = new Set(version.days.map((day) => day.crewId));
   const known = new Set(crews.map((crew) => crew.id));
@@ -122,7 +137,7 @@ export function gridIssueSummary(issues: ShiftRotationGridIssue[], crews: ShiftR
       missingByCrew.set(issue.crewId, (missingByCrew.get(issue.crewId) ?? 0) + 1);
       continue;
     }
-    const text = humanizeRotationMessage(issue.message);
+    const text = humanizeGridIssueMessage(issue.message);
     const target = issue.severity === "ERROR" ? errors : warnings;
     if (!target.includes(text)) target.push(text);
   }

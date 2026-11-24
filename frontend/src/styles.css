@@ -2907,8 +2907,8 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .rotation-issue-more:hover{text-decoration:underline}
 .rotation-issue-more:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px;border-radius:4px}
 /* `.form-stack>.form-actions{grid-column:span 2}` genera dos columnas implícitas: cada fila del formulario ocupa todo el ancho. */
-.rotation-form{grid-template-columns:minmax(0,1fr)}
-.rotation-form>.form-actions{grid-column:1/-1}
+.rotation-form,.rotation-cell-form{grid-template-columns:minmax(0,1fr)}
+.rotation-form>.form-actions,.rotation-cell-form>.form-actions{grid-column:1/-1}
 .rotation-form .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:0}
 .rotation-form-full{grid-column:1/-1}
 /* El estilo global de campos (input,select,textarea{background:#fff!important}) no distingue deshabilitados: un dato bloqueado (código o grupo que ya no se pueden cambiar) debe verse como tal. */
@@ -2919,6 +2919,8 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 /* R4.8B1: equipos y grilla del ciclo (sólo lectura). Mismo patrón de tabla del sistema; los !important sólo superan los de `tbody td`/`thead th` globales. */
 .rotation-crews-table .col-order{width:80px}.rotation-crews-table .col-code{width:120px}.rotation-crews-table .col-count{width:110px;text-align:right}.rotation-crews-table .col-state{width:120px}.rotation-crews-table .col-actions{width:120px}
 .rotation-crews-table thead th.col-count{text-align:right!important}
+/* `.table-shell` corta palabras en cualquier punto en pantallas angostas; los nombres de equipo se cortan entre palabras (la tabla se desplaza). */
+.table-shell>table.rotation-crews-table tbody td{overflow-wrap:normal!important;word-break:normal!important;white-space:normal!important;min-width:96px}
 .rotation-section-error{margin:0 0 12px}
 .rotation-section-footnote{margin:12px 0 0;color:var(--color-text-muted);font-size:12px}
 .rotation-version-select{display:flex;align-items:center;gap:8px}
@@ -2973,3 +2975,46 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .rotation-grid-issues li.is-warning svg{color:var(--ds-amber-700)}
 .rotation-form .rotation-crew-form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media(max-width:700px){.rotation-version-select{flex-wrap:wrap}.rotation-version-select select{width:100%}.rotation-form .rotation-crew-form-grid{grid-template-columns:1fr}}
+/* R4.8B2: editor de versiones. Reutiliza la grilla de B1; la celda editable es un botón con el mismo contenido. */
+.rotation-grid-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 12px}
+.rotation-version-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.button.subtle.rotation-danger-button{color:var(--ds-red-700)!important}
+.button.subtle.rotation-danger-button:hover{border-color:var(--ds-red-200)!important;background:var(--ds-red-50)!important}
+.rotation-cell-button{display:block;width:100%;min-height:44px;padding:2px;border:1px solid transparent;border-radius:8px;background:none;color:inherit;font:inherit;text-align:inherit;cursor:pointer}
+.rotation-cell-button:hover{border-color:var(--ds-blue-300);background:var(--ds-blue-50)}
+.rotation-cell-button:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:1px}
+.rotation-grid-cell.has-issues .rotation-cell-button{border-color:transparent}
+.rotation-editor-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;align-items:start;margin:0 0 16px}
+.rotation-editor-fields input,.rotation-editor-fields select{width:100%}
+.rotation-save-error{margin:0 0 16px;padding:12px 16px;border:1px solid var(--ds-red-200);border-left:4px solid var(--ds-red-600);border-radius:10px;background:var(--ds-red-50);color:var(--color-text-primary);font-size:13px}
+.rotation-save-error-title{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:14px;font-weight:700}
+.rotation-save-error-title svg{flex:none;margin-top:1px;color:var(--ds-red-600)}
+.rotation-save-error ul{margin:8px 0 0;padding-left:42px;line-height:1.5}
+.rotation-save-error-hint{margin:8px 0 0 24px;color:var(--color-text-secondary)}
+.rotation-save-error-actions{margin:10px 0 0 24px}
+.rotation-editor-empty{margin:0;padding:16px;border:1px dashed var(--ds-slate-300);border-radius:10px;color:var(--color-text-secondary);font-size:14px;text-align:center}
+/* La barra de guardado queda visible al recorrer grillas largas: el panel del editor no recorta (overflow) para que `sticky` use el scroll de la página. */
+.panel.rotation-editor{overflow:visible!important}
+.panel.rotation-editor>.panel-body{overflow:visible!important}
+.rotation-editor-footer{position:sticky;bottom:0;z-index:3;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 16px;margin:16px -20px -20px;padding:12px 20px;border-top:1px solid var(--ds-slate-200);border-radius:0 0 10px 10px;background:#fff;box-shadow:0 -6px 16px #0f172a0d}
+.rotation-editor-status{flex:1 1 320px;min-width:0}
+.rotation-editor-status p{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:13px}
+.rotation-editor-status svg{flex:none;margin-top:1px}
+.rotation-editor-status .is-warning{color:var(--ds-amber-700)}
+.rotation-editor-status .is-ok{color:var(--color-success)}
+.rotation-editor-actions{display:flex;gap:8px}
+.rotation-cell-form .choice-group{margin:0}
+.rotation-cell-blocks{display:grid;gap:10px;margin:0;padding:14px;border:1px solid var(--ds-slate-200);border-radius:10px}
+.rotation-cell-blocks legend{padding:0 4px;color:var(--color-text-primary);font-size:13px;font-weight:700}
+.rotation-cell-blocks .field-hint,.rotation-cell-blocks .field-error{margin:0}
+.rotation-cell-block-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.rotation-cell-block-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+.rotation-cell-block-row select{width:100%}
+.rotation-cell-remove{margin-bottom:6px}
+.rotation-cell-blocks>.button{justify-self:start}
+.rotation-cell-save-hint{margin:0}
+.rotation-conflict-body{display:grid;gap:14px}
+.rotation-conflict-body>p{margin:0;color:var(--color-text-secondary);font-size:14px}
+@media(max-width:1100px){.rotation-editor-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.rotation-editor-fields{grid-template-columns:1fr}.rotation-editor-footer{margin:16px -16px -16px;padding:12px 16px}.rotation-editor-actions{width:100%}.rotation-editor-actions .button{flex:1}.rotation-grid-actions{justify-content:flex-start}}
+.rotation-editor-anchor{scroll-margin-top:16px}

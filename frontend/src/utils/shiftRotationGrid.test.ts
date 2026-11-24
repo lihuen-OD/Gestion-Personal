@@ -7,6 +7,7 @@ import {
   defaultVersionId,
   GRID_WEEKDAYS,
   gridIssueSummary,
+  humanizeGridIssueMessage,
   validateCrewForm,
   versionOptionLabel,
   versionTimeline,
@@ -90,6 +91,15 @@ describe("modelo de la grilla", () => {
       [crew("a", "A", 0)],
     );
     expect(result).toEqual({ errors: ["El turno P-01 del lunes está inactivo."], warnings: ["Equipo A (equipo A): 2 días sin configurar."] });
+  });
+});
+
+describe("mensajes de problemas de grilla", () => {
+  it("numera los bloques desde 1 y corrige la referencia a la semana (mensaje real del backend)", () => {
+    expect(humanizeGridIssueMessage("El bloque 1 del semana A, martes empieza antes de que termine el bloque 0 del semana A, martes."))
+      .toBe("El bloque 2 de la semana A, martes empieza antes de que termine el bloque 1 de la semana A, martes.");
+    expect(humanizeGridIssueMessage("Falta configurar el semana B, domingo del equipo B.")).toBe("Falta configurar la semana B, domingo del equipo B.");
+    expect(humanizeGridIssueMessage("en el viernes el bloque P-1907 se superpone")).toBe("En el viernes el bloque P-1907 se superpone");
   });
 });
 

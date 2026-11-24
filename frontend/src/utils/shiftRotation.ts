@@ -74,6 +74,9 @@ export function humanizeRotationMessage(message: string): string {
     .replace(DATE_KEY_PATTERN, (match) => formatCalendarDate(match))
     .replace(/\b(SIN_TURNO|TURNO_OBLIGATORIO|TURNO_FLEXIBLE)\b/g, (kind) => `«${workRegimeKindLabel(kind as WorkRegimeKind)}»`)
     .replace(/\b(ACTIVA|ACTIVO|INACTIVA|INACTIVO)\b/g, (word) => word.toLowerCase())
+    // Los mensajes de grilla del backend nombran la celda como "el/del semana B, lunes".
+    .replace(/\bdel semana\b/g, "de la semana")
+    .replace(/\bel semana\b/g, "la semana")
     .replace(/[ \t]{2,}/g, " ")
     .trim()
     .replace(/^\p{Ll}/u, (first) => first.toUpperCase());

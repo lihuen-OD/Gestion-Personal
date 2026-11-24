@@ -1,14 +1,19 @@
-import { AlertTriangle, Coffee, XCircle } from "lucide-react";
+import { AlertTriangle, Coffee, Pencil, Plus, Trash2, XCircle } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 import { Section } from "../ui/Section";
-import { shiftRotationApiService, type ShiftRotation, type ShiftRotationVersion } from "../../services/api/shiftRotationApiService";
+import { getUserErrorMessage } from "../../services/api/apiClient";
+import { shiftRotationApiService, type ShiftRotation, type ShiftRotationVersion, type ShiftRotationVersionSummary } from "../../services/api/shiftRotationApiService";
+import { confirmAction } from "../../services/appDialog";
 import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { formatCalendarDate } from "../../utils/date";
-import { rotationCycleLabel } from "../../utils/shiftRotation";
+import { humanizeRotationMessage, rotationCycleLabel } from "../../utils/shiftRotation";
+import { addDaysKey } from "../../utils/shiftRotationDraft";
+import { TOAST_SUCCESS_MS } from "../../utils/toast";
 import {
   buildGridModel,
   defaultVersionId,
@@ -20,16 +25,29 @@ import {
   versionTimelineLabel,
 } from "../../utils/shiftRotationGrid";
 import { RotationCycleGrid } from "./RotationCycleGrid";
+import { RotationVersionEditor, type VersionEditorMode } from "./RotationVersionEditor";
 
 const TIMELINE_TONE = { CURRENT: "success", FUTURE: "info", PAST: "neutral" } as const;
 
 /**
  * Grilla del ciclo en sólo lectura (R4.8B1). Las versiones llegan resumidas en
  * el detalle; la grilla completa de la elegida se pide al seleccionarla y se
- * conserva visible mientras se refresca (cambios de equipos). Crear o editar
- * versiones es R4.8B2.
+ * conserva visible mientras se refresca (cambios de equipos). R4.8B2: RRHH
+ * crea versiones nuevas y edita o elimina las que todavía no rigieron
+ * (`locked` lo decide el backend); el resto queda en sólo lectura.
  */
-export function RotationGridPanel({ rotation, reloadToken }: { rotation: ShiftRotation; reloadToken: number }) {
+function reopenText(versions: ShiftRotationVersionSummary[], target: ShiftRotationVersionSummary) {
+  // Lo mismo que hace el backend al borrar: la anterior se extiende hasta el día previo a la siguiente (o a lo que cubría la borrada).
+  const sorted = [...versions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const index = sorted.findIndex((item) => item.id === target.id);
+  const previous = index > 0 ? sorted[index - 1] : null;
+  if (!previous) return "No hay una versión anterior: en esas fechas la rotación queda sin grilla.";
+  const next = sorted[index + 1];
+  const reopenTo = next ? addDaysKey(next.effectiveFrom, -1) : target.effectiveTo;
+  return `La versión anterior (desde el ${formatCalendarDate(previous.effectiveFrom)}) vuelve a regir ${reopenTo ? `hasta el ${formatCalendarDate(reopenTo)}` : "sin fecha de fin"}.`;
+}
+
+export function RotationGridPanel({ rotation, reloadToken, canEdit = false, onVersionsChanged }: { rotation: ShiftRotation; reloadToken: number; canEdit?: boolean; onVersionsChanged?: () => void }) {
   const todayKey = argentinaDateKey(new Date());
   const selectId = useId();
   const versions = useMemo(() => sortVersionsForSelect(rotation.versions), [rotation.versions]);
@@ -38,6 +56,16 @@ export function RotationGridPanel({ rotation, reloadToken }: { rotation: ShiftRo
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [retry, setRetry] = useState(0);
   const shownId = useRef<string | null>(null);
+  const [editor, setEditor] = useState<VersionEditorMode | null>(null);
+  const [notice, setNotice] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = setTimeout(() => setNotice(""), TOAST_SUCCESS_MS);
+    return () => clearTimeout(timeout);
+  }, [notice]);
 
   // Si la versión elegida desaparece (p. ej. se borró una futura), volver a la predeterminada.
   useEffect(() => {
@@ -74,6 +102,43 @@ export function RotationGridPanel({ rotation, reloadToken }: { rotation: ShiftRo
   const issues = useMemo(() => (version ? gridIssueSummary(version.issues, rotation.crews) : { errors: [], warnings: [] }), [version, rotation.crews]);
   const timeline = summary ? versionTimeline(summary, todayKey) : null;
 
+  const editable = canEdit && summary !== null && !summary.locked && version !== null && status === "success";
+
+  const removeVersion = async () => {
+    if (!summary || deleting) return;
+    const ok = await confirmAction(`Se elimina la versión ${versionRangeText(summary)}, que todavía no rigió. ${reopenText(rotation.versions, summary)} Esta acción no se puede deshacer.`, { title: "Eliminar versión", confirmLabel: "Eliminar", tone: "danger" });
+    if (!ok) return;
+    setDeleting(true);
+    setActionError("");
+    try {
+      await shiftRotationApiService.removeVersion(rotation.id, summary.id);
+      setNotice("Versión eliminada.");
+      onVersionsChanged?.();
+    } catch (reason) {
+      setActionError(humanizeRotationMessage(getUserErrorMessage(reason, "No pudimos eliminar la versión.")));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (editor) {
+    return (
+      <RotationVersionEditor
+        rotation={rotation}
+        mode={editor}
+        onCancel={() => setEditor(null)}
+        onSaved={(saved, created) => {
+          setEditor(null);
+          shownId.current = null;
+          setSelectedId(saved.id);
+          setNotice(created ? "Versión creada." : "Versión guardada.");
+          onVersionsChanged?.();
+        }}
+      />
+    );
+  }
+
+  const createButton = <Button variant="primary" onClick={() => { setActionError(""); setEditor({ kind: "create" }); }}><Plus size={16} /> Nueva versión</Button>;
   const selector = versions.length > 1 ? (
     <div className="rotation-version-select">
       <label htmlFor={selectId}>Versión</label>
@@ -83,11 +148,20 @@ export function RotationGridPanel({ rotation, reloadToken }: { rotation: ShiftRo
     </div>
   ) : undefined;
 
+  const headerActions = selector || (canEdit && versions.length) ? (
+    <div className="rotation-grid-actions">
+      {selector}
+      {canEdit && versions.length ? createButton : null}
+    </div>
+  ) : undefined;
+
   return (
-    <Section title="Grilla del ciclo" subtitle="Turnos y descansos de cada equipo, de lunes a domingo, en cada semana del ciclo." action={selector} className="rotation-grid-section">
+    <Section title="Grilla del ciclo" subtitle="Turnos y descansos de cada equipo, de lunes a domingo, en cada semana del ciclo." action={headerActions} className="rotation-grid-section">
+      {notice ? <div className="toast" role="status">{notice}</div> : null}
+      {actionError ? <p className="error rotation-section-error" role="alert">{actionError}</p> : null}
       {!versions.length ? (
-        <EmptyState text="Esta rotación todavía no tiene grilla. La grilla se define en versiones con una fecha de inicio." />
-      ) : status === "loading" || status === "idle" ? (
+        <EmptyState text="Esta rotación todavía no tiene grilla. La grilla se define en versiones con una fecha de inicio." action={canEdit ? createButton : undefined} />
+      ) : status === "loading" || status === "idle" || (status === "success" && !summary) ? (
         <LoadingState text="Cargando grilla..." />
       ) : status === "error" || !version || !summary ? (
         <ErrorState message="No pudimos cargar la grilla de esta versión." onRetry={() => setRetry((value) => value + 1)} />
@@ -101,6 +175,12 @@ export function RotationGridPanel({ rotation, reloadToken }: { rotation: ShiftRo
           </dl>
           {version.locked ? (
             <div className="info-note rotation-grid-note" role="note"><p>Esta versión ya rigió y no se puede modificar. Los cambios se hacen con una versión nueva desde una fecha futura.</p></div>
+          ) : null}
+          {editable ? (
+            <div className="rotation-version-actions">
+              <Button variant="subtle" icon={Pencil} onClick={() => { setActionError(""); setEditor({ kind: "edit", version: version! }); }}>Editar esta versión</Button>
+              <Button variant="subtle" icon={Trash2} className="rotation-danger-button" onClick={() => void removeVersion()} disabled={deleting}>{deleting ? "Eliminando..." : "Eliminar versión"}</Button>
+            </div>
           ) : null}
           <ul className="rotation-grid-legend" aria-label="Referencias de la grilla">
             <li><span className="rotation-legend-sample is-shift">07:00–19:00</span>Turno: horario y código</li>
