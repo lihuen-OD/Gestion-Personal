@@ -37,7 +37,7 @@ type Modules = {
   obligations: typeof import("./rotationObligation.service");
   errors: typeof import("./shiftRotationErrors");
 };
-type Api = { status: number; data: any; error: { code: string; message: string; details?: any } | undefined };
+type Api = { status: number; data: any; context?: any; meta?: any; error: { code: string; message: string; details?: any } | undefined };
 
 describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL local", () => {
   let m: Modules;
@@ -54,8 +54,8 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
   async function call(method: string, path: string, body?: unknown, user = rrhh): Promise<Api> {
     const token = jwt.sign({ sub: user.id, email: user.email, role: user.role }, m.env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
     const response = await fetch(`${baseUrl}${path}`, { method, headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const json = (await response.json()) as { data?: unknown; error?: Api["error"] };
-    return { status: response.status, data: json.data, error: json.error };
+    const json = (await response.json()) as { data?: unknown; context?: unknown; meta?: unknown; error?: Api["error"] };
+    return { status: response.status, data: json.data, context: json.context, meta: json.meta, error: json.error };
   }
   const today = (dateKey: string, time = "09:00") => vi.setSystemTime(at(dateKey, time));
 
@@ -481,5 +481,64 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     const created = await call("POST", "/shifts/rotations", { code: "X1", name: "Prueba", shiftGroupId: groupId }, supervision);
     expect(created.status).toBe(403);
     expect((await call("GET", "/shifts/rotations", undefined, supervision)).status).toBe(200);
+  });
+
+  // ── R4.7: vista previa guardada, hipotética y de sólo lectura ───────────────
+
+  it("preview INACTIVO: simula sin activar ni alterar obligaciones y conserva cada nocturno en su fecha operativa", async () => {
+    const { rotationId } = await setupPlanta(MON_A, { activate: false });
+    const statusBefore = await holder.shiftRotation.findUniqueOrThrow({ where: { id: rotationId }, select: { status: true, updatedAt: true } });
+    expect(await blocksOf(PLANTA_EMPLOYEES.JOSE, FRI_A)).toBeNull();
+
+    const preview = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${FRI_A}&to=${SAT_A}`);
+
+    expect(preview.status, JSON.stringify(preview.error)).toBe(200);
+    expect(preview.context).toMatchObject({ persistedStatus: "INACTIVO", readOnly: true, previewMode: "HYPOTHETICAL_INACTIVE", affectsRealObligations: false });
+    expect(preview.meta).toMatchObject({ total: 7, page: 1, pageSize: 25, hasMore: false });
+    const jose = preview.data.find((row: { employee: { id: string } }) => row.employee.id === employee[PLANTA_EMPLOYEES.JOSE]);
+    expect(jose.days.map((cell: { date: string }) => cell.date)).toEqual([FRI_A, SAT_A]);
+    expect(jose.days[0].planning.blocks.map((block: { operationalDate: string; template: { code: string }; scheduledStartAt: string; scheduledEndAt: string }) => ({
+      operationalDate: block.operationalDate,
+      code: block.template.code,
+      start: block.scheduledStartAt,
+      end: block.scheduledEndAt,
+    }))).toEqual([
+      { operationalDate: FRI_A, code: "PLANTA-07-11", start: "2026-11-06T10:00:00.000Z", end: "2026-11-06T14:00:00.000Z" },
+      { operationalDate: FRI_A, code: "PLANTA-19-07", start: "2026-11-06T22:00:00.000Z", end: "2026-11-07T10:00:00.000Z" },
+    ]);
+    expect(jose.days[1].planning.blocks).toHaveLength(1);
+    expect(jose.days[1].planning.blocks[0]).toMatchObject({ operationalDate: SAT_A, template: { code: "PLANTA-19-07" } });
+    expect(await holder.shiftRotation.findUniqueOrThrow({ where: { id: rotationId }, select: { status: true, updatedAt: true } })).toEqual(statusBefore);
+    expect(await blocksOf(PLANTA_EMPLOYEES.JOSE, FRI_A)).toBeNull();
+    expect(await holder.auditLog.count({ where: { entityId: rotationId } })).toBe(1);
+  });
+
+  it("preview pagina empleados por membresía intersectante, incluye un cambio futuro de equipo y aplica employeeAccessWhere", async () => {
+    const { rotationId, crewIds, versionId } = await setupPlanta(MON_A, { activate: false });
+    const members = (await call("GET", `/shifts/rotations/${rotationId}/members?history=true`)).data;
+    const joseMember = members.find((row: { employeeId: string }) => row.employeeId === employee[PLANTA_EMPLOYEES.JOSE]);
+    const moved = await call("POST", `/shifts/rotations/${rotationId}/members/${joseMember.id}/move`, { toCrewId: crewIds[PLANTA_CREWS.JOHANNA], effectiveFrom: MON_B });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const futureVersion = await call("POST", `/shifts/rotations/${rotationId}/versions`, { effectiveFrom: MON_A2, cycleLengthWeeks: 2, anchorWeekStart: PLANTA_ANCHOR, days: plantaGrid(crewIds) });
+    expect(futureVersion.status, JSON.stringify(futureVersion.error)).toBe(201);
+
+    const preview = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_B}&page=1&take=3`);
+    expect(preview.status).toBe(200);
+    expect(preview.meta).toMatchObject({ total: 7, page: 1, pageSize: 3, hasMore: true });
+    const full = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_A2}&page=1&take=25`);
+    const jose = full.data.find((row: { employee: { id: string } }) => row.employee.id === employee[PLANTA_EMPLOYEES.JOSE]);
+    expect(jose.days).toHaveLength(15);
+    expect(jose.days[0].assignment.crew.id).toBe(crewIds[PLANTA_CREWS.JOSE]);
+    expect(jose.days[7].assignment.crew.id).toBe(crewIds[PLANTA_CREWS.JOHANNA]);
+    expect(jose.days[7].assignment.version.id).toBe(versionId);
+    expect(jose.days[14].assignment.version.id).toBe(futureVersion.data.id);
+    expect(new Set(full.data.map((row: { employee: { id: string } }) => row.employee.id)).size).toBe(7);
+
+    // Sin TIME_RESPONSIBLE vigentes para esta Supervisión: el endpoint no
+    // filtra después de paginar ni expone los otros seis legajos.
+    const scoped = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_B}`, undefined, supervision);
+    expect(scoped.status).toBe(200);
+    expect(scoped.data).toEqual([]);
+    expect(scoped.meta.total).toBe(0);
   });
 });
