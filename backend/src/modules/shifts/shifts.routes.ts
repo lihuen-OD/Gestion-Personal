@@ -29,11 +29,17 @@ import {
   updateRotationSchema,
   updateVersionSchema,
 } from "./shiftRotation.schemas";
+import { shiftExpectedPreviewController } from "./shiftExpectedPreview.controller";
+import { expectedShiftPreviewQuerySchema } from "./shiftExpectedPreview.schemas";
 
 export const shiftsRouter = Router();
 shiftsRouter.use(requireAuth);
 
 const all = [roles.rrhh, roles.supervision, roles.cargaHoraria];
+
+// R4.7: vista previa de sólo lectura. Una rotación INACTIVA se simula
+// exclusivamente dentro del request; nunca cambia obligaciones reales.
+shiftsRouter.get("/expected", requireAnyRole(all), validateQuery(expectedShiftPreviewQuerySchema), asyncHandler(shiftExpectedPreviewController.preview));
 
 shiftsRouter.get("/assignments/summary", requireAnyRole(all), asyncHandler(c.summary));
 shiftsRouter.get("/assignments", requireAnyRole(all), validateQuery(listShiftAssignmentsQuerySchema), asyncHandler(c.list));
