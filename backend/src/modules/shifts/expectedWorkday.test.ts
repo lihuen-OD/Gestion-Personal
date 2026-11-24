@@ -4,6 +4,7 @@ import {
   expectedMinutesForTemplates,
   loadEmployeeWorkdayContext,
   resolveEmployeeHolidayStatus,
+  resolveEmployeeExpectedShift,
   resolveExpectedWorkdays,
   shiftTemplateExpectedMinutes,
   workdayDateKeys,
@@ -59,6 +60,21 @@ const regime = (kind: WorkdayRegimePeriod["kind"], from = "2026-01-01", to: stri
 const convocation = (overrides: Partial<WorkdayConvocation> = {}): WorkdayConvocation => ({ template: null, expectedStartTime: null, expectedEndTime: null, ...overrides });
 
 describe("evaluateEmployeeWorkday — jornada normal", () => {
+  it("proyecta la misma resolución central que expone para consumidores de sólo lectura", () => {
+    const ctx = context({ assignments: [assignment()] });
+    const resolution = resolveEmployeeExpectedShift(ctx, MONDAY, "EXPECTED_WORKDAY");
+
+    expect(resolution).toMatchObject({ obligation: "SHIFT", source: "FIXED_ASSIGNMENT", reason: null });
+    expect(evaluateEmployeeWorkday(ctx, MONDAY)).toMatchObject({ obligation: "WORKDAY", source: "SHIFT_PLAN", expectedMinutes: 480 });
+  });
+
+  it("expone sin mezclar las políticas operativa y de Novedades", () => {
+    const ctx = context({ assignments: [assignment()], regimes: [regime("SIN_TURNO")] });
+
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "WORK_OBLIGATION")).toMatchObject({ obligation: "NO_OBLIGATION", source: "REGIME", reason: "REGIME_SIN_TURNO" });
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "EXPECTED_WORKDAY")).toMatchObject({ obligation: "UNRESOLVED", source: "REGIME", reason: "REGIME_SIN_TURNO" });
+  });
+
   it("turno L–V, lunes → WORKDAY con los minutos del turno", () => {
     expect(evaluateEmployeeWorkday(context({ assignments: [assignment()] }), MONDAY)).toEqual({
       dateKey: MONDAY,

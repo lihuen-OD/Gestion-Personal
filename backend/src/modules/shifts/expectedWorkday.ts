@@ -33,7 +33,7 @@ import type { HistoryReader } from "../labor-history/laborHistory.repository";
 import { ruleScopeOf } from "../time-entries/specialHourRuleScope";
 import { buildActiveDatesByRule, ruleMatchesDate, type RecurrenceType } from "../workforce-management/doubleHourRuleMatching";
 import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
-import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
+import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftPolicy, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
 import { resolveRotationDayPlan, type ExpectedDayPlanConflictReason, type ExpectedDayPlanMissingReason, type RotationConfiguration } from "./rotationPlan";
 import { loadRotationConfiguration, type LoadedRotationTemplate } from "./rotationPlan.loader";
 
@@ -271,7 +271,7 @@ export function resolveEmployeeHolidayStatus(input: {
 
 // ── Núcleo puro ─────────────────────────────────────────────────────────────
 
-type WorkdayResolution = ExpectedShiftResolution<WorkdayShiftTemplate, WorkdayConvocation>;
+export type WorkdayResolution = ExpectedShiftResolution<WorkdayShiftTemplate, WorkdayConvocation>;
 
 /**
  * Jornada esperada de Novedades para un legajo y una fecha.
@@ -284,8 +284,22 @@ type WorkdayResolution = ExpectedShiftResolution<WorkdayShiftTemplate, WorkdayCo
  * Novedades: minutos (regla P3), fuente de minutos y motivos persistibles.
  */
 export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey: string): ExpectedWorkday {
+  return projectExpectedWorkday(resolveEmployeeExpectedShift(context, dateKey, "EXPECTED_WORKDAY"));
+}
+
+/**
+ * Resolución central compartida por Novedades y las vistas de sólo lectura.
+ * Mantiene en un único lugar la traducción del contexto batch a
+ * `resolveExpectedShift`, incluida la simulación que el llamador haya preparado
+ * exclusivamente en su copia de `context.rotation`.
+ */
+export function resolveEmployeeExpectedShift(
+  context: EmployeeWorkdayContext,
+  dateKey: string,
+  policy: ExpectedShiftPolicy,
+): WorkdayResolution {
   const date = argentinaCalendarDate(dateKey);
-  const resolution = resolveExpectedShift(
+  return resolveExpectedShift(
     {
       dateKey,
       assignments: context.assignments,
@@ -295,9 +309,8 @@ export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey
       regimeKind: activeRegimeKindOn(context.regimes, date),
       ...rotationInputs(context, dateKey),
     },
-    "EXPECTED_WORKDAY",
+    policy,
   );
-  return projectExpectedWorkday(resolution);
 }
 
 /** R4.3b: plan del día y plantilla de la convocatoria, sólo para un miembro de rotación (si no, nada: camino legacy). */
