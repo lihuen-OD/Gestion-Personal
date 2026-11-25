@@ -8,6 +8,10 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 //
 // Con FICHADOR_QA_DIR definida (sólo QA visual local, nunca en CI) guarda
 // capturas del diálogo en los tamaños de la regla del fichador.
+// Playwright corre en Node, pero tsconfig.e2e.json no incluye los tipos de
+// Node (ni @types/node como dependencia): sólo se lee esta variable opcional.
+declare const process: { env: Record<string, string | undefined> };
+
 const API = "http://127.0.0.1:59999/api";
 const employee = { id: "employee-1", dni: "30123456", firstName: "Ana", lastName: "Gomez", name: "Gomez, Ana" };
 const OPEN = { id: "shift-0700", startAt: "2026-11-06T10:00:00.000Z" };
@@ -98,7 +102,7 @@ test("QA visual del diálogo (sólo con FICHADOR_QA_DIR): sin desbordes horizont
     await page.waitForTimeout(150);
     const overflow = await page.evaluate(() => {
       const dialog = document.querySelector(".modal")!.getBoundingClientRect();
-      const buttons = [...document.querySelectorAll(".exit-decision .button")].map((button) => button.getBoundingClientRect());
+      const buttons = Array.from(document.querySelectorAll(".exit-decision .button"), (button) => button.getBoundingClientRect());
       return {
         horizontal: document.documentElement.scrollWidth > window.innerWidth,
         dialogOutside: dialog.left < 0 || dialog.right > window.innerWidth,
