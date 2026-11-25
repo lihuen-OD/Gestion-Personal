@@ -213,6 +213,26 @@ export async function createShiftAlert(input: {
 }
 
 /**
+ * R4.9C.2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.18): crea la alerta SÓLO si no
+ * existe (INSERT … ON CONFLICT DO NOTHING sobre el único workShiftId+type) y
+ * avisa únicamente quien la insertó. Para chequeos periódicos que pueden
+ * correr en paralelo (dos instancias durante un deploy): con leer-y-crear,
+ * ambos veían "no existe" y mandaban dos avisos. Nunca reabre ni modifica una
+ * alerta existente (a diferencia del upsert de createShiftAlert). Devuelve
+ * null si ya existía.
+ */
+export async function createShiftAlertIfAbsent(input: { employeeId: string; workShiftId: string; type: ShiftAlertTypeValue; actualAt: Date; differenceMinutes?: number | null }) {
+  const inserted = await prisma.shiftAlert.createMany({
+    data: [{ employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity: severityByAlertType[input.type], actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined }],
+    skipDuplicates: true,
+  });
+  if (inserted.count === 0) return null;
+  const alert = await prisma.shiftAlert.findUniqueOrThrow({ where: { workShiftId_type: { workShiftId: input.workShiftId, type: input.type } } });
+  await notifyShiftAlert({ id: alert.id, employeeId: input.employeeId, type: input.type, actualAt: input.actualAt });
+  return alert;
+}
+
+/**
  * Aviso (SystemNotification) de una alerta ya persistida. createShiftAlert lo
  * manda al crearla; quien crea la alerta dentro de una transacción crítica con
  * `notify=false` (la salida con horas manuales, MANUAL_HOURS_VS_CLOCK_PUNCH.md)

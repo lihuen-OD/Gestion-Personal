@@ -1,7 +1,7 @@
 import { WorkShiftStatus } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { evaluateOpenShiftRisk, type OpenShiftRiskResult } from "./workShiftEvaluation.service";
-import { createShiftAlert, toTemplateRef } from "./workShiftEvaluationRunner";
+import { createShiftAlertIfAbsent, toTemplateRef } from "./workShiftEvaluationRunner";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { effectiveShiftTemplate } from "./templateRulesSnapshot";
 
@@ -44,14 +44,15 @@ export async function checkMissingOutRisk(now: Date) {
     });
     if (existingAlert) continue;
 
-    await createShiftAlert({
+    // R4.9C.2: inserción atómica; si otro tick paralelo ya la creó, no se avisa de nuevo.
+    const alert = await createShiftAlertIfAbsent({
       employeeId: shift.employeeId,
       workShiftId: shift.id,
       type: "POSIBLE_OLVIDO_SALIDA",
       actualAt: now,
       differenceMinutes: risk.minutesOpen,
     });
-    created += 1;
+    if (alert) created += 1;
   }
 
   return { checked: openShifts.length, created };

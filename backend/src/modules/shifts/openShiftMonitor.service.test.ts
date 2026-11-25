@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { checkMissingOutRisk } from "./openShiftMonitor.service";
-import { createShiftAlert } from "./workShiftEvaluationRunner";
+import { createShiftAlertIfAbsent } from "./workShiftEvaluationRunner";
 
 // Etapa 10C: cierra el hueco de cobertura señalado por 10A/10B — hasta acá
 // sólo `evaluateOpenShiftRisk` (función pura) tenía tests; `checkMissingOutRisk`
@@ -21,7 +21,7 @@ vi.mock("../../shared/prisma/client", () => ({
 }));
 
 vi.mock("./workShiftEvaluationRunner", () => ({
-  createShiftAlert: vi.fn().mockResolvedValue({ id: "alert-1" }),
+  createShiftAlertIfAbsent: vi.fn().mockResolvedValue({ id: "alert-1" }),
   toTemplateRef: (template: Record<string, unknown>) => template,
 }));
 
@@ -30,7 +30,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAlert: { findUnique: Mock };
   employeeWorkRegime: { findFirst: Mock };
 };
-const mockedCreateShiftAlert = createShiftAlert as unknown as Mock;
+const mockedCreateShiftAlert = createShiftAlertIfAbsent as unknown as Mock;
 
 function at(hours: number, minutes: number, day = 10) {
   return new Date(2026, 6, day, hours, minutes, 0, 0);
@@ -86,6 +86,20 @@ describe("checkMissingOutRisk", () => {
     expect(mockedCreateShiftAlert).toHaveBeenCalledWith(
       expect.objectContaining({ employeeId: "emp-1", workShiftId: "shift-risk", type: "POSIBLE_OLVIDO_SALIDA" }),
     );
+  });
+
+  it("R4.9C.2: si otro tick paralelo ya insertó la alerta (inserción atómica → null), no la cuenta como creada", async () => {
+    const dayTemplate = { ...nightTemplate, id: "dia", startTime: "07:00", endTime: "15:30", crossesMidnight: false, missingOutAlertAfterMinutes: 60, exitToleranceAfterMinutes: 20 };
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-race", employeeId: "emp-1", startAt: at(7, 0), shiftTemplate: dayTemplate },
+    ]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedCreateShiftAlert.mockResolvedValueOnce(null);
+
+    const result = await checkMissingOutRisk(at(17, 50));
+
+    expect(result.created).toBe(0);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledTimes(1);
   });
 
   it("nunca evalúa una jornada EXPIRED — ese caso queda exclusivamente a cargo de expireOpenWorkShifts (evita la doble notificación)", async () => {

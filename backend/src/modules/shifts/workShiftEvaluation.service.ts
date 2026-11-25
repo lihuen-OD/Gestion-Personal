@@ -1,5 +1,6 @@
 import { ARGENTINA_OFFSET_MINUTES, argentinaCalendarDate, argentinaDateKey, scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTime";
 import { entryReferenceCandidates, isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnDate, isShiftAssignmentApplicableOnWeekday, type ShiftAssignmentStatusValue } from "./expectedShiftResolver";
+import { computeExpectedMinutes } from "./shiftTemplateTime";
 
 // Etapa R2: la vigencia y el día de semana de una asignación los define el
 // resolver central (expectedShiftResolver.ts); se re-exportan para no
@@ -352,7 +353,18 @@ export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; templat
     const expectedMinutesToExit = differenceInMinutes(expectedExitAt, input.startAt);
     missingOutThresholdMinutes = expectedMinutesToExit + input.template.exitToleranceAfterMinutes + input.template.missingOutAlertAfterMinutes;
   } else {
-    missingOutThresholdMinutes = DEFAULT_MAXIMUM_INFORMATIVE_MINUTES;
+    // R4.9C.2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.18): con turno pero sin aviso
+    // de olvido configurado, el default nunca vence antes de que termine una
+    // jornada CUMPLIDA (duración programada + anticipación permitida +
+    // tolerancia de salida). Sin esto, los turnos de 12 h (o de 10 h con
+    // ingreso anticipado permitido) avisaban "posible olvido" antes de su
+    // salida programada. Se usa la duración de la plantilla, no la salida
+    // esperada: ésta depende del ingreso y, en jornadas legacy nocturnas
+    // ingresadas pasada la medianoche, cae un día después.
+    const compliantMaximum = input.template
+      ? computeExpectedMinutes(input.template.startTime, input.template.endTime, input.template.crossesMidnight) + input.template.entryToleranceBeforeMinutes + input.template.exitToleranceAfterMinutes
+      : 0;
+    missingOutThresholdMinutes = Math.max(DEFAULT_MAXIMUM_INFORMATIVE_MINUTES, compliantMaximum);
   }
 
   const level: OpenShiftRiskLevel =
