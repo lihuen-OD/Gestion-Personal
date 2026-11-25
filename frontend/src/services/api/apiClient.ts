@@ -191,6 +191,9 @@ const errorMessagesByCode: Record<string, string> = {
   STORAGE_LOCAL_INVALID_KEY: "El archivo no está disponible.",
   STORAGE_LOCAL_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",
   INTERNAL_ERROR: "Ocurrió un problema inesperado. Intentá nuevamente.",
+  // La transacción se revirtió completa: el backend sólo emite este código
+  // cuando no quedó nada guardado.
+  TRANSACTION_TIMEOUT: "El guardado no se completó porque la operación tardó demasiado. No se guardó ningún cambio: podés intentarlo de nuevo.",
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
   MISSING_ROUTE_PARAM: "Falta información necesaria para completar la operación.",
 };

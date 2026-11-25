@@ -41,6 +41,24 @@ function formatFullDateLabel(dateKey: string) {
 type EmployeeDetails = { shiftTemplateId: string; expectedStartTime: string; expectedEndTime: string; notes: string };
 const emptyDetails: EmployeeDetails = { shiftTemplateId: "", expectedStartTime: "", expectedEndTime: "", notes: "" };
 
+// Campos editables tal como viajan al guardar (vacío → null, notas sin
+// espacios). La detección de cambios compara esta misma forma, así un dato
+// que no cambia lo que se guardaría no cuenta como modificación.
+function assignmentFields(details: EmployeeDetails) {
+  return {
+    shiftTemplateId: details.shiftTemplateId || null,
+    expectedStartTime: details.expectedStartTime || null,
+    expectedEndTime: details.expectedEndTime || null,
+    notes: details.notes.trim() || null,
+  };
+}
+
+function sameAssignmentFields(left: EmployeeDetails, right: EmployeeDetails) {
+  const a = assignmentFields(left);
+  const b = assignmentFields(right);
+  return a.shiftTemplateId === b.shiftTemplateId && a.expectedStartTime === b.expectedStartTime && a.expectedEndTime === b.expectedEndTime && a.notes === b.notes;
+}
+
 function habitualShiftLabel(candidate: HolidayWorkAssignmentCandidate) {
   if (!candidate.shiftAssignments.length) return "Sin turno habitual";
   return candidate.shiftAssignments.map((item) => item.shiftTemplate.name).join(", ");
@@ -73,6 +91,8 @@ export function HolidayWorkAssignmentsPage() {
   const [panelError, setPanelError] = useState("");
 
   const [originalAssignedIds, setOriginalAssignedIds] = useState<Set<string>>(new Set());
+  // Detalle guardado de cada convocado (base para detectar ediciones).
+  const [originalDetails, setOriginalDetails] = useState<Map<string, EmployeeDetails>>(new Map());
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Map<string, EmployeeDetails>>(new Map());
 
@@ -141,6 +161,7 @@ export function HolidayWorkAssignmentsPage() {
           });
         }
         setDetails(detailsMap);
+        setOriginalDetails(new Map(detailsMap));
       })
       .catch(() => {
         if (alive) setPanelError("No pudimos cargar la convocatoria ya guardada para esta fecha. Los cambios que hagas podrían no reflejar lo ya guardado.");
@@ -224,9 +245,14 @@ export function HolidayWorkAssignmentsPage() {
     setDetails((current) => new Map(current).set(employeeId, { ...emptyDetails, ...current.get(employeeId), ...patch }));
   };
 
+  // Cambia la lista de convocados o algún campo editable (turno, horario,
+  // observación) de alguien que ya estaba convocado.
   const hasChanges = () => {
     if (checkedIds.size !== originalAssignedIds.size) return true;
-    for (const id of checkedIds) if (!originalAssignedIds.has(id)) return true;
+    for (const id of checkedIds) {
+      if (!originalAssignedIds.has(id)) return true;
+      if (!sameAssignmentFields(details.get(id) || emptyDetails, originalDetails.get(id) || emptyDetails)) return true;
+    }
     return false;
   };
 
@@ -241,21 +267,14 @@ export function HolidayWorkAssignmentsPage() {
     try {
       const payload: HolidayWorkAssignmentInput[] = [];
       for (const employeeId of checkedIds) {
-        const employeeDetails = details.get(employeeId) || emptyDetails;
-        payload.push({
-          employeeId,
-          status: "ACTIVA",
-          shiftTemplateId: employeeDetails.shiftTemplateId || null,
-          expectedStartTime: employeeDetails.expectedStartTime || null,
-          expectedEndTime: employeeDetails.expectedEndTime || null,
-          notes: employeeDetails.notes.trim() || null,
-        });
+        payload.push({ employeeId, status: "ACTIVA", ...assignmentFields(details.get(employeeId) || emptyDetails) });
       }
       for (const employeeId of originalAssignedIds) {
         if (!checkedIds.has(employeeId)) payload.push({ employeeId, status: "CANCELADA" });
       }
       await holidayWorkAssignmentApiService.saveAssignments(selectedDate, payload);
       setOriginalAssignedIds(new Set(checkedIds));
+      setOriginalDetails(new Map([...checkedIds].map((employeeId) => [employeeId, details.get(employeeId) || emptyDetails])));
       setNotice("Convocatoria guardada correctamente.");
       setTimeout(() => setNotice(""), 2500);
     } catch (reason) {

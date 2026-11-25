@@ -7,6 +7,7 @@ import {
   holidayWorkAssignmentApiService,
   type HolidayWorkAssignmentCandidate,
 } from "../services/api/holidayWorkAssignmentApiService";
+import { ApiError, formatApiErrorMessage } from "../services/api/apiClient";
 import { workforceApiService } from "../services/api/workforceApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 
@@ -326,5 +327,98 @@ describe("HolidayWorkAssignmentsPage — Etapa 12D", () => {
     await screen.findByText("Pérez, Juan");
     expect(screen.queryByLabelText(/Trabaja este feriado/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Guardar cambios" })).not.toBeInTheDocument();
+  });
+
+  // fix/holiday-work-assignment-performance: la detección de cambios mira
+  // también los campos editables, no sólo quiénes están convocados.
+  describe("detección de cambios en los datos de la convocatoria", () => {
+    const saved = {
+      id: "hwa-1", date: "2026-08-27", employeeId: "employee-1", status: "ACTIVA" as const, shiftTemplateId: "template-manana", expectedStartTime: "08:00", expectedEndTime: "16:00", notes: "Convocado",
+      createdAt: "", updatedAt: "", employee: { id: "employee-1", legajo: "100", firstName: "Juan", lastName: "Pérez", status: "ACTIVO" },
+    };
+    const openWithSavedAssignment = async () => {
+      vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({ items: [candidate()], meta: { total: 1, page: 1, pageSize: 300, hasMore: false } });
+      vi.mocked(holidayWorkAssignmentApiService.getAssignmentsByDate).mockResolvedValue({ date: "2026-08-27", assignments: [saved] });
+      const user = userEvent.setup();
+      await openFirstDate(user);
+      await screen.findByDisplayValue("Convocado");
+      return user;
+    };
+    const save = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    it("sin tocar nada informa que no hay cambios y no llama al backend", async () => {
+      const user = await openWithSavedAssignment();
+      await save(user);
+
+      expect(await screen.findByText("No hay cambios para guardar.")).toBeInTheDocument();
+      expect(holidayWorkAssignmentApiService.saveAssignments).not.toHaveBeenCalled();
+    });
+
+    it("cambiar sólo la observación de un convocado habilita el guardado y la envía con el resto de sus datos", async () => {
+      const user = await openWithSavedAssignment();
+      const notes = screen.getByLabelText(/Observación — Pérez, Juan/i);
+      await user.clear(notes);
+      await user.type(notes, "Llega 10:00");
+      await save(user);
+
+      await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(holidayWorkAssignmentApiService.saveAssignments).mock.calls[0]![1]).toEqual([
+        { employeeId: "employee-1", status: "ACTIVA", shiftTemplateId: "template-manana", expectedStartTime: "08:00", expectedEndTime: "16:00", notes: "Llega 10:00" },
+      ]);
+    });
+
+    it("cambiar sólo el horario de un convocado habilita el guardado", async () => {
+      const user = await openWithSavedAssignment();
+      const from = screen.getByLabelText(/Horario desde — Pérez, Juan/i);
+      await user.clear(from);
+      await user.type(from, "09:00");
+      await save(user);
+
+      await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledTimes(1));
+      expect(vi.mocked(holidayWorkAssignmentApiService.saveAssignments).mock.calls[0]![1]).toEqual([expect.objectContaining({ employeeId: "employee-1", expectedStartTime: "09:00", expectedEndTime: "16:00" })]);
+    });
+
+    it("una edición que vuelve al valor guardado (o sólo agrega espacios) no cuenta como cambio", async () => {
+      const user = await openWithSavedAssignment();
+      const notes = screen.getByLabelText(/Observación — Pérez, Juan/i);
+      await user.clear(notes);
+      await user.type(notes, "  Convocado  ");
+      await save(user);
+
+      expect(await screen.findByText("No hay cambios para guardar.")).toBeInTheDocument();
+      expect(holidayWorkAssignmentApiService.saveAssignments).not.toHaveBeenCalled();
+    });
+
+    it("después de guardar una edición, la nueva versión pasa a ser la guardada", async () => {
+      const user = await openWithSavedAssignment();
+      const notes = screen.getByLabelText(/Observación — Pérez, Juan/i);
+      await user.clear(notes);
+      await user.type(notes, "Llega 10:00");
+      await save(user);
+      expect(await screen.findByText("Convocatoria guardada correctamente.")).toBeInTheDocument();
+
+      await save(user);
+      expect(await screen.findByText("No hay cambios para guardar.")).toBeInTheDocument();
+      expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledTimes(1);
+    });
+
+    it("si el guardado vence (TRANSACTION_TIMEOUT) informa que no se guardó, conserva lo editado y no reintenta solo", async () => {
+      const payload = { error: { code: "TRANSACTION_TIMEOUT", message: "Transaction already closed" } };
+      vi.mocked(holidayWorkAssignmentApiService.saveAssignments).mockRejectedValueOnce(new ApiError(formatApiErrorMessage(payload), "TRANSACTION_TIMEOUT", 503, payload));
+      const user = await openWithSavedAssignment();
+      const notes = screen.getByLabelText(/Observación — Pérez, Juan/i);
+      await user.clear(notes);
+      await user.type(notes, "Llega 10:00");
+      await save(user);
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("No se guardó ningún cambio");
+      expect(screen.getByLabelText(/Observación — Pérez, Juan/i)).toHaveValue("Llega 10:00");
+      expect((screen.getByLabelText(/Trabaja este feriado — Pérez, Juan/i) as HTMLInputElement).checked).toBe(true);
+      expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledTimes(1);
+
+      // El reintento es manual y sigue detectando el cambio pendiente.
+      await save(user);
+      await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledTimes(2));
+    });
   });
 });
