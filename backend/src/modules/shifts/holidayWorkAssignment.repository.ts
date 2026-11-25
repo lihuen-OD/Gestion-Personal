@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { employeeStructureWhere } from "../../shared/prisma/employeeStructureWhere";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
-import type { HolidayWorkAssignmentItemInput, HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
+import type { HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
+import type { HolidayWorkAssignmentFields } from "./holidayWorkAssignmentChanges";
 
 const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true, status: true } as const;
 
@@ -68,38 +69,26 @@ export const holidayWorkAssignmentRepository = {
     });
   },
 
-  findExisting(date: Date, employeeId: string, db: AssignmentWriter = prisma) {
-    return db.holidayWorkAssignment.findUnique({ where: { date_employeeId: { date, employeeId } } });
+  // Guardado en lote (una consulta por paso, nunca una por empleado): cada
+  // viaje a la base corre dentro de la transacción con tiempo límite.
+  findExistingForEmployees(date: Date, employeeIds: string[], db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.findMany({ where: { date, employeeId: { in: employeeIds } } });
   },
 
-  create(date: Date, employeeId: string, data: HolidayWorkAssignmentItemInput, userId: string | null, db: AssignmentWriter = prisma) {
-    return db.holidayWorkAssignment.create({
-      data: {
-        date,
-        employeeId,
-        status: data.status,
-        shiftTemplateId: data.shiftTemplateId ?? null,
-        expectedStartTime: data.expectedStartTime ?? null,
-        expectedEndTime: data.expectedEndTime ?? null,
-        notes: data.notes ?? null,
-        createdByUserId: userId,
-        updatedByUserId: userId,
-      },
-      include: { employee: { select: employeeSelect }, shiftTemplate: { select: shiftTemplateSelect } },
+  createMany(date: Date, items: Array<{ employeeId: string; fields: HolidayWorkAssignmentFields }>, userId: string | null, db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.createMany({
+      data: items.map(({ employeeId, fields }) => ({ date, employeeId, ...fields, createdByUserId: userId, updatedByUserId: userId })),
     });
   },
 
-  update(id: string, data: HolidayWorkAssignmentItemInput, userId: string | null, db: AssignmentWriter = prisma) {
-    return db.holidayWorkAssignment.update({
-      where: { id },
-      data: {
-        status: data.status,
-        shiftTemplateId: data.shiftTemplateId ?? null,
-        expectedStartTime: data.expectedStartTime ?? null,
-        expectedEndTime: data.expectedEndTime ?? null,
-        notes: data.notes ?? null,
-        updatedByUserId: userId,
-      },
+  /** Mismos campos finales para todas las filas del grupo; nunca toca createdByUserId. */
+  updateMany(ids: string[], fields: HolidayWorkAssignmentFields, userId: string | null, db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.updateMany({ where: { id: { in: ids } }, data: { ...fields, updatedByUserId: userId } });
+  },
+
+  findForEmployeesWithRelations(date: Date, employeeIds: string[], db: AssignmentWriter = prisma) {
+    return db.holidayWorkAssignment.findMany({
+      where: { date, employeeId: { in: employeeIds } },
       include: { employee: { select: employeeSelect }, shiftTemplate: { select: shiftTemplateSelect } },
     });
   },

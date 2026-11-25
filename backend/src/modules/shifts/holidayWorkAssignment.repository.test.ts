@@ -6,14 +6,14 @@ import { holidayWorkAssignmentRepository } from "./holidayWorkAssignment.reposit
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     employee: { findMany: vi.fn(), count: vi.fn() },
-    holidayWorkAssignment: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    holidayWorkAssignment: { findMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn((operations: unknown[]) => Promise.all(operations)),
   },
 }));
 
 const mockedPrisma = prisma as unknown as {
   employee: { findMany: Mock; count: Mock };
-  holidayWorkAssignment: { findMany: Mock; findUnique: Mock; create: Mock; update: Mock };
+  holidayWorkAssignment: { findMany: Mock; createMany: Mock; updateMany: Mock };
 };
 
 beforeEach(() => {
@@ -121,50 +121,50 @@ describe("findByDate — Etapa 12D", () => {
   });
 });
 
-describe("findExisting/create/update — Etapa 12D", () => {
-  it("findExisting consulta por el unique compuesto date_employeeId", async () => {
-    mockedPrisma.holidayWorkAssignment.findUnique.mockResolvedValue(null);
-    const date = new Date("2026-08-27");
+describe("escrituras en lote del guardado (fix/holiday-work-assignment-performance)", () => {
+  const date = new Date("2026-08-27");
+  const fields = { status: "ACTIVA" as const, shiftTemplateId: "template-1", expectedStartTime: "08:00", expectedEndTime: "16:00", notes: "Convocado" };
 
-    await holidayWorkAssignmentRepository.findExisting(date, "employee-1");
+  it("findExistingForEmployees lee lo existente de la fecha para todos los empleados en una sola consulta", async () => {
+    mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([]);
 
-    expect(mockedPrisma.holidayWorkAssignment.findUnique).toHaveBeenCalledWith({ where: { date_employeeId: { date, employeeId: "employee-1" } } });
+    await holidayWorkAssignmentRepository.findExistingForEmployees(date, ["employee-1", "employee-2"]);
+
+    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledWith({ where: { date, employeeId: { in: ["employee-1", "employee-2"] } } });
   });
 
-  it("create persiste turno/horario/notas y createdByUserId/updatedByUserId", async () => {
-    mockedPrisma.holidayWorkAssignment.create.mockResolvedValue({ id: "hwa-1" });
-    const date = new Date("2026-08-27");
+  it("createMany persiste turno/horario/notas y createdByUserId/updatedByUserId de todas las altas en una sola consulta", async () => {
+    mockedPrisma.holidayWorkAssignment.createMany.mockResolvedValue({ count: 2 });
 
-    await holidayWorkAssignmentRepository.create(date, "employee-1", { employeeId: "employee-1", status: "ACTIVA", shiftTemplateId: "template-1", expectedStartTime: "08:00", expectedEndTime: "16:00", notes: "Convocado" }, "user-1");
+    await holidayWorkAssignmentRepository.createMany(date, [{ employeeId: "employee-1", fields }, { employeeId: "employee-2", fields: { ...fields, shiftTemplateId: null, notes: null } }], "user-1");
 
-    expect(mockedPrisma.holidayWorkAssignment.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          date,
-          employeeId: "employee-1",
-          status: "ACTIVA",
-          shiftTemplateId: "template-1",
-          expectedStartTime: "08:00",
-          expectedEndTime: "16:00",
-          notes: "Convocado",
-          createdByUserId: "user-1",
-          updatedByUserId: "user-1",
-        }),
-      }),
-    );
+    expect(mockedPrisma.holidayWorkAssignment.createMany).toHaveBeenCalledWith({
+      data: [
+        { date, employeeId: "employee-1", ...fields, createdByUserId: "user-1", updatedByUserId: "user-1" },
+        { date, employeeId: "employee-2", ...fields, shiftTemplateId: null, notes: null, createdByUserId: "user-1", updatedByUserId: "user-1" },
+      ],
+    });
   });
 
-  it("update cambia status/horario/notas y updatedByUserId, sin tocar createdByUserId", async () => {
-    mockedPrisma.holidayWorkAssignment.update.mockResolvedValue({ id: "hwa-1" });
+  it("updateMany cambia status/horario/notas y updatedByUserId, sin tocar createdByUserId", async () => {
+    mockedPrisma.holidayWorkAssignment.updateMany.mockResolvedValue({ count: 2 });
+    const cancel = { status: "CANCELADA" as const, shiftTemplateId: null, expectedStartTime: null, expectedEndTime: null, notes: null };
 
-    await holidayWorkAssignmentRepository.update("hwa-1", { employeeId: "employee-1", status: "CANCELADA", shiftTemplateId: null, expectedStartTime: null, expectedEndTime: null, notes: "Ya no viene" }, "user-2");
+    await holidayWorkAssignmentRepository.updateMany(["hwa-1", "hwa-2"], cancel, "user-2");
 
-    expect(mockedPrisma.holidayWorkAssignment.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: "hwa-1" },
-        data: expect.objectContaining({ status: "CANCELADA", notes: "Ya no viene", updatedByUserId: "user-2" }),
-      }),
-    );
-    expect(mockedPrisma.holidayWorkAssignment.update.mock.calls[0]![0].data.createdByUserId).toBeUndefined();
+    expect(mockedPrisma.holidayWorkAssignment.updateMany).toHaveBeenCalledWith({ where: { id: { in: ["hwa-1", "hwa-2"] } }, data: { ...cancel, updatedByUserId: "user-2" } });
+    expect(mockedPrisma.holidayWorkAssignment.updateMany.mock.calls[0]![0].data.createdByUserId).toBeUndefined();
+  });
+
+  it("findForEmployeesWithRelations devuelve las filas con empleado y turno para la respuesta y la auditoría", async () => {
+    mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([]);
+
+    await holidayWorkAssignmentRepository.findForEmployeesWithRelations(date, ["employee-1"]);
+
+    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { date, employeeId: { in: ["employee-1"] } },
+      include: { employee: expect.any(Object), shiftTemplate: expect.any(Object) },
+    }));
   });
 });

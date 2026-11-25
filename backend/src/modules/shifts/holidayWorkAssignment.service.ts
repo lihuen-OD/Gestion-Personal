@@ -19,6 +19,7 @@ import { describeReinterpretation, reinterpretationMetadata } from "../workforce
 // reinterpretación de la fecha corre dentro de la transacción del guardado.
 const HOLIDAY_WORK_TRANSACTION_OPTIONS = { timeout: 30_000 };
 import type { HolidayWorkCandidatesQuery, SaveHolidayWorkAssignmentsInput } from "./holidayWorkAssignment.schemas";
+import { groupHolidayWorkAssignmentUpdates, planHolidayWorkAssignmentChanges } from "./holidayWorkAssignmentChanges";
 
 function dateKey(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -30,11 +31,17 @@ function mapPrismaError(error: unknown) {
       throw new AppError("Related employee, shift template or user not found", 400, "RELATION_CONSTRAINT");
     }
     // Carrera entre dos guardados simultáneos para el mismo (date,
-    // employeeId) — findExisting no lo vio a tiempo. El unique compuesto en
-    // base es la garantía real de "nunca dos convocatorias activas para el
-    // mismo feriado"; esto sólo lo traduce a un error prolijo en vez de 500.
+    // employeeId) — la lectura de lo existente no lo vio a tiempo. El unique
+    // compuesto en base es la garantía real de "nunca dos convocatorias
+    // activas para el mismo feriado"; esto sólo lo traduce a un error prolijo
+    // en vez de 500.
     if (error.code === "P2002") {
       throw new AppError("Ya existe una convocatoria para este empleado en esta fecha", 409, "HOLIDAY_WORK_ASSIGNMENT_ALREADY_EXISTS");
+    }
+    // La transacción venció (o no llegó a empezar) y Prisma la revirtió
+    // completa: no quedó nada guardado ni auditado. Sin detalle técnico.
+    if (error.code === "P2028") {
+      throw new AppError("El guardado no se completó porque la operación tardó demasiado. No se guardó ningún cambio: podés intentarlo de nuevo.", 503, "TRANSACTION_TIMEOUT");
     }
   }
   throw error;
@@ -108,41 +115,56 @@ export const holidayWorkAssignmentService = {
           "HOLIDAY_WORK_CONFLICTS_DAY_OFF",
         );
       }
-      const saved = [];
+      // En lote: una lectura de lo existente, la diferencia en memoria y una
+      // escritura por paso (nunca una consulta por empleado). Un item que no
+      // cambia ningún campo editable no se escribe ni se audita; un CANCELADA
+      // para una convocatoria que nunca existió no crea una fila vacía.
+      const existingRows = await holidayWorkAssignmentRepository.findExistingForEmployees(input.date, employeeIds, tx);
+      const changes = planHolidayWorkAssignmentChanges(input.assignments, existingRows);
+      const creates = changes.flatMap((change) => (change.kind === "CREATE" ? [change] : []));
+      if (creates.length) await holidayWorkAssignmentRepository.createMany(input.date, creates, user.id, tx);
+      for (const group of groupHolidayWorkAssignmentUpdates(changes)) {
+        await holidayWorkAssignmentRepository.updateMany(group.ids, group.fields, user.id, tx);
+      }
+      const responseEmployeeIds = changes.filter((change) => change.kind !== "SKIP").map((change) => change.employeeId);
+      const savedByEmployee = new Map(
+        responseEmployeeIds.length
+          ? (await holidayWorkAssignmentRepository.findForEmployeesWithRelations(input.date, responseEmployeeIds, tx)).map((row) => [row.employeeId, row])
+          : [],
+      );
+      const saved = responseEmployeeIds.map((employeeId) => savedByEmployee.get(employeeId)!);
       const pendingAudits: RegisterAuditInput[] = [];
-      for (const item of input.assignments) {
-        const existing = await holidayWorkAssignmentRepository.findExisting(input.date, item.employeeId, tx);
-
-        if (!existing) {
-          // Nada que cancelar si la convocatoria nunca existió — evita crear
-          // filas CANCELADA "vacías" sólo porque el frontend mandó un item
-          // desmarcado que ya estaba desmarcado.
-          if (item.status === "CANCELADA") continue;
-          const created = await holidayWorkAssignmentRepository.create(input.date, item.employeeId, item, user.id, tx);
+      for (const change of changes) {
+        if (change.kind === "SKIP" || change.kind === "UNCHANGED") continue;
+        const row = savedByEmployee.get(change.employeeId)!;
+        if (change.kind === "CREATE") {
           pendingAudits.push({
             action: "CREATE",
             entity: "HolidayWorkAssignment",
-            entityId: item.employeeId,
-            description: `Se convocó a ${created.employee.legajo} a trabajar el feriado del ${dateLabel}.`,
-            after: created as unknown as Prisma.InputJsonValue,
+            entityId: change.employeeId,
+            description: `Se convocó a ${row.employee.legajo} a trabajar el feriado del ${dateLabel}.`,
+            after: row as unknown as Prisma.InputJsonValue,
           });
-          saved.push(created);
           continue;
         }
-
-        const statusChanged = existing.status !== item.status;
-        const updated = await holidayWorkAssignmentRepository.update(existing.id, item, user.id, tx);
+        const status = change.fields.status;
+        const statusChanged = change.existing.status !== status;
         pendingAudits.push({
-          action: statusChanged ? (item.status === "CANCELADA" ? "DEACTIVATE" : "ACTIVATE") : "UPDATE",
+          action: statusChanged ? (status === "CANCELADA" ? "DEACTIVATE" : "ACTIVATE") : "UPDATE",
           entity: "HolidayWorkAssignment",
-          entityId: item.employeeId,
+          entityId: change.employeeId,
           description: statusChanged
-            ? `Se ${item.status === "CANCELADA" ? "canceló" : "reactivó"} la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`
-            : `Se actualizó la convocatoria de ${updated.employee.legajo} para el feriado del ${dateLabel}.`,
-          before: existing as unknown as Prisma.InputJsonValue,
-          after: updated as unknown as Prisma.InputJsonValue,
+            ? `Se ${status === "CANCELADA" ? "canceló" : "reactivó"} la convocatoria de ${row.employee.legajo} para el feriado del ${dateLabel}.`
+            : `Se actualizó la convocatoria de ${row.employee.legajo} para el feriado del ${dateLabel}.`,
+          before: change.existing as unknown as Prisma.InputJsonValue,
+          after: row as unknown as Prisma.InputJsonValue,
         });
-        saved.push(updated);
+      }
+      // Sin ningún cambio efectivo, las fuentes que leen la cobertura y la
+      // reinterpretación son idénticas a las de antes: recalcular no cambiaría
+      // nada. Los locks y la validación de francos ya se aplicaron igual.
+      if (!changes.some((change) => change.kind === "CREATE" || change.kind === "UPDATE")) {
+        return { results: saved, audits: pendingAudits, reinterpretation: null, coverage: null };
       }
       // Cobertura de la fecha (todos los legajos) antes de reinterpretar las
       // horas: los snapshots que reconstruye la reinterpretación ya la incluyen.
@@ -155,6 +177,7 @@ export const holidayWorkAssignmentService = {
 
     // La auditoría se registra recién cuando la transacción confirmó.
     for (const entry of audits) await auditService.register({ ...audit, ...entry });
+    if (!reinterpretation || !coverage) return results;
     if (reinterpretation.timeEntries + reinterpretation.breakdowns > 0) {
       await auditService.register({
         ...audit,
