@@ -1742,6 +1742,47 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 
 **Evidencia.** `shiftRotationAdmin.integration.test.ts` 23/23 (incluye el caso R4.9C.1); `rotationPlan.test.ts` + `rotationValidation.test.ts` 59/59; `typecheck` verde. Estado operativo final de la base: 0 `WorkShift`, 0 `AttendancePunch`, 0 `AttendanceInactivityIncident`. No se simularon fichadas ni notificaciones y no hubo acceso a bases compartidas.
 
+### 25.18 R4.9C.2 — Simulación integral de fichadas de Planta (PostgreSQL local; dos defectos corregidos)
+
+**Alcance.** `clock/plantaSimulation.integration.test.ts` (opt-in `PLANTA_SIM_IT_DATABASE_URL`, base local descartable `clock_it_r49_sim` con las 82 migraciones) carga la configuración de R4.9C.1 por las API de administración con el reloj de pruebas en el 30/10/2026, da de alta las siete membresías desde el 02/11 (futuras), cierra por contrato el turno fijo previo de Roberto (`closeFixedAssignments`) y **activa** la rotación sólo en esa base. Fichadas por `/clock/photo-punch` con dispositivo real, post-proceso drenado y el mantenimiento real (`maintainClockPunchAttempts`) por ticks; `Date` controlado por el test, nunca el reloj del sistema. Storage primario en memoria, Google Drive bloqueado (0 llamadas), avisos sólo `SystemNotification` (el backend no envía correo ni push). Empleados y usuarios ficticios; un perfil ajeno (Oficina 08–16) y Juanjo fijo como control.
+
+**Parámetros de QA (no son política de Planta).** Entrada anterior 30; entrada posterior 10; salida anterior/posterior 20; absoluto 1200; mínimo, máximo informativo y aviso de olvido `NULL`. Las alertas que dependen de ellos describen el motor con esos valores.
+
+**Matriz.**
+
+| # | Escenario | Esperado | Obtenido |
+|---|---|---|---|
+| 1 | Ciclo 02/11–17/11, 9 perfiles, entrada −5 / salida +5 en 4, 8, 10 y 12 h | una jornada por bloque, bloque y plantilla correctos, minutos reales, sin alertas, incidentes ni avisos | OK (con F1); sin F1: 54 `POSIBLE_OLVIDO_SALIDA` falsos con aviso ALTA |
+| 2 | Entrada −29 / −30 / −31 (tolerancia 30) | sin alerta / sin alerta / `INGRESO_ANTICIPADO` −31 | OK; −31 avisa a RRHH (O1) |
+| 3 | Ingreso +10 / +11 | puntual / `INGRESO_TARDE` 11 con aviso a encargado y RRHH; la falta del bloque se resuelve sola | OK; borde O2 |
+| 4 | Salida −20 / +20 / −21 / +21 | sin alerta / sin alerta / `SALIDA_ANTICIPADA` / `SALIDA_TARDIA` | OK, minutos reales |
+| 5 | Nocturnos 17–03 y 19–07 con ticks toda la noche | fecha operativa del inicio, salida contra el día siguiente, sin alertas | OK (con F1) |
+| 6 | José viernes A 07–11 y 19–07 | dos jornadas independientes | OK (270 y 760 min, sin alertas) |
+| 7 | Cambio de bloque con B1 abierta | B1 `FALTA_SALIDA` sin salida ni horas, B2 abierta con su bloque, un aviso de falta de salida | OK (+ posible olvido legítimo de B1 a las 10 h) |
+| 8 | Domingo→lunes y alternancia A/B (Roberto, Carlos) | bloques sin superposición ni alertas | OK |
+| 9 | Juanchi tras V–S–D de sereno → lunes A descanso → martes 03–11 | salida del lunes 07:05 del domingo, sin trabajo no programado | OK |
+| 10 | Falta de ingreso, falta de salida, posible olvido | un incidente por bloque y un aviso; absoluto → `FALTA_SALIDA` 0 h; olvido una vez | OK (O3) |
+| 11 | Feriado sin y con convocatoria | sin obligación ni falta / bloque de la convocatoria; trabajo no convocado informativo | OK |
+| 12 | Franco y descanso de rotación con trabajo | sin falta; `ACTIVIDAD_EN_FRANCO` un aviso; informativa sin aviso | OK |
+| 13 | Juanjo fuera de rotación | legacy (sin bloque, falta de día), sábado informativo sin aviso | OK |
+| 14 | Novedades vs. fichado | esperado = bloques (José viernes 960); fichado = jornadas reales; horas por día = tramos | OK |
+| 15 | Idempotencia y concurrencia | un incidente/alerta y un aviso por hecho; mismo `requestId` una fichada | OK (con F2); sin F2: 2 avisos por alerta |
+| 16 | Snapshot con jornada abierta | la abierta conserva tolerancias; la siguiente usa las nuevas | OK |
+| — | Historia previa y perfiles ajenos | sin cambios | OK (hash idéntico; fijo de Roberto cerrado el 01/11 por contrato) |
+
+**Defectos corregidos.**
+- **F1 — posible olvido de salida antes del fin de la jornada.** Con plantilla y sin `missingOutAlertAfterMinutes`, el umbral era 600 min desde el ingreso para cualquier duración: los turnos de 12 h y los de 10 h con ingreso anticipado permitido avisaban "Posible olvido de salida" (prioridad ALTA) antes de su salida programada. Ahora el default es `max(600, duración de la plantilla + anticipación permitida + tolerancia de salida)`; se usa la duración y no la salida esperada porque ésta, en jornadas legacy nocturnas ingresadas después de medianoche, cae un día más tarde. Turnos de hasta ~9 h, sin plantilla y con aviso configurado: sin cambios. Afecta también el riesgo mostrado en Asistencia (mismo cálculo).
+- **F2 — aviso duplicado bajo concurrencia.** `checkMissingOutRisk` leía y luego hacía upsert: dos ticks simultáneos (dos procesos, p. ej. durante un deploy) creaban una alerta y **dos** avisos. Nueva `createShiftAlertIfAbsent`: `INSERT … ON CONFLICT DO NOTHING` sobre el único (`workShiftId`, `type`) y avisa sólo quien insertó; nunca reabre una alerta existente.
+
+**Observaciones (no corregidas; decisión de negocio o deuda).**
+- O1: un ingreso anticipado fuera de tolerancia avisa a RRHH/encargado; con entradas habituales más tempranas serán avisos frecuentes (pendiente ya registrado antes de R4.9).
+- O2: la falta de ingreso vence en `inicio + tolerancia` inclusive y la puntualidad redondea al minuto: una entrada a +10:00…+10:29 es puntual, pero si el tick corrió en ese mismo minuto ya se envió "Falta de ingreso" (se resuelve sola; el aviso queda). Ventana < 1 min.
+- O3: `FALTA_SALIDA` por límite absoluto deja `totalMinutes = 0`; por cambio de bloque, `null`. Ambas sin horas.
+- O4: `TimeEntry` NORMAL es el agregado diario canónico por persona y fecha (ligado al último tramo); los minutos por jornada están en `TimeSegment`. Un nocturno reparte horas en dos días; no es defecto.
+- O5: el aviso de olvido para turnos cortos sigue en 10 h desde el ingreso mientras `missingOutAlertAfterMinutes` siga `NULL`; los límites siguen sin política aprobada.
+
+**Evidencia.** Simulación 18/18 (ciclo completo 27 s); regresión en bases nuevas: `rotationClock`, `rotationAttendance`, `clockPunchPostProcess`, `clock`, `shiftRotationAdmin` 104/104; unitarias relacionadas 337/337 (caracterización incluida); backend 4379/4379 (263 opt-in omitidas); `typecheck` y `build` verdes. Sin schema ni migraciones. La suite nueva no está en CI (pendiente de autorización: `ci.yml` es configuración compartida).
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas
