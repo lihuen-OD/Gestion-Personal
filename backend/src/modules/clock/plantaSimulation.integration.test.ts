@@ -146,7 +146,14 @@ function planned(person: string, dateKey: string): Planned[] {
 }
 const durationOf = (block: Planned) => (block.end.getTime() - block.start.getTime()) / 60_000;
 
-describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra PostgreSQL local", () => {
+// Los escenarios avanzan el reloj con ticks del mantenimiento real (decenas de
+// consultas por tick): en el runner de CI tardan ~2,4× lo local y superaban el
+// timeout por defecto de 5 s. Un caso vencido sigue corriendo en segundo plano
+// (mueve el reloj y escribe) y arrastra a los siguientes; por eso un margen
+// explícito. El ciclo completo conserva el suyo (600 s).
+const SCENARIO_TIMEOUT_MS = 60_000;
+
+describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra PostgreSQL local", { timeout: SCENARIO_TIMEOUT_MS }, () => {
   let m: Modules;
   let holder: PrismaClient;
   let server: Server;
