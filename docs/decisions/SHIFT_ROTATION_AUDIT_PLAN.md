@@ -1800,6 +1800,18 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 
 **Evidencia.** Simulación 31/31; `rotationClock` + `clockPunchPostProcess` + `clock` 65/65 y `rotationAttendance` 16/16 (tras mover 6 casos a la nueva frontera); unitarias focalizadas 187/187; backend 4386/4386 (276 opt-in omitidas); `typecheck` y `build` verdes.
 
+### 25.20 R4.9D.3–D.4 — Conservación de datos al migrar Neon development (inventario, B1 y ensayo)
+
+**Migraciones pendientes en Neon development** (78 aplicadas; verificado con `migrate status`): `20261120180000` (elimina `ShiftRotationSlot` —0 filas, guarda que aborta antes del `DROP`— y crea `ShiftRotationDay`/`Block`), `20261121090000` (columna nullable + índice único de expresión creado antes de quitar el anterior; guardas pre/post), `20261124120000` (dos valores de enum) y `20261125120000` (columna JSONB nullable). Ningún valor de fila cambia; cada archivo corre en una transacción implícita (PostgreSQL 18.7). El código anterior (`4de624c`) es compatible con el schema nuevo (no usa la clave única eliminada; escribe incidentes con `createMany`/`ON CONFLICT DO NOTHING`); el código nuevo no lo es con el schema viejo: migrar antes de desplegar.
+
+**Inventario de conservación.** `backend/scripts/db/migration-inventory.ts` (núcleo en `src/shared/migrationInventory/`): `snapshot` en transacción READ ONLY con TimeZone UTC (por tabla preservada: filas, md5 de IDs y md5 de filas con las columnas preexistentes; filas de tablas eliminadas/creadas; valores de columnas nuevas; integridad: restricciones no validadas, duplicados de la clave de incidentes, huérfanos), `compare` (sale 1 ante cualquier diferencia no explicada) y `checksums`. Nunca guarda valores de filas; exige `--env-file` y `--expected-host` explícitos; no pisa evidencia y escribe con permisos 600. La prueba opt-in `migrationInventory.integration.test.ts` (`MIGRATION_INVENTORY_IT_DATABASE_URL`) ensaya el mecanismo en PostgreSQL local: historia → rollbacks versionados de las 4 → `prisma migrate deploy` → `compare` ok, y detecta una alteración posterior.
+
+**Línea base de development (2026-11-25, sólo lectura):** 33 tablas inventariadas, determinístico (dos tomas idénticas), 0 duplicados, 0 huérfanos, 0 restricciones no validadas, `migrate diff` contra el schema de sus 78 migraciones vacío. Identidad Neon VERIFICADA por la API (endpoint → rama `development`, no por defecto). `backend/.env` no define `DIRECT_URL`: el host directo se deriva quitando `-pooler`.
+
+**B1 (preexistente; requisito antes de producción).** En development, `_prisma_migrations.checksum` difiere del archivo del repositorio en `20260826120000_special_hour_rules_scope_calendar_priority` (versión nunca commiteada) y `20261002120000_add_hour_concept_work_treatment` (versión de `bcb98b4`, previa al bloque HC-GUARDIA de `6519619`; HC-GUARDIA no existe en development). Sin deriva estructural. Antes de producción: `checksums` contra producción y explicar cada diferencia; nunca editar migraciones aplicadas.
+
+**Ensayo (R4.9D.4, preparado, sin ejecutar):** rama hija temporal de `development` con cómputo propio, inventario antes, `migrate deploy` sólo contra esa rama, inventario después, `compare`, `migrate status` (82) y `migrate diff` vacío, lectura con el backend de `pre-development`; la rama se conserva hasta revisar el resultado.
+
 ---
 
 ## Anexo — respuestas directas a las 22 preguntas

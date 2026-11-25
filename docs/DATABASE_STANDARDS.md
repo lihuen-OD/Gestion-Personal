@@ -153,6 +153,11 @@ History rules, enforced by the CI `database` job (`docs/GIT_WORKFLOW.md` §5.2):
 - a new migration folder is `<14-digit timestamp>_<snake_case_name>`, contains `migration.sql`, and sorts after the latest migration of the target branch;
 - the full history must replay on a clean PostgreSQL and produce exactly `schema.prisma` (`prisma migrate diff --exit-code` empty). The only bootstrap allowed is the `HC-NORMAL` seed row that `20260824170000_normalize_hour_concepts` requires; a new migration must never depend on seed or environment-specific data.
 
+Applying migrations to a database with existing data (shared environments and production; added 2026-11-25, R4.9D.4):
+- take a data-preservation inventory before and after with `backend/scripts/db/migration-inventory.ts` (`snapshot` → apply → `snapshot` → `compare`). It runs read-only, stores only counts and md5 aggregates (no row values), and `compare` must report every pre-existing table identical (columns the migration adds are excluded and must stay NULL), no previous migration altered, dropped tables empty beforehand and the new structure present. Any unexplained difference fails the change;
+- rehearse first on a disposable copy that keeps the same data (a Neon child branch or a restored dump), never on the shared branch;
+- review `_prisma_migrations.checksum` against the sha256 of each repository `migration.sql` (`migration-inventory.ts checksums`). `migrate deploy` does not detect a migration that was applied from a different version of its file. Known case (B1, SHIFT_ROTATION_AUDIT_PLAN.md §25.20): Neon `development` applied other versions of `20260826120000_special_hour_rules_scope_calendar_priority` and `20261002120000_add_hour_concept_work_treatment`. Production must be checked and any mismatch explained before deploying; applied migrations are still never edited.
+
 Hand-written rollbacks (`backend/prisma/rollbacks/*.down.sql`, added 2026-10-09):
 - run in one transaction and lock the affected tables before checking anything;
 - **abort without changes** when dropping a column or table would lose information that cannot be re-derived — e.g. any history row (`20261008090000`), any archived row, or a persisted classification that differs from the criterion the previous code would re-derive (`20261008150000`);
