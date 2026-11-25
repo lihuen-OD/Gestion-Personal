@@ -3,10 +3,13 @@ import { argentinaDayRange, formatArgentinaDate, previousCalendarDateKey, todayA
 import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
 import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
 import { resolveRotationBlockCandidates, resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
+import { lateEntryThresholdMs } from "../shifts/workShiftEvaluation.service";
 import {
   claimAndNotifyInactivityIncidents,
   findEmployeeIdsExcludedByNovelty,
+  findEmployeeIdsWithInFlightEntryForObligation,
   findEmployeeIdsWithMatchingEntryEvidence,
+  findInFlightBlockObligationKeys,
   findSatisfiedBlockObligationKeys,
   INACTIVITY_CANDIDATE_SELECT,
   operationalDateRanges,
@@ -52,8 +55,10 @@ function reportAttendanceHistoryConflicts(conflicts: readonly MissingEntryReconc
   });
 }
 
+// R4.9C.2 O2: vence en el mismo instante en que la entrada deja de ser
+// puntual (Math.round de la puntualidad), nunca antes.
 function entryDeadline(candidate: WorkObligationCandidate): number {
-  return candidate.scheduledStartAt.getTime() + candidate.template.entryToleranceAfterMinutes * 60_000;
+  return candidate.scheduledStartAt.getTime() + lateEntryThresholdMs(candidate.template.entryToleranceAfterMinutes);
 }
 
 function isToleranceExpired(candidate: WorkObligationCandidate, now: Date): boolean {
@@ -116,15 +121,17 @@ async function resolvePendingMissingEntries(dateKey: string, candidates: WorkObl
  * TODOS sus candidatos — el día entero ya pasó, no hace falta filtrar por
  * tolerancia).
  */
-async function createMissingEntryIncidents(dateKey: string, candidates: WorkObligationCandidate[]): Promise<number> {
+async function createMissingEntryIncidents(dateKey: string, candidates: WorkObligationCandidate[], now: Date): Promise<number> {
   if (!candidates.length) return 0;
   const ranges = operationalDateRanges(dateKey);
   const employeeIds = candidates.map((candidate) => candidate.employeeId);
+  // O2: intentos en curso ANTES que las fichadas (orden que cierra la carrera).
+  const inFlight = await findEmployeeIdsWithInFlightEntryForObligation(candidates, now);
   const [hasEntryEvidence, excludedByNovelty] = await Promise.all([
     findEmployeeIdsWithMatchingEntryEvidence(candidates),
     findEmployeeIdsExcludedByNovelty(employeeIds, ranges.operationalDate),
   ]);
-  const missing = candidates.filter((candidate) => !hasEntryEvidence.has(candidate.employeeId) && !excludedByNovelty.has(candidate.employeeId));
+  const missing = candidates.filter((candidate) => !inFlight.has(candidate.employeeId) && !hasEntryEvidence.has(candidate.employeeId) && !excludedByNovelty.has(candidate.employeeId));
   if (!missing.length) return 0;
 
   const templateById = new Map(missing.map((candidate) => [candidate.employeeId, candidate.template]));
@@ -193,11 +200,14 @@ const blockObservation = (candidate: BlockCandidate) =>
  *    revierte ambos). Los bloques futuros nunca participan.
  * Los avisos van después, con el reclamo atómico compartido.
  */
-async function createMissingBlockIncidents(due: readonly BlockCandidate[]): Promise<BlockOutcome> {
+async function createMissingBlockIncidents(due: readonly BlockCandidate[], now: Date): Promise<BlockOutcome> {
   const outcome: BlockOutcome = { created: 0, reconciliationRequired: [] };
   if (!due.length) return outcome;
 
   const dateKeys = [...new Set(due.map((candidate) => candidate.block.operationalDate))];
+  // O2: intentos en curso ANTES que las fichadas; sólo se pospone el bloque
+  // al que se asignaría cada intento, nunca los demás bloques del día.
+  const inFlight = await findInFlightBlockObligationKeys(due.map((candidate) => candidate.block), now);
   const [satisfied, ...excludedPerDate] = await Promise.all([
     findSatisfiedBlockObligationKeys(due.map((candidate) => candidate.block)),
     ...dateKeys.map((dateKey) =>
@@ -208,7 +218,7 @@ async function createMissingBlockIncidents(due: readonly BlockCandidate[]): Prom
     ),
   ]);
   const excludedByDate = new Map(dateKeys.map((dateKey, index) => [dateKey, excludedPerDate[index]!]));
-  const missing = due.filter((candidate) => !satisfied.has(candidate.block.obligationKey) && !excludedByDate.get(candidate.block.operationalDate)!.has(candidate.employeeId));
+  const missing = due.filter((candidate) => !inFlight.has(candidate.block.obligationKey) && !satisfied.has(candidate.block.obligationKey) && !excludedByDate.get(candidate.block.operationalDate)!.has(candidate.employeeId));
   if (!missing.length) return outcome;
 
   const persisted: BlockCandidate[] = [];
@@ -340,9 +350,9 @@ export async function checkMissingExpectedEntries(now: Date = new Date()): Promi
   const blockCandidates = [...yesterdayTail, ...candidates.filter(isBlockCandidate)];
 
   const due = fixedCandidates.filter((candidate) => isToleranceExpired(candidate, now));
-  const created = await createMissingEntryIncidents(dateKey, due);
+  const created = await createMissingEntryIncidents(dateKey, due, now);
   const blockDue = blockCandidates.filter((candidate) => isToleranceExpired(candidate, now));
-  const blockOutcome = await createMissingBlockIncidents(blockDue);
+  const blockOutcome = await createMissingBlockIncidents(blockDue, now);
   reportAttendanceHistoryConflicts(blockOutcome.reconciliationRequired);
 
   // Etapa 15M.19B §Lifecycle: resolver también a los candidatos de hoy que
@@ -381,11 +391,11 @@ export async function checkMissingEntriesForElapsedDate(
   if (!candidates.length) return { created: 0, resolved: 0 };
   const fixedCandidates = candidates.filter((candidate) => !isBlockCandidate(candidate));
   const blockCandidates = candidates.filter(isBlockCandidate);
-  const created = await createMissingEntryIncidents(dateKey, fixedCandidates);
+  const created = await createMissingEntryIncidents(dateKey, fixedCandidates, now);
   // R4.3b: aun en una fecha elapsada, sólo bloques efectivamente vencidos
   // (uno que empieza cerca de la medianoche con tolerancia larga lo toma el
   // tick intradía del día siguiente).
-  const blockOutcome = await createMissingBlockIncidents(blockCandidates.filter((candidate) => isToleranceExpired(candidate, now)));
+  const blockOutcome = await createMissingBlockIncidents(blockCandidates.filter((candidate) => isToleranceExpired(candidate, now)), now);
   reportAttendanceHistoryConflicts(blockOutcome.reconciliationRequired);
   const resolved = (await resolvePendingMissingEntries(dateKey, fixedCandidates)) + (await resolvePendingBlockIncidents(blockCandidates));
   return {

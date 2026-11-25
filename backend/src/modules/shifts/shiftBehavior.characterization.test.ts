@@ -38,6 +38,7 @@ import { toTemplateRef } from "./workShiftEvaluationRunner";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    clockPunchAttempt: { findMany: vi.fn(async () => []) }, // R4.9C.2 O2: sin fichadas en curso
     // R4.3b: sin membresías de rotación (camino legacy).
     shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     shiftAssignment: { findMany: vi.fn(), findUnique: vi.fn() },
@@ -97,7 +98,7 @@ const SUNDAY = "2026-11-22";
 const MONDAY_TO_FRIDAY = [1, 2, 3, 4, 5];
 
 /** Instante real a partir de fecha + hora de Argentina (UTC-3, sin horario de verano). */
-const art = (dateKey: string, hhmm: string) => new Date(`${dateKey}T${hhmm}:00.000-03:00`);
+const art = (dateKey: string, hhmm: string) => new Date(`${dateKey}T${hhmm.length === 5 ? `${hhmm}:00.000` : hhmm}-03:00`); // R4.9C.2 O2: admite "HH:MM:SS"
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -285,10 +286,12 @@ describe("A1 — turno fijo Oficina (L–V 06:30–15:00, 510 min, tolerancias 1
     expect(db.employeeDayOff.findMany).not.toHaveBeenCalled();
   });
 
-  it("falta de ingreso: 06:44 todavía no vence; 06:45 sin fichada sí (deadline = inicio + 15)", async () => {
+  it("falta de ingreso: 06:45 todavía no vence; 06:45:30 sin fichada sí (deadline = frontera de puntualidad, inicio + 15:30; R4.9C.2 O2)", async () => {
     givenAssignments(rows);
     expect((await checkMissingExpectedEntries(art(MONDAY, "06:44"))).due).toBe(0);
-    const result = await checkMissingExpectedEntries(art(MONDAY, "06:45"));
+    // R4.9C.2 O2: vence en la frontera de puntualidad (Math.round): +15:00 todavía es puntual.
+    expect((await checkMissingExpectedEntries(art(MONDAY, "06:45"))).due).toBe(0);
+    const result = await checkMissingExpectedEntries(art(MONDAY, "06:45:30"));
     expect(result).toMatchObject({ candidates: 1, due: 1, created: 1 });
     expect(incidentObservations()[0]).toContain("OF-01 (06:30)");
   });
@@ -569,7 +572,7 @@ describe("A6 — dos turnos HABILITADOS aplicables el mismo día (Mañana 07–1
 
   it("COMPORTAMIENTO ACTUAL (bug conocido P1): quien trabaja de tarde recibe falta de ingreso de la mañana a las 07:10 y se notifica", async () => {
     givenAssignments(rows);
-    const result = await checkMissingExpectedEntries(art(MONDAY, "07:10"));
+    const result = await checkMissingExpectedEntries(art(MONDAY, "07:10:30")); // R4.9C.2 O2
     expect(result).toMatchObject({ candidates: 1, due: 1, created: 1 });
     expect(incidentObservations()).toEqual([expect.stringContaining("PLANTA-M (07:00)")]);
     expect(notificationMessages()).toEqual([expect.stringContaining("PLANTA-M (07:00)")]);
@@ -694,10 +697,10 @@ describe("A7 — turnos que cruzan medianoche (17–03, 19–07, 23–07)", () =
     expect(await exitAlerts(NOCHE, art(MONDAY, "23:00"), art(TUESDAY, "07:11"))).toEqual(["SALIDA_TARDIA"]);
   });
 
-  it("falta de ingreso del turno 23:00: vence a las 23:10 del mismo día operativo", async () => {
+  it("falta de ingreso del turno 23:00: vence a las 23:10:30 del mismo día operativo (R4.9C.2 O2)", async () => {
     givenAssignments([assignment(NOCHE, { weekdays: [] })]);
-    expect((await checkMissingExpectedEntries(art(MONDAY, "23:09"))).due).toBe(0);
-    expect((await checkMissingExpectedEntries(art(MONDAY, "23:10"))).due).toBe(1);
+    expect((await checkMissingExpectedEntries(art(MONDAY, "23:10"))).due).toBe(0); // R4.9C.2 O2: +10:00 todavía es puntual
+    expect((await checkMissingExpectedEntries(art(MONDAY, "23:10:30"))).due).toBe(1);
   });
 
   it("Novedades: minutos atribuidos a la fecha operativa de inicio (600 / 720 / 480)", () => {
@@ -865,7 +868,7 @@ describe("R1.1-D — evidencia de ingreso por plantilla aislada (José viernes A
 
   it("COMPORTAMIENTO ACTUAL (cambia en R4.3a): el incidente de falta de ingreso es uno por empleado y día — createMany con skipDuplicates sobre (employeeId, operationalDate)", async () => {
     givenAssignments([assignment(BLOCK_07, { weekdays: [] })]);
-    await checkMissingExpectedEntries(art(PLANTA_FRIDAY, "07:10"));
+    await checkMissingExpectedEntries(art(PLANTA_FRIDAY, "07:10:30")); // R4.9C.2 O2
     const call = db.attendanceInactivityIncident.createMany.mock.calls[0]![0];
     expect(call.skipDuplicates).toBe(true);
     expect(call.data).toHaveLength(1);

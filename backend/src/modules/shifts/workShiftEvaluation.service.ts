@@ -209,6 +209,18 @@ export function evaluateEntryPunctuality(match: ShiftMatchResult): EntryPunctual
   };
 }
 
+/**
+ * R4.9C.2 O2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.19): primer instante, en ms
+ * desde el inicio programado, en que un ingreso es TARDÍO con la puntualidad
+ * vigente. `differenceInMinutes` redondea (Math.round, mitad hacia arriba),
+ * así que `lateArrival` (redondeado > tolerancia) equivale a
+ * Δ ≥ tolerancia + 0,5 min. La falta de ingreso vence en este mismo instante:
+ * nunca antes de que la entrada deje de ser puntual.
+ */
+export function lateEntryThresholdMs(entryToleranceAfterMinutes: number): number {
+  return (entryToleranceAfterMinutes * 60 + 30) * 1000;
+}
+
 // Etapa 13A, caso H del pedido ("entrada muy anticipada", ej. turno 08:30
 // con entrada 04:00): un ingreso anticipado sigue siendo INGRESO_ANTICIPADO
 // sin importar la magnitud (nunca se reclasifica como turno ajeno ni como

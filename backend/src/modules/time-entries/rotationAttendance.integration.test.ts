@@ -25,7 +25,8 @@ type Modules = {
 };
 
 /** Instante ART (UTC−3, sin horario de verano). */
-const at = (dateKey: string, time: string) => new Date(`${dateKey}T${time}:00-03:00`);
+// R4.9C.2 O2: admite segundos ("07:10:30") para las fronteras de vencimiento.
+const at = (dateKey: string, time: string) => new Date(`${dateKey}T${time.length === 5 ? `${time}:00` : time}-03:00`);
 const day = (dateKey: string) => new Date(`${dateKey}T00:00:00.000Z`);
 
 // Semana A: lunes 02/11/2026 (ancla). Semana B: lunes 09/11/2026.
@@ -146,11 +147,11 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
   });
 
   it("1 — José sin ninguna entrada: una falta por bloque al vencer cada tolerancia, con su aviso", async () => {
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:09"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:29.999"));
     expect(await incidentsOf(jose(), FRI_A)).toHaveLength(0);
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:30"));
     expect(starts(await incidentsOf(jose(), FRI_A))).toEqual([at(FRI_A, "07:00").toISOString()]);
-    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10"));
+    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30"));
     expect(result).not.toHaveProperty("reconciliationRequired");
     const rows = await incidentsOf(jose(), FRI_A);
     expect(starts(rows)).toEqual([at(FRI_A, "07:00").toISOString(), at(FRI_A, "19:00").toISOString()]);
@@ -184,9 +185,9 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
   it("4 — ambos procesos en paralelo (y repetidos): sin duplicados ni bloques perdidos, un aviso por incidente", async () => {
     await Promise.all([
       m.inactivity.detectAttendanceInactivity(FRI_A),
-      m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10")),
+      m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30")),
       m.missing.checkMissingEntriesForElapsedDate(FRI_A, at(SAT_A, "01:00")),
-      m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10")),
+      m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30")),
       m.inactivity.detectAttendanceInactivity(FRI_A),
     ]);
     expect(starts(await incidentsOf(jose(), FRI_A))).toEqual([at(FRI_A, "07:00").toISOString(), at(FRI_A, "19:00").toISOString()]);
@@ -206,18 +207,18 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
     expect(await noticesOf(jose(), FRI_A)).toHaveLength(2);
   });
 
-  it("6 — entrada del primer bloque (07:02) no cumple el segundo: el 19:00 vence a las 19:10", async () => {
+  it("6 — entrada del primer bloque (07:02) no cumple el segundo: el 19:00 vence a las 19:10:30 (frontera de puntualidad, O2)", async () => {
     await punchIn(jose(), at(FRI_A, "07:02"));
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:30"));
     expect(await incidentsOf(jose(), FRI_A)).toHaveLength(0);
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:09"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:29.999"));
     expect(await incidentsOf(jose(), FRI_A)).toHaveLength(0);
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30"));
     expect(starts(await incidentsOf(jose(), FRI_A))).toEqual([at(FRI_A, "19:00").toISOString()]);
   });
 
   it("7 — entrada posterior del segundo bloque resuelve SÓLO su incidente", async () => {
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30"));
     expect(await incidentsOf(jose(), FRI_A)).toHaveLength(2);
     await punchIn(jose(), at(FRI_A, "19:25"));
     const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:26"));
@@ -254,7 +255,7 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
   });
 
   it("10 — Juanjo (fijo, no miembro): un incidente de día, legacy intacto", async () => {
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:30"));
     await m.inactivity.detectAttendanceInactivity(FRI_A);
     const rows = await incidentsOf(juanjo(), FRI_A);
     expect(starts(rows)).toEqual([null]);
@@ -275,7 +276,7 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
     const dayIncident = await holder.attendanceInactivityIncident.create({
       data: { employeeId: jose(), operationalDate: day(FRI_A), observation: "día", status: "RESUELTA", reviewedAt: at(FRI_A, "12:00"), reviewedByUserId: rrhhId, reviewNote: "justificado", notifiedAt: at(FRI_A, "07:10") },
     });
-    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10"));
+    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30"));
     expect(result.reconciliationRequired).toEqual([
       { employeeId: jose(), dateKey: FRI_A, dayIncidentId: dayIncident.id, blockKeys: [`${jose()}|${at(FRI_A, "07:00").toISOString()}`, `${jose()}|${at(FRI_A, "19:00").toISOString()}`] },
     ]);
@@ -291,7 +292,7 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
 
   it("día DESCARTADO: tampoco se crean faltas por bloque", async () => {
     await holder.attendanceInactivityIncident.create({ data: { employeeId: jose(), operationalDate: day(FRI_A), observation: "día", status: "DESCARTADA" } });
-    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10"));
+    const result = await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:30"));
     expect(result.reconciliationRequired).toHaveLength(1);
     expect(await incidentsOf(jose(), FRI_A)).toHaveLength(1);
   });
@@ -300,14 +301,14 @@ describe.skipIf(!url)("R4.3b — asistencia por bloque de rotación contra Postg
     const dayIncident = await holder.attendanceInactivityIncident.create({ data: { employeeId: jose(), operationalDate: day(FRI_A), observation: "día", notifiedAt: at(FRI_A, "07:10") } });
     await m.missing.checkMissingExpectedEntries(at(FRI_A, "06:00"));
     expect((await holder.attendanceInactivityIncident.findUniqueOrThrow({ where: { id: dayIncident.id } })).status).toBe("PENDIENTE"); // nunca por bloques futuros
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "07:10:30"));
     let rows = await incidentsOf(jose(), FRI_A);
     expect(rows.map((row) => [row.scheduledStartAt?.toISOString() ?? null, row.status])).toEqual([
       [at(FRI_A, "07:00").toISOString(), "PENDIENTE"],
       [null, "RESUELTA"],
     ]);
     expect(rows[1]).toMatchObject({ reviewedByUserId: null, reviewNote: "Reemplazado por las faltas de ingreso por bloque de la programación por rotación." });
-    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10"));
+    await m.missing.checkMissingExpectedEntries(at(FRI_A, "19:10:30"));
     rows = await incidentsOf(jose(), FRI_A);
     expect(rows.map((row) => [row.scheduledStartAt?.toISOString() ?? null, row.status])).toEqual([
       [at(FRI_A, "07:00").toISOString(), "PENDIENTE"],

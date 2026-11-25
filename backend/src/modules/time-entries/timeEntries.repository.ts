@@ -880,7 +880,10 @@ export const timeEntriesRepository = {
   },
 
   createClockPunchAttempt(input: { requestId: string; employeeId: string; deviceId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
-    return prisma.clockPunchAttempt.create({ data: input });
+    // R4.9C.2 O2: `startedAt` con el reloj de la aplicación, el mismo de la
+    // fichada, del TTL (service y expireClockPunchAttempts) y del detector de
+    // falta de ingreso, que ubica el intento en curso en su obligación.
+    return prisma.clockPunchAttempt.create({ data: { ...input, startedAt: new Date() } });
   },
 
   findClockPunchAttempt(requestId: string) {

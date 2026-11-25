@@ -6,6 +6,7 @@ import { checkMissingExpectedEntries } from "./missingEntry.service";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    clockPunchAttempt: { findMany: vi.fn(async () => []) },
     // R4.3b: sin membresías de rotación (camino legacy).
     shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     employee: { findMany: vi.fn() },
@@ -133,6 +134,34 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
     const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:11:00.000Z"));
 
     expect(result.created).toBe(0);
+  });
+
+  describe("R4.9C.2 O2 — frontera de puntualidad e ingreso en curso (legacy)", () => {
+    const attempts = () => (prisma as unknown as { clockPunchAttempt: { findMany: Mock } }).clockPunchAttempt.findMany;
+
+    it("vence recién a +10:30 (Math.round de la puntualidad): +10:29.999 no está vencido", async () => {
+      mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
+      mockedPrisma.employee.findMany.mockResolvedValue([employeeRow("employee-1")]);
+      expect(await checkMissingExpectedEntries(new Date("2026-09-18T11:10:29.999Z"))).toMatchObject({ due: 0, created: 0 });
+      expect(await checkMissingExpectedEntries(new Date("2026-09-18T11:10:30.000Z"))).toMatchObject({ due: 1, created: 1 });
+    });
+
+    it("intento PROCESSING de ESTA ocurrencia: se pospone (sin incidente) y los intentos se leen ANTES que las fichadas", async () => {
+      mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
+      attempts().mockResolvedValueOnce([{ employeeId: "employee-1", startedAt: new Date("2026-09-18T11:10:20.000Z") }]);
+      const result = await checkMissingExpectedEntries(new Date("2026-09-18T11:10:31.000Z"));
+      expect(result.created).toBe(0);
+      expect(mockedPrisma.attendanceInactivityIncident.createMany).not.toHaveBeenCalled();
+      expect(attempts().mock.invocationCallOrder[0]).toBeLessThan(mockedPrisma.attendancePunch.findMany.mock.invocationCallOrder[0]!);
+      expect(attempts()).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ punchType: "INGRESO", status: "PROCESSING" }) }));
+    });
+
+    it("intento PROCESSING de OTRA ocurrencia (el día anterior): no pospone la falta de hoy", async () => {
+      mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
+      mockedPrisma.employee.findMany.mockResolvedValue([employeeRow("employee-1")]);
+      attempts().mockResolvedValueOnce([{ employeeId: "employee-1", startedAt: new Date("2026-09-17T11:05:00.000Z") }]);
+      expect((await checkMissingExpectedEntries(new Date("2026-09-18T11:10:31.000Z"))).created).toBe(1);
+    });
   });
 
   it("tolerancia vencida pero YA fichó (evidencia via attendancePunch): NO genera falta de ingreso", async () => {

@@ -14,6 +14,7 @@ import {
   isShiftAssignmentActiveOnDate,
   isShiftAssignmentApplicableForInstant,
   isShiftAssignmentApplicableOnWeekday,
+  lateEntryThresholdMs,
   matchShiftForEmployee,
   type ShiftTemplateRef,
   workShiftOperationalDateKey,
@@ -883,5 +884,22 @@ describe("workShiftOperationalDateKey — fecha operativa de una jornada (EMPLOY
 
   it("sin turno adoptado: fecha argentina del ingreso (21:30 ART del 10 = 00:30 UTC del 11)", () => {
     expect(workShiftOperationalDateKey(new Date("2026-11-11T00:30:00.000Z"), null)).toBe("2026-11-10");
+  });
+});
+
+describe("lateEntryThresholdMs — R4.9C.2 O2 (vencimiento de falta = frontera de puntualidad)", () => {
+  it("tolerancia 10: +10:29.999 puntual y no vencido; +10:30.000 tardío y vencido", () => {
+    expect(lateEntryThresholdMs(10)).toBe(630_000);
+  });
+
+  it("para cualquier desfase, 'tardío' de evaluateEntryPunctuality ⇔ desfase ≥ umbral (tolerancias 0, 10 y 30)", () => {
+    for (const tolerance of [0, 10, 30]) {
+      const shift = template({ id: `t${tolerance}`, code: "T", startTime: "07:00", endTime: "15:00", entryToleranceAfterMinutes: tolerance });
+      const threshold = lateEntryThresholdMs(tolerance);
+      for (const offset of [threshold - 60_000, threshold - 1, threshold, threshold + 1, threshold + 29_999, threshold - 30_000]) {
+        const late = evaluateEntryPunctuality({ case: "ENABLED", template: shift, differenceMinutes: Math.round(offset / 60_000) } as Parameters<typeof evaluateEntryPunctuality>[0]).lateArrival;
+        expect(late, `tol ${tolerance}, +${offset} ms`).toBe(offset >= threshold);
+      }
+    }
   });
 });

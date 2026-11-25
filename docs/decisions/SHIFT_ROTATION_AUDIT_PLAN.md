@@ -1776,12 +1776,29 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 
 **Observaciones (no corregidas; decisión de negocio o deuda).**
 - O1: un ingreso anticipado fuera de tolerancia avisa a RRHH/encargado; con entradas habituales más tempranas serán avisos frecuentes (pendiente ya registrado antes de R4.9).
-- O2: la falta de ingreso vence en `inicio + tolerancia` inclusive y la puntualidad redondea al minuto: una entrada a +10:00…+10:29 es puntual, pero si el tick corrió en ese mismo minuto ya se envió "Falta de ingreso" (se resuelve sola; el aviso queda). Ventana < 1 min.
+- O2: la falta de ingreso vence en `inicio + tolerancia` inclusive y la puntualidad redondea al minuto: una entrada a +10:00…+10:29 es puntual, pero si el tick corrió en ese mismo minuto ya se envió "Falta de ingreso" (se resuelve sola; el aviso queda). Ventana < 1 min. **Corregida en §25.19.**
 - O3: `FALTA_SALIDA` por límite absoluto deja `totalMinutes = 0`; por cambio de bloque, `null`. Ambas sin horas.
 - O4: `TimeEntry` NORMAL es el agregado diario canónico por persona y fecha (ligado al último tramo); los minutos por jornada están en `TimeSegment`. Un nocturno reparte horas en dos días; no es defecto.
 - O5: el aviso de olvido para turnos cortos sigue en 10 h desde el ingreso mientras `missingOutAlertAfterMinutes` siga `NULL`; los límites siguen sin política aprobada.
 
 **Evidencia.** Simulación 18/18 (ciclo completo 27 s); regresión en bases nuevas: `rotationClock`, `rotationAttendance`, `clockPunchPostProcess`, `clock`, `shiftRotationAdmin` 104/104; unitarias relacionadas 337/337 (caracterización incluida); backend 4379/4379 (263 opt-in omitidas); `typecheck` y `build` verdes. Sin schema ni migraciones. La suite nueva no está en CI (pendiente de autorización: `ci.yml` es configuración compartida).
+
+### 25.19 R4.9C.2 — Corrección de O2: falta de ingreso falsa en el vencimiento de la tolerancia
+
+**Diagnóstico.** Dos causas independientes. (1) *Precisión:* la falta vencía en `inicio + tolerancia` (ms, inclusive) y la puntualidad marca tardío sólo si `Math.round(Δ/60 000) > tolerancia`, es decir desde `inicio + tolerancia + 30 s`; una entrada a +10:00…+10:29.999 era puntual pero ya podía tener falta y aviso. (2) *Carrera:* el fichador confirma `ClockPunchAttempt` (PROCESSING), toma el instante de la fichada, sube la foto y recién después confirma `AttendancePunch`; un tick entre ambos no veía la fichada. El lock de jornada del detector no serializa con la entrada (que no lo toma) y la idempotencia (`skipDuplicates`, reclamo atómico de `notifiedAt`) evita duplicados, no falsos positivos; la resolución automática del tick siguiente no retira el aviso.
+
+**Corrección (sin schema, sin cambios de puntualidad ni de alertas).**
+- A — `lateEntryThresholdMs(tol) = (tol·60 + 30)·1000` en `workShiftEvaluation.service.ts`, la frontera exacta de `Math.round`; `entryDeadline` la usa (rotación y legacy). Una falta real se crea 30 s después que antes; nunca mientras la entrada sería puntual.
+- B — Antes de leer las fichadas, los dos caminos de creación (`createMissingEntryIncidents`, `createMissingBlockIncidents`) leen los intentos de INGRESO `PROCESSING` dentro del TTL (`CLOCK_ATTEMPT_PROCESSING_TTL_MS`) y los asignan a su obligación con la MISMA lógica que la evidencia (`closestOccurrence` legacy; `assignInstantToBlock` sobre bloques efectivos en rotación). Sólo esa obligación se pospone; los demás bloques vencidos del día (José viernes A) se crean igual. Un intento FAILED o vencido por TTL deja de posponer.
+- `ClockPunchAttempt.startedAt` se escribe con el reloj de la aplicación (antes `DEFAULT now()` de la base): es el mismo reloj de la fichada, del TTL del servicio, de `expireClockPunchAttempts` y del detector.
+
+**Por qué no hace falta otro lock.** Si una fichada es puntual (instante < vencimiento ≤ inicio del chequeo), su intento ya estaba confirmado antes de que el detector leyera intentos: o lo ve PROCESSING (pospone), o ya COMPLETED y su `AttendancePunch` confirmado en la misma transacción (la lectura posterior de fichadas lo ve). Un intento que aparece después de esa lectura tomó su instante después del vencimiento: es tardío y su falta es legítima (coherente con `INGRESO_TARDE`). Supuesto: relojes de instancias sincronizados (NTP); un desfase sólo puede acortar la frontera en ese desfase.
+
+**Pruebas.** Unitarias: equivalencia frontera ⇔ puntualidad (tolerancias 0/10/30, ±1 ms), postergación legacy ligada a su ocurrencia y por bloque (sólo el bloque en curso; intentos leídos antes que fichadas). PostgreSQL (`plantaSimulation`, fichadas reales con la subida de la foto retenida): frontera rotación + legacy (+10:29.999 / +10:30, puntual +10:20, tardío +10:30 coherente), seis intercalaciones del detector (antes del chequeo, tras leer intentos, tras leer fichadas, antes de persistir, antes del reclamo de avisos, después) con verificación de que cada gancho se disparó, nocturno 17–03, doble bloque, intento fallido, TTL exacto (60 s pospone; 60,001 s el mantenimiento lo vence y crea la falta), chequeos paralelos y legacy (Juanjo). Control negativo sin la corrección: 13/14 casos O2 fallan (sólo pasa la intercalación «antes del chequeo», esperada). Tests existentes con el vencimiento en el minuto exacto se movieron a la nueva frontera, marcados O2, incluidos 4 de la caracterización (precedente R4.5/R4.6; siguen 65).
+
+**Límite.** Si una fichada tarda más que el TTL (60 s) en confirmarse, el mantenimiento vence su intento y la falta se crea y avisa; al confirmarse, el tick siguiente la resuelve, pero el aviso queda (cubierto por la prueba de TTL).
+
+**Evidencia.** Simulación 31/31; `rotationClock` + `clockPunchPostProcess` + `clock` 65/65 y `rotationAttendance` 16/16 (tras mover 6 casos a la nueva frontera); unitarias focalizadas 187/187; backend 4386/4386 (276 opt-in omitidas); `typecheck` y `build` verdes.
 
 ---
 

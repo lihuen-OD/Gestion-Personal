@@ -1,4 +1,5 @@
 import { EmployeeStatus } from "@prisma/client";
+import { env } from "../../config/env";
 import { prisma } from "../../shared/prisma/client";
 import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArgentinaDate, nextCalendarDateKey, previousCalendarDateKey } from "../../shared/datetime/argentinaTime";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
@@ -160,6 +161,60 @@ export async function findSatisfiedBlockObligationKeys(blocks: ReadonlyArray<Exp
     if (assignment.kind === "ASSIGNED") satisfied.add(assignment.block.obligationKey);
   }
   return satisfied;
+}
+
+/**
+ * R4.9C.2 O2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.19): fichadas de INGRESO EN
+ * CURSO. El fichador confirma el `ClockPunchAttempt` (PROCESSING) ANTES de
+ * tomar el instante de la fichada, subir la foto y confirmar el
+ * `AttendancePunch`. Un detector que, a partir del vencimiento, lee PRIMERO
+ * los intentos y DESPUÉS las fichadas no puede perder una fichada puntual:
+ * si su intento no estaba visible en la primera lectura, la fichada tomó su
+ * instante después de esa lectura (≥ vencimiento) y es tardía; si estaba
+ * PROCESSING, esa obligación se pospone; si ya estaba COMPLETED, la fichada
+ * ya estaba confirmada (misma transacción) y la segunda lectura la ve.
+ * Sólo cuentan intentos dentro del TTL (vencido el TTL el mantenimiento los
+ * pasa a FAILED). `startedAt` usa el reloj de la aplicación, el mismo de la
+ * fichada y de este chequeo.
+ */
+async function inFlightEntryAttempts(employeeIds: string[], asOf: Date) {
+  if (!employeeIds.length) return [];
+  return prisma.clockPunchAttempt.findMany({
+    where: { employeeId: { in: employeeIds }, punchType: "INGRESO", status: "PROCESSING", startedAt: { gte: new Date(asOf.getTime() - env.CLOCK_ATTEMPT_PROCESSING_TTL_MS) } },
+    select: { employeeId: true, startedAt: true },
+  });
+}
+
+/** O2, legacy: empleados cuyo intento en curso corresponde a ESTA obligación (misma ocurrencia que la evidencia precisa). */
+export async function findEmployeeIdsWithInFlightEntryForObligation(candidates: WorkObligationCandidate[], asOf: Date): Promise<Set<string>> {
+  const attempts = await inFlightEntryAttempts([...new Set(candidates.map((candidate) => candidate.employeeId))], asOf);
+  const deferred = new Set<string>();
+  for (const candidate of candidates) {
+    const matches = attempts.some((attempt) => attempt.employeeId === candidate.employeeId
+      && closestOccurrence(attempt.startedAt, candidate.template.startTime).scheduledAt.getTime() === candidate.scheduledStartAt.getTime());
+    if (matches) deferred.add(candidate.employeeId);
+  }
+  return deferred;
+}
+
+/** O2, rotación: `obligationKey` del bloque al que se asignaría cada intento en curso (misma asignación que la evidencia por bloque). */
+export async function findInFlightBlockObligationKeys(blocks: ReadonlyArray<ExpectedBlock<LoadedRotationTemplate>>, asOf: Date): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const attempts = await inFlightEntryAttempts([...new Set(blocks.map((block) => block.employeeId))], asOf);
+  if (!attempts.length) return keys;
+  const employeeIds = [...new Set(attempts.map((attempt) => attempt.employeeId))];
+  const dates = new Set<string>();
+  for (const block of blocks.filter((candidate) => employeeIds.includes(candidate.employeeId))) {
+    dates.add(previousCalendarDateKey(block.operationalDate));
+    dates.add(block.operationalDate);
+    dates.add(nextCalendarDateKey(block.operationalDate));
+  }
+  const { blocksByEmployee } = await effectiveBlocksAround(employeeIds, [...dates]);
+  for (const attempt of attempts) {
+    const assignment = assignInstantToBlock(attempt.startedAt, blocksByEmployee.get(attempt.employeeId) ?? []);
+    if (assignment.kind === "ASSIGNED") keys.add(assignment.block.obligationKey);
+  }
+  return keys;
 }
 
 /**

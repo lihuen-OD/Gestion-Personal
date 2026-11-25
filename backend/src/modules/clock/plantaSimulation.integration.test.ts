@@ -30,10 +30,28 @@ import { PLANTA_ANCHOR, PLANTA_CREWS, PLANTA_EMPLOYEES, PLANTA_EXPECTED_TWO_WEEK
 const url = process.env.PLANTA_SIM_IT_DATABASE_URL;
 
 const external = vi.hoisted(() => ({ drive: 0 }));
+// O2: retiene la PRÓXIMA subida de foto (la fichada queda con su intento PROCESSING y su instante ya tomado).
+type UploadHold = { entered: () => void; release: Promise<void>; fail: boolean };
+const uploadGate = vi.hoisted(() => ({ next: null as UploadHold | null }));
 
-vi.mock("../../shared/storage/neonObjectStorage.provider", async () => ({
-  neonObjectStorageProvider: (await import("../../shared/testing/inMemoryObjectStorage")).inMemoryObjectStorage.provider,
-}));
+vi.mock("../../shared/storage/neonObjectStorage.provider", async () => {
+  const { provider } = (await import("../../shared/testing/inMemoryObjectStorage")).inMemoryObjectStorage;
+  return {
+    neonObjectStorageProvider: {
+      ...provider,
+      async upload(input: Parameters<typeof provider.upload>[0]) {
+        const hold = uploadGate.next;
+        if (hold) {
+          uploadGate.next = null;
+          hold.entered();
+          await hold.release;
+          if (hold.fail) throw new Error("storage no disponible (simulado)");
+        }
+        return provider.upload(input);
+      },
+    },
+  };
+});
 vi.mock("../../shared/storage/googleDriveStorage.provider", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../shared/storage/googleDriveStorage.provider")>();
   const blocked = async () => {
@@ -485,7 +503,10 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     await tick(at(TUE_A, "07:09"));
     expect((await punch(jose, "IN", at(TUE_A, "07:10"))).status).toBe(201);
     await punch(jose, "OUT", at(TUE_A, "15:00"));
+    // O2 (§25.19): la falta vence a +10:30, la misma frontera en que la entrada pasa a ser tardía.
     await tick(at(WED_A, "07:10"));
+    expect(await incidentsOf(jose, WED_A)).toEqual([]);
+    await tick(new Date(at(WED_A, "07:10").getTime() + 30_000));
     expect((await incidentsOf(jose, WED_A)).map((row) => [row.scheduledStartAt?.toISOString(), row.status])).toEqual([[at(WED_A, "07:00").toISOString(), "PENDIENTE"]]);
     expect((await punch(jose, "IN", at(WED_A, "07:11"))).status).toBe(201);
     await tick(at(WED_A, "07:12"));
@@ -503,18 +524,18 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     expect(await noticesFor(users.otherSupervisor)).toEqual([]);
   });
 
-  it("borde de tolerancia (observación O2): con el tick justo al vencer, una entrada PUNTUAL (+10:00) ya recibió el aviso de falta; +10:30 redondea a 11 y es tardía", async () => {
+  it("borde de tolerancia (O2 corregida, §25.19): el tick a +10:00 ya no vence; la entrada puntual de +10:00 no recibe falta ni aviso; +10:30 redondea a 11 y es tardía", async () => {
     const jose = PLANTA_EMPLOYEES.JOSE;
-    // Martes: tick a las 07:10:00 (vencimiento = inicio + 10, inclusive) y entrada en el mismo instante.
+    // Martes: tick del mantenimiento real a las 07:10:00 y entrada en el mismo instante (antes de la corrección: falta + aviso).
     await tick(at(TUE_A, "07:10"));
-    expect((await incidentsOf(jose, TUE_A)).map((row) => row.status)).toEqual(["PENDIENTE"]);
+    expect(await incidentsOf(jose, TUE_A)).toEqual([]);
     await punch(jose, "IN", at(TUE_A, "07:10"));
     await tick(at(TUE_A, "07:11"));
     await punch(jose, "OUT", at(TUE_A, "15:00"));
     const [tuesday] = await newShiftsOf(jose);
     expect(await alertsOf(tuesday!.id)).toEqual([]); // puntual: +10 no supera la tolerancia
-    expect((await incidentsOf(jose, TUE_A)).map((row) => [row.status, row.reviewedByUserId])).toEqual([["RESUELTA", null]]);
-    expect(await titlesAbout(jose, users.supervisorJose)).toEqual(["Falta de ingreso"]); // aviso ya enviado (no se retira)
+    expect(await incidentsOf(jose, TUE_A)).toEqual([]);
+    expect(await titlesAbout(jose, users.supervisorJose)).toEqual([]);
     // Miércoles: +10:30 se redondea a 11 → INGRESO_TARDE.
     await punch(jose, "IN", new Date(at(WED_A, "07:10").getTime() + 30_000));
     const [, wednesday] = await newShiftsOf(jose);
@@ -839,5 +860,194 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     expect(await alertTypes(open!.id)).toEqual(["SALIDA_TARDIA"]);
     expect(next!.templateRulesSnapshot).toMatchObject({ exitToleranceAfterMinutes: 60 });
     expect(await alertTypes(next!.id)).toEqual([]);
+  });
+
+  // ── R4.9C.2 O2 — frontera de puntualidad e ingreso en curso (§25.19) ───────────────────────
+
+  /** Fichada real cuya subida de foto queda retenida: su intento queda PROCESSING y su instante ya tomado. */
+  async function heldPunch(person: string, instant: Date, options: { fail?: boolean } = {}) {
+    let entered!: () => void;
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    uploadGate.next = { entered, release: new Promise<void>((resolve) => { release = resolve; }), fail: options.fail ?? false };
+    const response = punch(person, "IN", instant);
+    await reached; // recién acá se puede mover el reloj: `now` de la fichada ya quedó tomado
+    expect(await holder.clockPunchAttempt.findMany({ where: { employeeId: id(person), status: "PROCESSING" } })).toEqual([expect.objectContaining({ startedAt: instant })]);
+    return { response, release: async () => { release(); return response; } };
+  }
+  const detect = async (instant: Date) => {
+    vi.setSystemTime(instant);
+    return m.missing.checkMissingExpectedEntries(instant);
+  };
+  const blockIncidents = async (person: string, start: Date) => holder.attendanceInactivityIncident.findMany({ where: { employeeId: id(person), scheduledStartAt: start } });
+  /** Cumplen sus bloques de las 07:00 del martes A (y Juanchi el de las 03:00): sólo José y Johanna quedan en juego. */
+  async function othersOnTimeTuesday() {
+    await punch(PLANTA_EMPLOYEES.JUANCHI, "IN", at(TUE_A, "02:55"));
+    for (const person of [PLANTA_EMPLOYEES.ROBERTO, PLANTA_EMPLOYEES.ARIEL, PLANTA_EMPLOYEES.JUANJO]) await punch(person, "IN", at(TUE_A, "06:55"));
+  }
+
+  it("O2 frontera (rotación y legacy): +10:29.999 no vence; +10:30 vence con un aviso; +10:20 es puntual sin falta; +10:30 es tardío y su falta se resuelve", async () => {
+    await punch(PLANTA_EMPLOYEES.JUANCHI, "IN", at(TUE_A, "02:55"));
+    await punch(PLANTA_EMPLOYEES.ROBERTO, "IN", at(TUE_A, "06:55"));
+    await detect(at(TUE_A, "07:10"));
+    await detect(new Date(at(TUE_A, "07:10").getTime() + 29_999));
+    expect(await holder.attendanceInactivityIncident.count({ where: { operationalDate: day(TUE_A) } })).toBe(0);
+    await punch(PLANTA_EMPLOYEES.JOSE, "IN", new Date(at(TUE_A, "07:10").getTime() + 20_000));
+    await detect(new Date(at(TUE_A, "07:10").getTime() + 30_000));
+    await detect(new Date(at(TUE_A, "07:10").getTime() + 45_000)); // repetido: sin duplicados
+    // José: puntual, sin falta ni aviso ni alerta.
+    expect(await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).toEqual([]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE)).toEqual([]);
+    expect(await alertsOf((await newShiftsOf(PLANTA_EMPLOYEES.JOSE))[0]!.id)).toEqual([]);
+    // Johanna (rotación) y Juanjo (legacy, de día) ausentes: una falta y un aviso cada uno, recién a +10:30.
+    expect((await blockIncidents(PLANTA_EMPLOYEES.JOHANNA, at(TUE_A, "07:00"))).map((row) => row.status)).toEqual(["PENDIENTE"]);
+    expect((await incidentsOf(PLANTA_EMPLOYEES.JUANJO, TUE_A)).map((row) => row.scheduledStartAt)).toEqual([null]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOHANNA)).toEqual(["Falta de ingreso"]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JUANJO)).toEqual(["Falta de ingreso"]);
+    // Ariel ficha exactamente a +10:30: tardío (11) y su falta (ya creada) se resuelve sola — coherentes.
+    await punch(PLANTA_EMPLOYEES.ARIEL, "IN", new Date(at(TUE_A, "07:10").getTime() + 30_000));
+    await detect(at(TUE_A, "07:12"));
+    expect((await alertsOf((await newShiftsOf(PLANTA_EMPLOYEES.ARIEL))[0]!.id)).map((alert) => [alert.type, alert.differenceMinutes])).toEqual([["INGRESO_TARDE", 11]]);
+    expect((await blockIncidents(PLANTA_EMPLOYEES.ARIEL, at(TUE_A, "07:00"))).map((row) => row.status)).toEqual(["RESUELTA"]);
+  });
+
+  // Etapas del detector en las que se libera (y confirma) la fichada retenida de José (07:10:20, puntual).
+  const STAGES = ["antes del chequeo", "tras leer intentos", "tras leer fichadas", "antes de persistir faltas", "antes del reclamo de avisos", "después del chequeo"] as const;
+  for (const stage of STAGES) {
+    it(`O2 intercalación «${stage}»: la fichada puntual en curso nunca recibe falta ni aviso; la falta real (Johanna) se crea y avisa una vez`, async () => {
+      await othersOnTimeTuesday();
+      const jose = await heldPunch(PLANTA_EMPLOYEES.JOSE, new Date(at(TUE_A, "07:10").getTime() + 20_000));
+      let fired = stage === "antes del chequeo" || stage === "después del chequeo";
+      const fire = async () => {
+        if (fired) return;
+        fired = true;
+        expect((await jose.release()).status).toBe(201);
+      };
+      const isJoseQuery = (args: { where?: { employeeId?: { in?: string[] } } } | undefined) => Boolean(args?.where?.employeeId?.in?.includes(id(PLANTA_EMPLOYEES.JOSE)));
+      const spies: Array<{ mockRestore: () => void }> = [];
+      const after = <T extends object>(target: T, method: string, match: (args: any) => boolean) => {
+        const original = (target as any)[method].bind(target);
+        spies.push(vi.spyOn(target as any, method).mockImplementation(async (...args: any[]) => {
+          const result = await original(...args);
+          if (match(args[0])) await fire();
+          return result;
+        }));
+      };
+      let readAttempts = false;
+      if (stage === "tras leer intentos") after(m.prisma.clockPunchAttempt, "findMany", isJoseQuery);
+      if (stage === "tras leer fichadas") {
+        after(m.prisma.clockPunchAttempt, "findMany", (args) => { if (isJoseQuery(args)) readAttempts = true; return false; });
+        after(m.prisma.attendancePunch, "findMany", (args) => readAttempts && isJoseQuery(args));
+      }
+      if (stage === "antes de persistir faltas" || stage === "antes del reclamo de avisos") {
+        let calls = 0;
+        const target = stage === "antes de persistir faltas" ? 1 : 2;
+        const original = m.prisma.$transaction.bind(m.prisma);
+        spies.push(vi.spyOn(m.prisma, "$transaction").mockImplementation(async (...args: any[]) => {
+          if (!fired && ++calls === target) await fire();
+          return (original as any)(...args);
+        }));
+      }
+      if (stage === "antes del chequeo") { fired = false; await fire(); }
+      try {
+        await detect(new Date(at(TUE_A, "07:10").getTime() + 31_000));
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+      if (stage === "después del chequeo") { fired = false; await fire(); }
+      expect(fired).toBe(true);
+      await detect(at(TUE_A, "07:12"));
+      await detect(at(TUE_A, "07:15"));
+      expect(await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).toEqual([]);
+      expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE)).toEqual([]);
+      const [shift] = await newShiftsOf(PLANTA_EMPLOYEES.JOSE);
+      expect(shift).toMatchObject({ shiftTemplateSource: "ROTATION", scheduledStartAt: at(TUE_A, "07:00") });
+      expect(await alertsOf(shift!.id)).toEqual([]);
+      expect((await blockIncidents(PLANTA_EMPLOYEES.JOHANNA, at(TUE_A, "07:00"))).map((row) => row.status)).toEqual(["PENDIENTE"]);
+      expect(await titlesAbout(PLANTA_EMPLOYEES.JOHANNA)).toEqual(["Falta de ingreso"]);
+    });
+  }
+
+  it("O2 nocturno 17–03: intento en curso de Carlos pospone sólo su bloque; Walter ausente recibe la falta a las 17:10:30", async () => {
+    await detect(new Date(at(MON_A, "17:10").getTime() + 29_999));
+    expect(await holder.attendanceInactivityIncident.count({ where: { operationalDate: day(MON_A), scheduledStartAt: at(MON_A, "17:00") } })).toBe(0);
+    const carlos = await heldPunch(PLANTA_EMPLOYEES.CARLOS, at(MON_A, "17:10"));
+    await detect(new Date(at(MON_A, "17:10").getTime() + 31_000));
+    expect(await blockIncidents(PLANTA_EMPLOYEES.CARLOS, at(MON_A, "17:00"))).toEqual([]);
+    expect(await blockIncidents(PLANTA_EMPLOYEES.WALTER, at(MON_A, "17:00"))).toHaveLength(1);
+    expect((await carlos.release()).status).toBe(201);
+    await detect(at(MON_A, "17:20"));
+    expect(await blockIncidents(PLANTA_EMPLOYEES.CARLOS, at(MON_A, "17:00"))).toEqual([]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.CARLOS)).toEqual([]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.WALTER)).toEqual(["Falta de ingreso"]);
+  });
+
+  it("O2 doble bloque (José viernes A): el intento en curso del 19:00 no pospone la falta del 07:00", async () => {
+    const jose = await heldPunch(PLANTA_EMPLOYEES.JOSE, new Date(at(FRI_A, "19:10").getTime() + 15_000));
+    await detect(new Date(at(FRI_A, "19:10").getTime() + 31_000)); // ambos bloques vencidos en el mismo chequeo
+    expect((await incidentsOf(PLANTA_EMPLOYEES.JOSE, FRI_A)).map((row) => row.scheduledStartAt?.toISOString())).toEqual([at(FRI_A, "07:00").toISOString()]);
+    expect((await jose.release()).status).toBe(201);
+    await detect(at(FRI_A, "19:20"));
+    expect((await incidentsOf(PLANTA_EMPLOYEES.JOSE, FRI_A)).map((row) => [row.scheduledStartAt?.toISOString(), row.status])).toEqual([[at(FRI_A, "07:00").toISOString(), "PENDIENTE"]]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE, users.supervisorJose)).toEqual(["Falta de ingreso"]);
+    const [shift] = await newShiftsOf(PLANTA_EMPLOYEES.JOSE);
+    expect(shift).toMatchObject({ scheduledStartAt: at(FRI_A, "19:00") });
+    expect(await alertsOf(shift!.id)).toEqual([]);
+  });
+
+  it("O2 intento fallido: mientras está en curso se pospone; al fallar, la falta real se crea con un aviso", async () => {
+    await othersOnTimeTuesday();
+    const jose = await heldPunch(PLANTA_EMPLOYEES.JOSE, new Date(at(TUE_A, "07:10").getTime() + 20_000), { fail: true });
+    await detect(new Date(at(TUE_A, "07:10").getTime() + 31_000));
+    expect(await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).toEqual([]);
+    expect((await jose.release()).status).toBe(503);
+    expect(await holder.clockPunchAttempt.findMany({ where: { employeeId: id(PLANTA_EMPLOYEES.JOSE) }, select: { status: true } })).toEqual([{ status: "FAILED" }]);
+    await detect(at(TUE_A, "07:12"));
+    await detect(at(TUE_A, "07:13"));
+    expect((await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).map((row) => row.status)).toEqual(["PENDIENTE"]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE, users.supervisorJose)).toEqual(["Falta de ingreso"]);
+  });
+
+  it("O2 TTL: el intento en curso pospone hasta exactamente 60 s; vencido el TTL (el mantenimiento lo pasa a FAILED) la falta se crea con un aviso", async () => {
+    await othersOnTimeTuesday();
+    const started = new Date(at(TUE_A, "07:10").getTime() + 20_000);
+    const jose = await heldPunch(PLANTA_EMPLOYEES.JOSE, started, { fail: true });
+    await detect(new Date(started.getTime() + 60_000)); // startedAt == ahora − TTL: todavía en curso
+    expect(await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).toEqual([]);
+    await tick(new Date(started.getTime() + 60_001)); // mantenimiento real: vence el intento y luego detecta
+    expect(await holder.clockPunchAttempt.findMany({ where: { employeeId: id(PLANTA_EMPLOYEES.JOSE) }, select: { status: true, errorCode: true } })).toEqual([{ status: "FAILED", errorCode: "CLOCK_ATTEMPT_TIMEOUT" }]);
+    expect((await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).map((row) => row.status)).toEqual(["PENDIENTE"]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE, users.supervisorJose)).toEqual(["Falta de ingreso"]);
+    await jose.release();
+    await tick(at(TUE_A, "07:15"));
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE, users.supervisorJose)).toEqual(["Falta de ingreso"]);
+  });
+
+  it("O2 concurrencia: chequeos paralelos durante el intento en curso y tras confirmarlo → ninguna falta de José; la de Johanna una vez", async () => {
+    await othersOnTimeTuesday();
+    const jose = await heldPunch(PLANTA_EMPLOYEES.JOSE, new Date(at(TUE_A, "07:10").getTime() + 20_000));
+    const t1 = new Date(at(TUE_A, "07:10").getTime() + 31_000);
+    vi.setSystemTime(t1);
+    await Promise.all([m.missing.checkMissingExpectedEntries(t1), m.missing.checkMissingExpectedEntries(t1), m.missing.checkMissingExpectedEntries(t1)]);
+    const [released] = await Promise.all([jose.release(), m.missing.checkMissingExpectedEntries(t1), m.missing.checkMissingExpectedEntries(t1)]);
+    expect(released.status).toBe(201);
+    const t2 = at(TUE_A, "07:12");
+    vi.setSystemTime(t2);
+    await Promise.all([m.missing.checkMissingExpectedEntries(t2), m.missing.checkMissingExpectedEntries(t2)]);
+    expect(await blockIncidents(PLANTA_EMPLOYEES.JOSE, at(TUE_A, "07:00"))).toEqual([]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOSE)).toEqual([]);
+    expect(await blockIncidents(PLANTA_EMPLOYEES.JOHANNA, at(TUE_A, "07:00"))).toHaveLength(1);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JOHANNA)).toEqual(["Falta de ingreso"]);
+  });
+
+  it("O2 legacy (Juanjo, fijo): el intento en curso pospone su falta de día; confirmado, ninguna falta ni aviso", async () => {
+    const juanjo = await heldPunch(PLANTA_EMPLOYEES.JUANJO, new Date(at(MON_A, "07:10").getTime() + 10_000));
+    await detect(new Date(at(MON_A, "07:10").getTime() + 31_000));
+    expect(await incidentsOf(PLANTA_EMPLOYEES.JUANJO, MON_A)).toEqual([]);
+    expect((await juanjo.release()).status).toBe(201);
+    await detect(at(MON_A, "07:12"));
+    expect(await incidentsOf(PLANTA_EMPLOYEES.JUANJO, MON_A)).toEqual([]);
+    expect(await titlesAbout(PLANTA_EMPLOYEES.JUANJO)).toEqual([]);
+    expect(await alertsOf((await newShiftsOf(PLANTA_EMPLOYEES.JUANJO))[0]!.id)).toEqual([]);
   });
 });

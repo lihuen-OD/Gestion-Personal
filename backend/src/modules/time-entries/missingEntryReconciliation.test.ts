@@ -21,6 +21,7 @@ import { checkMissingEntriesForElapsedDate, checkMissingExpectedEntries } from "
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    clockPunchAttempt: { findMany: vi.fn(async () => []) },
     // R4.3b: sin membresías de rotación (camino legacy).
     shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     holidayWorkAssignment: { findMany: vi.fn() },
