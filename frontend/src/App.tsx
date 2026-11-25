@@ -41,6 +41,7 @@ const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettings
 const ShiftsPage = lazy(() => import("./pages/ShiftsPage").then((module) => ({ default: module.ShiftsPage })));
 const ShiftCreatePage = lazy(() => import("./pages/ShiftCreatePage").then((module) => ({ default: module.ShiftCreatePage })));
 const ShiftDetailPage = lazy(() => import("./pages/ShiftDetailPage").then((module) => ({ default: module.ShiftDetailPage })));
+const RotationDetailPage = lazy(() => import("./pages/RotationDetailPage").then((module) => ({ default: module.RotationDetailPage })));
 const HolidayWorkAssignmentsPage = lazy(() => import("./pages/HolidayWorkAssignmentsPage").then((module) => ({ default: module.HolidayWorkAssignmentsPage })));
 const ClockDevicesPage = lazy(() => import("./pages/ClockDevicesPage").then((module) => ({ default: module.ClockDevicesPage })));
 
@@ -94,6 +95,7 @@ export function App() {
           <Route path="/configuracion/turnos-horas-especiales" element={<WorkScheduleSettingsPage />} />
           <Route path="/configuracion/turnos" element={<ShiftsPage />} />
           <Route path="/configuracion/turnos/nuevo" element={<ShiftCreatePage />} />
+          <Route path="/configuracion/turnos/rotaciones/:id" element={<RotationDetailPage />} />
           <Route path="/configuracion/turnos/:id" element={<ShiftDetailPage />} />
           <Route path="/configuracion/turnos-asignaciones-feriados" element={<HolidayWorkAssignmentsPage />} />
           <Route path="/configuracion/dispositivos-fichada" element={<RoleRoute allowedLevels={[1]}><ClockDevicesPage /></RoleRoute>} />

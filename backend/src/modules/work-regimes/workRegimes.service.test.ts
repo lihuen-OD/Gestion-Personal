@@ -6,6 +6,7 @@ import { workRegimesService, resolveActiveWorkRegime } from "./workRegimes.servi
 import { classifyWorkRegimeVigency, findActiveEmployeeWorkRegime, workRegimesRepository } from "./workRegimes.repository";
 import { auditService } from "../audit/audit.service";
 import { roles } from "../../shared/security/roles";
+import { shiftRotationRepository } from "../shifts/shiftRotation.repository";
 
 // Etapa 5: el recálculo de cobertura de novedades se prueba en
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
@@ -48,6 +49,9 @@ vi.mock("./workRegimes.repository", () => ({
     findEmployees: vi.fn(),
   },
 }));
+vi.mock("../shifts/shiftRotation.repository", () => ({
+  shiftRotationRepository: { overlappingMemberships: vi.fn() },
+}));
 
 vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(undefined) },
@@ -69,9 +73,12 @@ const repo = workRegimesRepository as unknown as {
   findEmployees: Mock;
 };
 const mockedAudit = auditService.register as unknown as Mock;
+const mockedRotationMemberships = shiftRotationRepository.overlappingMemberships as unknown as Mock;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  repo.findById.mockResolvedValue(baseRegime);
+  mockedRotationMemberships.mockResolvedValue([]);
 });
 
 describe("resolveActiveWorkRegime", () => {
@@ -244,6 +251,42 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
 
     expect(item).toEqual(assignment);
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "EmployeeWorkRegime" }));
+    expect(repo.findOverlappingAssignment).toHaveBeenNthCalledWith(2, employeeId, new Date("2026-01-01"), undefined, undefined, expect.anything());
+  });
+
+  it("revalida el solapamiento después del lock y rechaza una carrera", async () => {
+    repo.employeeExists.mockResolvedValue({ id: employeeId });
+    repo.findById.mockResolvedValue(baseRegime);
+    repo.findOverlappingAssignment.mockResolvedValueOnce(null).mockResolvedValueOnce(assignment);
+
+    await expect(workRegimesService.assign(employeeId, { workRegimeId: "regime-1", effectiveFrom: new Date("2026-01-01") } as never)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "WORK_REGIME_ASSIGNMENT_OVERLAP",
+    });
+    expect(repo.createAssignment).not.toHaveBeenCalled();
+  });
+
+  it("rechaza SIN_TURNO si su vigencia se superpone con una rotación", async () => {
+    repo.employeeExists.mockResolvedValue({ id: employeeId });
+    repo.findById.mockResolvedValue({ ...baseRegime, kind: "SIN_TURNO" });
+    repo.findOverlappingAssignment.mockResolvedValue(null);
+    mockedRotationMemberships.mockResolvedValue([{ crew: { code: "A", name: "Equipo A", rotation: { code: "ROT", name: "Planta" } } }]);
+    await expect(workRegimesService.assign(employeeId, { workRegimeId: "regime-1", effectiveFrom: new Date("2026-01-01") } as never)).rejects.toMatchObject({ statusCode: 409, code: "WORK_REGIME_OVERLAPS_ROTATION" });
+    expect(repo.createAssignment).not.toHaveBeenCalled();
+  });
+
+  it("relee el kind después del lock y rechaza si cambió concurrentemente a SIN_TURNO", async () => {
+    repo.employeeExists.mockResolvedValue({ id: employeeId });
+    repo.findById.mockResolvedValueOnce(baseRegime).mockResolvedValueOnce({ ...baseRegime, kind: "SIN_TURNO" });
+    repo.findOverlappingAssignment.mockResolvedValue(null);
+    mockedRotationMemberships.mockResolvedValue([{ crew: { code: "A", name: "Equipo A", rotation: { code: "ROT", name: "Planta" } } }]);
+
+    await expect(workRegimesService.assign(employeeId, { workRegimeId: "regime-1", effectiveFrom: new Date("2026-01-01") } as never)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "WORK_REGIME_OVERLAPS_ROTATION",
+    });
+    expect(repo.findById).toHaveBeenNthCalledWith(2, "regime-1", expect.anything());
+    expect(repo.createAssignment).not.toHaveBeenCalled();
   });
 
   // Etapa 10B (hallazgo 10A §7/§11): entityId debe ser el id del EMPLEADO,
@@ -328,7 +371,8 @@ describe("EmployeeWorkRegime — asignación con vigencia", () => {
 
     await workRegimesService.updateAssignment(employeeId, "assignment-1", { effectiveFrom: new Date("2026-02-01") } as never, { userId: "user-1" });
 
-    expect(repo.findOverlappingAssignment).toHaveBeenCalledWith(employeeId, new Date("2026-02-01"), null, "assignment-1");
+    expect(repo.findOverlappingAssignment).toHaveBeenNthCalledWith(1, employeeId, new Date("2026-02-01"), null, "assignment-1", undefined);
+    expect(repo.findOverlappingAssignment).toHaveBeenNthCalledWith(2, employeeId, new Date("2026-02-01"), null, "assignment-1", expect.anything());
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "EmployeeWorkRegime", entityId: employeeId }));
   });
 

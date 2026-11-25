@@ -4,10 +4,10 @@ import type { workforceService } from "./workforce.service";
 // Etapa 9C: shiftTemplates()/doubleRules() son datos de configuración (RRHH
 // los edita ocasionalmente) leídos en cada carga de sus pantallas — mismo
 // patrón ya usado en dashboard/time-entries/novelties/audit/documents
-// (backend/src/shared/cache/ttlCache.ts). Write paths verificados exhaustivos
-// (grep de `.shiftTemplate.`/`.doubleHourRule.` en todo backend/src): sólo
-// create/update/remove de cada uno, los 3 en workforce.service.ts, sin
-// mutadores externos. No cachea calendarPreview() (endpoint distinto, ya
+// (backend/src/shared/cache/ttlCache.ts). Los write paths de plantillas son
+// create/update/remove y el reemplazo fechado de R4.6; sus controladores
+// invalidan este catálogo. Los de reglas dobles siguen concentrados en
+// workforce.service.ts. No cachea calendarPreview() (endpoint distinto, ya
 // tiene su propio refresh-tras-mutación en el frontend) ni el motor de
 // horas (timeEntries.repository.ts consulta Prisma directo, nunca pasa por
 // acá) — ninguno de los dos queda con datos stale por este cache.

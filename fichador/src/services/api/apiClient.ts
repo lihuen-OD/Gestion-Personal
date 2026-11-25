@@ -5,6 +5,8 @@
 // módulos administrativos y el evento global de errores. El fichador no
 // tiene sesión de usuario: se autentica como dispositivo, con un
 // ClockDevice individual (ver clockDeviceSession.ts).
+import { publicClockGuidance, type ClockGuidance } from "./clockGuidance";
+
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:4002/api").replace(/\/$/, "");
 
 /** Error de una respuesta HTTP del backend (status != 2xx). */
@@ -13,13 +15,16 @@ export class ApiError extends Error {
   status: number;
   /** F8: segundos públicos de espera que manda el backend (p. ej. CLOCK_PUNCH_COOLDOWN). */
   retryAfterSeconds?: number;
+  /** R4.4: guía pública de una salida dudosa (confirmación previa o límite superado). */
+  clockGuidance?: ClockGuidance;
 
-  constructor(message: string, code: string, status: number, retryAfterSeconds?: number) {
+  constructor(message: string, code: string, status: number, retryAfterSeconds?: number, clockGuidance?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.status = status;
     this.retryAfterSeconds = publicRetryAfterSeconds(retryAfterSeconds);
+    this.clockGuidance = publicClockGuidance(clockGuidance);
   }
 }
 
@@ -41,7 +46,7 @@ export class NetworkError extends Error {
   }
 }
 
-type ApiErrorPayload = { error?: { code?: string; message?: string; retryAfterSeconds?: unknown } };
+type ApiErrorPayload = { error?: { code?: string; message?: string; retryAfterSeconds?: unknown; clockGuidance?: unknown } };
 
 // Los mensajes CLOCK_* del backend ya están escritos para la persona que
 // ficha; el resto se traduce a un texto de negocio sin detalle técnico.
@@ -100,9 +105,9 @@ export function formatClockErrorMessage(status: number, payload: ApiErrorPayload
 }
 
 /** Rearma un ApiError a partir del error público guardado en un intento (GET attempts). */
-export function apiErrorFromStored(error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: unknown }) {
+export function apiErrorFromStored(error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: unknown; clockGuidance?: unknown }) {
   const payload = { error: { code: error.code, message: error.message } };
-  return new ApiError(formatClockErrorMessage(error.httpStatus, payload), error.code, error.httpStatus, publicRetryAfterSeconds(error.retryAfterSeconds));
+  return new ApiError(formatClockErrorMessage(error.httpStatus, payload), error.code, error.httpStatus, publicRetryAfterSeconds(error.retryAfterSeconds), error.clockGuidance);
 }
 
 /** Mensaje para la persona que ficha: nunca un stack trace ni un error técnico. */
@@ -137,7 +142,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const payload: unknown = isJson ? await response.json().catch(() => null) : await response.text().catch(() => "");
   if (!response.ok) {
     const parsed = typeof payload === "object" && payload ? (payload as ApiErrorPayload) : {};
-    throw new ApiError(formatClockErrorMessage(response.status, parsed), parsed.error?.code || "API_ERROR", response.status, publicRetryAfterSeconds(parsed.error?.retryAfterSeconds));
+    throw new ApiError(formatClockErrorMessage(response.status, parsed), parsed.error?.code || "API_ERROR", response.status, publicRetryAfterSeconds(parsed.error?.retryAfterSeconds), parsed.error?.clockGuidance);
   }
   return payload as T;
 }

@@ -51,8 +51,10 @@ vi.mock("../../shared/prisma/client", () => ({
     timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     // Etapa 5: quién usa la plantilla (recálculo de cobertura al inactivarla).
-    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
-    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findFirst: vi.fn().mockResolvedValue(null) },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     sector: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     company: { findMany: vi.fn().mockResolvedValue([]) },
@@ -60,7 +62,8 @@ vi.mock("../../shared/prisma/client", () => ({
     specialHourRuleApplication: { deleteMany: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
-    workShift: { findMany: vi.fn() },
+    workShift: { findMany: vi.fn(), findFirst: vi.fn().mockResolvedValue(null) },
+    shiftRotationBlock: { findFirst: vi.fn().mockResolvedValue(null) },
     // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): enriquecimiento
     // de notificaciones "no asistió" (entityType AttendanceInactivityIncident)
     // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
@@ -70,6 +73,7 @@ vi.mock("../../shared/prisma/client", () => ({
     user: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
     // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
     $executeRaw: vi.fn().mockResolvedValue(0),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     // A8 §12.4: bloqueo FOR SHARE de destinos de reglas dentro de la transacción.
     $queryRawUnsafe: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
@@ -110,10 +114,12 @@ const mockedPrisma = prisma as unknown as {
   specialHourRuleApplication: { deleteMany: Mock };
   systemNotification: { findMany: Mock; count: Mock; findFirst: Mock };
   shiftAlert: { findMany: Mock };
-  workShift: { findMany: Mock };
+  workShift: { findMany: Mock; findFirst: Mock };
+  holidayWorkAssignment: { findMany: Mock; findFirst: Mock };
   attendanceInactivityIncident: { findMany: Mock };
   clockPunchPostProcessJob: { count: Mock };
   $executeRaw: Mock;
+  $queryRaw: Mock;
   $queryRawUnsafe: Mock;
   $transaction: Mock;
 };
@@ -462,6 +468,27 @@ describe("workforceService.closures/corrections — contrato preservado (Etapa 1
 });
 
 describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", () => {
+  const shiftTemplateRow = {
+    id: "template-1",
+    code: "T-1",
+    name: "Turno",
+    startTime: "08:00",
+    endTime: "16:00",
+    crossesMidnight: false,
+    expectedMinutes: 480,
+    shiftGroupId: null,
+    shiftGroup: null,
+    status: "ACTIVO",
+    entryToleranceBeforeMinutes: 10,
+    entryToleranceAfterMinutes: 10,
+    exitToleranceBeforeMinutes: 10,
+    exitToleranceAfterMinutes: 10,
+    minimumMinutesForCompliance: 420,
+    maximumInformativeMinutes: 600,
+    missingOutAlertAfterMinutes: 60,
+    absoluteOpenShiftLimitMinutes: 1_200,
+  };
+
   it("createShiftTemplate mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
     mockedPrisma.shiftTemplate.create.mockRejectedValue(prismaKnownError("P2003"));
 
@@ -480,6 +507,43 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftTemplate" }));
   });
 
+  it("no reescribe el horario de una plantilla que ya rigió", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
+
+    await expect(workforceService.updateShiftTemplate("template-1", { startTime: "09:00" })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SHIFT_TEMPLATE_SCHEDULE_LOCKED",
+      details: { workShift: true },
+    });
+
+    expect(lockNoveltyCoverageGlobally).toHaveBeenCalledWith(mockedPrisma);
+    expect(mockedPrisma.shiftTemplate.update).not.toHaveBeenCalled();
+  });
+
+  it("no cambia tolerancias mientras haya una entrada fija sin snapshot", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValueOnce(2);
+
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 })).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SHIFT_TEMPLATE_RULES_PENDING_PUNCHES",
+      details: { pending: 2 },
+    });
+
+    expect(mockedPrisma.shiftTemplate.update).not.toHaveBeenCalled();
+  });
+
+  it("permite cambiar tolerancias cuando no quedan entradas pendientes y no recalcula la jornada", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.shiftTemplate.update.mockResolvedValue({ ...shiftTemplateRow, entryToleranceAfterMinutes: 15 });
+
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 })).resolves.toMatchObject({ entryToleranceAfterMinutes: 15 });
+
+    expect(mockedPrisma.shiftTemplate.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ entryToleranceAfterMinutes: 15 }) }));
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
+  });
+
   it("no permite borrar un turno con asignaciones aunque no tenga jornadas", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
       id: "template-1",
@@ -496,30 +560,28 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
   });
 
-  it("inactiva un turno con jornadas históricas y no lo borra", async () => {
+  it("protege un turno con jornadas históricas: no lo inactiva ni lo borra", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
       id: "template-1",
       code: "T-1",
       name: "Turno",
       _count: { workShifts: 2, assignments: 0, holidayWorkAssignments: 0 },
     });
-    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+    mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED", relatedWorkShifts: 2 });
+    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
-    // Etapa 5: inactivar deja de definir jornada → lock global + recálculo de quienes la usan (acá nadie).
-    expect(lockNoveltyCoverageGlobally).toHaveBeenCalled();
-    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(expect.anything(), { employeeIds: [] }, expect.objectContaining({ source: "SHIFT_TEMPLATE_CHANGED" }));
+    expect(lockNoveltyCoverageGlobally).not.toHaveBeenCalled();
   });
 
-  it("una convocatoria de feriado también es historia: inactiva en vez de dejar su referencia en NULL, y audita dentro de la transacción", async () => {
+  it("una convocatoria de feriado histórica también protege el turno", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno", _count: { workShifts: 0, assignments: 0, holidayWorkAssignments: 1 } });
-    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+    mockedPrisma.holidayWorkAssignment.findFirst.mockResolvedValueOnce({ id: "holiday-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
+    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
-    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "DEACTIVATE", entity: "ShiftTemplate" }));
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
   it("borra un turno sin asignaciones ni jornadas", async () => {

@@ -548,3 +548,48 @@ describe("ShiftAlertsPage — 'Ver legajo' y 'Ver turno' con iconos distintos (a
     expect(turnoLink).toHaveAttribute("href", "/configuracion/turnos/template-1");
   });
 });
+
+// R4.5 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.7): trabajo no
+// programado (informativa, ya resuelta) e ingreso fuera del horario del turno.
+describe("ShiftAlertsPage — R4.5 trabajo no programado", () => {
+  const informative = (overrides: Partial<ShiftAlert> = {}) =>
+    buildAlert({ id: "alert-tnp", type: "TRABAJO_NO_PROGRAMADO", status: "RESUELTA", severity: "INFO", resolutionNote: "Informativa: trabajo sin turno programado el sábado 07/11/2026 (día no incluido en su turno asignado). No requiere revisión.", ...overrides } as Partial<ShiftAlert>);
+
+  it("una jornada sólo con trabajo no programado se muestra como 'No requiere revisión', sin acción de resolver", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({ data: [informative()], meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null } });
+
+    renderPage();
+
+    await screen.findByText("Trabajo no programado");
+    expect(screen.getAllByText("No requiere revisión").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Resuelta")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Resolver/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("TRABAJO_NO_PROGRAMADO")).not.toBeInTheDocument();
+  });
+
+  it("la informativa no cambia el estado del grupo: con otra alerta pendiente sigue 'Pendiente' y no es la principal", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [informative(), buildAlert({ id: "alert-ext", type: "JORNADA_EXTENDIDA", status: "PENDIENTE", severity: "INFO" })],
+      meta: { total: 2, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    await screen.findByText("Jornada extendida");
+    expect(screen.getByText("Pendiente")).toBeInTheDocument();
+    expect(screen.queryByText("Parcialmente resuelta")).not.toBeInTheDocument();
+  });
+
+  it("muestra 'Ingreso fuera del horario del turno' con label legible y en el filtro de Tipo", async () => {
+    vi.mocked(shiftAlertApiService.getAll).mockResolvedValue({
+      data: [buildAlert({ id: "alert-fv", type: "INGRESO_FUERA_DE_VENTANA", status: "PENDIENTE", severity: "ADVERTENCIA" })],
+      meta: { total: 1, pageSize: 20, hasMore: false, nextBefore: null },
+    });
+
+    renderPage();
+
+    expect(await screen.findAllByText("Ingreso fuera del horario del turno")).not.toHaveLength(0);
+    expect(screen.getByRole("option", { name: "Ingreso fuera del horario del turno" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Trabajo no programado" })).toBeInTheDocument();
+  });
+});

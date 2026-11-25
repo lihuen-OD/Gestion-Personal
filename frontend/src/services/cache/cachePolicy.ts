@@ -343,6 +343,16 @@ export const cachePolicies = {
     sensitive: false,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
+  // R3 (SHIFT_ROTATION_AUDIT_PLAN.md §23): grupos de turnos. Misma familia que
+  // las plantillas: cualquier escritura de grupos o de plantillas invalida
+  // ambos catálogos (el de plantillas trae nombre, orden y estado del grupo).
+  shiftGroupsCatalog: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
   // sensitive:true porque DoubleHourRule.employees trae legajo/nombre/apellido
   // cuando la regla está limitada a empleados específicos (a diferencia de
   // shiftTemplatesCatalog/shiftAssignmentSummary/doubleHourRulesCalendarByMonth,

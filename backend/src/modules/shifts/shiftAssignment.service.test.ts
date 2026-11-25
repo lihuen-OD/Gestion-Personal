@@ -8,6 +8,7 @@ import { auditService } from "../audit/audit.service";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
 import { shiftAssignmentService } from "./shiftAssignment.service";
 import { roles } from "../../shared/security/roles";
+import { assertFixedAssignmentsCompatibleWithRotations } from "./shiftRotationTransitions";
 
 // Etapa 5: el recálculo de cobertura de novedades se prueba en
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
@@ -41,6 +42,7 @@ vi.mock("./shiftAssignment.repository", () => ({
   shiftAssignmentRepository: {
     countByTemplateAndStatus: vi.fn(),
     findExisting: vi.fn(),
+    findExistingMany: vi.fn(),
     create: vi.fn(),
     reEnable: vi.fn(),
     findById: vi.fn(),
@@ -49,10 +51,12 @@ vi.mock("./shiftAssignment.repository", () => ({
   },
 }));
 
+vi.mock("./shiftRotationTransitions", () => ({ assertFixedAssignmentsCompatibleWithRotations: vi.fn() }));
+
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
     shiftTemplate: { findUnique: vi.fn() },
-    employee: { count: vi.fn() },
+    employee: { findMany: vi.fn() },
     // Etapa 5: asignación + recálculo de cobertura en una transacción.
     $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback({ tx: true })),
   },
@@ -62,9 +66,10 @@ vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
 
-const repo = shiftAssignmentRepository as unknown as { countByTemplateAndStatus: Mock; findExisting: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock; remove: Mock };
-const mockedPrisma = prisma as unknown as { shiftTemplate: { findUnique: Mock }; employee: { count: Mock } };
+const repo = shiftAssignmentRepository as unknown as { countByTemplateAndStatus: Mock; findExisting: Mock; findExistingMany: Mock; create: Mock; reEnable: Mock; findById: Mock; update: Mock; remove: Mock };
+const mockedPrisma = prisma as unknown as { shiftTemplate: { findUnique: Mock }; employee: { findMany: Mock } };
 const mockedAudit = auditService.register as unknown as Mock;
+const mockedRotationProtection = assertFixedAssignmentsCompatibleWithRotations as unknown as Mock;
 
 function prismaKnownError(code: string) {
   return new Prisma.PrismaClientKnownRequestError("mock prisma error", { code, clientVersion: "0.0.0" });
@@ -78,7 +83,8 @@ const baseAssignInput = { shiftTemplateId: template.id, effectiveFrom: new Date(
 beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(template);
-  mockedPrisma.employee.count.mockResolvedValue(1);
+  mockedPrisma.employee.findMany.mockResolvedValue([{ id: "emp-1", legajo: "100", firstName: "Ana", lastName: "Pérez" }]);
+  repo.findExistingMany.mockResolvedValue([]);
 });
 
 describe("shiftAssignmentService.summary", () => {
@@ -105,8 +111,14 @@ describe("shiftAssignmentService.summary", () => {
 });
 
 describe("shiftAssignmentService.assign", () => {
+  it("rechaza atómicamente un turno fijo superpuesto con una membresía de rotación", async () => {
+    mockedRotationProtection.mockRejectedValueOnce(new AppError("conflicto", 409, "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION"));
+    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION" });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
   it("crea la asignacion con un userId real (camino feliz, sin cambios de comportamiento)", async () => {
-    repo.findExisting.mockResolvedValue(null);
+    repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
     const result = await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
@@ -122,7 +134,7 @@ describe("shiftAssignmentService.assign", () => {
   });
 
   it("mapea un userId inexistente (P2003) a un 400 prolijo, no a un 500", async () => {
-    repo.findExisting.mockResolvedValue(null);
+    repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockRejectedValue(prismaKnownError("P2003"));
 
     await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user)).rejects.toMatchObject({
@@ -132,7 +144,7 @@ describe("shiftAssignmentService.assign", () => {
   });
 
   it("no transforma otros errores no relacionados a FK", async () => {
-    repo.findExisting.mockResolvedValue(null);
+    repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockRejectedValue(prismaKnownError("P2025"));
 
     let caught: unknown;
@@ -148,7 +160,7 @@ describe("shiftAssignmentService.assign", () => {
   // Etapa 10B (hallazgo 10A §7/§11): entityId debe ser el id del EMPLEADO,
   // no el id de la fila de asignación — mismo criterio que workRegimes.
   it("audita la asignación con entityId=employeeId (no el id de la asignación) para que aparezca en el historial del legajo", async () => {
-    repo.findExisting.mockResolvedValue(null);
+    repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" } });
 
     await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
@@ -218,7 +230,7 @@ describe("shiftAssignmentService.remove", () => {
 
 describe("shiftAssignmentService.assign — reactivación (reEnable) con vigencia nueva (Etapa 8I)", () => {
   it("si la asignación existente está DESHABILITADO, la reactiva con la vigencia/weekdays del payload nuevo, no con los viejos", async () => {
-    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] });
+    repo.findExistingMany.mockResolvedValue([{ employeeId: "emp-1", id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] }]);
     repo.reEnable.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
     await shiftAssignmentService.assign(
@@ -237,7 +249,7 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
   });
 
   it("audita la reactivación con entityId=employeeId (no el id de la asignación) — Etapa 10B", async () => {
-    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] });
+    repo.findExistingMany.mockResolvedValue([{ employeeId: "emp-1", id: "assign-1", status: "DESHABILITADO", effectiveFrom: new Date("2025-01-01"), effectiveTo: new Date("2025-06-30"), weekdays: [1] }]);
     repo.reEnable.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" } });
 
     await shiftAssignmentService.assign(
@@ -249,7 +261,7 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
   });
 
   it("si la asignación existente ya está HABILITADO, no la toca (no reEnable, no create) — comportamiento de no-op preservado", async () => {
-    repo.findExisting.mockResolvedValue({ id: "assign-1", status: "HABILITADO" });
+    repo.findExistingMany.mockResolvedValue([{ employeeId: "emp-1", id: "assign-1", status: "HABILITADO" }]);
     repo.findById.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
     await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);

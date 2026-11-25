@@ -25,7 +25,6 @@
  * turno, docs/decisions/EMPLOYEE_DAY_OFF.md §4): un turno 22:00-06:00 del lunes
  * son 480 min del lunes, nunca se parte por fecha calendario.
  */
-import type { WorkRegimeKind } from "@prisma/client";
 import { argentinaCalendarDate, calendarDateKey, calendarDaysInclusive, nextCalendarDateKey } from "../../shared/datetime/argentinaTime";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { evaluateRuleScope, type EngineScopeHistory } from "../labor-history/laborHistory.scope";
@@ -34,7 +33,9 @@ import type { HistoryReader } from "../labor-history/laborHistory.repository";
 import { ruleScopeOf } from "../time-entries/specialHourRuleScope";
 import { buildActiveDatesByRule, ruleMatchesDate, type RecurrenceType } from "../workforce-management/doubleHourRuleMatching";
 import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
-import { isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnWeekday } from "./workShiftEvaluation.service";
+import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftPolicy, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
+import { resolveRotationDayPlan, type ExpectedDayPlanConflictReason, type ExpectedDayPlanMissingReason, type RotationConfiguration } from "./rotationPlan";
+import { loadRotationConfiguration, type LoadedRotationTemplate } from "./rotationPlan.loader";
 
 // ── Resultado ───────────────────────────────────────────────────────────────
 
@@ -61,10 +62,23 @@ export type WorkdaySource =
   | "HOLIDAY_CONVOCATION"
   | "WORK_REGIME"
   | "SHIFT_PLAN"
+  // R4.2: plan de rotación (inalcanzable hasta que R4.3 cargue rotaciones).
+  | "SHIFT_ROTATION"
   | "NONE";
 
 /** De dónde salieron los minutos esperados (sólo WORKDAY o el intento fallido). */
-export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "CONVOCATION_TIMES";
+export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "CONVOCATION_TIMES" | "ROTATION_BLOCKS";
+
+/**
+ * R4.2: problema de configuración de la rotación del día (CONFLICT o MISSING),
+ * conservado para diagnóstico. `unresolvedReason` se persiste en el enum de
+ * base NoveltyCoverageScheduleReviewReason, que no tiene un valor de conflicto
+ * de rotación (agregarlo es una migración, decisión de R4.3): por eso el
+ * motivo propio viaja acá y no se oculta como una ausencia normal.
+ */
+export type WorkdayPlanIssue =
+  | { kind: "CONFLICT"; reason: ExpectedDayPlanConflictReason; detail: string[] }
+  | { kind: "MISSING"; reason: ExpectedDayPlanMissingReason };
 
 export type ExpectedWorkday = {
   dateKey: string;
@@ -77,12 +91,16 @@ export type ExpectedWorkday = {
   convoked: boolean;
   source: WorkdaySource;
   minutesSource: WorkdayMinutesSource | null;
+  /** R4.2: sólo presente en el camino de rotación cuando el plan es CONFLICT o MISSING. */
+  planIssue?: WorkdayPlanIssue;
 };
 
 // ── Contexto (lo arma loadEmployeeWorkdayContext) ───────────────────────────
 
 export type WorkdayShiftTemplate = {
   id: string;
+  /** R4.3b: lo carga `loadEmployeeWorkdayContext` (bloque de una convocatoria en rotación). */
+  code?: string;
   startTime: string;
   endTime: string;
   crossesMidnight: boolean;
@@ -104,7 +122,8 @@ export type WorkdayConvocation = {
   expectedEndTime: string | null;
 };
 
-export type WorkdayRegimePeriod = { effectiveFrom: Date; effectiveTo: Date | null; kind: WorkRegimeKind };
+/** Alias del período de régimen del resolver central (Etapa R2). */
+export type WorkdayRegimePeriod = RegimePeriod;
 
 /**
  * Estado de feriado de una fecha para un legajo. Ausente = ninguna regla
@@ -113,8 +132,10 @@ export type WorkdayRegimePeriod = { effectiveFrom: Date; effectiveTo: Date | nul
  *   OUT_OF_SCOPE: hay FERIADO por calendario pero ninguno lo alcanza.
  *   SCOPE_HISTORY_MISSING: ninguna lo alcanza con certeza y alguna depende de
  *     una dimensión sin historia registrada esa fecha.
+ * Definido en el resolver central (Etapa R2); se re-exporta para los
+ * importadores existentes.
  */
-export type HolidayScopeStatus = "IN_SCOPE" | "OUT_OF_SCOPE" | "SCOPE_HISTORY_MISSING";
+export type { HolidayScopeStatus };
 
 export type EmployeeWorkdayContext = {
   employeeId: string;
@@ -123,6 +144,12 @@ export type EmployeeWorkdayContext = {
   convocations: ReadonlyMap<string, WorkdayConvocation>;
   regimes: WorkdayRegimePeriod[];
   holidays: ReadonlyMap<string, HolidayScopeStatus>;
+  /**
+   * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): configuración
+   * de rotaciones; presente sólo si el legajo tiene alguna membresía en el
+   * rango. Ausente ⇒ resultado idéntico al previo.
+   */
+  rotation?: RotationConfiguration<LoadedRotationTemplate>;
 };
 
 // ── Minutos de uno o varios turnos (P3) ─────────────────────────────────────
@@ -244,105 +271,159 @@ export function resolveEmployeeHolidayStatus(input: {
 
 // ── Núcleo puro ─────────────────────────────────────────────────────────────
 
-function activeRegimeKind(regimes: WorkdayRegimePeriod[], date: Date): WorkRegimeKind | null {
-  // Mismo criterio que findActiveEmployeeWorkRegime: vigente en la fecha y,
-  // si hubiera más de uno, el de effectiveFrom más reciente.
-  let winner: WorkdayRegimePeriod | null = null;
-  for (const regime of regimes) {
-    if (regime.effectiveFrom > date || (regime.effectiveTo && regime.effectiveTo < date)) continue;
-    if (!winner || regime.effectiveFrom > winner.effectiveFrom) winner = regime;
-  }
-  return winner?.kind ?? null;
-}
+export type WorkdayResolution = ExpectedShiftResolution<WorkdayShiftTemplate, WorkdayConvocation>;
 
-function usableAssignments(context: EmployeeWorkdayContext, date: Date) {
-  return context.assignments.filter(
-    (assignment) => assignment.status === "HABILITADO" && assignment.template.status === "ACTIVO" && isShiftAssignmentActiveOnDate(assignment, date),
-  );
+/**
+ * Jornada esperada de Novedades para un legajo y una fecha.
+ *
+ * Etapa R2: la PRECEDENCIA la decide el resolver central
+ * (`resolveExpectedShift`, política EXPECTED_WORKDAY): franco → feriado
+ * (convocado / no convocado / alcance sin historia) → SIN_TURNO → asignación
+ * aplicable → TURNO_FLEXIBLE → sin planificación → planificación que excluye
+ * el día (ADR de Novedades §7). Acá queda sólo la PROYECCIÓN propia de
+ * Novedades: minutos (regla P3), fuente de minutos y motivos persistibles.
+ */
+export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey: string): ExpectedWorkday {
+  return projectExpectedWorkday(resolveEmployeeExpectedShift(context, dateKey, "EXPECTED_WORKDAY"));
 }
 
 /**
- * Precedencia (ADR §7): franco → feriado (convocado / no convocado) →
- * SIN_TURNO → asignación aplicable → TURNO_FLEXIBLE → sin planificación →
- * planificación que excluye el día.
+ * Resolución central compartida por Novedades y las vistas de sólo lectura.
+ * Mantiene en un único lugar la traducción del contexto batch a
+ * `resolveExpectedShift`, incluida la simulación que el llamador haya preparado
+ * exclusivamente en su copia de `context.rotation`.
  */
-export function evaluateEmployeeWorkday(context: EmployeeWorkdayContext, dateKey: string): ExpectedWorkday {
+export function resolveEmployeeExpectedShift(
+  context: EmployeeWorkdayContext,
+  dateKey: string,
+  policy: ExpectedShiftPolicy,
+): WorkdayResolution {
   const date = argentinaCalendarDate(dateKey);
-  const holiday = context.holidays.get(dateKey) ?? null;
-  const convocation = context.convocations.get(dateKey) ?? null;
-  // Una convocatoria sólo cuenta si la fecha es feriado por calendario (una
-  // regla FERIADO vigente cae ese día): sin regla FERIADO la convocatoria no
-  // aporta nada, igual que en el motor de Horas Especiales (§15/§16).
-  const convokedToHoliday = Boolean(holiday && convocation);
-  const result = (fields: Omit<ExpectedWorkday, "dateKey" | "convoked" | "isHoliday"> & { isHoliday?: boolean }): ExpectedWorkday => ({
-    dateKey,
-    convoked: convokedToHoliday,
-    isHoliday: fields.isHoliday ?? (holiday === "IN_SCOPE" || convokedToHoliday),
+  return resolveExpectedShift(
+    {
+      dateKey,
+      assignments: context.assignments,
+      dayOff: context.dayOffDates.has(dateKey),
+      holiday: context.holidays.get(dateKey) ?? null,
+      convocation: context.convocations.get(dateKey) ?? null,
+      regimeKind: activeRegimeKindOn(context.regimes, date),
+      ...rotationInputs(context, dateKey),
+    },
+    policy,
+  );
+}
+
+/** R4.3b: plan del día y plantilla de la convocatoria, sólo para un miembro de rotación (si no, nada: camino legacy). */
+function rotationInputs(context: EmployeeWorkdayContext, dateKey: string) {
+  if (!context.rotation) return {};
+  const rotationPlan = resolveRotationDayPlan(context.employeeId, dateKey, context.rotation);
+  if (!rotationPlan) return {};
+  const template = context.convocations.get(dateKey)?.template ?? null;
+  return { rotationPlan, convocationTemplate: template && template.code !== undefined ? { ...template, code: template.code } : null };
+}
+
+/** Traduce la resolución central al resultado de Novedades, sin cambiar ningún valor respecto de la implementación previa a R2. */
+export function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedWorkday {
+  // R4.2: un plan de rotación CONFLICT o MISSING queda visible en todos los
+  // resultados (aun si una convocatoria decide la jornada). Ausente en el
+  // camino legacy: el resultado es idéntico al previo.
+  const plan = resolution.dayPlan;
+  const planIssue: WorkdayPlanIssue | undefined =
+    plan?.kind === "CONFLICT" ? { kind: "CONFLICT", reason: plan.reason, detail: plan.detail } : plan?.kind === "MISSING" ? { kind: "MISSING", reason: plan.reason } : undefined;
+  const result = (fields: Omit<ExpectedWorkday, "dateKey" | "convoked" | "isHoliday">): ExpectedWorkday => ({
+    dateKey: resolution.dateKey,
+    convoked: resolution.convoked,
+    isHoliday: resolution.isHoliday,
     ...fields,
+    ...(planIssue ? { planIssue } : {}),
   });
+  const rotationBlocksWorkday = (source: WorkdaySource) =>
+    result({
+      obligation: "WORKDAY",
+      unresolvedReason: null,
+      expectedMinutes: resolution.blocks.reduce((sum, block) => sum + block.durationMinutes, 0),
+      shiftTemplateIds: resolution.blocks.map((block) => block.template.id),
+      source,
+      minutesSource: "ROTATION_BLOCKS",
+    });
   const unresolved = (reason: WorkdayUnresolvedReason, source: WorkdaySource, shiftTemplateIds: string[] = [], minutesSource: WorkdayMinutesSource | null = null) =>
     result({ obligation: "UNRESOLVED", unresolvedReason: reason, expectedMinutes: null, shiftTemplateIds, source, minutesSource });
   const confirmedZero = (obligation: "DAY_OFF" | "HOLIDAY_NOT_CONVOKED" | "NO_WORK_OBLIGATION", source: WorkdaySource) =>
     result({ obligation, unresolvedReason: null, expectedMinutes: 0, shiftTemplateIds: [], source, minutesSource: null });
+  const templates = resolution.fixedCandidates;
 
-  // 1. Franco: gana incluso sobre una convocatoria (EMPLOYEE_DAY_OFF.md §5).
-  if (context.dayOffDates.has(dateKey)) return confirmedZero("DAY_OFF", "EMPLOYEE_DAY_OFF");
+  switch (resolution.source) {
+    case "DAY_OFF":
+      // Franco: gana incluso sobre una convocatoria (EMPLOYEE_DAY_OFF.md §5).
+      return confirmedZero("DAY_OFF", "EMPLOYEE_DAY_OFF");
 
-  const usable = usableAssignments(context, date);
-  const applicable = usable.filter((assignment) => isShiftAssignmentApplicableOnWeekday(assignment, date));
-
-  // 2-3. Feriado.
-  if (convokedToHoliday && convocation) {
-    const convocationTemplate = convocation.template?.status === "ACTIVO" ? convocation.template : null;
-    if (convocationTemplate) {
-      const minutes = shiftTemplateExpectedMinutes(convocationTemplate);
-      if (minutes !== null) {
-        return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes, shiftTemplateIds: [convocationTemplate.id], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_SHIFT_TEMPLATE" });
+    case "HOLIDAY_CONVOCATION": {
+      // Una convocatoria sólo cuenta si la fecha es feriado por calendario
+      // (lo garantiza el resolver). Fuente de minutos: turno de la
+      // convocatoria (si está ACTIVO) → turnos aplicables → horario propio.
+      const convocation = resolution.convocation!;
+      const convocationTemplate = convocation.template?.status === "ACTIVO" ? convocation.template : null;
+      if (convocationTemplate) {
+        const minutes = shiftTemplateExpectedMinutes(convocationTemplate);
+        if (minutes !== null) {
+          return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes, shiftTemplateIds: [convocationTemplate.id], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_SHIFT_TEMPLATE" });
+        }
       }
+      if (templates.length) {
+        const minutes = expectedMinutesForTemplates(templates);
+        if ("minutes" in minutes) {
+          return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes.minutes, shiftTemplateIds: templates.map((template) => template.id), source: "HOLIDAY_CONVOCATION", minutesSource: "SHIFT_ASSIGNMENT" });
+        }
+        if (minutes.unresolved === "SHIFT_ASSIGNMENTS_OVERLAP") {
+          return unresolved("SHIFT_ASSIGNMENTS_OVERLAP", "HOLIDAY_CONVOCATION", templates.map((template) => template.id), "SHIFT_ASSIGNMENT");
+        }
+      }
+      // R4.2, camino de rotación (sin asignaciones fijas): bloques del plan.
+      if (resolution.dayPlan && resolution.blocks.length) return rotationBlocksWorkday("HOLIDAY_CONVOCATION");
+      const start = parseShiftTime(convocation.expectedStartTime);
+      const end = parseShiftTime(convocation.expectedEndTime);
+      if (start !== null && end !== null) {
+        const minutes = computeExpectedMinutes(convocation.expectedStartTime!, convocation.expectedEndTime!, end <= start);
+        return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes, shiftTemplateIds: [], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_TIMES" });
+      }
+      return unresolved("EXPECTED_MINUTES_UNKNOWN", "HOLIDAY_CONVOCATION");
     }
-    if (applicable.length) {
-      const templates = applicable.map((assignment) => assignment.template);
+
+    case "HOLIDAY_NOT_CONVOKED":
+      return confirmedZero("HOLIDAY_NOT_CONVOKED", "HOLIDAY_RULE");
+
+    case "HOLIDAY_SCOPE":
+      return unresolved("HOLIDAY_SCOPE_HISTORY_MISSING", "HOLIDAY_RULE");
+
+    case "REGIME":
+      // SIN_TURNO: para Novedades nunca es 0 h confirmado por el nombre del
+      // régimen. TURNO_FLEXIBLE sin asignación aplicable: no se puede afirmar
+      // que no trabajaba.
+      return resolution.reason === "REGIME_SIN_TURNO" ? unresolved("REGIME_WITHOUT_SCHEDULE", "WORK_REGIME") : unresolved("FLEXIBLE_REGIME_NO_ASSIGNMENT", "WORK_REGIME");
+
+    case "FIXED_ASSIGNMENT": {
+      if (resolution.obligation === "NO_OBLIGATION") return confirmedZero("NO_WORK_OBLIGATION", "SHIFT_PLAN");
+      // LEGACY (P3): turnos disjuntos suman; superpuestos, UNRESOLVED.
       const minutes = expectedMinutesForTemplates(templates);
       if ("minutes" in minutes) {
-        return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes.minutes, shiftTemplateIds: templates.map((template) => template.id), source: "HOLIDAY_CONVOCATION", minutesSource: "SHIFT_ASSIGNMENT" });
+        return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes.minutes, shiftTemplateIds: templates.map((template) => template.id), source: "SHIFT_PLAN", minutesSource: "SHIFT_ASSIGNMENT" });
       }
-      if (minutes.unresolved === "SHIFT_ASSIGNMENTS_OVERLAP") {
-        return unresolved("SHIFT_ASSIGNMENTS_OVERLAP", "HOLIDAY_CONVOCATION", templates.map((template) => template.id), "SHIFT_ASSIGNMENT");
-      }
+      return unresolved(minutes.unresolved, "SHIFT_PLAN", templates.map((template) => template.id), "SHIFT_ASSIGNMENT");
     }
-    const start = parseShiftTime(convocation.expectedStartTime);
-    const end = parseShiftTime(convocation.expectedEndTime);
-    if (start !== null && end !== null) {
-      const minutes = computeExpectedMinutes(convocation.expectedStartTime!, convocation.expectedEndTime!, end <= start);
-      return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes, shiftTemplateIds: [], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_TIMES" });
-    }
-    return unresolved("EXPECTED_MINUTES_UNKNOWN", "HOLIDAY_CONVOCATION");
+
+    case "NONE":
+      // Sin planificación vigente (ninguna asignación habilitada en vigencia): falta configuración.
+      return unresolved("SCHEDULE_MISSING", "NONE");
+
+    case "ROTATION":
+      // R4.2: plan de rotación. Los bloques pertenecen al mismo plan
+      // autoritativo, así que la suma es válida (José viernes A: 240 + 720).
+      // REST → 0 confirmado. MISSING o CONFLICT → no resuelto, con el motivo
+      // propio en `planIssue` (el enum persistido no tiene uno de rotación).
+      if (resolution.obligation === "SHIFT") return rotationBlocksWorkday("SHIFT_ROTATION");
+      if (resolution.obligation === "NO_OBLIGATION") return confirmedZero("NO_WORK_OBLIGATION", "SHIFT_ROTATION");
+      return unresolved("SCHEDULE_MISSING", "SHIFT_ROTATION");
   }
-  if (holiday === "IN_SCOPE") return confirmedZero("HOLIDAY_NOT_CONVOKED", "HOLIDAY_RULE");
-  if (holiday === "SCOPE_HISTORY_MISSING") return unresolved("HOLIDAY_SCOPE_HISTORY_MISSING", "HOLIDAY_RULE");
-
-  // 4. SIN_TURNO: para Novedades nunca es 0 h confirmado por el nombre del régimen.
-  const regime = activeRegimeKind(context.regimes, date);
-  if (regime === "SIN_TURNO") return unresolved("REGIME_WITHOUT_SCHEDULE", "WORK_REGIME");
-
-  // 5. Asignación aplicable ese día.
-  if (applicable.length) {
-    const templates = applicable.map((assignment) => assignment.template);
-    const minutes = expectedMinutesForTemplates(templates);
-    if ("minutes" in minutes) {
-      return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes.minutes, shiftTemplateIds: templates.map((template) => template.id), source: "SHIFT_PLAN", minutesSource: "SHIFT_ASSIGNMENT" });
-    }
-    return unresolved(minutes.unresolved, "SHIFT_PLAN", templates.map((template) => template.id), "SHIFT_ASSIGNMENT");
-  }
-
-  // 6. TURNO_FLEXIBLE sin asignación aplicable: no se puede afirmar que no trabajaba.
-  if (regime === "TURNO_FLEXIBLE") return unresolved("FLEXIBLE_REGIME_NO_ASSIGNMENT", "WORK_REGIME");
-
-  // 8. Sin planificación vigente (ninguna asignación habilitada en vigencia): falta configuración.
-  if (!usable.length) return unresolved("SCHEDULE_MISSING", "NONE");
-
-  // 7. TURNO_OBLIGATORIO o sin régimen, con planificación vigente que excluye el día.
-  return confirmedZero("NO_WORK_OBLIGATION", "SHIFT_PLAN");
 }
 
 // ── Cargador batch ──────────────────────────────────────────────────────────
@@ -352,11 +433,11 @@ export const MAX_WORKDAY_RANGE_DAYS = 400;
 
 export type WorkdayContextReader = Pick<
   PrismaTransactionClient,
-  "shiftAssignment" | "employeeDayOff" | "holidayWorkAssignment" | "employeeWorkRegime" | "doubleHourRule"
+  "shiftAssignment" | "employeeDayOff" | "holidayWorkAssignment" | "employeeWorkRegime" | "doubleHourRule" | "shiftRotationCrewMember" | "shiftRotation"
 > &
   HistoryReader;
 
-const templateSelect = { id: true, startTime: true, endTime: true, crossesMidnight: true, expectedMinutes: true, status: true } as const;
+const templateSelect = { id: true, code: true, startTime: true, endTime: true, crossesMidnight: true, expectedMinutes: true, status: true } as const;
 
 export function workdayDateKeys(from: Date, to: Date): string[] {
   const days = calendarDaysInclusive(from, to);
@@ -383,7 +464,7 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
   const result = new Map<string, EmployeeWorkdayContext>();
   if (!ids.length) return result;
 
-  const [assignments, dayOffs, convocations, regimes, feriadoRules] = await Promise.all([
+  const [assignments, dayOffs, convocations, regimes, feriadoRules, rotation] = await Promise.all([
     db.shiftAssignment.findMany({
       where: { employeeId: { in: ids }, status: "HABILITADO", effectiveFrom: { lte: to }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: from } }] },
       select: { employeeId: true, status: true, effectiveFrom: true, effectiveTo: true, weekdays: true, shiftTemplate: { select: templateSelect } },
@@ -415,7 +496,10 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
         employees: { select: { employeeId: true } },
       },
     }),
+    // R4.3b: sin membresías es una sola consulta vacía.
+    loadRotationConfiguration(db, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]!, employeeIds: ids }),
   ]);
+  const rotationMembers = new Set(rotation.memberships.map((membership) => membership.employeeId));
 
   const histories = feriadoRules.some(feriadoRuleRestrictsHistory)
     ? await laborHistoryService.loadEngineScopeHistoryByEmployee(db, ids, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]! })
@@ -437,6 +521,7 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
         .filter((row) => row.employeeId === employeeId)
         .map((row) => ({ effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo, kind: row.workRegime.kind })),
       holidays: resolveEmployeeHolidayStatus({ employeeId, dateKeys, feriadoRules, history: histories?.get(employeeId) ?? null }),
+      ...(rotationMembers.has(employeeId) ? { rotation } : {}),
     });
   }
   return result;

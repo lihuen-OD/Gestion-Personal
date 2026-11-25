@@ -7,7 +7,7 @@ import { roles } from "../../shared/security/roles";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { argentinaDateKey, humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { argentinaDateKey, humanizePeriodEs, nextCalendarDateKey, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { resolveEmployeeNotificationRecipients, type RecipientsReader } from "./employeeNotificationRecipients";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
@@ -23,6 +23,9 @@ import { describeReinterpretation, reinterpretationMetadata } from "./specialHou
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
 import { computeExpectedMinutes } from "../shifts/shiftTemplateTime";
+import { assertShiftGroupAssignable, describeShiftGroup } from "../shifts/shiftGroup.service";
+import { shiftGroupSummarySelect } from "../shifts/shiftGroup.repository";
+import { pendingFixedEntryJobs, shiftTemplateHistory, shiftTemplateScheduleService, type ReplaceShiftTemplateScheduleInput } from "./shiftTemplateSchedule.service";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -93,6 +96,15 @@ function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
 
 // ── Turnos: cobertura de novedades de quienes usan la plantilla (etapa 5) ──
 const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+// R3.1: cada plantilla del catálogo trae su grupo (`shiftGroup: null` = sin
+// grupo). Es clasificación: no participa de ningún cálculo de jornada.
+const SHIFT_TEMPLATE_GROUP_INCLUDE = { shiftGroup: { select: shiftGroupSummarySelect } } as const;
+
+/** Frase de auditoría del grupo de una plantilla, con nombres (nunca ids). */
+function shiftGroupAuditPhrase(before: { code: string; name: string } | null | undefined, after: { code: string; name: string } | null | undefined): string {
+  const label = (group: { code: string; name: string } | null | undefined) => (group ? describeShiftGroup(group) : "sin grupo");
+  return ` Grupo: ${label(before)} → ${label(after)}.`;
+}
 
 /**
  * Cambio de horario/minutos/estado de una plantilla: recalcula sólo los
@@ -101,15 +113,51 @@ const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
  * ventana de esas vigencias/fechas (NOVELTY_COVERAGE_ENGINE.md §13.2). Quien
  * llama ya tomó el lock global de cobertura.
  */
+type CoverageRange = { employeeId: string; from: Date; to: Date | null };
+
+/**
+ * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): miembros de
+ * rotación cuyas grillas usan la plantilla, con el período de su membresía
+ * acotado a la vigencia de las versiones que la usan. Sin ninguna membresía
+ * (hoy, todos los entornos) no consulta las tablas de la grilla.
+ */
+async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shiftTemplateId: string): Promise<CoverageRange[]> {
+  if (!(await tx.shiftRotationCrewMember.findFirst({ select: { id: true } }))) return [];
+  const blocks = await tx.shiftRotationBlock.findMany({
+    where: { shiftTemplateId },
+    select: { day: { select: { crewId: true, version: { select: { effectiveFrom: true, effectiveTo: true } } } } },
+  });
+  if (!blocks.length) return [];
+  const spanByCrew = new Map<string, { from: Date; to: Date | null }>();
+  for (const { day } of blocks) {
+    const span = spanByCrew.get(day.crewId);
+    const versionTo = day.version.effectiveTo;
+    spanByCrew.set(day.crewId, span
+      ? { from: span.from < day.version.effectiveFrom ? span.from : day.version.effectiveFrom, to: span.to === null || versionTo === null ? null : span.to > versionTo ? span.to : versionTo }
+      : { from: day.version.effectiveFrom, to: versionTo });
+  }
+  const members = await tx.shiftRotationCrewMember.findMany({ where: { crewId: { in: [...spanByCrew.keys()] } }, select: { employeeId: true, crewId: true, effectiveFrom: true, effectiveTo: true } });
+  const ranges: CoverageRange[] = [];
+  for (const member of members) {
+    const span = spanByCrew.get(member.crewId)!;
+    const from = member.effectiveFrom > span.from ? member.effectiveFrom : span.from;
+    const to = member.effectiveTo === null ? span.to : span.to === null ? member.effectiveTo : member.effectiveTo < span.to ? member.effectiveTo : span.to;
+    if (to === null || to >= from) ranges.push({ employeeId: member.employeeId, from, to });
+  }
+  return ranges;
+}
+
 async function recalculateTemplateCoverage(tx: PrismaTransactionClient, shiftTemplateId: string, label: string) {
-  const [assignments, convocations] = await Promise.all([
+  const [assignments, convocations, rotationRanges] = await Promise.all([
     tx.shiftAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } }),
     tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, date: true } }),
+    rotationTemplateCoverageRanges(tx, shiftTemplateId),
   ]);
   const reason = { source: "SHIFT_TEMPLATE_CHANGED" as const, label };
-  const ranges = [
+  const ranges: CoverageRange[] = [
     ...assignments.map((row) => ({ employeeId: row.employeeId, from: row.effectiveFrom, to: row.effectiveTo })),
     ...convocations.map((row) => ({ employeeId: row.employeeId, from: row.date, to: row.date as Date | null })),
+    ...rotationRanges,
   ];
   if (!ranges.length) return recalculateNoveltyCoverage(tx, { employeeIds: [] }, reason);
   const from = new Date(Math.min(...ranges.map((range) => range.from.getTime())));
@@ -490,9 +538,25 @@ export const workforceService = {
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
-  shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
+  async shiftTemplates() {
+    const tomorrow = new Date(`${nextCalendarDateKey(todayArgentinaDateKey())}T00:00:00.000Z`);
+    const rows = await prisma.shiftTemplate.findMany({
+      orderBy: { startTime: "asc" },
+      include: {
+        ...SHIFT_TEMPLATE_GROUP_INCLUDE,
+        _count: { select: {
+          assignments: { where: { status: "HABILITADO", OR: [{ effectiveTo: null }, { effectiveTo: { gte: tomorrow } }] } },
+          holidayWorkAssignments: { where: { status: "ACTIVA", date: { gte: tomorrow } } },
+          rotationBlocks: { where: { day: { version: { OR: [{ effectiveTo: null }, { effectiveTo: { gte: tomorrow } }] } } } },
+        } },
+      },
+    });
+    return rows.map(({ _count, ...row }) => ({ ...row, inUseFromTomorrow: (_count?.assignments ?? 0) + (_count?.holidayWorkAssignments ?? 0) + (_count?.rotationBlocks ?? 0) > 0 }));
+  },
   async createShiftTemplate(input: any, audit?: AuditContext) {
     const crossesMidnight = input.endTime <= input.startTime;
+    // R3.1: un grupo nuevo para la plantilla debe existir y estar ACTIVO.
+    const group = await assertShiftGroupAssignable(input.shiftGroupId, null);
     const item = await execute(() => prisma.shiftTemplate.create({
       data: {
         ...input,
@@ -501,22 +565,50 @@ export const workforceService = {
         createdByUserId: audit?.userId || null,
         updatedByUserId: audit?.userId || null,
       },
+      include: SHIFT_TEMPLATE_GROUP_INCLUDE,
     }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
+    const groupPhrase = group ? ` Grupo: ${describeShiftGroup(group)}.` : "";
+    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.${groupPhrase}`, after: item as Prisma.InputJsonValue });
     return item;
   },
   async updateShiftTemplate(id: string, input: any, audit?: AuditContext) {
-    const before = await prisma.shiftTemplate.findUnique({ where: { id } });
-    if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
-    const startTime = input.startTime ?? before.startTime;
-    const endTime = input.endTime ?? before.endTime;
-    const crossesMidnight = endTime <= startTime;
-    const expectedMinutes = computeExpectedMinutes(startTime, endTime, crossesMidnight);
-    // Horario, minutos o estado cambian la jornada esperada de quienes usan
-    // el turno: misma transacción que el recálculo de su cobertura (etapa 5).
-    const affectsWorkday = startTime !== before.startTime || endTime !== before.endTime || crossesMidnight !== before.crossesMidnight || expectedMinutes !== before.expectedMinutes || (input.status !== undefined && input.status !== before.status);
-    const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
-      if (affectsWorkday) await lockNoveltyCoverageGlobally(tx);
+    const { item, coverage, before, groupChanged, nextGroup } = await execute(() => prisma.$transaction(async (tx) => {
+      // Mismo orden que el reemplazo fechado: cobertura global → plantilla.
+      // Las ediciones de catálogo son infrecuentes y así no pueden cruzarse
+      // con un plan de reemplazo ni con escritores por legajo.
+      await lockNoveltyCoverageGlobally(tx);
+      await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
+      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: SHIFT_TEMPLATE_GROUP_INCLUDE });
+      if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      // R3.1: cambiar el grupo es clasificación, no planificación horaria.
+      const groupChanged = input.shiftGroupId !== undefined && (input.shiftGroupId ?? null) !== (before.shiftGroupId ?? null);
+      const nextGroup = groupChanged ? await assertShiftGroupAssignable(input.shiftGroupId, before.shiftGroupId ?? null, tx) : null;
+      const startTime = input.startTime ?? before.startTime;
+      const endTime = input.endTime ?? before.endTime;
+      const crossesMidnight = endTime <= startTime;
+      const expectedMinutes = computeExpectedMinutes(startTime, endTime, crossesMidnight);
+      const scheduleChanged = startTime !== before.startTime || endTime !== before.endTime;
+      const retiring = (input.status !== undefined && input.status !== before.status && input.status === "INACTIVO") || groupChanged;
+      if (scheduleChanged || retiring) {
+        const history = await shiftTemplateHistory(id, todayArgentinaDateKey(), tx);
+        if (history.hasRuled) {
+          const code = scheduleChanged ? "SHIFT_TEMPLATE_SCHEDULE_LOCKED" : "SHIFT_TEMPLATE_HISTORY_LOCKED";
+          throw new AppError(scheduleChanged
+            ? "El horario de este turno ya rigió y no se puede reescribir. Usá el reemplazo de horario con fecha para conservar el pasado."
+            : "El turno ya rigió: no se puede inactivar ni cambiar de grupo porque eso alteraría la resolución histórica.", 409, code, history.sources);
+        }
+      }
+      const rulesChanged = [
+        "entryToleranceBeforeMinutes", "entryToleranceAfterMinutes", "exitToleranceBeforeMinutes", "exitToleranceAfterMinutes",
+        "minimumMinutesForCompliance", "maximumInformativeMinutes", "missingOutAlertAfterMinutes", "absoluteOpenShiftLimitMinutes",
+      ].some((field) => input[field] !== undefined && input[field] !== (before as unknown as Record<string, unknown>)[field]);
+      if (rulesChanged) {
+        const pending = await pendingFixedEntryJobs(id, tx);
+        if (pending > 0) throw new AppError(`Hay ${pending} fichada(s) de entrada pendientes de procesar para este turno. Reprocesalas antes de cambiar tolerancias o límites.`, 409, "SHIFT_TEMPLATE_RULES_PENDING_PUNCHES", { pending });
+      }
+      // Horario, minutos o estado cambian la jornada esperada de quienes usan
+      // el turno: misma transacción que el recálculo de su cobertura (etapa 5).
+      const affectsWorkday = scheduleChanged || crossesMidnight !== before.crossesMidnight || expectedMinutes !== before.expectedMinutes || (input.status !== undefined && input.status !== before.status);
       const updated = await tx.shiftTemplate.update({
         where: { id },
         data: {
@@ -525,9 +617,10 @@ export const workforceService = {
           expectedMinutes,
           updatedByUserId: audit?.userId || null,
         },
+        include: SHIFT_TEMPLATE_GROUP_INCLUDE,
       });
       const recalculated = affectsWorkday ? await recalculateTemplateCoverage(tx, id, `cambio del turno ${updated.code} - ${updated.name}`) : null;
-      return { item: updated, coverage: recalculated };
+      return { item: updated, coverage: recalculated, before, groupChanged, nextGroup };
     }, SHIFT_TEMPLATE_TRANSACTION_OPTIONS));
     if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     await auditService.register({
@@ -535,7 +628,7 @@ export const workforceService = {
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
       entity: "ShiftTemplate",
       entityId: id,
-      description: `Se actualizó el turno ${item.code} - ${item.name}.`,
+      description: `Se actualizó el turno ${item.code} - ${item.name}.${groupChanged ? shiftGroupAuditPhrase(before.shiftGroup, nextGroup) : ""}`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
@@ -548,21 +641,12 @@ export const workforceService = {
   // en vez de dejar su referencia en NULL.
   async removeShiftTemplate(id: string, audit?: AuditContext) {
     return execute(() => prisma.$transaction(async (tx) => {
-      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true } } } });
+      await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
+      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true, rotationBlocks: true } } } });
       if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
-      const history = before._count.workShifts + before._count.holidayWorkAssignments;
-      if (history > 0) {
-        if (before.status !== "INACTIVO") await lockNoveltyCoverageGlobally(tx);
-        const item = await tx.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
-        await auditService.registerWithin(tx, { ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas o convocatorias de feriado históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
-        // Un turno inactivo deja de definir jornada: cobertura de quienes lo usan (etapa 5).
-        if (before.status !== "INACTIVO") {
-          const coverage = await recalculateTemplateCoverage(tx, id, `inactivación del turno ${before.code} - ${before.name}`);
-          const description = describeNoveltyCoverageRecalculation(coverage);
-          if (description) await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "NoveltyDayCoverage", description, after: { source: coverage.source, novelties: coverage.changedNovelties, days: coverage.changedDays, protectedPeriods: coverage.protectedPeriods, droppedResolutions: coverage.droppedResolutions } as unknown as Prisma.InputJsonValue });
-        }
-        return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
-      }
+      const history = await shiftTemplateHistory(id, todayArgentinaDateKey(), tx);
+      if (history.hasRuled) throw new AppError("El turno ya rigió y debe conservarse activo para no alterar la historia. Si cambia el horario, usá el reemplazo con fecha.", 409, "SHIFT_TEMPLATE_HISTORY_LOCKED", history.sources);
+      if (before._count.rotationBlocks > 0) throw new AppError("No se puede eliminar el turno porque forma parte de una versión de rotación. Reemplazalo en una versión futura.", 409, "SHIFT_TEMPLATE_IN_ROTATION");
       if (before._count.assignments > 0) {
         throw new AppError("No se puede eliminar el turno porque tiene asignaciones de empleados asociadas", 409, "SHIFT_TEMPLATE_HAS_ASSIGNMENTS");
       }
@@ -570,6 +654,12 @@ export const workforceService = {
       await auditService.registerWithin(tx, { ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
       return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  },
+  previewShiftTemplateScheduleReplacement(id: string, input: ReplaceShiftTemplateScheduleInput) {
+    return shiftTemplateScheduleService.preview(id, input);
+  },
+  replaceShiftTemplateSchedule(id: string, input: ReplaceShiftTemplateScheduleInput, audit?: AuditContext) {
+    return shiftTemplateScheduleService.replace(id, input, audit);
   },
   // Etapa 8B: se agregan dates (calendario FECHA) y los 4 nombres de scope
   // (empresa/sector/centro de costo/puesto) para que el frontend no necesite

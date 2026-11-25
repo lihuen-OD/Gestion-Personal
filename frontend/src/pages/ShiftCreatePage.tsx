@@ -10,12 +10,19 @@ import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService } from "../services/api/workforceApiService";
 import { roleLevel } from "../utils/roles";
 import { useAsyncAction } from "../utils/useAsyncAction";
+import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
+import { shiftGroupSelectOptions } from "../utils/shiftGroups";
 
 export function ShiftCreatePage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [value, setValue] = useState(emptyShiftTemplate());
   const [error, setError] = useState("");
+  const { groups, status: groupsStatus } = useShiftGroupsCatalog();
+  const groupField = {
+    options: shiftGroupSelectOptions(groups, null),
+    unavailableMessage: groupsStatus === "error" ? "No pudimos cargar los grupos: el turno se crea sin grupo y podés asignarlo después." : groupsStatus === "loading" ? "Cargando grupos..." : undefined,
+  };
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
@@ -35,7 +42,7 @@ export function ShiftCreatePage() {
     <form onSubmit={save}>
       <PageHeader eyebrow="TURNOS" title="Crear turno" description="Definí el horario de referencia, sus tolerancias y las reglas de control." />
       <Section title="Datos generales, horario, tolerancias y control" subtitle="Los empleados se asocian una vez creado el turno.">
-        <ShiftTemplateFormFields value={value} onChange={setValue} />
+        <ShiftTemplateFormFields value={value} onChange={setValue} groupField={groupField} />
       </Section>
       {error ? <p className="error create-error">{error}</p> : null}
       <FormActions className="create-actions">

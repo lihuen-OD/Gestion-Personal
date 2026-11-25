@@ -15,18 +15,22 @@ import { Button } from "../ui/Button";
 import { TableShell } from "../ui/TableShell";
 import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
 import { argentinaDateKey } from "../../utils/argentinaDateKey";
+import { shiftGroupLabel } from "../../utils/shiftGroups";
 
 function todayDateInput() {
   return argentinaDateKey(new Date());
 }
 
-function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove }: { rows: ShiftAssignment[]; canEdit: boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void }) {
+// R3.2: el grupo mostrado es el del TURNO (lugar donde se trabaja ese turno),
+// no un atributo del empleado. Sale del catálogo de turnos que el panel ya carga.
+function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove, templatesById }: { rows: ShiftAssignment[]; canEdit: boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void; templatesById: ReadonlyMap<string, ShiftTemplate> }) {
   return (
-    <TableShell minWidth={960}>
+    <TableShell minWidth={1060}>
       <table>
         <thead>
           <tr>
             <th>Turno</th>
+            <th>Grupo</th>
             <th>Categoría</th>
             <th>Horario</th>
             <th>Desde</th>
@@ -41,6 +45,7 @@ function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove }: { rows: Shi
           {rows.map((assignment) => (
             <tr key={assignment.id}>
               <td><b>{assignment.shiftTemplate.name}</b></td>
+              <td>{shiftGroupLabel(templatesById.get(assignment.shiftTemplateId)?.shiftGroup)}</td>
               <td>{assignment.shiftTemplate.categoryName || <em>Sin categoría</em>}</td>
               <td>{assignment.shiftTemplate.startTime}–{assignment.shiftTemplate.endTime}</td>
               <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
@@ -148,6 +153,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
   const disabled = assignments.filter((assignment) => assignment.status === "DESHABILITADO");
   const assignedTemplateIds = new Set(assignments.map((assignment) => assignment.shiftTemplateId));
   const availableTemplates = templates.filter((template) => template.status === "ACTIVO" && !assignedTemplateIds.has(template.id));
+  const templatesById = new Map(templates.map((template) => [template.id, template]));
 
   return (
     <>
@@ -161,7 +167,7 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
                 <option value="">Seleccionar turno...</option>
                 {availableTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
-                    {template.name}{template.categoryName ? ` (${template.categoryName})` : ""}
+                    {template.name} · {shiftGroupLabel(template.shiftGroup)}{template.categoryName ? ` (${template.categoryName})` : ""}
                   </option>
                 ))}
               </select>
@@ -189,9 +195,9 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       ) : (
         <>
           <h4>Turnos habilitados ({enabled.length})</h4>
-          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <EmptyState size="compact" text="Ningún turno habilitado." />}
+          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno habilitado." />}
           <h4>Turnos deshabilitados ({disabled.length})</h4>
-          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} /> : <EmptyState size="compact" text="Ningún turno deshabilitado." />}
+          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno deshabilitado." />}
         </>
       )}
     </>

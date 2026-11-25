@@ -975,7 +975,7 @@ describe("HoursPage — Bandeja 'Por persona' con el modelo de tiempo trabajado"
   async function switchToPersonTab() {
     const { default: userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Por persona" }));
+    await user.click(screen.getByRole("tab", { name: "Por persona" }));
   }
 
   it("domingo x2 — base 8 + Sereno 3 + Colectivo 1: total trabajado 9 h (base + adicionales) y 'Para liquidación: 18 h'", async () => {

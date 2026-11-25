@@ -10,6 +10,7 @@ import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches } from "../employees/employees.controller";
 import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
 import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { clearShiftAssignmentSummaryCache } from "../shifts/shiftAssignment.cache";
 
 // Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
 // controllers — clave por usuario+rol+URL (ninguno de los dos endpoints tiene
@@ -118,6 +119,17 @@ export const workforceController = {
     clearShiftTemplatesReadCache();
     clearNoveltyCoverageReadCaches();
     res.json({data});
+  }) satisfies RequestHandler,
+  previewShiftTemplateScheduleReplacement: (async (req,res)=>{
+    const data=await workforceService.previewShiftTemplateScheduleReplacement(requireParam(req,"id"),req.body);
+    res.json({data});
+  }) satisfies RequestHandler,
+  replaceShiftTemplateSchedule: (async (req,res)=>{
+    const data=await workforceService.replaceShiftTemplateSchedule(requireParam(req,"id"),req.body,requestAuditContext(req));
+    clearShiftTemplatesReadCache();
+    clearShiftAssignmentSummaryCache();
+    clearNoveltyCoverageReadCaches();
+    res.status(201).json({data});
   }) satisfies RequestHandler,
   doubleRules: (async (req,res)=>{
     const key=userScopedCacheKey(req);
