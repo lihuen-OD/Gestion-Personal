@@ -1781,7 +1781,7 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 - O4: `TimeEntry` NORMAL es el agregado diario canónico por persona y fecha (ligado al último tramo); los minutos por jornada están en `TimeSegment`. Un nocturno reparte horas en dos días; no es defecto.
 - O5: el aviso de olvido para turnos cortos sigue en 10 h desde el ingreso mientras `missingOutAlertAfterMinutes` siga `NULL`; los límites siguen sin política aprobada.
 
-**Evidencia.** Simulación 18/18 (ciclo completo 27 s); regresión en bases nuevas: `rotationClock`, `rotationAttendance`, `clockPunchPostProcess`, `clock`, `shiftRotationAdmin` 104/104; unitarias relacionadas 337/337 (caracterización incluida); backend 4379/4379 (263 opt-in omitidas); `typecheck` y `build` verdes. Sin schema ni migraciones. La suite nueva no está en CI (pendiente de autorización: `ci.yml` es configuración compartida).
+**Evidencia.** Simulación 18/18 (ciclo completo 27 s); regresión en bases nuevas: `rotationClock`, `rotationAttendance`, `clockPunchPostProcess`, `clock`, `shiftRotationAdmin` 104/104; unitarias relacionadas 337/337 (caracterización incluida); backend 4379/4379 (263 opt-in omitidas); `typecheck` y `build` verdes. Sin schema ni migraciones. La suite se incorporó al CI en R4.9D.2 (job `Database`: base efímera `clock_it_ci_planta_sim` clonada de la recién migrada y `PLANTA_SIM_IT_DATABASE_URL`; sin Neon ni secretos).
 
 ### 25.19 R4.9C.2 — Corrección de O2: falta de ingreso falsa en el vencimiento de la tolerancia
 
