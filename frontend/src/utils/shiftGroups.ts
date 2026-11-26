@@ -92,8 +92,12 @@ export type ShiftGroupOption = { value: string; label: string };
  * actual (se puede conservar) pero nunca se ofrece como destino de otra.
  * Sin catálogo (`groups = null`) sólo se ofrece conservar el actual o quitarlo.
  */
-export function shiftGroupSelectOptions(groups: readonly ShiftGroup[] | null, current: ShiftGroupSummary | null | undefined): ShiftGroupOption[] {
-  const options: ShiftGroupOption[] = [{ value: "", label: UNGROUPED_LABEL }];
+/**
+ * `allowUngrouped: false` (R8, Nivel 2/3): un turno sin grupo es sólo de
+ * RRHH, así que no se ofrece «Sin grupo».
+ */
+export function shiftGroupSelectOptions(groups: readonly ShiftGroup[] | null, current: ShiftGroupSummary | null | undefined, { allowUngrouped = true }: { allowUngrouped?: boolean } = {}): ShiftGroupOption[] {
+  const options: ShiftGroupOption[] = allowUngrouped ? [{ value: "", label: UNGROUPED_LABEL }] : [];
   const active = sortShiftGroups((groups ?? []).filter((group) => group.status === "ACTIVO"));
   options.push(...active.map((group) => ({ value: group.id, label: group.name })));
   if (current && !active.some((group) => group.id === current.id)) {

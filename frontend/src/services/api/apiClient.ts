@@ -227,6 +227,11 @@ function isInternalMessage(message: string) {
 // específico que cualquier genérico (por eso no van en errorMessagesByCode).
 const fallbackMessagesByCode: Record<string, string> = {
   USER_SUPERVISION_INVALID_TARGET: "Revisá los responsables de carga seleccionados: sólo se pueden supervisar usuarios Nivel 3 - Administrativo de Carga Horaria.",
+  SHIFT_GROUP_FORBIDDEN: "No administrás ese grupo de turnos. Elegí uno de tus grupos o pedile a RRHH que te lo asigne.",
+  ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE: "Hay turnos fijos superpuestos de otro grupo: no podés cerrarlos desde esta rotación. Pedíselo a RRHH o a quien administre ese grupo.",
+  USER_SHIFT_GROUP_INVALID: "Uno de los grupos de turnos seleccionados ya no existe. Recargá la pantalla e intentá nuevamente.",
+  USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE: "Sólo un usuario Nivel 2 - Supervisión / Gestión puede tener grupos de turnos asignados.",
+  USER_SHIFT_GROUP_CONCURRENT_UPDATE: "Los grupos de turnos se modificaron en paralelo. Recargá la pantalla e intentá nuevamente.",
   NOVELTY_TYPE_COVERAGE_CONFIG_INVALID: "La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.",
   NOVELTY_TYPE_HOURS_DAYS_CONFLICT: "Si al cargar la novedad se indican horas, la unidad de Valor 1 no puede ser \"Días\".",
   NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED: "Para exportar a Finnegans completá el código y el nombre Finnegans.",

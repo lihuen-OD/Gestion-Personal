@@ -18,6 +18,7 @@ import { shiftRotationRepository, type RotationFullRow } from "./shiftRotation.r
 import { allMembers, keyOf, keyOrNull, membershipFacts, rotationSnapshot } from "./shiftRotation.support";
 import { fixedIntervalsOn, rotationIntervalsOn, transitionCheck, type ScheduledInterval } from "./shiftRotationReadiness";
 import { AppError } from "../../shared/errors/AppError";
+import { withErrorScope } from "./shiftErrorScope";
 
 type Db = PrismaTransactionClient;
 
@@ -134,11 +135,11 @@ export async function assertFixedAssignmentsCompatibleWithRotations(
   if (memberships.length) {
     const current = memberships[0]!;
     const input = inputs.find((candidate) => candidate.employeeId === current.employeeId) ?? first;
-    throw new AppError(
+    throw withErrorScope(new AppError(
       `El turno fijo de ${input.employee} se superpone con la rotación ${current.crew.rotation.code} - ${current.crew.rotation.name}, equipo ${current.crew.code} - ${current.crew.name}. Cerrá primero la membresía o iniciá el turno después.`,
       409,
       "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION",
-    );
+    ), { shiftGroupIds: [current.crew.rotation.shiftGroupId], employeeIds: [current.employeeId] });
   }
   const previous = previousCalendarDateKey(first.effectiveFrom);
   const config = await loadRotationConfiguration(db, { fromKey: previous, toKey: previous, employeeIds: inputs.map((input) => input.employeeId) });

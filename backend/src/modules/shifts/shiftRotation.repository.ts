@@ -54,9 +54,11 @@ export const shiftRotationRepository = {
     if (!rows.length) throw new AppError("No encontramos la rotación solicitada", 404, "ROTATION_NOT_FOUND");
   },
 
-  list(filter: { status?: "ACTIVO" | "INACTIVO"; shiftGroupId?: string }, db: Db = prisma) {
+  list(filter: { status?: "ACTIVO" | "INACTIVO"; shiftGroupId?: string }, scopeWhere: Prisma.ShiftRotationWhereInput, db: Db = prisma) {
     return db.shiftRotation.findMany({
-      where: { ...(filter.status ? { status: filter.status } : {}), ...(filter.shiftGroupId ? { shiftGroupId: filter.shiftGroupId } : {}) },
+      where: Object.keys(scopeWhere).length
+        ? { AND: [{ ...(filter.status ? { status: filter.status } : {}), ...(filter.shiftGroupId ? { shiftGroupId: filter.shiftGroupId } : {}) }, scopeWhere] }
+        : { ...(filter.status ? { status: filter.status } : {}), ...(filter.shiftGroupId ? { shiftGroupId: filter.shiftGroupId } : {}) },
       orderBy: [{ code: "asc" }],
       include: rotationFullInclude,
     });
@@ -196,7 +198,7 @@ export const shiftRotationRepository = {
         ...(to ? { effectiveFrom: { lte: argentinaCalendarDate(to) } } : {}),
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: argentinaCalendarDate(from) } }],
       },
-      include: { crew: { select: { code: true, name: true, rotation: { select: { code: true, name: true } } } } },
+      include: { crew: { select: { code: true, name: true, rotation: { select: { code: true, name: true, shiftGroupId: true } } } } },
     });
   },
 

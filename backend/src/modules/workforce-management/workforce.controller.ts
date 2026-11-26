@@ -1,4 +1,6 @@
 import type { RequestHandler } from "express";
+import { requestShiftGroupScope, shiftGroupScopeCacheKey } from "../shifts/shiftGroupAccess";
+import { requestShiftActor } from "../shifts/shiftWriteAccess";
 import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
 import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
@@ -95,37 +97,40 @@ export const workforceController = {
   // Etapa 9C: cache de lectura TTL corto (ver workforce.cache.ts) — mismo
   // shape de respuesta que antes, sólo cambia si la data viene de Prisma o
   // del cache.
+  // R8: la clave incluye la huella del alcance por grupo, resuelto en esta
+  // request: un grupo asignado o revocado nunca sirve una entrada vieja.
   shiftTemplates: (async (req,res)=>{
-    const key=userScopedCacheKey(req);
+    const scope=await requestShiftGroupScope(req);
+    const key=`${userScopedCacheKey(req)}:${shiftGroupScopeCacheKey(scope)}`;
     const cached=shiftTemplatesCache.get(key);
     if(cached) return res.json({data:cached});
-    const data=await workforceService.shiftTemplates();
+    const data=await workforceService.shiftTemplates(scope);
     shiftTemplatesCache.set(key,data);
     res.json({data});
   }) satisfies RequestHandler,
   createShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.createShiftTemplate(req.body,requestAuditContext(req));
+    const data=await workforceService.createShiftTemplate(req.body,await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     res.status(201).json({data});
   }) satisfies RequestHandler,
   updateShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req));
+    const data=await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     clearNoveltyCoverageReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
   removeShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req));
+    const data=await workforceService.removeShiftTemplate(requireParam(req,"id"),await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     clearNoveltyCoverageReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
   previewShiftTemplateScheduleReplacement: (async (req,res)=>{
-    const data=await workforceService.previewShiftTemplateScheduleReplacement(requireParam(req,"id"),req.body);
+    const data=await workforceService.previewShiftTemplateScheduleReplacement(requireParam(req,"id"),req.body,await requestShiftActor(req));
     res.json({data});
   }) satisfies RequestHandler,
   replaceShiftTemplateSchedule: (async (req,res)=>{
-    const data=await workforceService.replaceShiftTemplateSchedule(requireParam(req,"id"),req.body,requestAuditContext(req));
+    const data=await workforceService.replaceShiftTemplateSchedule(requireParam(req,"id"),req.body,await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     clearShiftAssignmentSummaryCache();
     clearNoveltyCoverageReadCaches();

@@ -24,11 +24,13 @@ workforceRouter.get("/notifications",requireAnyRole(all),validateQuery(listNotif
 workforceRouter.post("/notifications/:id/read",requireAnyRole(all),asyncHandler(c.readNotification));
 workforceRouter.get("/notifications-unread-count",requireAnyRole(all),asyncHandler(c.unreadNotificationCount));
 workforceRouter.get("/shift-templates",requireAnyRole(all),asyncHandler(c.shiftTemplates));
-workforceRouter.post("/shift-templates",requireAnyRole([roles.rrhh]),validateBody(shiftTemplateSchema),asyncHandler(c.createShiftTemplate));
-workforceRouter.patch("/shift-templates/:id",requireAnyRole([roles.rrhh]),validateBody(updateShiftTemplateSchema),asyncHandler(c.updateShiftTemplate));
-workforceRouter.delete("/shift-templates/:id",requireAnyRole([roles.rrhh]),asyncHandler(c.removeShiftTemplate));
-workforceRouter.post("/shift-templates/:id/replace-schedule/preview",requireAnyRole([roles.rrhh]),validateBody(replaceShiftTemplateSchedulePreviewSchema),asyncHandler(c.previewShiftTemplateScheduleReplacement));
-workforceRouter.post("/shift-templates/:id/replace-schedule",requireAnyRole([roles.rrhh]),validateBody(replaceShiftTemplateScheduleSchema),asyncHandler(c.replaceShiftTemplateSchedule));
+// R8.3 (§26): plantillas abiertas a Nivel 2/3; el grupo y los legajos los
+// verifican workforce.service.ts y shiftTemplateSchedule.service.ts.
+workforceRouter.post("/shift-templates",requireAnyRole(all),validateBody(shiftTemplateSchema),asyncHandler(c.createShiftTemplate));
+workforceRouter.patch("/shift-templates/:id",requireAnyRole(all),validateBody(updateShiftTemplateSchema),asyncHandler(c.updateShiftTemplate));
+workforceRouter.delete("/shift-templates/:id",requireAnyRole(all),asyncHandler(c.removeShiftTemplate));
+workforceRouter.post("/shift-templates/:id/replace-schedule/preview",requireAnyRole(all),validateBody(replaceShiftTemplateSchedulePreviewSchema),asyncHandler(c.previewShiftTemplateScheduleReplacement));
+workforceRouter.post("/shift-templates/:id/replace-schedule",requireAnyRole(all),validateBody(replaceShiftTemplateScheduleSchema),asyncHandler(c.replaceShiftTemplateSchedule));
 workforceRouter.get("/double-hour-rules",requireAnyRole(all),asyncHandler(c.doubleRules));
 workforceRouter.get("/double-hour-rules/calendar",requireAnyRole(all),validateQuery(calendarRangeQuerySchema),asyncHandler(c.doubleRulesCalendar));
 workforceRouter.post("/double-hour-rules",requireAnyRole([roles.rrhh]),validateBody(doubleRuleSchema),asyncHandler(c.createDoubleRule));

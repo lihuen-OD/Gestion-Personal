@@ -27,8 +27,8 @@ vi.mock("../services/api/shiftAssignmentApiService", async (importOriginal) => {
 vi.mock("../services/api/shiftGroupApiService", () => ({ shiftGroupApiService: { list: vi.fn() } }));
 vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { list: vi.fn(), create: vi.fn() } }));
 
-function authAs(role: string) {
-  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo" } });
+function authAs(role: string, groupIds: string[] = []) {
+  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo", shiftGroupAccess: { all: false, groupIds } }, refreshShiftGroupAccess: vi.fn() });
 }
 
 function DetailProbe() {
@@ -150,10 +150,18 @@ describe("pestaña Rotaciones", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Ya existe una rotación con ese código.");
   });
 
-  it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])("%s ve el listado sin acciones de administración", async (role) => {
+  it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])("R8: %s sin grupos no ve rotaciones ni puede crear", async (role) => {
     authAs(role);
     renderPage();
-    expect(await screen.findByText("PLANTA-4X4")).toBeInTheDocument();
+    expect(await screen.findByText(/Todavía no tenés grupos de turnos para administrar/)).toBeInTheDocument();
+    expect(screen.queryByText("PLANTA-4X4")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Crear rotación/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])("R8: %s con su grupo ve sus rotaciones y puede crear", async (role) => {
+    authAs(role, [PLANTA_GROUP.id]);
+    renderPage();
+    expect(await screen.findByText("PLANTA-4X4")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Crear rotación/ }).length).toBeGreaterThan(0);
   });
 });

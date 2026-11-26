@@ -6,6 +6,13 @@ type Db = PrismaTransactionClient | typeof prisma;
 
 const supervisionPersonSelect = { id: true, name: true, email: true, role: true, status: true } satisfies Prisma.UserSelect;
 
+/** R8.4: forma pública de un grupo de turnos en la respuesta de usuarios. */
+export const userShiftGroupSelect = { id: true, code: true, name: true, status: true, sortOrder: true } satisfies Prisma.ShiftGroupSelect;
+const shiftGroupScopesSelect = {
+  select: { shiftGroup: { select: userShiftGroupSelect } },
+  orderBy: [{ shiftGroup: { sortOrder: "asc" } }, { shiftGroup: { name: "asc" } }],
+} satisfies Prisma.User$shiftGroupScopesArgs;
+
 export const userSelect = {
   id: true,
   name: true,
@@ -20,18 +27,52 @@ export const userSelect = {
   employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
   // Nivel 2 → Nivel 3: a quiénes supervisa y (para un Nivel 3) quién lo supervisa.
   supervisionsAsSupervisor: { select: { supervised: { select: supervisionPersonSelect } }, orderBy: { supervised: { name: "asc" } } },
-  supervisionsAsSupervised: { select: { supervisor: { select: supervisionPersonSelect } }, orderBy: { supervisor: { name: "asc" } } },
+  supervisionsAsSupervised: { select: { supervisor: { select: { ...supervisionPersonSelect, shiftGroupScopes: shiftGroupScopesSelect } } }, orderBy: { supervisor: { name: "asc" } } },
+  // R8.4: grupos de turnos asignados (sólo un Nivel 2 tiene filas).
+  shiftGroupScopes: shiftGroupScopesSelect,
 } satisfies Prisma.UserSelect;
 
 type UserRow = Prisma.UserGetPayload<{ select: typeof userSelect }>;
 
-/** Respuesta pública: relaciones de supervisión aplanadas, sin hash de contraseña. */
+type ShiftGroupSummary = Prisma.ShiftGroupGetPayload<{ select: typeof userShiftGroupSelect }>;
+type SupervisorRow = UserRow["supervisionsAsSupervised"][number]["supervisor"];
+
+/**
+ * R8.4: grupos que un Nivel 3 hereda, con los supervisores de origen. Misma
+ * regla que `shiftGroupScopeWhere` (shifts/shiftGroupAccess.ts): sólo
+ * supervisores que sigan siendo Nivel 2 y estén ACTIVOS. Es informativo: la
+ * autorización la decide siempre el helper, en cada request.
+ */
+function inheritedShiftGroups(role: UserRow["role"], supervisors: SupervisorRow[]) {
+  if (role !== "NIVEL_3_CARGA_HORARIA") return [];
+  const byGroup = new Map<string, { group: ShiftGroupSummary; viaSupervisors: Array<{ id: string; name: string; email: string }> }>();
+  for (const supervisor of supervisors) {
+    if (supervisor.role !== "NIVEL_2_SUPERVISION" || supervisor.status !== "ACTIVO") continue;
+    for (const { shiftGroup } of supervisor.shiftGroupScopes) {
+      const entry = byGroup.get(shiftGroup.id) ?? { group: shiftGroup, viaSupervisors: [] };
+      entry.viaSupervisors.push({ id: supervisor.id, name: supervisor.name, email: supervisor.email });
+      byGroup.set(shiftGroup.id, entry);
+    }
+  }
+  return [...byGroup.values()].sort((a, b) => a.group.sortOrder - b.group.sortOrder || a.group.name.localeCompare(b.group.name));
+}
+
+/** Respuesta pública: relaciones de supervisión y grupos aplanados, sin hash de contraseña. */
 function toUser(row: UserRow) {
-  const { supervisionsAsSupervisor, supervisionsAsSupervised, ...user } = row;
+  const { supervisionsAsSupervisor, supervisionsAsSupervised, shiftGroupScopes, ...user } = row;
+  const supervisors = supervisionsAsSupervised.map((item) => item.supervisor);
   return {
     ...user,
     supervisedUsers: supervisionsAsSupervisor.map((item) => item.supervised),
-    supervisorUsers: supervisionsAsSupervised.map((item) => item.supervisor),
+    supervisorUsers: supervisors.map(({ shiftGroupScopes: _groups, ...person }) => person),
+    /**
+     * R8.4: grupos asignados. Sólo un Nivel 2 los tiene (una fila desfasada de
+     * otro rol nunca da alcance y no se muestra). Un Nivel 2 INACTIVO los
+     * conserva sin efecto.
+     */
+    shiftGroups: row.role === "NIVEL_2_SUPERVISION" ? shiftGroupScopes.map((item) => item.shiftGroup) : [],
+    /** R8.4: grupos heredados (Nivel 3), con sus supervisores de origen. */
+    inheritedShiftGroups: inheritedShiftGroups(row.role, supervisors),
   };
 }
 
@@ -156,6 +197,22 @@ export const usersRepository = {
   removeSupervisions(db: PrismaTransactionClient, supervisorUserId: string, supervisedUserIds: string[]) {
     if (!supervisedUserIds.length) return Promise.resolve({ count: 0 });
     return db.userSupervisionAssignment.deleteMany({ where: { supervisorUserId, supervisedUserId: { in: supervisedUserIds } } });
+  },
+
+  /** R8.4: grupos de turnos candidatos, para validar existencia y estado. */
+  findShiftGroupsByIds(ids: string[], db: Db = prisma) {
+    if (!ids.length) return Promise.resolve([]);
+    return db.shiftGroup.findMany({ where: { id: { in: ids } }, select: userShiftGroupSelect });
+  },
+
+  addShiftGroupScopes(db: PrismaTransactionClient, userId: string, shiftGroupIds: string[], createdByUserId: string | null) {
+    if (!shiftGroupIds.length) return Promise.resolve({ count: 0 });
+    return db.userShiftGroupScope.createMany({ data: shiftGroupIds.map((shiftGroupId) => ({ userId, shiftGroupId, createdByUserId })), skipDuplicates: true });
+  },
+
+  removeShiftGroupScopes(db: PrismaTransactionClient, userId: string, shiftGroupIds: string[]) {
+    if (!shiftGroupIds.length) return Promise.resolve({ count: 0 });
+    return db.userShiftGroupScope.deleteMany({ where: { userId, shiftGroupId: { in: shiftGroupIds } } });
   },
 
   /** Al dejar de ser Nivel 3: deja de estar supervisado por cualquier Nivel 2. */

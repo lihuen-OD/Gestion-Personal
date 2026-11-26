@@ -16,6 +16,7 @@ import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
 import { transitionCheck, type ScheduledInterval } from "./shiftRotationReadiness";
 import { shiftExpectedPreviewRepository, type PreviewEmployeeRow, type PreviewMembershipRow, type PreviewRotationRow } from "./shiftExpectedPreview.repository";
 import type { ExpectedShiftPreviewQuery } from "./shiftExpectedPreview.schemas";
+import { canAccessShiftGroup, type ShiftGroupScope } from "./shiftGroupAccess";
 
 type PreviewWarning = {
   code: "ROTATION_PLAN_MISSING" | "ROTATION_PLAN_CONFLICT" | "MULTIPLE_FIXED_ASSIGNMENTS" | "FIXED_ASSIGNMENTS_OVERLAP" | "EXPECTED_WORKDAY_UNRESOLVED" | "TRANSITION_OVERLAP";
@@ -218,10 +219,64 @@ function publicCell(cell: InternalCell) {
   return result;
 }
 
+type PublicCell = ReturnType<typeof publicCell>;
+type SerializedBlock = ReturnType<typeof serializeBlock>;
+type HiddenTemplateBlock = Omit<SerializedBlock, "template"> & {
+  template: Omit<SerializedBlock["template"], "id" | "code"> & { id: null; code: null };
+  templateHidden: true;
+};
+
+/**
+ * R8 (§26): para quien no es Nivel 1, una celda puede mostrar planificación de
+ * otros grupos (un turno fijo, otra rotación o una convocatoria de la misma
+ * persona). Se conservan horarios, fuente y obligación —lo que necesita para
+ * entender el día— y se quitan identificadores y códigos ajenos: plantilla de
+ * un grupo no administrable (o sin grupo), origen de otra rotación y el
+ * detalle técnico de un conflicto.
+ */
+function redactCell(cell: PublicCell, rotationId: string, visibleTemplate: (id: string) => boolean) {
+  const block = (item: SerializedBlock): SerializedBlock | HiddenTemplateBlock =>
+    visibleTemplate(item.template.id)
+      ? item
+      : { ...item, template: { ...item.template, id: null, code: null }, templateHidden: true };
+  return {
+    ...cell,
+    planning: {
+      ...cell.planning,
+      origin: cell.planning.origin && cell.planning.origin.rotationId !== rotationId ? null : cell.planning.origin,
+      detail: [],
+      blocks: cell.planning.blocks.map(block),
+    },
+    effective: { ...cell.effective, blocks: cell.effective.blocks.map(block) },
+    expectedWorkday: { ...cell.expectedWorkday, shiftTemplateIds: cell.expectedWorkday.shiftTemplateIds.filter(visibleTemplate) },
+  };
+}
+
+function cellTemplateIds(cell: PublicCell) {
+  return [
+    ...cell.planning.blocks.map((item) => item.template.id),
+    ...cell.effective.blocks.map((item) => item.template.id),
+    ...cell.expectedWorkday.shiftTemplateIds,
+  ];
+}
+
+async function redactForScope<T extends { days: PublicCell[] }>(rows: T[], rotationId: string, scope: ShiftGroupScope) {
+  const templateIds = [...new Set(rows.flatMap((row) => row.days.flatMap(cellTemplateIds)))];
+  const groups = await shiftExpectedPreviewRepository.templateGroups(templateIds);
+  const visibleTemplate = (id: string) => canAccessShiftGroup(scope, groups.get(id));
+  return rows.map((row) => ({ ...row, days: row.days.map((cell) => redactCell(cell, rotationId, visibleTemplate)) }));
+}
+
 export const shiftExpectedPreviewService = {
-  async preview(query: ExpectedShiftPreviewQuery, user: Express.AuthUser) {
+  /**
+   * R8: la rotación tiene que ser de un grupo administrable (si no, 404 igual
+   * que inexistente); las personas, del alcance de legajos; y para quien no es
+   * Nivel 1 se oculta la planificación ajena de cada celda (`redactCell`).
+   * Nunca escribe ni cachea.
+   */
+  async preview(query: ExpectedShiftPreviewQuery, user: Express.AuthUser, scope: ShiftGroupScope) {
     const rotation = await shiftExpectedPreviewRepository.findRotation(query.rotationId);
-    if (!rotation) throw new AppError("No encontramos la rotación solicitada", 404, "ROTATION_NOT_FOUND");
+    if (!rotation || !canAccessShiftGroup(scope, rotation.shiftGroup.id)) throw new AppError("No encontramos la rotación solicitada", 404, "ROTATION_NOT_FOUND");
 
     const { items: employees, total } = await shiftExpectedPreviewRepository.findEmployees(query, employeeAccessWhere(user));
     const returnedKeys = workdayDateKeys(argentinaCalendarDate(query.from), argentinaCalendarDate(query.to));
@@ -248,8 +303,10 @@ export const shiftExpectedPreviewService = {
       };
     });
 
+    const visibleData = scope.all ? data : await redactForScope(data, rotation.id, scope);
+
     return {
-      data,
+      data: visibleData,
       context: {
         rotation: { id: rotation.id, code: rotation.code, name: rotation.name, shiftGroup: rotation.shiftGroup },
         range: { from: query.from, to: query.to, days: returnedKeys.length },

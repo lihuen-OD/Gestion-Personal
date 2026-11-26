@@ -110,6 +110,11 @@ export function previewKindText(kind: PreviewCellKind) {
   return KIND_TEXT[kind];
 }
 
+/** Código del turno del bloque; uno de otro grupo llega oculto (R8). */
+export function blockCodeText(block: PreviewBlock) {
+  return block.template.code ?? "Otro grupo";
+}
+
 export function blockTimeText(block: PreviewBlock) {
   return `${block.template.startTime}–${block.template.endTime}`;
 }
@@ -128,7 +133,7 @@ export function previewCellLabel(row: PreviewRow, cell: PreviewCell, view: Previ
   const person = `${row.employee.lastName}, ${row.employee.firstName}`;
   const week = cell.assignment?.cycleWeekLabel ? `, semana ${cell.assignment.cycleWeekLabel}` : "";
   const content = view.blocks.length
-    ? view.blocks.map((block) => `${block.template.code} de ${block.template.startTime} a ${block.template.endTime}${block.template.crossesMidnight ? " del día siguiente" : ""}`).join(" y ")
+    ? view.blocks.map((block) => `${blockCodeText(block)} de ${block.template.startTime} a ${block.template.endTime}${block.template.crossesMidnight ? " del día siguiente" : ""}`).join(" y ")
     : KIND_TEXT[view.kind];
   const extra = [view.kind === "FIXED" ? "turno fijo" : "", ...view.tags, view.errors ? `${view.errors} ${view.errors === 1 ? "error" : "errores"}` : "", view.warnings ? `${view.warnings} ${view.warnings === 1 ? "advertencia" : "advertencias"}` : ""].filter(Boolean);
   return `${person}, ${dayHeader(cell.date).full}${week}: ${content}${extra.length ? ` (${extra.join(", ")})` : ""}. Ver detalle.`;

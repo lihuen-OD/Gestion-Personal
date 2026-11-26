@@ -25,7 +25,7 @@ type Scope = "current" | "history";
  * se pide al backend (vigentes y futuras, o el historial completo) y se
  * ordena por persona y período; el historial nunca se edita.
  */
-export function RotationMembersPanel({ rotation, canEdit, onChanged }: { rotation: ShiftRotation; canEdit: boolean; onChanged: () => void }) {
+export function RotationMembersPanel({ rotation, canEdit, hiddenNote, onChanged }: { rotation: ShiftRotation; canEdit: boolean; /** R8: aviso de personas fuera del alcance de legajos. */ hiddenNote?: string; onChanged: () => void }) {
   const todayKey = argentinaDateKey(new Date());
   const [scope, setScope] = useState<Scope>("current");
   const [members, setMembers] = useState<ShiftRotationMember[] | null>(null);
@@ -97,6 +97,9 @@ export function RotationMembersPanel({ rotation, canEdit, onChanged }: { rotatio
     <Section title="Personas" subtitle={subtitle} action={canAdd && status === "success" && members?.length ? addButton : undefined}>
       {notice ? <div className="toast" role="status">{notice}</div> : null}
       {actionError ? <p className="error rotation-section-error" role="alert">{actionError}</p> : null}
+      {hiddenNote && scope === "current" ? (
+        <div className="info-note rotation-hidden-members" role="note"><p><b>{hiddenNote}</b> No aparecen en esta lista y sólo RRHH (o su responsable) puede darlas de baja, moverlas o cancelarlas.</p></div>
+      ) : null}
       {withoutFixed.length ? (
         <div className="info-note warning rotation-without-fixed" role="status">
           <p><b>Sin turno asignado después de la baja.</b> Estas personas no tienen turno fijo ni otra rotación desde la fecha indicada:</p>

@@ -8,6 +8,9 @@ import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
 import { workforceService } from "./workforce.service";
+import { ALL_SHIFT_GROUPS } from "../shifts/shiftGroupAccess";
+import { globalShiftActor } from "../shifts/shiftWriteAccess";
+const RRHH_ACTOR = globalShiftActor({ id: "user-1", role: "NIVEL_1_RRHH" } as never);
 
 // Mismo par de mocks que workforce.service.test.ts (el orden de carga importa).
 vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
@@ -70,7 +73,7 @@ beforeEach(() => {
 describe("catálogo (serialización)", () => {
   it("incluye el grupo de cada plantilla; sin grupo = shiftGroup null", async () => {
     db.shiftTemplate.findMany.mockResolvedValue([template(), template({ id: "template-2", shiftGroupId: PLANTA_ID, shiftGroup: PLANTA })]);
-    const items = await workforceService.shiftTemplates();
+    const items = await workforceService.shiftTemplates(ALL_SHIFT_GROUPS);
     expect(db.shiftTemplate.findMany).toHaveBeenCalledWith(expect.objectContaining({ orderBy: { startTime: "asc" }, include: expect.objectContaining(GROUP_INCLUDE) }));
     expect(items.map((item) => item.shiftGroup)).toEqual([null, PLANTA]);
     expect(items.every((item) => item.inUseFromTomorrow === false)).toBe(true);
@@ -79,7 +82,7 @@ describe("catálogo (serialización)", () => {
 
 describe("alta", () => {
   it("sin grupo: no consulta grupos y audita como siempre", async () => {
-    const item = await workforceService.createShiftTemplate(input, { userId: "user-1" });
+    const item = await workforceService.createShiftTemplate(input, RRHH_ACTOR, { userId: "user-1" });
     expect(db.shiftGroup.findUnique).not.toHaveBeenCalled();
     expect(db.shiftTemplate.create.mock.calls[0]![0].include).toEqual(GROUP_INCLUDE);
     expect(item.shiftGroup).toBeNull();
@@ -87,7 +90,7 @@ describe("alta", () => {
   });
 
   it("con grupo ACTIVO: lo guarda y lo nombra en la auditoría (sin ids)", async () => {
-    const item = await workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID });
+    const item = await workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID }, RRHH_ACTOR);
     expect(db.shiftTemplate.create.mock.calls[0]![0].data.shiftGroupId).toBe(PLANTA_ID);
     expect(item.shiftGroup).toEqual(PLANTA);
     expect(lastDescription()).toBe("Se creó el turno PL-01 - Planta 01. Grupo: PLANTA - Planta.");
@@ -96,13 +99,13 @@ describe("alta", () => {
 
   it("grupo inexistente → 404 sin crear", async () => {
     givenGroups();
-    await expect(workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID })).rejects.toMatchObject({ statusCode: 404, code: "SHIFT_GROUP_NOT_FOUND" });
+    await expect(workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 404, code: "SHIFT_GROUP_NOT_FOUND" });
     expect(db.shiftTemplate.create).not.toHaveBeenCalled();
   });
 
   it("grupo INACTIVO → 409 sin crear", async () => {
     givenGroups({ ...PLANTA, status: "INACTIVO" as never });
-    await expect(workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_INACTIVE" });
+    await expect(workforceService.createShiftTemplate({ ...input, shiftGroupId: PLANTA_ID }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_INACTIVE" });
     expect(db.shiftTemplate.create).not.toHaveBeenCalled();
   });
 });
@@ -127,7 +130,7 @@ describe("edición", () => {
 
   it("asignar grupo a una plantilla sin grupo: sin recálculo de cobertura", async () => {
     givenBefore();
-    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID });
+    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID }, RRHH_ACTOR);
     expect(db.shiftTemplate.findUnique).toHaveBeenCalledWith({ where: { id: "template-1" }, include: GROUP_INCLUDE });
     expect(item.shiftGroup).toEqual(PLANTA);
     expectNoRecalculation();
@@ -136,7 +139,7 @@ describe("edición", () => {
 
   it("cambiar de grupo", async () => {
     givenBefore({ shiftGroupId: PLANTA_ID, shiftGroup: PLANTA });
-    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: GRANJA_ID });
+    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: GRANJA_ID }, RRHH_ACTOR);
     expect(item.shiftGroup).toEqual(GRANJA);
     expectNoRecalculation();
     expect(lastDescription()).toContain("Grupo: PLANTA - Planta → GRANJA - Granja.");
@@ -144,7 +147,7 @@ describe("edición", () => {
 
   it("desasignar con null (sin consultar grupos)", async () => {
     givenBefore({ shiftGroupId: PLANTA_ID, shiftGroup: PLANTA });
-    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: null });
+    const item = await workforceService.updateShiftTemplate("template-1", { shiftGroupId: null }, RRHH_ACTOR);
     expect(db.shiftTemplate.update.mock.calls[0]![0].data.shiftGroupId).toBeNull();
     expect(item.shiftGroup).toBeNull();
     expect(db.shiftGroup.findUnique).not.toHaveBeenCalled();
@@ -155,30 +158,30 @@ describe("edición", () => {
   it("asignar un grupo INACTIVO nuevo → 409 sin escribir", async () => {
     givenBefore();
     givenGroups({ ...PLANTA, status: "INACTIVO" as never });
-    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_INACTIVE" });
+    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_INACTIVE" });
     expect(db.shiftTemplate.update).not.toHaveBeenCalled();
   });
 
   it("grupo inexistente → 404 sin escribir", async () => {
     givenBefore();
     givenGroups();
-    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID })).rejects.toMatchObject({ statusCode: 404 });
+    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 404 });
     expect(db.shiftTemplate.update).not.toHaveBeenCalled();
   });
 
   it("editar otro dato de una plantilla cuyo grupo se inactivó: la plantilla sigue funcionando y conserva el grupo", async () => {
     givenBefore({ shiftGroupId: PLANTA_ID, shiftGroup: { ...PLANTA, status: "INACTIVO" } });
     givenGroups({ ...PLANTA, status: "INACTIVO" as never });
-    await expect(workforceService.updateShiftTemplate("template-1", { name: "Planta Uno" })).resolves.toMatchObject({ shiftGroupId: PLANTA_ID });
+    await expect(workforceService.updateShiftTemplate("template-1", { name: "Planta Uno" }, RRHH_ACTOR)).resolves.toMatchObject({ shiftGroupId: PLANTA_ID });
     // Reenviar el mismo grupo inactivo tampoco es un cambio.
-    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID, name: "Planta Uno" })).resolves.toMatchObject({ shiftGroupId: PLANTA_ID });
+    await expect(workforceService.updateShiftTemplate("template-1", { shiftGroupId: PLANTA_ID, name: "Planta Uno" }, RRHH_ACTOR)).resolves.toMatchObject({ shiftGroupId: PLANTA_ID });
     expect(db.shiftGroup.findUnique).not.toHaveBeenCalled();
     expect(lastDescription()).toBe("Se actualizó el turno PL-01 - Planta Uno.");
   });
 
   it("control: cambiar el horario sí recalcula cobertura (comportamiento previo intacto)", async () => {
     givenBefore();
-    await workforceService.updateShiftTemplate("template-1", { startTime: "08:00", shiftGroupId: PLANTA_ID });
+    await workforceService.updateShiftTemplate("template-1", { startTime: "08:00", shiftGroupId: PLANTA_ID }, RRHH_ACTOR);
     expect(usersOfTemplateLookup()).toHaveBeenCalledWith(expect.objectContaining({ where: { shiftTemplateId: "template-1" } }));
   });
 });

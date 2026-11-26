@@ -25,6 +25,9 @@ vi.mock("./users.repository", () => ({
     addSupervisions: vi.fn(),
     removeSupervisions: vi.fn(),
     removeAllAsSupervised: vi.fn(),
+    findShiftGroupsByIds: vi.fn(),
+    addShiftGroupScopes: vi.fn(),
+    removeShiftGroupScopes: vi.fn(),
   },
 }));
 vi.mock("../audit/audit.service", () => ({
@@ -33,7 +36,7 @@ vi.mock("../audit/audit.service", () => ({
 }));
 vi.mock("../auth/auth.service", () => ({ invalidateCurrentUserCache: vi.fn() }));
 
-type RepoMethod = "findById" | "findByEmail" | "findCompany" | "create" | "update" | "findEmployeeLink" | "findUsersByIds" | "transaction" | "addSupervisions" | "removeSupervisions" | "removeAllAsSupervised" | "updatePassword";
+type RepoMethod = "findById" | "findByEmail" | "findCompany" | "create" | "update" | "findEmployeeLink" | "findUsersByIds" | "transaction" | "addSupervisions" | "removeSupervisions" | "removeAllAsSupervised" | "updatePassword" | "findShiftGroupsByIds" | "addShiftGroupScopes" | "removeShiftGroupScopes";
 const repo = usersRepository as unknown as Record<RepoMethod, Mock>;
 const TX = { tx: true };
 
@@ -70,21 +73,21 @@ describe("A8 §12.4 — User.companyId no puede apuntar a un registro archivado"
 
   it("permite el alta con empresa no archivada", async () => {
     repo.findCompany.mockResolvedValue({ id: "c-ok", name: "Odwyer", archivedAt: null });
-    repo.create.mockResolvedValue({ id: "u-1", email: "ana@example.com", supervisedUsers: [], supervisorUsers: [] });
+    repo.create.mockResolvedValue({ id: "u-1", email: "ana@example.com", supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [] });
 
     await expect(usersService.create({ ...createInput, companyId: "c-ok" })).resolves.toMatchObject({ id: "u-1" });
     expect(repo.create).toHaveBeenCalled();
   });
 
   it("permite el alta sin empresa", async () => {
-    repo.create.mockResolvedValue({ id: "u-2", email: "ana@example.com", supervisedUsers: [], supervisorUsers: [] });
+    repo.create.mockResolvedValue({ id: "u-2", email: "ana@example.com", supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [] });
 
     await expect(usersService.create({ ...createInput, companyId: null })).resolves.toMatchObject({ id: "u-2" });
     expect(repo.findCompany).not.toHaveBeenCalled();
   });
 
   it("rechaza en la edición cambiar a una empresa archivada, sin escribir", async () => {
-    repo.findById.mockResolvedValue({ id: "u-1", email: "old@example.com", name: "Ana", role: "NIVEL_1_RRHH", status: "ACTIVO", supervisedUsers: [], supervisorUsers: [] });
+    repo.findById.mockResolvedValue({ id: "u-1", email: "old@example.com", name: "Ana", role: "NIVEL_1_RRHH", status: "ACTIVO", supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [] });
     repo.findCompany.mockResolvedValue({ id: "c-arch", name: "Odwyer Vieja", archivedAt: new Date() });
 
     await expect(usersService.update("u-1", { companyId: "c-arch" } as UpdateUserInput)).rejects.toMatchObject({
@@ -95,8 +98,8 @@ describe("A8 §12.4 — User.companyId no puede apuntar a un registro archivado"
   });
 
   it("una edición que no toca la empresa no consulta el chequeo de archivado", async () => {
-    repo.findById.mockResolvedValue({ id: "u-1", email: "old@example.com", name: "Ana", role: "NIVEL_1_RRHH", status: "ACTIVO", supervisedUsers: [], supervisorUsers: [] });
-    repo.update.mockResolvedValue({ id: "u-1", name: "Ana Renombrada", supervisedUsers: [], supervisorUsers: [] });
+    repo.findById.mockResolvedValue({ id: "u-1", email: "old@example.com", name: "Ana", role: "NIVEL_1_RRHH", status: "ACTIVO", supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [] });
+    repo.update.mockResolvedValue({ id: "u-1", name: "Ana Renombrada", supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [] });
 
     await usersService.update("u-1", { name: "Ana Renombrada" } as UpdateUserInput);
 
@@ -112,7 +115,7 @@ const person = (id: string, role: string, name = id.toUpperCase()) => ({ id, nam
 const cargaPlanta = person("n3-planta", N3, "CARGA PLANTA");
 const cargaPanol = person("n3-panol", N3, "CARGA PAÑOL");
 const otroN2 = person("n2-otro", N2, "OTRO ENCARGADO");
-const stored = (overrides: Record<string, unknown> = {}) => ({ id: "n2-jefe", name: "ENCARGADO PLANTA", email: "jefe@example.com", role: N2, status: "ACTIVO", employeeId: null, supervisedUsers: [], supervisorUsers: [], ...overrides });
+const stored = (overrides: Record<string, unknown> = {}) => ({ id: "n2-jefe", name: "ENCARGADO PLANTA", email: "jefe@example.com", role: N2, status: "ACTIVO", employeeId: null, supervisedUsers: [], supervisorUsers: [], shiftGroups: [], inheritedShiftGroups: [], ...overrides });
 const registeredAudits = () => (auditService.registerWithin as Mock).mock.calls.map((call) => call[1]);
 const supervisionAudits = () => registeredAudits().filter((entry) => entry.entity === "UserSupervisionAssignment");
 
@@ -309,5 +312,94 @@ describe("Usuarios — supervisión Nivel 2 → Nivel 3", () => {
 
     await expect(usersService.update("n2-jefe", { supervisedUserIds: [cargaPlanta.id] } as UpdateUserInput)).rejects.toThrow("db down");
     expect(repo.transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("R8.4 — grupos de turnos de un Nivel 2", () => {
+  const planta = { id: "g-planta", code: "PLANTA", name: "Planta", status: "ACTIVO", sortOrder: 10 };
+  const taller = { id: "g-taller", code: "TALLER", name: "Taller", status: "ACTIVO", sortOrder: 20 };
+  const viejo = { id: "g-viejo", code: "VIEJO", name: "Viejo", status: "INACTIVO", sortOrder: 30 };
+  const groupAudits = () => registeredAudits().filter((entry) => entry.entity === "UserShiftGroupScope");
+
+  it("alta de un Nivel 2 con varios grupos: los asigna y audita con estado anterior y posterior, sin ids en el texto", async () => {
+    repo.findShiftGroupsByIds.mockResolvedValue([taller, planta]);
+    repo.create.mockResolvedValue(stored());
+    repo.findById.mockResolvedValue(stored({ shiftGroups: [planta, taller] }));
+
+    const user = await usersService.create({ ...createInput, role: N2, shiftGroupIds: [planta.id, taller.id] } as CreateUserInput, { userId: "rrhh-1" });
+
+    expect(repo.addShiftGroupScopes).toHaveBeenCalledWith(TX, "n2-jefe", [planta.id, taller.id], "rrhh-1");
+    expect(user.shiftGroups).toHaveLength(2);
+    const [audit] = groupAudits();
+    expect(audit).toMatchObject({ action: "UPDATE", entityId: "n2-jefe", before: { shiftGroups: [] }, after: { shiftGroups: [{ id: planta.id, code: "PLANTA", name: "Planta" }, { id: taller.id, code: "TALLER", name: "Taller" }] } });
+    expect(audit.description).toContain("se agregaron PLANTA - Planta, TALLER - Taller");
+    expect(audit.description).not.toMatch(/g-planta|n2-jefe/);
+  });
+
+  it("Nivel 1 y Nivel 3 no pueden tener grupos propios (el Nivel 3 los hereda)", async () => {
+    for (const role of [N1, N3]) {
+      await expect(usersService.create({ ...createInput, role, shiftGroupIds: [planta.id] } as CreateUserInput))
+        .rejects.toMatchObject({ statusCode: 400, code: "USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE" });
+    }
+    repo.findById.mockResolvedValue(stored({ id: "n3-x", role: N3 }));
+    await expect(usersService.update("n3-x", { shiftGroupIds: [planta.id] } as UpdateUserInput)).rejects.toMatchObject({ code: "USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE" });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("grupo inexistente → 400; grupo INACTIVO nuevo → 409; uno INACTIVO ya asignado se conserva", async () => {
+    repo.findById.mockResolvedValue(stored({ shiftGroups: [viejo] }));
+    repo.findShiftGroupsByIds.mockResolvedValue([planta]);
+    await expect(usersService.update("n2-jefe", { shiftGroupIds: [planta.id, "g-borrado"] } as UpdateUserInput)).rejects.toMatchObject({ statusCode: 400, code: "USER_SHIFT_GROUP_INVALID" });
+
+    repo.findShiftGroupsByIds.mockResolvedValue([taller, { ...viejo, id: "g-otro-viejo" }]);
+    await expect(usersService.update("n2-jefe", { shiftGroupIds: [taller.id, "g-otro-viejo"] } as UpdateUserInput)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_GROUP_INACTIVE" });
+    expect(repo.update).not.toHaveBeenCalled();
+
+    repo.findShiftGroupsByIds.mockResolvedValue([viejo, planta]);
+    repo.update.mockResolvedValue(stored({ shiftGroups: [viejo] }));
+    await usersService.update("n2-jefe", { shiftGroupIds: [viejo.id, planta.id] } as UpdateUserInput);
+    expect(repo.addShiftGroupScopes).toHaveBeenCalledWith(TX, "n2-jefe", [planta.id], null);
+    expect(repo.removeShiftGroupScopes).toHaveBeenCalledWith(TX, "n2-jefe", []);
+  });
+
+  it("sin la lista se conservan; con la misma lista no escribe ni audita", async () => {
+    repo.findById.mockResolvedValue(stored({ shiftGroups: [planta] }));
+    repo.update.mockResolvedValue(stored({ shiftGroups: [planta] }));
+    await usersService.update("n2-jefe", { name: "ENCARGADO" } as UpdateUserInput);
+    repo.findShiftGroupsByIds.mockResolvedValue([planta]);
+    await usersService.update("n2-jefe", { shiftGroupIds: [planta.id] } as UpdateUserInput);
+    expect(repo.addShiftGroupScopes).not.toHaveBeenCalled();
+    expect(groupAudits()).toHaveLength(0);
+  });
+
+  it("un Nivel 2 que pasa a otro rol pierde sus grupos en la misma transacción, auditado con el motivo", async () => {
+    repo.findById.mockResolvedValue(stored({ shiftGroups: [planta, taller] }));
+    repo.update.mockResolvedValue(stored({ role: N3 }));
+
+    await usersService.update("n2-jefe", { role: N3 } as UpdateUserInput);
+
+    expect(repo.removeShiftGroupScopes).toHaveBeenCalledWith(TX, "n2-jefe", [planta.id, taller.id]);
+    const [audit] = groupAudits();
+    expect(audit).toMatchObject({ before: { shiftGroups: [{ id: planta.id, code: "PLANTA", name: "Planta" }, { id: taller.id, code: "TALLER", name: "Taller" }] }, after: { shiftGroups: [] } });
+    expect(audit.description).toContain("dejó de ser Nivel 2");
+  });
+
+  it("inactivar un Nivel 2 conserva sus grupos (la regla de alcance los suspende)", async () => {
+    repo.findById.mockResolvedValue(stored({ id: "n2-jefe", shiftGroups: [planta] }));
+    repo.update.mockResolvedValue(stored({ status: "INACTIVO", shiftGroups: [planta] }));
+
+    const user = await usersService.update("n2-jefe", { status: "INACTIVO" } as UpdateUserInput);
+
+    expect(repo.removeShiftGroupScopes).not.toHaveBeenCalled();
+    expect(user.shiftGroups).toEqual([planta]);
+  });
+
+  it("una carrera sobre el par usuario-grupo responde 409 USER_SHIFT_GROUP_CONCURRENT_UPDATE", async () => {
+    repo.findById.mockResolvedValue(stored());
+    repo.findShiftGroupsByIds.mockResolvedValue([planta]);
+    repo.update.mockResolvedValue(stored());
+    repo.addShiftGroupScopes.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x", meta: { target: ["userId", "shiftGroupId"] } }));
+    await expect(usersService.update("n2-jefe", { shiftGroupIds: [planta.id] } as UpdateUserInput)).rejects.toMatchObject({ statusCode: 409, code: "USER_SHIFT_GROUP_CONCURRENT_UPDATE" });
   });
 });

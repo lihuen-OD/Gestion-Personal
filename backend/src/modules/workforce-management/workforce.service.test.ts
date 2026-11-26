@@ -14,6 +14,8 @@ import type { ListNotificationsQuery } from "./workforce.schemas";
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
 import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { globalShiftActor } from "../shifts/shiftWriteAccess";
+const RRHH_ACTOR = globalShiftActor({ id: "user-1", role: "NIVEL_1_RRHH" } as never);
 vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
   lockEmployeeCoverage: vi.fn(),
@@ -492,7 +494,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   it("createShiftTemplate mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
     mockedPrisma.shiftTemplate.create.mockRejectedValue(prismaKnownError("P2003"));
 
-    await expect(workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" })).rejects.toMatchObject({
+    await expect(workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
@@ -501,7 +503,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   it("createShiftTemplate funciona igual que antes con un userId real", async () => {
     mockedPrisma.shiftTemplate.create.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno" });
 
-    const item = await workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, { userId: "user-1" });
+    const item = await workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, RRHH_ACTOR, { userId: "user-1" });
 
     expect(item.id).toBe("template-1");
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftTemplate" }));
@@ -511,7 +513,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
     mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
 
-    await expect(workforceService.updateShiftTemplate("template-1", { startTime: "09:00" })).rejects.toMatchObject({
+    await expect(workforceService.updateShiftTemplate("template-1", { startTime: "09:00" }, RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 409,
       code: "SHIFT_TEMPLATE_SCHEDULE_LOCKED",
       details: { workShift: true },
@@ -525,7 +527,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
     mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValueOnce(2);
 
-    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 })).rejects.toMatchObject({
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 }, RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 409,
       code: "SHIFT_TEMPLATE_RULES_PENDING_PUNCHES",
       details: { pending: 2 },
@@ -538,7 +540,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
     mockedPrisma.shiftTemplate.update.mockResolvedValue({ ...shiftTemplateRow, entryToleranceAfterMinutes: 15 });
 
-    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 })).resolves.toMatchObject({ entryToleranceAfterMinutes: 15 });
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 }, RRHH_ACTOR)).resolves.toMatchObject({ entryToleranceAfterMinutes: 15 });
 
     expect(mockedPrisma.shiftTemplate.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ entryToleranceAfterMinutes: 15 }) }));
     expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
@@ -552,7 +554,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       _count: { workShifts: 0, assignments: 1, holidayWorkAssignments: 0 },
     });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 409,
       code: "SHIFT_TEMPLATE_HAS_ASSIGNMENTS",
       message: "No se puede eliminar el turno porque tiene asignaciones de empleados asociadas",
@@ -569,7 +571,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     });
     mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
     expect(lockNoveltyCoverageGlobally).not.toHaveBeenCalled();
   });
@@ -578,7 +580,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno", _count: { workShifts: 0, assignments: 0, holidayWorkAssignments: 1 } });
     mockedPrisma.holidayWorkAssignment.findFirst.mockResolvedValueOnce({ id: "holiday-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
     expect(auditService.registerWithin).not.toHaveBeenCalled();
@@ -593,7 +595,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     });
     mockedPrisma.shiftTemplate.delete.mockResolvedValue({ id: "template-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toEqual({ mode: "DELETED", id: "template-1", relatedWorkShifts: 0 });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).resolves.toEqual({ mode: "DELETED", id: "template-1", relatedWorkShifts: 0 });
     expect(mockedPrisma.shiftTemplate.delete).toHaveBeenCalledWith({ where: { id: "template-1" } });
   });
 

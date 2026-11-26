@@ -19,12 +19,13 @@ function countLabel(count: number) {
 export function ShiftGroupSections({
   sections,
   counts,
-  canEdit,
+  canEditGroup,
   onToggleStatus,
 }: {
   sections: ShiftGroupSection[];
   counts: Record<string, ShiftAssignmentCounts>;
-  canEdit: boolean;
+  /** R8: acciones por grupo (`null` = sin grupo, sólo Nivel 1). */
+  canEditGroup: (groupId: string | null) => boolean;
   onToggleStatus: (item: ShiftTemplate) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -52,7 +53,7 @@ export function ShiftGroupSections({
             {open ? (
               <div id={bodyId} className="shift-group-body">
                 {section.templates.length ? (
-                  <ShiftTable items={section.templates} counts={counts} canEdit={canEdit} onToggleStatus={onToggleStatus} layout="grouped" />
+                  <ShiftTable items={section.templates} counts={counts} canEdit={canEditGroup(section.group?.id ?? null)} onToggleStatus={onToggleStatus} layout="grouped" />
                 ) : (
                   <EmptyState size="compact" text="Este grupo todavía no tiene turnos asociados." />
                 )}

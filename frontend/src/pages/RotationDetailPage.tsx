@@ -22,7 +22,7 @@ import { shiftRotationApiService, type ShiftRotation, type ShiftRotationWithoutF
 import { confirmAction } from "../services/appDialog";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { formatCalendarDate, formatInstantDate } from "../utils/date";
-import { roleLevel } from "../utils/roles";
+import { useShiftGroupAccess } from "../utils/shiftGroupAccess";
 import {
   canDeleteRotation,
   countLabel,
@@ -65,12 +65,19 @@ function stateNote(rotation: ShiftRotation): string | null {
  * diagnóstico. Equipos y grilla (R4.8B), personas (R4.8C), vista previa
  * (R4.8D) y activación/finalización (R4.8E) se agregan en sus subetapas.
  */
+/** R8: personas de la rotación fuera del alcance de legajos de quien consulta. */
+function hiddenMembersText(count: number) {
+  return count === 1 ? "1 persona de esta rotación está fuera de tu alcance de legajos." : `${count} personas de esta rotación están fuera de tu alcance de legajos.`;
+}
+
 export function RotationDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation() as { state?: { created?: boolean } };
-  const canEdit = roleLevel(user!.role) === 1;
+  // R8: se administra si el grupo de la rotación es administrable (RRHH: todas).
+  // Una rotación de otro grupo responde 404 en el backend («no encontrada»).
+  const { canManageGroup } = useShiftGroupAccess();
   const [rotation, setRotation] = useState<ShiftRotation | null>(null);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error" | "not-found">("loading");
   const [reload, setReload] = useState(0);
@@ -169,6 +176,8 @@ export function RotationDetailPage() {
   }
   if (loadStatus === "error" || !rotation) return <Section title="Rotación"><ErrorState message="No pudimos cargar la rotación." onRetry={() => setReload((value) => value + 1)} /></Section>;
 
+  const canEdit = rotation ? canManageGroup(rotation.shiftGroup.id) : false;
+  const hiddenMembers = rotation?.hiddenMemberCount ?? 0;
   const state = rotationState(rotation);
   const health = rotationHealth(rotation.health);
   const version = rotationVersionStatus(rotation.versions, todayKey);
@@ -197,9 +206,10 @@ export function RotationDetailPage() {
           {canEdit ? (
             <>
               <Button variant="subtle" icon={Pencil} onClick={() => setEditing(true)}>Editar datos</Button>
-              {lifecycle.activate ? <Button variant="primary" icon={Power} loading={lifecycleBusy} disabled={blocked || lifecycleBusy} onClick={() => void changeStatus("activate")}>Activar</Button> : null}
-              {lifecycle.deactivate ? <Button variant="subtle" icon={Power} loading={lifecycleBusy} disabled={lifecycleBusy} onClick={() => void changeStatus("deactivate")}>Desactivar</Button> : null}
-              {lifecycle.finalize ? <Button variant="subtle" icon={CalendarX2} className="rotation-danger-button" disabled={lifecycleBusy} onClick={() => { setLifecycleError(null); setFinalizing(true); }}>Finalizar</Button> : null}
+              {/* R8: con personas fuera del alcance de legajos el backend rechaza activar, desactivar y finalizar: se deshabilitan y el aviso explica por qué. */}
+              {lifecycle.activate ? <Button variant="primary" icon={Power} loading={lifecycleBusy} disabled={blocked || lifecycleBusy || hiddenMembers > 0} onClick={() => void changeStatus("activate")}>Activar</Button> : null}
+              {lifecycle.deactivate ? <Button variant="subtle" icon={Power} loading={lifecycleBusy} disabled={lifecycleBusy || hiddenMembers > 0} onClick={() => void changeStatus("deactivate")}>Desactivar</Button> : null}
+              {lifecycle.finalize ? <Button variant="subtle" icon={CalendarX2} className="rotation-danger-button" disabled={lifecycleBusy || hiddenMembers > 0} onClick={() => { setLifecycleError(null); setFinalizing(true); }}>Finalizar</Button> : null}
               {deletable ? (
                 <button type="button" className="table-icon-action danger-link" title="Eliminar rotación" aria-label="Eliminar rotación" onClick={() => void remove()} disabled={deleting}>
                   <Trash2 size={14} aria-hidden="true" /><span>Eliminar rotación</span>
@@ -210,6 +220,11 @@ export function RotationDetailPage() {
         </div>
       </div>
       {notice ? <div className="toast" role="status">{notice}</div> : null}
+      {hiddenMembers ? (
+        <div className="info-note warning rotation-hidden-members" role="note">
+          <p><b>{hiddenMembersText(hiddenMembers)}</b> No se muestran ni se pueden modificar. Activar, desactivar, finalizar o cambiar la grilla de la rotación activa también las afecta, así que el sistema lo rechaza mientras sigan fuera de tu alcance: coordinalo con RRHH.</p>
+        </div>
+      ) : null}
       {actionError ? <p className="error rotation-action-error" role="alert">{actionError}</p> : null}
       {lifecycleError ? (
         <div className="rotation-save-error rotation-lifecycle-error" role="alert">
@@ -250,7 +265,7 @@ export function RotationDetailPage() {
       ) : null}
       {view === "personas" ? (
         <div {...tabPanelProps(DETAIL_TABS_ID, "personas")}>
-          <RotationMembersPanel rotation={rotation} canEdit={canEdit} onChanged={() => setReload((value) => value + 1)} />
+          <RotationMembersPanel rotation={rotation} canEdit={canEdit} hiddenNote={hiddenMembers ? hiddenMembersText(hiddenMembers) : undefined} onChanged={() => setReload((value) => value + 1)} />
         </div>
       ) : null}
       {view === "vista-previa" ? (

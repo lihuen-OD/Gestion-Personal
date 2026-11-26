@@ -4,6 +4,7 @@ import { shiftExpectedPreviewRepository } from "./shiftExpectedPreview.repositor
 import { shiftExpectedPreviewService } from "./shiftExpectedPreview.service";
 import type { ExpectedShiftPreviewQuery } from "./shiftExpectedPreview.schemas";
 import type { LoadedRotationTemplate } from "./rotationPlan.loader";
+import { ALL_SHIFT_GROUPS } from "./shiftGroupAccess";
 
 vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
 vi.mock("./shiftExpectedPreview.repository", () => ({
@@ -97,7 +98,7 @@ describe("shiftExpectedPreviewService.preview", () => {
     const context = employeeContext();
     vi.mocked(loadEmployeeWorkdayContext).mockResolvedValue(new Map([[EMPLOYEE, context]]));
 
-    const result = await shiftExpectedPreviewService.preview(query, { id: "rrhh", role: "RRHH" } as never);
+    const result = await shiftExpectedPreviewService.preview(query, { id: "rrhh", role: "RRHH" } as never, ALL_SHIFT_GROUPS);
 
     expect(result.context).toMatchObject({ persistedStatus: "INACTIVO", readOnly: true, previewMode: "HYPOTHETICAL_INACTIVE", affectsRealObligations: false });
     expect(result.data[0]!.days).toHaveLength(2);

@@ -3,6 +3,8 @@ import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
 import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { pendingFixedEntryJobs, shiftTemplateHistory, shiftTemplateScheduleService } from "./shiftTemplateSchedule.service";
+import { globalShiftActor } from "../shifts/shiftWriteAccess";
+const RRHH_ACTOR = globalShiftActor({ id: "user-1", role: "NIVEL_1_RRHH" } as never);
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
@@ -98,8 +100,8 @@ describe("reemplazo de horario con fecha", () => {
     db.shiftAssignment.findMany.mockResolvedValue([{ id: "a1", employeeId: "e1", employee: employee("e1", "10"), effectiveFrom: new Date("2026-01-01"), effectiveTo: null, weekdays: [1], observation: null, updatedAt: new Date("2026-11-01") }]);
     db.holidayWorkAssignment.findMany.mockResolvedValue([{ id: "h1", employeeId: "e1", employee: employee("e1", "10"), date: new Date("2026-12-08"), updatedAt: new Date("2026-11-02") }]);
     db.shiftRotationVersion.findMany.mockResolvedValue([{ id: "v1", effectiveFrom: new Date("2026-12-01"), effectiveTo: null, updatedAt: new Date("2026-11-03"), rotation: { code: "ROT", name: "Planta" }, days: [{ crew: { code: "A", name: "Equipo A" } }] }]);
-    const first = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input);
-    const second = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input);
+    const first = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
+    const second = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
     expect(first.confirmationToken).toBe(second.confirmationToken);
     expect(first.complete).toBe(false);
     expect(first.assignments[0]).toMatchObject({ action: "SPLIT", employee: "Pérez, Ana · Legajo 10" });
@@ -107,17 +109,33 @@ describe("reemplazo de horario con fecha", () => {
     expect(first.pendingDependencies.rotationVersions[0]).toMatchObject({ rotation: "ROT - Planta", crews: ["A - Equipo A"] });
   });
 
+  it("R8.7: a un Nivel 2 no le nombra una rotación de otro grupo que use la plantilla (datos inconsistentes)", async () => {
+    db.shiftTemplate.findUnique.mockResolvedValue({ ...template(), shiftGroupId: "g-planta" });
+    db.shiftAssignment.findMany.mockResolvedValue([]);
+    db.holidayWorkAssignment.findMany.mockResolvedValue([]);
+    db.shiftRotationVersion.findMany.mockResolvedValue([
+      { id: "v1", effectiveFrom: new Date("2026-12-01"), effectiveTo: null, updatedAt: new Date("2026-11-03"), rotation: { code: "ROT-PL", name: "Planta", shiftGroupId: "g-planta" }, days: [{ crew: { code: "A", name: "Equipo A" } }] },
+      { id: "v2", effectiveFrom: new Date("2026-12-01"), effectiveTo: null, updatedAt: new Date("2026-11-03"), rotation: { code: "ROT-TA", name: "Taller", shiftGroupId: "g-taller" }, days: [{ crew: { code: "B", name: "Equipo B" } }] },
+    ]);
+    const stefi = { user: { id: "u-stefi", role: "NIVEL_2_SUPERVISION" } as never, scope: { all: false as const, groupIds: new Set(["g-planta"]) } };
+    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, stefi);
+    expect(preview.pendingDependencies.rotationVersions).toMatchObject([{ rotation: "ROT-PL - Planta", crews: ["A - Equipo A"] }, { rotation: "Rotación de otro grupo", crews: [] }]);
+    expect(JSON.stringify(preview)).not.toContain("ROT-TA");
+    const rrhh = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
+    expect(rrhh.pendingDependencies.rotationVersions[1]).toMatchObject({ rotation: "ROT-TA - Taller" });
+  });
+
   it("un cambio entre preview y ejecución invalida el token antes de escribir", async () => {
-    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input);
+    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
     db.shiftTemplate.findUnique.mockResolvedValue(template(new Date("2026-11-24T13:00:00.000Z")));
-    await expect(shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_REPLACEMENT_STALE" });
+    await expect(shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_REPLACEMENT_STALE" });
     expect(db.shiftTemplate.create).not.toHaveBeenCalled();
   });
 
   it("dependencias futuras exigen reconocimiento explícito y quedan intactas", async () => {
     db.holidayWorkAssignment.findMany.mockResolvedValue([{ id: "h1", employeeId: "e1", employee: employee("e1", "10"), date: new Date("2026-12-08"), updatedAt: new Date("2026-11-02") }]);
-    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input);
-    await expect(shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken })).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_REPLACEMENT_DEPENDENCIES" });
+    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
+    await expect(shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken }, RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_REPLACEMENT_DEPENDENCIES" });
     expect(db.holidayWorkAssignment.findMany).toHaveBeenCalled();
     expect(db.shiftTemplate.create).not.toHaveBeenCalled();
   });
@@ -126,8 +144,8 @@ describe("reemplazo de horario con fecha", () => {
     const split = { id: "a1", employeeId: "e1", employee: employee("e1", "10"), effectiveFrom: new Date("2026-01-01"), effectiveTo: null, weekdays: [1, 2], observation: "vigente", updatedAt: new Date("2026-11-01") };
     const repoint = { id: "a2", employeeId: "e2", employee: employee("e2", "20"), effectiveFrom: new Date("2026-12-01"), effectiveTo: new Date("2027-01-31"), weekdays: [], observation: null, updatedAt: new Date("2026-11-02") };
     db.shiftAssignment.findMany.mockResolvedValue([split, repoint]);
-    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input);
-    const result = await shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken });
+    const preview = await shiftTemplateScheduleService.preview(TEMPLATE_ID, input, RRHH_ACTOR);
+    const result = await shiftTemplateScheduleService.replace(TEMPLATE_ID, { ...input, confirmationToken: preview.confirmationToken }, RRHH_ACTOR);
     expect(result).toMatchObject({ assignments: 2, complete: true });
     expect(db.shiftTemplate.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ code: "NUEVO", startTime: "08:00", entryToleranceBeforeMinutes: 10 }) }));
     expect(db.shiftAssignment.update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { effectiveTo: new Date("2026-11-24T00:00:00.000Z") } });

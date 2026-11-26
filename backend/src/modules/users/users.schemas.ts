@@ -19,6 +19,15 @@ const supervisedUserIdsSchema = z
   .refine((ids) => new Set(ids).size === ids.length, { message: "No repitas responsables de carga." })
   .optional();
 
+// R8.4 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §26): grupos de turnos
+// que administra un Nivel 2. Mismo criterio que `supervisedUserIds`: lista
+// completa (reemplaza), omitirla la conserva, sin repetidos.
+const shiftGroupIdsSchema = z
+  .array(z.string().uuid())
+  .max(200)
+  .refine((ids) => new Set(ids).size === ids.length, { message: "No repitas grupos de turnos." })
+  .optional();
+
 export const createUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(160),
@@ -28,6 +37,7 @@ export const createUserSchema = z.object({
   companyId: z.string().uuid().optional().nullable(),
   employeeId: z.string().uuid().optional().nullable(),
   supervisedUserIds: supervisedUserIdsSchema,
+  shiftGroupIds: shiftGroupIdsSchema,
 });
 
 export const updateUserSchema = z.object({
@@ -38,6 +48,7 @@ export const updateUserSchema = z.object({
   companyId: z.string().uuid().optional().nullable(),
   employeeId: z.string().uuid().optional().nullable(),
   supervisedUserIds: supervisedUserIdsSchema,
+  shiftGroupIds: shiftGroupIdsSchema,
 });
 
 export const resetPasswordSchema = z.object({

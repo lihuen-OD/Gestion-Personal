@@ -1,4 +1,6 @@
 import { Prisma, type DoubleHourRuleKind } from "@prisma/client";
+import { shiftTemplateWhereForScope, type ShiftGroupScope } from "../shifts/shiftGroupAccess";
+import { assertEmployeesWritable, assertShiftGroupWritable, canManageShiftGroup, isGlobalActor, type ShiftActor } from "../shifts/shiftWriteAccess";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { lockClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
@@ -121,10 +123,10 @@ type CoverageRange = { employeeId: string; from: Date; to: Date | null };
  * acotado a la vigencia de las versiones que la usan. Sin ninguna membresía
  * (hoy, todos los entornos) no consulta las tablas de la grilla.
  */
-async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shiftTemplateId: string): Promise<CoverageRange[]> {
+async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shiftTemplateId: string, options: { activeRotationsOnly?: boolean } = {}): Promise<CoverageRange[]> {
   if (!(await tx.shiftRotationCrewMember.findFirst({ select: { id: true } }))) return [];
   const blocks = await tx.shiftRotationBlock.findMany({
-    where: { shiftTemplateId },
+    where: { shiftTemplateId, ...(options.activeRotationsOnly ? { day: { version: { rotation: { status: "ACTIVO" } } } } : {}) },
     select: { day: { select: { crewId: true, version: { select: { effectiveFrom: true, effectiveTo: true } } } } },
   });
   if (!blocks.length) return [];
@@ -145,6 +147,40 @@ async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shift
     if (to === null || to >= from) ranges.push({ employeeId: member.employeeId, from, to });
   }
   return ranges;
+}
+
+/**
+ * R8.3 (§26): legajos cuyo horario u obligación REAL cambia si cambia esta
+ * plantilla desde hoy: fijos HABILITADOS vigentes o futuros, convocatorias
+ * ACTIVAS futuras y miembros vigentes o futuros de rotaciones ACTIVAS cuyas
+ * versiones la usan. Mismas fuentes que el recálculo de cobertura, sin la
+ * historia ni lo inactivo.
+ */
+async function templateAffectedEmployeeIds(tx: PrismaTransactionClient, shiftTemplateId: string): Promise<string[]> {
+  const today = new Date(`${todayArgentinaDateKey()}T00:00:00.000Z`);
+  const [assignments, convocations, rotationRanges] = await Promise.all([
+    tx.shiftAssignment.findMany({ where: { shiftTemplateId, status: "HABILITADO", OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }] }, select: { employeeId: true } }),
+    tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId, status: "ACTIVA", date: { gte: today } }, select: { employeeId: true } }),
+    rotationTemplateCoverageRanges(tx, shiftTemplateId, { activeRotationsOnly: true }),
+  ]);
+  return [...new Set([
+    ...assignments.map((row) => row.employeeId),
+    ...convocations.map((row) => row.employeeId),
+    ...rotationRanges.filter((range) => range.to === null || range.to >= today).map((range) => range.employeeId),
+  ])];
+}
+
+/** Campos de una plantilla que no cambian horarios ni obligaciones (clasificación y rótulos). */
+const SHIFT_TEMPLATE_DESCRIPTIVE_FIELDS = new Set(["code", "name", "description", "categoryName", "shiftGroupId"]);
+
+/**
+ * R8.3 (§26): un cambio con efecto real sobre empleados exige, además del
+ * grupo, todos los legajos afectados en el alcance (403 sin escribir). Nivel 1
+ * no consulta nada.
+ */
+async function assertTemplateEffectWritable(tx: PrismaTransactionClient, actor: ShiftActor, shiftTemplateId: string) {
+  if (isGlobalActor(actor)) return;
+  await assertEmployeesWritable(actor, await templateAffectedEmployeeIds(tx, shiftTemplateId), tx);
 }
 
 async function recalculateTemplateCoverage(tx: PrismaTransactionClient, shiftTemplateId: string, label: string) {
@@ -538,9 +574,14 @@ export const workforceService = {
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
-  async shiftTemplates() {
+  /**
+   * R8: sólo plantillas de grupos administrables (`shiftGroupAccess.ts`); una
+   * plantilla sin grupo es sólo de Nivel 1.
+   */
+  async shiftTemplates(scope: ShiftGroupScope) {
     const tomorrow = new Date(`${nextCalendarDateKey(todayArgentinaDateKey())}T00:00:00.000Z`);
     const rows = await prisma.shiftTemplate.findMany({
+      ...(scope.all ? {} : { where: shiftTemplateWhereForScope(scope) }),
       orderBy: { startTime: "asc" },
       include: {
         ...SHIFT_TEMPLATE_GROUP_INCLUDE,
@@ -553,7 +594,9 @@ export const workforceService = {
     });
     return rows.map(({ _count, ...row }) => ({ ...row, inUseFromTomorrow: (_count?.assignments ?? 0) + (_count?.holidayWorkAssignments ?? 0) + (_count?.rotationBlocks ?? 0) > 0 }));
   },
-  async createShiftTemplate(input: any, audit?: AuditContext) {
+  /** R8.3: el grupo de la plantilla tiene que ser administrable (sin grupo = sólo Nivel 1). */
+  async createShiftTemplate(input: any, actor: ShiftActor, audit?: AuditContext) {
+    assertShiftGroupWritable(actor, input.shiftGroupId ?? null);
     const crossesMidnight = input.endTime <= input.startTime;
     // R3.1: un grupo nuevo para la plantilla debe existir y estar ACTIVO.
     const group = await assertShiftGroupAssignable(input.shiftGroupId, null);
@@ -571,7 +614,11 @@ export const workforceService = {
     await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.${groupPhrase}`, after: item as Prisma.InputJsonValue });
     return item;
   },
-  async updateShiftTemplate(id: string, input: any, audit?: AuditContext) {
+  /**
+   * R8.3: una plantilla de un grupo no administrable responde 404 (igual que
+   * inexistente); moverla exige administrar también el grupo destino.
+   */
+  async updateShiftTemplate(id: string, input: any, actor: ShiftActor, audit?: AuditContext) {
     const { item, coverage, before, groupChanged, nextGroup } = await execute(() => prisma.$transaction(async (tx) => {
       // Mismo orden que el reemplazo fechado: cobertura global → plantilla.
       // Las ediciones de catálogo son infrecuentes y así no pueden cruzarse
@@ -579,9 +626,14 @@ export const workforceService = {
       await lockNoveltyCoverageGlobally(tx);
       await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
       const before = await tx.shiftTemplate.findUnique({ where: { id }, include: SHIFT_TEMPLATE_GROUP_INCLUDE });
-      if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      if (!before || !canManageShiftGroup(actor, before.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
       // R3.1: cambiar el grupo es clasificación, no planificación horaria.
       const groupChanged = input.shiftGroupId !== undefined && (input.shiftGroupId ?? null) !== (before.shiftGroupId ?? null);
+      if (groupChanged) assertShiftGroupWritable(actor, input.shiftGroupId ?? null);
+      // R8.3: horario, tolerancias, límites o estado cambian lo que rige para
+      // quienes la usan; nombre, código o categoría no.
+      const changesEffect = Object.keys(input).some((field) => !SHIFT_TEMPLATE_DESCRIPTIVE_FIELDS.has(field) && input[field] !== (before as unknown as Record<string, unknown>)[field]);
+      if (changesEffect) await assertTemplateEffectWritable(tx, actor, id);
       const nextGroup = groupChanged ? await assertShiftGroupAssignable(input.shiftGroupId, before.shiftGroupId ?? null, tx) : null;
       const startTime = input.startTime ?? before.startTime;
       const endTime = input.endTime ?? before.endTime;
@@ -639,11 +691,13 @@ export const workforceService = {
   // de las dos, nunca se borra en cascada en silencio). Las convocatorias de
   // feriado son historia como las jornadas: con ellas el turno se inactiva,
   // en vez de dejar su referencia en NULL.
-  async removeShiftTemplate(id: string, audit?: AuditContext) {
+  async removeShiftTemplate(id: string, actor: ShiftActor, audit?: AuditContext) {
     return execute(() => prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
       const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true, rotationBlocks: true } } } });
-      if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      if (!before || !canManageShiftGroup(actor, before.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      // R8.3: borrarla deja sin turno a sus convocatorias futuras (SetNull).
+      await assertTemplateEffectWritable(tx, actor, id);
       const history = await shiftTemplateHistory(id, todayArgentinaDateKey(), tx);
       if (history.hasRuled) throw new AppError("El turno ya rigió y debe conservarse activo para no alterar la historia. Si cambia el horario, usá el reemplazo con fecha.", 409, "SHIFT_TEMPLATE_HISTORY_LOCKED", history.sources);
       if (before._count.rotationBlocks > 0) throw new AppError("No se puede eliminar el turno porque forma parte de una versión de rotación. Reemplazalo en una versión futura.", 409, "SHIFT_TEMPLATE_IN_ROTATION");
@@ -655,11 +709,11 @@ export const workforceService = {
       return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   },
-  previewShiftTemplateScheduleReplacement(id: string, input: ReplaceShiftTemplateScheduleInput) {
-    return shiftTemplateScheduleService.preview(id, input);
+  previewShiftTemplateScheduleReplacement(id: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor) {
+    return shiftTemplateScheduleService.preview(id, input, actor);
   },
-  replaceShiftTemplateSchedule(id: string, input: ReplaceShiftTemplateScheduleInput, audit?: AuditContext) {
-    return shiftTemplateScheduleService.replace(id, input, audit);
+  replaceShiftTemplateSchedule(id: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor, audit?: AuditContext) {
+    return shiftTemplateScheduleService.replace(id, input, actor, audit);
   },
   // Etapa 8B: se agregan dates (calendario FECHA) y los 4 nombres de scope
   // (empresa/sector/centro de costo/puesto) para que el frontend no necesite

@@ -14,6 +14,7 @@ import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService, type ShiftTemplate } from "../services/api/workforceApiService";
 import { confirmAction } from "../services/appDialog";
 import { roleLevel } from "../utils/roles";
+import { useShiftGroupAccess } from "../utils/shiftGroupAccess";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
 import { shiftGroupLabel, shiftGroupSelectOptions } from "../utils/shiftGroups";
@@ -27,7 +28,10 @@ export function ShiftDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const location = useLocation() as { state?: { created?: boolean } };
-  const canEdit = roleLevel(user!.role) === 1;
+  // R8: se edita si el grupo del turno es administrable (RRHH: todos). Un turno
+  // de otro grupo ni siquiera llega: el catálogo del backend ya viene filtrado.
+  const isRrhh = roleLevel(user!.role) === 1;
+  const { canManageGroup } = useShiftGroupAccess();
   const [source, setSource] = useState<ShiftTemplate | undefined>(undefined);
   const [value, setValue] = useState<ShiftTemplateFormValue | undefined>(undefined);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
@@ -88,10 +92,11 @@ export function ShiftDetailPage() {
     }
   };
 
+  const canEdit = Boolean(source) && canManageGroup(source?.shiftGroupId ?? null);
   const groupField = {
     // El grupo actual (aunque esté inactivo) siempre se puede conservar; nunca se ofrece un inactivo como destino nuevo.
-    options: shiftGroupSelectOptions(groups, source?.shiftGroup ?? null),
-    unavailableMessage: groupsStatus === "error" ? "No pudimos cargar los grupos: podés conservar el grupo actual o dejarlo sin grupo." : undefined,
+    options: shiftGroupSelectOptions(groups, source?.shiftGroup ?? null, { allowUngrouped: isRrhh }),
+    unavailableMessage: groupsStatus === "error" ? isRrhh ? "No pudimos cargar los grupos: podés conservar el grupo actual o dejarlo sin grupo." : "No pudimos cargar tus grupos: podés conservar el grupo actual." : undefined,
   };
 
   if (loadStatus === "loading") return <Section title="Turno"><LoadingState text="Cargando turno..." /></Section>;

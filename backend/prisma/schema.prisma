@@ -573,6 +573,9 @@ model User {
   // Jerarquía de alcance Nivel 2 → Nivel 3 (UserSupervisionAssignment).
   supervisionsAsSupervisor           UserSupervisionAssignment[]    @relation("UserSupervisionSupervisor")
   supervisionsAsSupervised           UserSupervisionAssignment[]    @relation("UserSupervisionSupervised")
+  // Alcance de administración de turnos (R8): grupos asignados a un Nivel 2.
+  shiftGroupScopes                   UserShiftGroupScope[]          @relation("UserShiftGroupScopeUser")
+  shiftGroupScopesCreated            UserShiftGroupScope[]          @relation("UserShiftGroupScopeCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -2003,12 +2006,36 @@ model ShiftGroup {
   createdAt       DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime     @updatedAt @db.Timestamptz(3)
 
-  templates ShiftTemplate[]
-  rotations ShiftRotation[]
-  createdBy User?           @relation("ShiftGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  updatedBy User?           @relation("ShiftGroupUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  templates  ShiftTemplate[]
+  rotations  ShiftRotation[]
+  userScopes UserShiftGroupScope[]
+  createdBy  User?                 @relation("ShiftGroupCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy  User?                 @relation("ShiftGroupUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@index([status, sortOrder])
+}
+
+// R8: alcance de administración de turnos por grupo. Sólo un Nivel 2 tiene
+// filas (lo valida users.service.ts: depende del rol en otra tabla, no es
+// expresable como CHECK). Nivel 1 administra todo sin filas; un Nivel 3 no
+// tiene filas propias y hereda, en vivo, los grupos de los Nivel 2 ACTIVOS que
+// lo supervisan (UserSupervisionAssignment). Sin filas = sin acceso, nunca
+// acceso global. Un grupo INACTIVO deja sus filas inertes (no se borran).
+// Restrict en userId/shiftGroupId: un usuario o grupo con alcances no se borra
+// físicamente; createdByUserId es autoría (SetNull).
+model UserShiftGroupScope {
+  id              String   @id @default(uuid())
+  userId          String
+  shiftGroupId    String
+  createdByUserId String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  user       User       @relation("UserShiftGroupScopeUser", fields: [userId], references: [id], onDelete: Restrict)
+  shiftGroup ShiftGroup @relation(fields: [shiftGroupId], references: [id], onDelete: Restrict)
+  createdBy  User?      @relation("UserShiftGroupScopeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, shiftGroupId])
+  @@index([shiftGroupId])
 }
 
 model ShiftTemplate {

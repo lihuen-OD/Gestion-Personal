@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
@@ -9,6 +9,7 @@ import { useAuth } from "../context/AuthContext";
 import { getUserErrorMessage } from "../services/api/apiClient";
 import { workforceApiService } from "../services/api/workforceApiService";
 import { roleLevel } from "../utils/roles";
+import { useShiftGroupAccess } from "../utils/shiftGroupAccess";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useShiftGroupsCatalog } from "../components/shifts/useShiftGroupsCatalog";
 import { shiftGroupSelectOptions } from "../utils/shiftGroups";
@@ -19,15 +20,28 @@ export function ShiftCreatePage() {
   const [value, setValue] = useState(emptyShiftTemplate());
   const [error, setError] = useState("");
   const { groups, status: groupsStatus } = useShiftGroupsCatalog();
+  // R8: RRHH puede dejar un turno sin grupo; Nivel 2/3 sólo crean en sus grupos
+  // (el catálogo ya viene filtrado por el backend, que vuelve a validarlo).
+  const isRrhh = roleLevel(user!.role) === 1;
+  const { hasGroups } = useShiftGroupAccess();
+  const options = shiftGroupSelectOptions(groups, null, { allowUngrouped: isRrhh });
   const groupField = {
-    options: shiftGroupSelectOptions(groups, null),
-    unavailableMessage: groupsStatus === "error" ? "No pudimos cargar los grupos: el turno se crea sin grupo y podés asignarlo después." : groupsStatus === "loading" ? "Cargando grupos..." : undefined,
+    options,
+    unavailableMessage: groupsStatus === "error"
+      ? isRrhh ? "No pudimos cargar los grupos: el turno se crea sin grupo y podés asignarlo después." : "No pudimos cargar tus grupos de turnos. Volvé a intentar en unos minutos."
+      : groupsStatus === "loading" ? "Cargando grupos..." : undefined,
   };
+  // Nivel 2/3: preselecciona su primer grupo (no hay «Sin grupo»).
+  const firstGroupId = !isRrhh ? options[0]?.value ?? "" : "";
+  useEffect(() => {
+    if (firstGroupId && !value.shiftGroupId) setValue((current) => ({ ...current, shiftGroupId: firstGroupId }));
+  }, [firstGroupId, value.shiftGroupId]);
 
   const { isRunning: isSaving, run: save } = useAsyncAction(async (event: FormEvent) => {
     event.preventDefault();
     setError("");
     if (!value.code.trim() || !value.name.trim()) return setError("Completá código y nombre del turno.");
+    if (!isRrhh && !value.shiftGroupId) return setError("Elegí el grupo del turno.");
     try {
       const created = await workforceApiService.createShiftTemplate(shiftTemplateFormToInput(value));
       navigate(`/configuracion/turnos/${created.id}`, { state: { created: true } });
@@ -36,7 +50,7 @@ export function ShiftCreatePage() {
     }
   });
 
-  if (roleLevel(user!.role) !== 1) return <Navigate to="/configuracion/turnos" />;
+  if (!hasGroups) return <Navigate to="/configuracion/turnos" />;
 
   return (
     <form onSubmit={save}>

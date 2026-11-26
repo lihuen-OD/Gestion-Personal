@@ -43,7 +43,11 @@ import {
   versionAuditSnapshot,
 } from "./shiftRotation.support";
 import { withRotationErrors } from "./shiftRotationErrors";
-import { assessRotation, formatDateKey, hasBlockingIssues, healthOf, isOpenOnOrAfter, type ReadinessIssue } from "./shiftRotationReadiness";
+import { withErrorScope } from "./shiftErrorScope";
+import { canAccessShiftGroup, shiftRotationWhereForScope, type ShiftGroupScope } from "./shiftGroupAccess";
+import { canSeeEmployee, rotationViewerFor, UNRESTRICTED_ROTATION_VIEWER, visibleIssues, type RotationViewer } from "./shiftRotationVisibility";
+import { assertEmployeesWritable, assertShiftGroupWritable, canManageShiftGroup, isGlobalActor, rotationViewerForActor, withShiftActorErrors, type ShiftActor } from "./shiftWriteAccess";
+import { assessRotation, formatDateKey, hasBlockingIssues, healthOf, isOpenOnOrAfter, toPublicIssues, type ReadinessIssue } from "./shiftRotationReadiness";
 import { transitionIssuesForExit } from "./shiftRotationTransitions";
 
 // ── Lectura ─────────────────────────────────────────────────────────────────
@@ -54,7 +58,7 @@ async function loadAssessmentFacts(rotation: RotationFullRow, db: PrismaTransact
     ? await Promise.all([shiftRotationRepository.fixedAssignmentsOf(employeeIds, db), shiftRotationRepository.regimesOf(employeeIds, db)])
     : [[], []];
   return {
-    fixedAssignments: fixed.map((row) => ({ employeeId: row.employeeId, templateCode: row.shiftTemplate.code, status: row.status, effectiveFrom: keyOf(row.effectiveFrom), effectiveTo: keyOrNull(row.effectiveTo) })),
+    fixedAssignments: fixed.map((row) => ({ employeeId: row.employeeId, templateCode: row.shiftTemplate.code, templateShiftGroupId: row.shiftTemplate.shiftGroupId, status: row.status, effectiveFrom: keyOf(row.effectiveFrom), effectiveTo: keyOrNull(row.effectiveTo) })),
     regimes: regimes.map((row) => ({ employeeId: row.employeeId, kind: row.workRegime.kind, effectiveFrom: keyOf(row.effectiveFrom), effectiveTo: keyOrNull(row.effectiveTo) })),
   };
 }
@@ -93,6 +97,8 @@ export async function assertNoAttendanceHistoryConflicts(
     {
       total: conflicts.length,
       conflicts: conflicts.map((conflict) => ({
+        // R8.3: permite ocultar a quien esté fuera del alcance del actor.
+        employeeId: conflict.employeeId,
         employee: employeeLabels.get(conflict.employeeId) ?? "Persona autorizada",
         operationalDate: keyOf(conflict.operationalDate),
       })),
@@ -128,9 +134,15 @@ function memberResponse(member: ReturnType<typeof allMembers>[number], crew: { c
   };
 }
 
-function toResponse(rotation: RotationFullRow, issues: ReadinessIssue[], now: Date = new Date()) {
+/**
+ * R8: `viewer` decide qué personas y avisos se exponen
+ * (`shiftRotationVisibility.ts`). Los conteos (`openMemberCount`, salud) siguen
+ * contando a todos: no identifican a nadie.
+ */
+function toResponse(rotation: RotationFullRow, issues: ReadinessIssue[], viewer: RotationViewer, now: Date = new Date()) {
   const { today } = todayAndTomorrow(now);
-  const openMembers = rotation.crews.flatMap((crew) => crew.members.filter((member) => isOpenOnOrAfter(keyOrNull(member.effectiveTo), today)).map((member) => memberResponse(member, crew)));
+  const allOpenMembers = rotation.crews.flatMap((crew) => crew.members.filter((member) => isOpenOnOrAfter(keyOrNull(member.effectiveTo), today)).map((member) => memberResponse(member, crew)));
+  const openMembers = allOpenMembers.filter((member) => canSeeEmployee(viewer, member.employeeId));
   const hasRuled = rotationHasRuled(rotation, today);
   const hasOpenVersion = rotation.versions.some((version) => isOpenOnOrAfter(keyOrNull(version.effectiveTo), today));
   return {
@@ -142,9 +154,9 @@ function toResponse(rotation: RotationFullRow, issues: ReadinessIssue[], now: Da
     shiftGroup: rotation.shiftGroup,
     hasRuled,
     /** Estado derivado: ACTIVA que ya rigió y no tiene versión ni membresías desde hoy. */
-    finalized: rotation.status === "ACTIVO" && hasRuled && !hasOpenVersion && openMembers.length === 0,
+    finalized: rotation.status === "ACTIVO" && hasRuled && !hasOpenVersion && allOpenMembers.length === 0,
     health: healthOf(issues),
-    issues,
+    issues: visibleIssues(issues, viewer),
     crews: rotation.crews.map((crew) => ({
       id: crew.id,
       code: crew.code,
@@ -156,12 +168,43 @@ function toResponse(rotation: RotationFullRow, issues: ReadinessIssue[], now: Da
     })),
     versions: versionSummary(rotation, today),
     members: openMembers,
+    /** R8: miembros vigentes o futuros fuera del alcance de legajos de quien consulta. */
+    hiddenMemberCount: allOpenMembers.length - openMembers.length,
     createdAt: rotation.createdAt,
     updatedAt: rotation.updatedAt,
   };
 }
 
 export type RotationResponse = ReturnType<typeof toResponse>;
+
+/**
+ * R8.3: rotación cargada para una escritura del actor. Una de un grupo no
+ * administrable responde igual que una inexistente (404).
+ */
+async function requireActorRotation(id: string, actor: ShiftActor, db: PrismaTransactionClient = prisma) {
+  const rotation = await requireRotation(id, db);
+  if (!canManageShiftGroup(actor, rotation.shiftGroupId)) throw notFound();
+  return rotation;
+}
+
+/** Respuesta de una escritura tal como la puede ver el actor (personas y avisos). */
+async function responseForActor(rotation: RotationFullRow, issues: ReadinessIssue[], actor: ShiftActor) {
+  const viewer = isGlobalActor(actor) ? UNRESTRICTED_ROTATION_VIEWER : await rotationViewerForActor(actor, allMembers(rotation).map((member) => member.employeeId));
+  return toResponse(rotation, issues, viewer);
+}
+
+/** R8.3: legajos con membresía vigente o futura (los que un cambio de la rotación afecta de verdad). */
+function openMemberIds(rotation: RotationFullRow, crewId?: string) {
+  const { today } = todayAndTomorrow();
+  return allMembers(rotation)
+    .filter((member) => (crewId === undefined || member.crewId === crewId) && isOpenOnOrAfter(keyOrNull(member.effectiveTo), today))
+    .map((member) => member.employeeId);
+}
+
+/** Rótulos del turno siguiente: pueden ser de otra planificación (R-6). */
+function overlapsForActor<T extends { incoming: string }>(overlaps: T[], actor: ShiftActor): T[] {
+  return isGlobalActor(actor) ? overlaps : overlaps.map((overlap) => ({ ...overlap, incoming: "el turno siguiente de la persona" }));
+}
 
 async function requireRotation(id: string, db: PrismaTransactionClient = prisma) {
   const rotation = await shiftRotationRepository.findFull(id, db);
@@ -203,6 +246,12 @@ function finalizePlan(rotation: RotationFullRow, lastDay: string): FinalizePlan 
   return plan;
 }
 
+/** R8.3: legajos cuyas membresías cerraría o cancelaría finalizar en `lastDay`. */
+function finalizeAffectedEmployees(rotation: RotationFullRow, lastDay: string) {
+  const plan = finalizePlan(rotation, lastDay);
+  return [...plan.closeMembers, ...plan.cancelMembers].map((member) => member.employeeId);
+}
+
 function tokenFor(rotation: RotationFullRow, plan: FinalizePlan) {
   const touched = new Set([...plan.closeVersions, ...plan.deleteVersions].map((version) => version.id));
   const versionStamps = rotation.versions.filter((version) => touched.has(version.id)).map((version) => [version.id, version.updatedAt.toISOString()]);
@@ -234,48 +283,55 @@ async function finalizePreviewOf(rotation: RotationFullRow, lastDay: string, db:
 // ── Servicio ────────────────────────────────────────────────────────────────
 
 export const shiftRotationService = {
-  async list(query: ListRotationsQuery) {
-    const rows = await shiftRotationRepository.list(query);
-    return Promise.all(rows.map(async (row) => toResponse(row, await assessRotationRow(row))));
+  /** R8: sólo rotaciones de grupos administrables; personas según el alcance de legajos. */
+  async list(query: ListRotationsQuery, user: Express.AuthUser, scope: ShiftGroupScope) {
+    const rows = await shiftRotationRepository.list(query, shiftRotationWhereForScope(scope));
+    const viewer = await rotationViewerFor(user, scope, rows.flatMap((row) => allMembers(row).map((member) => member.employeeId)));
+    return Promise.all(rows.map(async (row) => toResponse(row, await assessRotationRow(row), viewer)));
   },
 
-  async detail(id: string) {
+  /** R8: una rotación de un grupo no administrable responde igual que una inexistente (404). */
+  async detail(id: string, user: Express.AuthUser, scope: ShiftGroupScope) {
     const rotation = await requireRotation(id);
-    return toResponse(rotation, await assessRotationRow(rotation));
+    if (!canAccessShiftGroup(scope, rotation.shiftGroupId)) throw notFound();
+    const viewer = await rotationViewerFor(user, scope, allMembers(rotation).map((member) => member.employeeId));
+    return toResponse(rotation, await assessRotationRow(rotation), viewer);
   },
 
-  async create(input: CreateRotationInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async create(input: CreateRotationInput, actor: ShiftActor, audit?: AuditContext) {
+    assertShiftGroupWritable(actor, input.shiftGroupId);
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await assertShiftGroupAssignable(input.shiftGroupId, null, tx);
       const created = await shiftRotationRepository.createRotation(input, audit?.userId ?? null, tx);
       await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "ShiftRotation", entityId: created.id, description: `Se creó la rotación ${describeRotation(created)} (inactiva hasta configurarla y activarla).`, after: rotationAuditSnapshot(created) });
       const full = await requireRotation(created.id, tx);
-      return toResponse(full, []);
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return await responseForActor(full, [], actor);
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async update(id: string, input: UpdateRotationInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async update(id: string, input: UpdateRotationInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, id);
-      const before = await requireRotation(id, tx);
+      const before = await requireActorRotation(id, actor, tx);
       const { today } = todayAndTomorrow();
       const ruled = rotationHasRuled(before, today);
       if (input.code !== undefined && input.code !== before.code && ruled) throw new AppError("El código de una rotación que ya rigió no se puede cambiar.", 409, "ROTATION_CODE_LOCKED");
       if (input.shiftGroupId !== undefined && input.shiftGroupId !== before.shiftGroupId) {
+        assertShiftGroupWritable(actor, input.shiftGroupId);
         if (before.versions.length) throw new AppError("El grupo de una rotación con versiones no se puede cambiar: sus turnos pertenecen al grupo actual.", 409, "ROTATION_GROUP_LOCKED");
         await assertShiftGroupAssignable(input.shiftGroupId, before.shiftGroupId, tx);
       }
       const updated = await shiftRotationRepository.updateRotation(id, { ...input, updatedByUserId: audit?.userId ?? null }, tx);
       await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "ShiftRotation", entityId: id, description: `Se actualizó la rotación ${describeRotation(updated)}.`, before: rotationAuditSnapshot(before), after: rotationAuditSnapshot(updated) });
       const full = await requireRotation(id, tx);
-      return toResponse(full, await assessRotationRow(full, tx));
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return await responseForActor(full, await assessRotationRow(full, tx), actor);
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async remove(id: string, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async remove(id: string, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, id);
-      const rotation = await requireRotation(id, tx);
+      const rotation = await requireActorRotation(id, actor, tx);
       if (rotation.status !== "INACTIVO") throw new AppError(`La rotación ${describeRotation(rotation)} está activa. Una rotación que rigió no se elimina: se finaliza con fecha.`, 409, "ROTATION_ACTIVE");
       if (allMembers(rotation).length) throw new AppError(`La rotación ${describeRotation(rotation)} tiene membresías. Cancelalas antes de eliminarla.`, 409, "ROTATION_HAS_MEMBERS");
       const crewNames = new Map(rotation.crews.map((crew) => [crew.id, describeCrew(crew)]));
@@ -289,24 +345,27 @@ export const shiftRotationService = {
       });
       await shiftRotationRepository.deleteRotation(id, tx);
       return { id };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async activate(id: string, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async activate(id: string, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, id);
-      const rotation = await requireRotation(id, tx);
+      const rotation = await requireActorRotation(id, actor, tx);
+      // R8.3: activar hace regir la rotación para sus membresías vigentes o
+      // futuras (ninguna puede haber empezado: ROTATION_ACTIVATION_RETROACTIVE).
+      await assertEmployeesWritable(actor, openMemberIds(rotation), tx);
       if (rotation.status === "ACTIVO") throw new AppError(`La rotación ${describeRotation(rotation)} ya está activa.`, 409, "ROTATION_ALREADY_ACTIVE");
       const { today, tomorrow } = todayAndTomorrow();
       const started = allMembers(rotation).filter((member) => keyOf(member.effectiveFrom) <= today);
       if (started.length) {
         const who = started.slice(0, 5).map((member) => `${employeeLabel(member.employee)} (${formatDateKey(keyOf(member.effectiveFrom))})`).join("; ");
-        throw new AppError(
+        throw withErrorScope(new AppError(
           `No se puede activar: la rotación ya tendría efecto sobre fechas pasadas o de hoy. Estas membresías empiezan antes del ${formatDateKey(tomorrow)}: ${who}. Cancelalas y volvé a darlas de alta desde el ${formatDateKey(tomorrow)} o después.`,
           409,
           "ROTATION_ACTIVATION_RETROACTIVE",
           { members: started.map((member) => ({ id: member.id, employee: employeeLabel(member.employee), effectiveFrom: keyOf(member.effectiveFrom) })) },
-        );
+        ), { shiftGroupIds: [rotation.shiftGroupId], employeeIds: started.map((member) => member.employeeId) });
       }
       const members = allMembers(rotation);
       const employeeIds = [...new Set(members.map((member) => member.employeeId))];
@@ -321,7 +380,8 @@ export const shiftRotationService = {
       );
       const issues = await assessRotationRow(rotation, tx);
       if (hasBlockingIssues(issues)) {
-        throw new AppError("No se puede activar: la configuración tiene problemas que impedirían resolver los turnos. Corregilos y volvé a intentar.", 409, "ROTATION_NOT_READY", { issues: issues.filter((issue) => issue.severity === "ERROR") });
+        const blocking = issues.filter((issue) => issue.severity === "ERROR");
+        throw withErrorScope(new AppError("No se puede activar: la configuración tiene problemas que impedirían resolver los turnos. Corregilos y volvé a intentar.", 409, "ROTATION_NOT_READY", { issues: toPublicIssues(blocking) }), { issues: blocking });
       }
       const updated = await shiftRotationRepository.updateRotation(id, { status: "ACTIVO", updatedByUserId: audit?.userId ?? null }, tx);
       const firstStart = members.map((member) => keyOf(member.effectiveFrom)).sort()[0];
@@ -329,14 +389,17 @@ export const shiftRotationService = {
       await auditService.registerWithin(tx, { ...audit, action: "ACTIVATE", entity: "ShiftRotation", entityId: id, description: `Se activó la rotación ${describeRotation(rotation)}${firstStart ? `; rige desde el ${formatDateKey(firstStart)} para ${new Set(members.map((member) => member.employeeId)).size} persona(s)` : " (todavía sin membresías)"}.`, before: rotationAuditSnapshot(rotation), after: rotationAuditSnapshot(updated) });
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       const full = await requireRotation(id, tx);
-      return toResponse(full, await assessRotationRow(full, tx));
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return await responseForActor(full, await assessRotationRow(full, tx), actor);
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async deactivate(id: string, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async deactivate(id: string, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, id);
-      const rotation = await requireRotation(id, tx);
+      const rotation = await requireActorRotation(id, actor, tx);
+      // R8.3: sólo se desactiva lo que no rigió; sus membresías vigentes o
+      // futuras vuelven al legacy.
+      await assertEmployeesWritable(actor, openMemberIds(rotation), tx);
       if (rotation.status === "INACTIVO") throw new AppError(`La rotación ${describeRotation(rotation)} ya está inactiva.`, 409, "ROTATION_ALREADY_INACTIVE");
       const { today } = todayAndTomorrow();
       if (rotationHasRuled(rotation, today)) {
@@ -350,20 +413,29 @@ export const shiftRotationService = {
       await auditService.registerWithin(tx, { ...audit, action: "DEACTIVATE", entity: "ShiftRotation", entityId: id, description: `Se desactivó la rotación ${describeRotation(rotation)} antes de que empezara a regir.`, before: rotationAuditSnapshot(rotation), after: rotationAuditSnapshot(updated) });
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       const full = await requireRotation(id, tx);
-      return toResponse(full, await assessRotationRow(full, tx));
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return await responseForActor(full, await assessRotationRow(full, tx), actor);
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async finalizePreview(id: string, lastDay: string) {
-    const rotation = await requireRotation(id);
-    const { plan: _plan, ...preview } = await finalizePreviewOf(rotation, lastDay, prisma, new Date());
-    return preview;
+  /**
+   * R8.3: finalizar cierra o cancela membresías (escritura sobre personas):
+   * si afecta a alguien fuera del alcance de legajos, `403` ya en la vista
+   * previa, sin nombrarlo.
+   */
+  async finalizePreview(id: string, lastDay: string, actor: ShiftActor) {
+    return withShiftActorErrors(actor, async () => {
+      const rotation = await requireActorRotation(id, actor);
+      await assertEmployeesWritable(actor, finalizeAffectedEmployees(rotation, lastDay));
+      const { plan: _plan, ...preview } = await finalizePreviewOf(rotation, lastDay, prisma, new Date());
+      return { ...preview, transitionOverlaps: overlapsForActor(preview.transitionOverlaps, actor) };
+    });
   },
 
-  async finalize(id: string, input: { lastDay: string; confirmationToken: string }, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async finalize(id: string, input: { lastDay: string; confirmationToken: string }, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, id);
-      const rotation = await requireRotation(id, tx);
+      const rotation = await requireActorRotation(id, actor, tx);
+      await assertEmployeesWritable(actor, finalizeAffectedEmployees(rotation, input.lastDay), tx);
       const preview = await finalizePreviewOf(rotation, input.lastDay, tx, new Date());
       const { plan: _plan, ...visible } = preview;
       if (preview.confirmationToken !== input.confirmationToken) {
@@ -411,26 +483,31 @@ export const shiftRotationService = {
       });
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       const full = await requireRotation(id, tx);
-      return { rotation: toResponse(full, await assessRotationRow(full, tx)), applied: visible };
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return { rotation: await responseForActor(full, await assessRotationRow(full, tx), actor), applied: { ...visible, transitionOverlaps: overlapsForActor(visible.transitionOverlaps, actor) } };
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async createCrew(rotationId: string, input: CreateCrewInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async createCrew(rotationId: string, input: CreateCrewInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
       const crew = await shiftRotationRepository.createCrew(rotationId, input, audit?.userId ?? null, tx);
       await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "ShiftRotationCrew", entityId: crew.id, description: `Se creó el equipo ${describeCrew(crew)} en la rotación ${describeRotation(rotation)}. No admite altas hasta que una versión incluya su grilla.`, after: { id: crew.id, code: crew.code, name: crew.name, sortOrder: crew.sortOrder, status: crew.status } });
       return crew;
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async updateCrew(rotationId: string, crewId: string, input: UpdateCrewInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async updateCrew(rotationId: string, crewId: string, input: UpdateCrewInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
       const before = rotation.crews.find((crew) => crew.id === crewId);
       if (!before) throw notFound("el equipo solicitado");
+      // R8.3: activar o inactivar un equipo de una rotación ACTIVA cambia lo que
+      // rige para sus miembros vigentes o futuros.
+      if (input.status !== undefined && input.status !== before.status && rotation.status === "ACTIVO") {
+        await assertEmployeesWritable(actor, openMemberIds(rotation, crewId), tx);
+      }
       if (input.status === "INACTIVO" && before.status !== "INACTIVO" && before.members.length) {
         throw new AppError(`El equipo ${describeCrew(before)} tuvo membresías: inactivarlo cambiaría también los días pasados. Cerrá o mové sus membresías en su lugar.`, 409, "ROTATION_CREW_HAS_MEMBERS");
       }
@@ -438,6 +515,6 @@ export const shiftRotationService = {
       const action = input.status && input.status !== before.status ? (input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE") : "UPDATE";
       await auditService.registerWithin(tx, { ...audit, action, entity: "ShiftRotationCrew", entityId: crewId, description: `Se actualizó el equipo ${describeCrew(updated)} de la rotación ${describeRotation(rotation)}.`, before: { code: before.code, name: before.name, sortOrder: before.sortOrder, status: before.status }, after: { code: updated.code, name: updated.name, sortOrder: updated.sortOrder, status: updated.status } });
       return updated;
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 };
