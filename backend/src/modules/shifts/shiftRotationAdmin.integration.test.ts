@@ -208,10 +208,16 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     const { rotationId } = await setupPlanta(MON_A, { activate: false });
     // Inactiva: nada resuelve todavía (rige el legacy para todos).
     expect(await blocksOf(PLANTA_EMPLOYEES.JOSE, FRI_A)).toBeNull();
+    // R8 (§26): sin alcance por grupo, la rotación no existe para Supervisión.
+    expect((await call("GET", `/shifts/rotations/${rotationId}`, undefined, supervision)).status).toBe(404);
+    await holder.userShiftGroupScope.create({ data: { userId: supervision.id, shiftGroupId: groupId } });
     const detail = await call("GET", `/shifts/rotations/${rotationId}`, undefined, supervision);
     expect(detail.status).toBe(200);
     expect(detail.data).toMatchObject({ status: "INACTIVO", hasRuled: false, health: "OK" });
-    expect(detail.data.members).toHaveLength(7);
+    // Sin TIME_RESPONSIBLE vigentes: los 7 miembros existen pero no se nombran.
+    expect(detail.data.members).toHaveLength(0);
+    expect(detail.data.hiddenMemberCount).toBe(7);
+    expect((await call("GET", `/shifts/rotations/${rotationId}`)).data.members).toHaveLength(7);
 
     expect((await call("POST", `/shifts/rotations/${rotationId}/activate`)).status).toBe(200);
     // Hoy (viernes 30/10) y el fin de semana siguen en el legacy; el lunes 02/11 rige la rotación.
@@ -691,7 +697,10 @@ describe.skipIf(!url)("R4.6 — administración de rotaciones contra PostgreSQL 
     expect(new Set(full.data.map((row: { employee: { id: string } }) => row.employee.id)).size).toBe(7);
 
     // Sin TIME_RESPONSIBLE vigentes para esta Supervisión: el endpoint no
-    // filtra después de paginar ni expone los otros seis legajos.
+    // filtra después de paginar ni expone los otros seis legajos. R8: primero
+    // necesita el grupo de la rotación; sin él, 404.
+    expect((await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_B}`, undefined, supervision)).status).toBe(404);
+    await holder.userShiftGroupScope.create({ data: { userId: supervision.id, shiftGroupId: groupId } });
     const scoped = await call("GET", `/shifts/expected?rotationId=${rotationId}&from=${MON_A}&to=${MON_B}`, undefined, supervision);
     expect(scoped.status).toBe(200);
     expect(scoped.data).toEqual([]);

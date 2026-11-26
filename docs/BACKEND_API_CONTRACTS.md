@@ -192,10 +192,13 @@ Response:
     "name": "Administrador RRHH",
     "email": "usuario@example.com",
     "role": "NIVEL_1_RRHH",
-    "status": "ACTIVO"
+    "status": "ACTIVO",
+    "shiftGroupAccess": { "all": true, "groupIds": [] }
   }
 }
 ```
+
+`shiftGroupAccess` (R8.4) también viene en `user` de `POST /api/auth/login` y `/refresh`. Es el alcance por grupo de turnos resuelto en esa request (`all: true` para RRHH) y sólo sirve para que la UI muestre u oculte acciones: el backend lo vuelve a resolver en cada request y nunca lo toma del cliente.
 
 ## Roles
 
@@ -922,13 +925,23 @@ Uso: `NIVEL_1_RRHH`. Cuerpo de `POST`/`PATCH` (además de `name`, `email`, `role
 
 ```txt
 supervisedUserIds?: uuid[]   // sólo Nivel 2; lista completa, sin repetidos (máx. 200)
+shiftGroupIds?: uuid[]       // R8.4: sólo Nivel 2; lista completa, sin repetidos (máx. 200)
 ```
+
+- `shiftGroupIds` (R8.4, ADR §26.5): grupos de turnos que administra un Nivel 2. Mismo contrato que `supervisedUserIds`: reemplaza la lista y, si se omite, la conserva.
+  - Otro rol con lista no vacía → `400 USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE`. Un Nivel 3 no tiene grupos propios: los hereda.
+  - Grupo inexistente → `400 USER_SHIFT_GROUP_INVALID`. Grupo INACTIVO que se agrega → `409 SHIFT_GROUP_INACTIVE` (uno ya asignado se puede conservar). Repetidos → `400 VALIDATION_ERROR`. Carrera → `409 USER_SHIFT_GROUP_CONCURRENT_UPDATE`.
+  - Quien deja de ser Nivel 2 pierde sus grupos en la misma transacción. Inactivarlo los conserva sin efecto, y vuelven a regir al reactivarlo.
+  - Auditoría: `entity: "UserShiftGroupScope"`, `entityId` = Nivel 2, `before`/`after` = `{ shiftGroups: [{ id, code, name }] }` y descripción con códigos y nombres.
+  - Rige desde la request siguiente: el alcance se resuelve por request, sin caché.
 
 - `supervisedUserIds` reemplaza la lista de Nivel 3 supervisados; omitirlo la conserva. Sólo la acepta un usuario cuyo rol final sea `NIVEL_2_SUPERVISION` (otro rol con lista no vacía → `400 USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE`). Cada id debe ser un usuario existente con rol `NIVEL_3_CARGA_HORARIA` y distinto del propio (si no → `400 USER_SUPERVISION_INVALID_TARGET`). Repetidos → `400 VALIDATION_ERROR`.
 - Cambio de rol: quien deja de ser Nivel 2 deja de supervisar a todos; quien deja de ser Nivel 3 deja de estar supervisado. Ocurre en la misma transacción que la edición y se audita.
 - Usuario, relaciones y auditoría se escriben en una sola transacción (`entity: "UserSupervisionAssignment"`, `entityId` = Nivel 2, descripción con nombres y emails de los agregados/quitados).
 - `employeeId` ("Empleado vinculado") identifica a la persona de la cuenta; **no** define alcance. Es único: si ya pertenece a otro usuario → `409 EMPLOYEE_ALREADY_LINKED_TO_USER` ("Este empleado ya está vinculado a otro usuario."), validado antes de escribir; el P2002 de una carrera se mapea al mismo error. Empleado inexistente → `400 USER_EMPLOYEE_NOT_FOUND`. Email repetido → `409 EMAIL_ALREADY_EXISTS`.
-- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`.
+- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`. R8.4 agrega:
+  - `shiftGroups` (`{ id, code, name, status, sortOrder }[]`): los grupos asignados, sólo para un Nivel 2.
+  - `inheritedShiftGroups` (`{ group, viaSupervisors: { id, name, email }[] }[]`): sólo para un Nivel 3. Es la unión de los grupos de sus supervisores que sigan siendo Nivel 2 y estén ACTIVOS. Es informativo: la autorización la decide `shifts/shiftGroupAccess.ts` en cada request.
 - Alta y edición llaman `invalidateEmployeeScopeCaches()` (el mismo helper que `PUT /api/employees/:id/assignments`), porque rol y supervisión cambian el alcance de otros usuarios: visible en la siguiente consulta, sin esperar TTL. `reset-password` no cambia alcance y no lo llama.
 
 ### Parametros de auditoria
@@ -2038,6 +2051,22 @@ WorkRegime es 100% configurable por RRHH — `kind` (`TURNO_OBLIGATORIO`/`TURNO_
 ### Turnos (`shifts`, montado en `/api/shifts`)
 
 Todas las rutas requieren `requireAuth`.
+
+**Alcance por grupo de turnos (R8.2, `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §26).** Las lecturas de este módulo y `GET /api/workforce/shift-templates` combinan el alcance de legajos (`employeeAccessWhere`) con el alcance por grupo (`shifts/shiftGroupAccess.ts`). Nivel 1 ve todo. Nivel 2 ve los grupos de sus filas `UserShiftGroupScope`. Nivel 3 hereda, en vivo, los grupos de los Nivel 2 `ACTIVOS` que lo supervisan. Sin grupos no hay acceso, nunca acceso global. Las escrituras siguen siendo sólo de RRHH hasta R8.3.
+- `GET /groups`, `GET /rotations`, `GET /assignments/summary` y `GET /workforce/shift-templates`: sólo grupos administrables. Una plantilla sin grupo es sólo de Nivel 1.
+- `GET /rotations/:id`, `/rotations/:id/versions/:versionId`, `/rotations/:id/members` y `GET /expected?rotationId=`: una rotación de un grupo no administrable responde `404 ROTATION_NOT_FOUND`, igual que una inexistente.
+- `GET /assignments?shiftTemplateId=` con una plantilla no administrable devuelve `[]`. Sin ese filtro (vista del legajo) sigue mostrando todos los turnos fijos de los legajos del alcance.
+- Personas dentro de una rotación propia: sólo las del alcance de legajos. `GET /rotations/:id` agrega `hiddenMemberCount` y `GET /rotations/:id/members` agrega `meta.hiddenCount`. Los avisos (`issues`) que nombran a una persona oculta, o a un turno fijo de otro grupo, se devuelven con texto genérico (mismo `code` y `severity`, sin `employeeId`).
+- `GET /expected` para Nivel 2/3: los bloques con plantilla de otro grupo (o sin grupo) llevan `template.id = null`, `template.code = null` y `templateHidden: true`; conservan horario, fuente y obligación. `expectedWorkday.shiftTemplateIds` omite esas plantillas, `planning.origin` es `null` si pertenece a otra rotación y `planning.detail` va vacío.
+- Las cachés de respuesta (`/assignments/summary`, `/workforce/shift-templates`) incluyen en la clave la huella del alcance resuelto en cada request: un grupo asignado o revocado rige en la request siguiente.
+
+**Escrituras de Nivel 2/3 (R8.3).** Abiertas a los 3 roles operativos: asignaciones fijas (`POST/PATCH/DELETE /assignments`), rotaciones con sus equipos, versiones, membresías, activación y finalización (`/rotations…`), y plantillas con su reemplazo de horario (`/api/workforce/shift-templates…`). Cada servicio verifica el alcance (`shifts/shiftWriteAccess.ts`). La administración de grupos (`/groups`) y las convocatorias (`PUT /holiday-work/assignments`) siguen siendo sólo de RRHH. `shiftWriteRoutes.test.ts` inventaría qué rutas están abiertas.
+- Recurso de otro grupo identificado en la ruta (rotación, plantilla, asignación, membresía de un legajo fuera de alcance): `404` igual que inexistente (`ROTATION_NOT_FOUND`, `SHIFT_TEMPLATE_NOT_FOUND`, `SHIFT_ASSIGNMENT_NOT_FOUND`). Plantilla ajena o sin grupo en `POST /assignments`: `404 SHIFT_TEMPLATE_NOT_FOUND`.
+- Grupo en el body (alta o cambio de grupo de una rotación o plantilla, incluido `null`): `403 SHIFT_GROUP_FORBIDDEN`.
+- Efectos indirectos (R8.3.1, ADR §26.4): también exigen todos los legajos realmente afectados activar o desactivar una rotación, crear, editar o borrar versiones y activar o inactivar equipos de una rotación ACTIVA, y editar horario, tolerancias, límites o estado de una plantilla, o borrarla (fijos vigentes, convocatorias futuras y miembros de rotaciones ACTIVAS que la usan). Los cambios descriptivos sólo exigen el grupo.
+- Legajos: toda escritura sobre personas exige que todos estén en el alcance. Si falta uno, `403 EMPLOYEE_SCOPE_FORBIDDEN` sin escribir nada. Aplica a altas fijas masivas, altas de miembros, finalización (con todas las membresías que cierra o cancela) y vista previa o reemplazo de horario (fijos y convocatorias pendientes afectadas).
+- Efectos laterales: `closeFixedAssignments` con un fijo de otro grupo (o sin grupo) responde `409 ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE` sin cerrar nada. `ROTATION_FIXED_ASSIGNMENT_OVERLAP` muestra `template: null` en lugar del código ajeno.
+- Mensajes para Nivel 2/3 (R8.7): si todo lo que menciona el conflicto (grupos y legajos) está en su alcance, el mensaje es el completo. Si no, o si no se puede comprobar: `SHIFT_ASSIGNMENT_OVERLAPS_ROTATION` y `ROTATION_MEMBERSHIP_OVERLAP` sin rotación ajena; `ROTATION_TRANSITION_OVERLAP` y `ROTATION_FINALIZE_STALE` sin `details`; `ROTATION_TEMPLATE_OTHER_GROUP` sin códigos; `ROTATION_ACTIVATION_RETROACTIVE` sin nombres; `issues` y conflictos de asistencia con texto genérico para personas fuera del alcance. `ROTATION_ATTENDANCE_HISTORY_CONFLICT.details.conflicts[]` agrega `employeeId` para Nivel 1. Las respuestas de escritura (rotación, `restsAtTransition`, `transitionOverlaps`) aplican la misma visibilidad que las lecturas.
 
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|

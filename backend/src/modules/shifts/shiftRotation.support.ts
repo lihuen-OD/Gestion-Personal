@@ -19,7 +19,8 @@ import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { coverageWindowOf, recalculateNoveltyCoverage, type NoveltyCoverageRecalculation } from "../novelties/noveltyCoverageRecalculation";
 import type { RotationSnapshot, RotationTemplateRef, RotationVersionSnapshot } from "./rotationPlan";
 import type { RotationFullRow, RotationMemberRow, RotationVersionRow } from "./shiftRotation.repository";
-import { formatDateKey, type MembershipFacts, type ReadinessIssue } from "./shiftRotationReadiness";
+import { formatDateKey, toPublicIssues, type MembershipFacts, type ReadinessIssue } from "./shiftRotationReadiness";
+import { withErrorScope } from "./shiftErrorScope";
 
 export const ROTATION_TRANSACTION_OPTIONS = { timeout: 30_000 };
 
@@ -185,6 +186,6 @@ export function newBlockingIssues(before: ReadinessIssue[], after: ReadinessIssu
 export function assertNoNewBlockingIssues(before: ReadinessIssue[], after: ReadinessIssue[], action: string) {
   const added = newBlockingIssues(before, after);
   if (added.length) {
-    throw new AppError(`No se puede ${action}: dejaría la rotación con una configuración incompleta o contradictoria.`, 409, "ROTATION_CONFIGURATION_CONFLICT", { issues: added });
+    throw withErrorScope(new AppError(`No se puede ${action}: dejaría la rotación con una configuración incompleta o contradictoria.`, 409, "ROTATION_CONFIGURATION_CONFLICT", { issues: toPublicIssues(added) }), { issues: added });
   }
 }

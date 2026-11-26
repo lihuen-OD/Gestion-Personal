@@ -20,8 +20,8 @@ vi.mock("../context/AuthContext", () => ({ useAuth: () => mockUseAuth() }));
 vi.mock("../services/api/shiftGroupApiService", () => ({ shiftGroupApiService: { list: vi.fn() } }));
 vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { detail: vi.fn(), update: vi.fn(), remove: vi.fn(), version: vi.fn(), preview: vi.fn() } }));
 
-function authAs(role: string) {
-  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo" } });
+function authAs(role: string, groupIds: string[] = []) {
+  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo", shiftGroupAccess: { all: false, groupIds } }, refreshShiftGroupAccess: vi.fn() });
 }
 
 function ListProbe() {
@@ -158,5 +158,43 @@ describe("detalle de rotación", () => {
     await screen.findByRole("heading", { level: 1, name: "Planta 4x4" });
     expect(screen.queryByRole("button", { name: /Editar datos/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Eliminar rotación/ })).not.toBeInTheDocument();
+  });
+
+  describe("R8: alcance por grupo", () => {
+    it("Nivel 2 con el grupo de la rotación la administra", async () => {
+      authAs("Nivel 2 - Supervisión / Gestión", [PLANTA_GROUP.id]);
+      renderPage();
+      await screen.findByRole("heading", { level: 1, name: "Planta 4x4" });
+      expect(screen.getByRole("button", { name: /Editar datos/ })).toBeInTheDocument();
+    });
+
+    it("Nivel 3 con otro grupo no ve acciones (el backend igual la rechaza)", async () => {
+      authAs("Nivel 3 - Administrativo de Carga Horaria", ["g-otro"]);
+      renderPage();
+      await screen.findByRole("heading", { level: 1, name: "Planta 4x4" });
+      expect(screen.queryByRole("button", { name: /Editar datos/ })).not.toBeInTheDocument();
+    });
+
+    it("avisa cuántas personas quedan fuera del alcance de legajos y qué operaciones las afectan", async () => {
+      authAs("Nivel 2 - Supervisión / Gestión", [PLANTA_GROUP.id]);
+      vi.mocked(shiftRotationApiService.detail).mockResolvedValue(rotationFixture({ hiddenMemberCount: 2 }));
+      renderPage();
+      const note = await screen.findByText("2 personas de esta rotación están fuera de tu alcance de legajos.");
+      expect(note.closest("[role='note']")).toHaveTextContent("Activar, desactivar, finalizar o cambiar la grilla");
+      // El backend lo rechazaría (403): no se ofrece.
+      expect(screen.getByRole("button", { name: /Activar/ })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /Editar datos/ })).toBeEnabled();
+    });
+
+    it("vista previa: un bloque de otro grupo se muestra con su horario y «Otro grupo», sin código", async () => {
+      authAs("Nivel 2 - Supervisión / Gestión", [PLANTA_GROUP.id]);
+      const hidden = { ...previewBlock("2026-11-23", "T-0816", "08:00", "16:00", 0, "FIXED_ASSIGNMENT"), template: { id: null, code: null, startTime: "08:00", endTime: "16:00", crossesMidnight: false }, templateHidden: true as const };
+      vi.mocked(shiftRotationApiService.preview).mockResolvedValue(previewResponse([previewRow("e1", "Gómez", "José", "19", [previewCell("2026-11-23", { kind: "FIXED_ASSIGNMENT", blocks: [hidden] })])], { from: "2026-11-23", days: 1 }));
+      renderPage(undefined, "?vista=vista-previa");
+      const grid = await screen.findByRole("grid");
+      expect(within(grid).getByText(/Otro grupo/)).toBeInTheDocument();
+      expect(within(grid).getByText(/08:00–16:00/)).toBeInTheDocument();
+      expect(grid.textContent).not.toContain("null");
+    });
   });
 });

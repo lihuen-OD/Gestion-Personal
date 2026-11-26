@@ -41,6 +41,29 @@ export const R49_PENDING_MIGRATIONS_CONFIG: InventoryConfig = {
   createdTables: ["ShiftRotationDay", "ShiftRotationBlock"],
 };
 
+/**
+ * R8 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §26): migración pendiente en
+ * Neon development `20261126120000_add_user_shift_group_scopes`. Aditiva: crea
+ * `UserShiftGroupScope` vacía y no toca columnas existentes. Se preservan las
+ * mismas tablas que en R4.9, más la configuración de rotaciones (ya aplicada)
+ * y las relaciones de usuarios que la nueva tabla referencia.
+ */
+export const R8_PENDING_MIGRATIONS_CONFIG: InventoryConfig = {
+  preservedTables: [
+    ...R49_PENDING_MIGRATIONS_CONFIG.preservedTables,
+    "ShiftRotationDay", "ShiftRotationBlock", "UserSupervisionAssignment",
+  ],
+  newColumns: {},
+  droppedTables: [],
+  createdTables: ["UserShiftGroupScope"],
+};
+
+/** Configuraciones por etapa para el CLI (`--config=`). `r49` sigue siendo el default. */
+export const INVENTORY_CONFIGS: Readonly<Record<string, InventoryConfig>> = {
+  r49: R49_PENDING_MIGRATIONS_CONFIG,
+  r8: R8_PENDING_MIGRATIONS_CONFIG,
+};
+
 export type TableInventory = { rows: number; idsHash: string; rowsHash: string; columns: number } | "ABSENT";
 
 export interface MigrationRow {

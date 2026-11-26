@@ -8,17 +8,23 @@ export const shiftGroupSummarySelect = { id: true, code: true, name: true, statu
 
 export const SHIFT_GROUP_ORDER_BY: Prisma.ShiftGroupOrderByWithRelationInput[] = [{ sortOrder: "asc" }, { name: "asc" }];
 
+/** R8: agrega el filtro de alcance sólo si restringe algo (Nivel 1 conserva la query intacta). */
+function withScope(where: Prisma.ShiftGroupWhereInput | undefined, scopeWhere: Prisma.ShiftGroupWhereInput) {
+  if (!Object.keys(scopeWhere).length) return where;
+  return where ? { AND: [where, scopeWhere] } : scopeWhere;
+}
+
 export const shiftGroupRepository = {
-  findMany(status: RecordStatus | undefined, db: Db = prisma) {
+  findMany(status: RecordStatus | undefined, scopeWhere: Prisma.ShiftGroupWhereInput = {}, db: Db = prisma) {
     return db.shiftGroup.findMany({
-      where: status ? { status } : undefined,
+      where: withScope(status ? { status } : undefined, scopeWhere),
       orderBy: SHIFT_GROUP_ORDER_BY,
       include: { _count: { select: { templates: true, rotations: true } } },
     });
   },
 
   findById(id: string, db: Db = prisma) {
-    return db.shiftGroup.findUnique({ where: { id }, include: { _count: { select: { templates: true, rotations: true } } } });
+    return db.shiftGroup.findUnique({ where: { id }, include: { _count: { select: { templates: true, rotations: true, userScopes: true } } } });
   },
 
   /**

@@ -13,6 +13,34 @@ export interface User {
   supervisedUsers?: UserSupervisionPerson[];
   /** Nivel 3: los Nivel 2 que lo supervisan. */
   supervisorUsers?: UserSupervisionPerson[];
+  /**
+   * R8: grupos de turnos a enviar (sólo Nivel 2). `undefined` = no se tocaron
+   * y el backend los conserva; `[]` los quita todos. Nunca viene del backend.
+   */
+  shiftGroupIds?: string[];
+  /** R8: grupos de turnos asignados (Nivel 2). */
+  shiftGroups?: UserShiftGroup[];
+  /** R8: grupos heredados (Nivel 3), con los Nivel 2 activos de los que provienen. */
+  inheritedShiftGroups?: UserInheritedShiftGroup[];
+  /**
+   * R8: alcance por grupo de turnos de la sesión (login y `/auth/me`). Sólo
+   * sirve para mostrar u ocultar acciones: el backend decide siempre.
+   */
+  shiftGroupAccess?: ShiftGroupAccess;
+}
+
+export interface ShiftGroupAccess {
+  all: boolean;
+  groupIds: string[];
+}
+
+export interface UserShiftGroup {
+  id: string; code: string; name: string; status: "Activo" | "Inactivo";
+}
+
+export interface UserInheritedShiftGroup {
+  group: UserShiftGroup;
+  viaSupervisors: Array<{ id: string; name: string; email: string }>;
 }
 
 export interface UserSupervisionPerson {

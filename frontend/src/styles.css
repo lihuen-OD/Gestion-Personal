@@ -2814,19 +2814,21 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .context-novelty-card .novelty-preview{position:static}
 @media(max-width:900px){.novelty-load-layout{grid-template-columns:minmax(0,1fr)}.novelty-preview{position:static}}
 @media(max-width:520px){.novelty-load-dates{grid-template-columns:minmax(0,1fr)}.novelty-load-duration{max-width:none}}
-/* Usuarios y roles: responsables de carga supervisados por un Nivel 2 (SupervisedUsersSelector) y ayuda del empleado vinculado. Reusa .people-search. */
-.supervised-users-head{display:grid;gap:4px}
-.supervised-users-head b{color:var(--color-text-primary,#203648);font-size:13px}
-.supervised-users-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
-.supervised-users .people-search-results{max-height:220px}
-.supervised-users .people-search-results b{display:inline-flex;align-items:center;gap:8px}
-.supervised-users button:disabled{cursor:not-allowed;opacity:.6}
+/* Usuarios y roles: selector múltiple compartido (MultiOptionSelector: responsables de carga supervisados y grupos de turnos de un Nivel 2) y ayuda del empleado vinculado. Reusa .people-search. */
+.multi-option-select-head{display:grid;gap:4px}
+.multi-option-select-head b{color:var(--color-text-primary,#203648);font-size:13px}
+.multi-option-select-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.multi-option-select .people-search-results{max-height:220px}
+.multi-option-select .people-search-results b{display:inline-flex;align-items:center;gap:8px}
+.multi-option-select button:disabled{cursor:not-allowed;opacity:.6}
+.multi-option-select-error{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.multi-option-select-error small{color:var(--color-danger,#b42318);font-size:12.5px}
 .modal-body label>small.field-hint{display:block;margin-top:6px}
 /* Modal de usuario: grilla explícita de 2 columnas parejas (sin ella,
    .form-stack>.form-actions{grid-column:span 2} arma columnas implícitas
    desparejas). Notas, bloques anchos, error y acciones ocupan la fila. */
 .modal-body .user-form{grid-template-columns:repeat(2,minmax(0,1fr))}
-.user-form>.info-note,.user-form>.supervised-users,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
+.user-form>.info-note,.user-form>.multi-option-select,.user-form>.inherited-shift-groups,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
 @media(max-width:620px){.modal-body .user-form{grid-template-columns:minmax(0,1fr)}}
 
 /* R3.2 — Turnos agrupados por grupo (lugar). docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23. */
@@ -3134,3 +3136,17 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 /* Una regla global de campos dentro de modales fuerza min-height:40px también en casillas: las de confirmación vuelven a 16 px y quedan alineadas con su texto. */
 .rotation-finalize-check input[type="checkbox"],.rotation-fixed-conflict-check input[type="checkbox"]{width:16px!important;height:16px!important;min-height:16px!important;margin:1px 0 0!important;padding:0!important}
 .rotation-finalize .rotation-grid-note{margin:0!important}
+/* R8: grupos de turnos heredados por un Nivel 3 (sólo lectura) y aviso de pérdida de accesos en Usuarios. */
+.inherited-shift-groups-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.inherited-shift-groups-list li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;padding:9px 11px;border:1px solid var(--color-border-light);border-radius:9px;background:#fff;min-width:0}
+.inherited-shift-groups-name{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.inherited-shift-groups-name b{color:var(--color-text-primary,#203648);font-size:13px}
+.inherited-shift-groups-name small,.inherited-shift-groups-via{color:var(--color-text-muted);font-size:12px}
+.inherited-shift-groups-via{overflow-wrap:anywhere}
+.inherited-shift-groups-empty{color:#7c8b98;font-size:12px;font-style:normal}
+.user-access-loss ul{display:grid;gap:3px;margin:6px 0 0;padding-left:18px}
+.user-access-loss li{font-size:12.5px;line-height:1.45}
+/* R8: bloque de vista previa con turno de otro grupo (sin código visible). */
+.rotation-block-code.is-hidden-template{font-style:italic}
+.rotation-hidden-members p{margin:0}
+.shift-assignment-foreign{color:var(--color-text-muted);font-style:italic}

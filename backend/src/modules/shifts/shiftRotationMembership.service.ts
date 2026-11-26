@@ -44,6 +44,10 @@ import {
   todayAndTomorrow,
 } from "./shiftRotation.support";
 import { withRotationErrors } from "./shiftRotationErrors";
+import { canAccessShiftGroup, type ShiftGroupScope } from "./shiftGroupAccess";
+import { withErrorScope } from "./shiftErrorScope";
+import { canSeeEmployee, rotationViewerFor } from "./shiftRotationVisibility";
+import { assertEmployeesWritable, canManageShiftGroup, employeesOutsideScope, withShiftActorErrors, type ShiftActor } from "./shiftWriteAccess";
 import { formatDateKey, isOpenOnOrAfter, rangesOverlap } from "./shiftRotationReadiness";
 import { storedConfiguration, transitionIssuesForEntry, transitionIssuesForExit } from "./shiftRotationTransitions";
 import type { RotationConfiguration } from "./rotationPlan";
@@ -62,6 +66,20 @@ function memberRow(rotation: RotationFullRow, memberId: string) {
     if (member) return { member, crew };
   }
   throw notFound("la membresía solicitada");
+}
+
+/** R8.3: rotación administrable o 404 (igual que inexistente). */
+async function requireActorRotation(id: string, actor: ShiftActor, db: Db) {
+  const rotation = await requireRotation(id, db);
+  if (!canManageShiftGroup(actor, rotation.shiftGroupId)) throw notFound();
+  return rotation;
+}
+
+/** R8.3: una membresía de una persona fuera del alcance de legajos responde como inexistente. */
+async function actorMemberRow(rotation: RotationFullRow, memberId: string, actor: ShiftActor, db: Db) {
+  const row = memberRow(rotation, memberId);
+  if (await employeesOutsideScope(actor, [row.member.employeeId], db)) throw notFound("la membresía solicitada");
+  return row;
 }
 
 function memberResponse(member: { id: string; crewId: string; employeeId: string; effectiveFrom: Date; effectiveTo: Date | null; employee: { legajo: string; firstName: string; lastName: string; status: "ACTIVO" | "INACTIVO" } }, crew: { code: string; name: string }) {
@@ -86,20 +104,34 @@ function withAddedMemberships(rotation: RotationFullRow, rows: Array<{ employeeI
 }
 
 export const shiftRotationMembershipService = {
-  async list(rotationId: string, query: ListMembersQuery) {
+  /**
+   * R8: rotación de un grupo no administrable → 404 (igual que inexistente).
+   * Dentro de una rotación propia, sólo los miembros del alcance de legajos;
+   * `hiddenCount` dice cuántos quedaron afuera, sin identificarlos.
+   */
+  async list(rotationId: string, query: ListMembersQuery, user: Express.AuthUser, scope: ShiftGroupScope) {
     const rotation = await requireRotation(rotationId, prisma);
+    if (!canAccessShiftGroup(scope, rotation.shiftGroupId)) throw notFound();
     const at = query.at ?? todayAndTomorrow().today;
-    return rotation.crews.flatMap((crew) =>
+    const listed = rotation.crews.flatMap((crew) =>
       crew.members
         .filter((member) => query.history || isOpenOnOrAfter(keyOrNull(member.effectiveTo), at))
         .map((member) => memberResponse(member, crew)),
     );
+    const viewer = await rotationViewerFor(user, scope, listed.map((member) => member.employeeId));
+    const items = listed.filter((member) => canSeeEmployee(viewer, member.employeeId));
+    return { items, hiddenCount: listed.length - items.length };
   },
 
-  async add(rotationId: string, crewId: string, input: AddMembersInput, audit?: AuditContext) {
-    const outcome = await withRotationErrors(() => prisma.$transaction(async (tx) => {
+  /**
+   * R8.3: rotación administrable (si no, 404) y todos los legajos en el
+   * alcance (si no, 403, sin escribir nada). Cerrar fijos (Opción C) sólo
+   * alcanza a turnos de grupos administrables.
+   */
+  async add(rotationId: string, crewId: string, input: AddMembersInput, actor: ShiftActor, audit?: AuditContext) {
+    const outcome = await withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
       const crew = rotation.crews.find((candidate) => candidate.id === crewId);
       if (!crew) throw notFound("el equipo solicitado");
       if (crew.status !== "ACTIVO") throw new AppError(`El equipo ${describeCrew(crew)} está inactivo: no admite altas.`, 409, "ROTATION_CREW_INACTIVE");
@@ -108,6 +140,7 @@ export const shiftRotationMembershipService = {
       const from = input.effectiveFrom;
       const to = input.effectiveTo ?? null;
       const employeeIds = [...new Set(input.employeeIds)];
+      await assertEmployeesWritable(actor, employeeIds, tx);
 
       const employees = await shiftRotationRepository.employeesByIds(employeeIds, tx);
       if (employees.length !== employeeIds.length) throw new AppError("Uno o más empleados no existen.", 404, "EMPLOYEE_NOT_FOUND");
@@ -127,11 +160,11 @@ export const shiftRotationMembershipService = {
 
       const overlapping = await shiftRotationRepository.overlappingMemberships(employeeIds, from, to, tx);
       if (overlapping.length) {
-        throw new AppError(
+        throw withErrorScope(new AppError(
           `Ya tienen una membresía de rotación en esas fechas: ${overlapping.map((row) => `${labels.get(row.employeeId)} (rotación ${describeRotation(row.crew.rotation)}, equipo ${describeCrew(row.crew)}, ${rangeLabel(keyOf(row.effectiveFrom), keyOrNull(row.effectiveTo))})`).join("; ")}.`,
           409,
           "ROTATION_MEMBERSHIP_OVERLAP",
-        );
+        ), { shiftGroupIds: overlapping.map((row) => row.crew.rotation.shiftGroupId), employeeIds: overlapping.map((row) => row.employeeId) });
       }
 
       const regimes = await shiftRotationRepository.regimesOf(employeeIds, tx);
@@ -141,13 +174,19 @@ export const shiftRotationMembershipService = {
       }
 
       const fixed = (await shiftRotationRepository.fixedAssignmentsOf(employeeIds, tx)).filter((row) => row.status === "HABILITADO" && rangesOverlap(from, to, keyOf(row.effectiveFrom), keyOrNull(row.effectiveTo)));
+      // R8.3: el código de un turno fijo de otro grupo no se muestra.
+      const fixedCode = (row: (typeof fixed)[number]) => (canManageShiftGroup(actor, row.shiftTemplate.shiftGroupId) ? row.shiftTemplate.code : null);
       if (fixed.length && !input.closeFixedAssignments) {
         throw new AppError(
-          `Tienen turnos fijos superpuestos con el alta: ${fixed.map((row) => `${labels.get(row.employeeId)} — ${row.shiftTemplate.code} ${rangeLabel(keyOf(row.effectiveFrom), keyOrNull(row.effectiveTo))}`).join("; ")}. Para cerrarlos desde el ${formatDateKey(from)}, repetí el alta con closeFixedAssignments.`,
+          `Tienen turnos fijos superpuestos con el alta: ${fixed.map((row) => `${labels.get(row.employeeId)} — ${fixedCode(row) ?? "turno de otro grupo"} ${rangeLabel(keyOf(row.effectiveFrom), keyOrNull(row.effectiveTo))}`).join("; ")}. Para cerrarlos desde el ${formatDateKey(from)}, repetí el alta con closeFixedAssignments.`,
           409,
           "ROTATION_FIXED_ASSIGNMENT_OVERLAP",
-          { assignments: fixed.map((row) => ({ employeeId: row.employeeId, employee: labels.get(row.employeeId), template: row.shiftTemplate.code, effectiveFrom: keyOf(row.effectiveFrom), effectiveTo: keyOrNull(row.effectiveTo) })) },
+          { assignments: fixed.map((row) => ({ employeeId: row.employeeId, employee: labels.get(row.employeeId), template: fixedCode(row), effectiveFrom: keyOf(row.effectiveFrom), effectiveTo: keyOrNull(row.effectiveTo) })) },
         );
+      }
+      // R-5: cerrar fijos de otro grupo (o sin grupo) es escribir planificación ajena.
+      if (fixed.some((row) => !canManageShiftGroup(actor, row.shiftTemplate.shiftGroupId))) {
+        throw new AppError("Hay turnos fijos superpuestos de otro grupo: no podés cerrarlos desde esta rotación. Pedíselo a RRHH o a quien administre ese grupo.", 409, "ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE");
       }
 
       const rows = employeeIds.map((employeeId) => ({ employeeId, crewId, effectiveFrom: from, effectiveTo: to }));
@@ -186,16 +225,16 @@ export const shiftRotationMembershipService = {
       const createdIds = new Set(created.map((membership) => membership.id));
       const members = after.crews.flatMap((candidate) => candidate.members.filter((member) => createdIds.has(member.id)).map((member) => memberResponse(member, candidate)));
       return { members, closedFixedAssignments: fixed.length, restsAtTransition: transition.restsAtTransition };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
     if (outcome.closedFixedAssignments) clearShiftAssignmentSummaryCache();
     return outcome;
   },
 
-  async close(rotationId: string, memberId: string, input: CloseMemberInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async close(rotationId: string, memberId: string, input: CloseMemberInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
-      const { member, crew } = memberRow(rotation, memberId);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
+      const { member, crew } = await actorMemberRow(rotation, memberId, actor, tx);
       const { today } = todayAndTomorrow();
       const from = keyOf(member.effectiveFrom);
       const currentTo = keyOrNull(member.effectiveTo);
@@ -213,14 +252,14 @@ export const shiftRotationMembershipService = {
       const coverage = await recalculateRotationCoverage(tx, [member.employeeId], [{ from: nextCalendarDateKey(input.lastDay), to: currentTo }], `baja de la rotación ${describeRotation(rotation)}`);
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       return { member: memberResponse({ ...member, effectiveTo: updated.effectiveTo }, crew), withoutFixedShiftAfter: transitions.withoutFixedShift, restsAtTransition: transitions.restsAtTransition };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async move(rotationId: string, memberId: string, input: MoveMemberInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async move(rotationId: string, memberId: string, input: MoveMemberInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
-      const { member, crew } = memberRow(rotation, memberId);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
+      const { member, crew } = await actorMemberRow(rotation, memberId, actor, tx);
       const { tomorrow } = todayAndTomorrow();
       assertNotBefore(input.effectiveFrom, tomorrow, "El cambio de equipo");
       const from = keyOf(member.effectiveFrom);
@@ -250,14 +289,14 @@ export const shiftRotationMembershipService = {
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       const createdRow = after.crews.flatMap((candidate) => candidate.members.map((row) => ({ row, candidate }))).find(({ row }) => row.id === created!.id)!;
       return { closed: memberResponse({ ...member, effectiveTo: closed.effectiveTo }, crew), opened: memberResponse(createdRow.row, createdRow.candidate), restsAtTransition: transition.restsAtTransition };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async cancel(rotationId: string, memberId: string, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async cancel(rotationId: string, memberId: string, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
-      const { member, crew } = memberRow(rotation, memberId);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
+      const { member, crew } = await actorMemberRow(rotation, memberId, actor, tx);
       const { today } = todayAndTomorrow();
       const from = keyOf(member.effectiveFrom);
       if (rotation.status === "ACTIVO" && from <= today) {
@@ -274,6 +313,6 @@ export const shiftRotationMembershipService = {
       const coverage = await recalculateRotationCoverage(tx, [member.employeeId], [{ from, to: keyOrNull(member.effectiveTo) }], `cancelación de un alta en la rotación ${describeRotation(rotation)}`);
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       return { id: memberId };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 };

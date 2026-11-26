@@ -86,8 +86,10 @@ export type ShiftRotation = {
   issues: ShiftRotationIssue[];
   crews: ShiftRotationCrew[];
   versions: ShiftRotationVersionSummary[];
-  /** Membresías vigentes o futuras (desde hoy). */
+  /** Membresías vigentes o futuras (desde hoy). R8: sólo las del alcance de legajos de quien consulta. */
   members: ShiftRotationMember[];
+  /** R8: membresías vigentes o futuras fuera del alcance de legajos (no se listan ni nombran). */
+  hiddenMemberCount?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -156,7 +158,12 @@ export type PreviewBlock = {
   operationalDate: string;
   blockIndex: number;
   source: "ROTATION" | "FIXED_ASSIGNMENT" | "HOLIDAY_CONVOCATION";
-  template: { id: string; code: string; startTime: string; endTime: string; crossesMidnight: boolean };
+  /**
+   * R8: para Nivel 2/3, un turno de otro grupo (o sin grupo) llega sin id ni
+   * código (`templateHidden: true`); se conservan horario y fuente.
+   */
+  template: { id: string | null; code: string | null; startTime: string; endTime: string; crossesMidnight: boolean };
+  templateHidden?: true;
   scheduledStartAt: string;
   scheduledEndAt: string;
   durationMinutes: number;

@@ -5,6 +5,7 @@ import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
 import { assertShiftGroupAssignable, shiftGroupService, shiftGroupUniquenessKey } from "./shiftGroup.service";
 import { createShiftGroupSchema, updateShiftGroupSchema } from "./shiftGroup.schemas";
+import { ALL_SHIFT_GROUPS } from "./shiftGroupAccess";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
@@ -40,7 +41,7 @@ beforeEach(() => {
 describe("listar", () => {
   it("ordena por sortOrder y nombre, filtra por estado y devuelve la cantidad de plantillas", async () => {
     db.shiftGroup.findMany.mockResolvedValue([row({ templates: 3 }), row({ id: "g2", code: "TALLER", name: "Taller", sortOrder: 20, status: "INACTIVO" })]);
-    const items = await shiftGroupService.list({ status: "ACTIVO" });
+    const items = await shiftGroupService.list({ status: "ACTIVO" }, ALL_SHIFT_GROUPS);
     expect(db.shiftGroup.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVO" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }], include: { _count: { select: { templates: true, rotations: true } } } });
     expect(items).toEqual([
       { id: GROUP_ID, code: "PLANTA", name: "Planta", sortOrder: 10, status: "ACTIVO", templateCount: 3, createdAt, updatedAt: createdAt },
@@ -49,7 +50,7 @@ describe("listar", () => {
   });
 
   it("sin filtro de estado lista todos", async () => {
-    await shiftGroupService.list({});
+    await shiftGroupService.list({}, ALL_SHIFT_GROUPS);
     expect(db.shiftGroup.findMany.mock.calls[0]![0].where).toBeUndefined();
   });
 });

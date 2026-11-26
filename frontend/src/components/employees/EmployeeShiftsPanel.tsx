@@ -16,6 +16,7 @@ import { TableShell } from "../ui/TableShell";
 import { ShiftAssignmentVigencyFields } from "../shared/ShiftAssignmentVigencyFields";
 import { argentinaDateKey } from "../../utils/argentinaDateKey";
 import { shiftGroupLabel } from "../../utils/shiftGroups";
+import { useShiftGroupAccess } from "../../utils/shiftGroupAccess";
 
 function todayDateInput() {
   return argentinaDateKey(new Date());
@@ -23,7 +24,10 @@ function todayDateInput() {
 
 // R3.2: el grupo mostrado es el del TURNO (lugar donde se trabaja ese turno),
 // no un atributo del empleado. Sale del catálogo de turnos que el panel ya carga.
-function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove, templatesById }: { rows: ShiftAssignment[]; canEdit: boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void; templatesById: ReadonlyMap<string, ShiftTemplate> }) {
+// R8: un turno que no está en el catálogo de quien consulta es de un grupo que
+// no administra (el backend filtra el catálogo): se muestra sólo lectura.
+function ShiftAssignmentTable({ rows, canEditRow, onToggle, onRemove, templatesById }: { rows: ShiftAssignment[]; canEditRow: (assignment: ShiftAssignment) => boolean; onToggle: (assignment: ShiftAssignment) => void; onRemove: (assignment: ShiftAssignment) => void; templatesById: ReadonlyMap<string, ShiftTemplate> }) {
+  const canEdit = rows.some(canEditRow);
   return (
     <TableShell minWidth={1060}>
       <table>
@@ -45,7 +49,7 @@ function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove, templatesById
           {rows.map((assignment) => (
             <tr key={assignment.id}>
               <td><b>{assignment.shiftTemplate.name}</b></td>
-              <td>{shiftGroupLabel(templatesById.get(assignment.shiftTemplateId)?.shiftGroup)}</td>
+              <td>{templatesById.has(assignment.shiftTemplateId) ? shiftGroupLabel(templatesById.get(assignment.shiftTemplateId)?.shiftGroup) : <span className="shift-assignment-foreign">Otro grupo</span>}</td>
               <td>{assignment.shiftTemplate.categoryName || <em>Sin categoría</em>}</td>
               <td>{assignment.shiftTemplate.startTime}–{assignment.shiftTemplate.endTime}</td>
               <td>{formatAssignmentDate(assignment.effectiveFrom)}</td>
@@ -53,7 +57,9 @@ function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove, templatesById
               <td>{formatWeekdays(assignment.weekdays)}</td>
               <td><Badge tone={assignmentVigencyTone(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}>{assignmentVigencyLabel(assignmentVigencyStatus(assignment.effectiveFrom, assignment.effectiveTo))}</Badge></td>
               <td>{assignment.observation || <em>Sin observación</em>}</td>
-              {canEdit ? (
+              {canEdit && !canEditRow(assignment) ? (
+                <td><span className="muted small" title="Turno de un grupo que no administrás">Sólo lectura</span></td>
+              ) : canEdit ? (
                 <td>
                   <div className="table-actions">
                     <button type="button" className="table-icon-action" title={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} aria-label={assignment.status === "HABILITADO" ? "Deshabilitar" : "Habilitar"} onClick={() => onToggle(assignment)}>
@@ -73,7 +79,11 @@ function ShiftAssignmentTable({ rows, canEdit, onToggle, onRemove, templatesById
   );
 }
 
-export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: Employee; user: User; canEdit?: boolean }) {
+export function EmployeeShiftsPanel({ employee, canEdit: canEditAll = false }: { employee: Employee; user: User; canEdit?: boolean }) {
+  // R8: RRHH (canEdit) administra todo; un Nivel 2/3 con grupos, sólo los
+  // turnos de sus grupos. El backend vuelve a validar grupo y legajo.
+  const { hasGroups, canManageGroup } = useShiftGroupAccess();
+  const canEdit = canEditAll || hasGroups;
   const [assignments, setAssignments] = useState<ShiftAssignment[]>([]);
   const [templates, setTemplates] = useState<ShiftTemplate[]>([]);
   const [loadStatus, setLoadStatus] = useState<"loading" | "success" | "error">("loading");
@@ -152,13 +162,18 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
   const enabled = assignments.filter((assignment) => assignment.status === "HABILITADO");
   const disabled = assignments.filter((assignment) => assignment.status === "DESHABILITADO");
   const assignedTemplateIds = new Set(assignments.map((assignment) => assignment.shiftTemplateId));
-  const availableTemplates = templates.filter((template) => template.status === "ACTIVO" && !assignedTemplateIds.has(template.id));
+  const availableTemplates = templates.filter((template) => template.status === "ACTIVO" && !assignedTemplateIds.has(template.id) && canManageGroup(template.shiftGroupId ?? null));
   const templatesById = new Map(templates.map((template) => [template.id, template]));
+  const canEditRow = (assignment: ShiftAssignment) => canEdit && templatesById.has(assignment.shiftTemplateId) && canManageGroup(templatesById.get(assignment.shiftTemplateId)?.shiftGroupId ?? null);
+  const hasForeign = !canEditAll && assignments.some((assignment) => !canEditRow(assignment));
 
   return (
     <>
       {notice ? <div className="toast">{notice}</div> : null}
-      {canEdit ? (
+      {hasForeign && canEdit ? (
+        <div className="info-note compact" role="note"><p>Los turnos de grupos que no administrás se muestran sólo para consulta.</p></div>
+      ) : null}
+      {canEdit && (canEditAll || availableTemplates.length) ? (
         <>
           <div className="form-grid">
             <label className="field">
@@ -195,9 +210,9 @@ export function EmployeeShiftsPanel({ employee, canEdit = false }: { employee: E
       ) : (
         <>
           <h4>Turnos habilitados ({enabled.length})</h4>
-          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno habilitado." />}
+          {enabled.length ? <ShiftAssignmentTable rows={enabled} canEditRow={canEditRow} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno habilitado." />}
           <h4>Turnos deshabilitados ({disabled.length})</h4>
-          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEdit={canEdit} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno deshabilitado." />}
+          {disabled.length ? <ShiftAssignmentTable rows={disabled} canEditRow={canEditRow} onToggle={toggle} onRemove={remove} templatesById={templatesById} /> : <EmptyState size="compact" text="Ningún turno deshabilitado." />}
         </>
       )}
     </>

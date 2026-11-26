@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertEmployeesWritable, canManageShiftGroup, type ShiftActor } from "../shifts/shiftWriteAccess";
 import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { argentinaCalendarDate, previousCalendarDateKey, todayArgentinaDateKey, nextCalendarDateKey } from "../../shared/datetime/argentinaTime";
@@ -63,8 +64,10 @@ async function requireTemplate(templateId: string, db: Db) {
   return template;
 }
 
-async function replacementPlan(templateId: string, input: ReplaceShiftTemplateScheduleInput, db: Db) {
+async function replacementPlan(templateId: string, input: ReplaceShiftTemplateScheduleInput, db: Db, actor: ShiftActor) {
   const template = await requireTemplate(templateId, db);
+  // R8.3: plantilla de un grupo no administrable → 404, igual que inexistente.
+  if (!canManageShiftGroup(actor, template.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
   const tomorrow = nextCalendarDateKey(todayArgentinaDateKey());
   if (input.effectiveFrom < tomorrow) {
     throw new AppError(`El reemplazo debe empezar desde el ${tomorrow} o después.`, 422, "SHIFT_TEMPLATE_REPLACEMENT_DATE");
@@ -87,7 +90,7 @@ async function replacementPlan(templateId: string, input: ReplaceShiftTemplateSc
         days: { some: { blocks: { some: { shiftTemplateId: templateId } } } },
       },
       include: {
-        rotation: { select: { code: true, name: true } },
+        rotation: { select: { code: true, name: true, shiftGroupId: true } },
         days: { where: { blocks: { some: { shiftTemplateId: templateId } } }, include: { crew: { select: { code: true, name: true } } } },
       },
       orderBy: { effectiveFrom: "asc" },
@@ -112,15 +115,21 @@ async function replacementPlan(templateId: string, input: ReplaceShiftTemplateSc
       employee: employeeLabel(row.employee),
       updatedAt: row.updatedAt.toISOString(),
     })),
+    // R8.7: una rotación de otro grupo (datos inconsistentes: la plantilla cambió
+    // de grupo con una versión futura que la usa) no se nombra a Nivel 2/3.
     rotationVersions: versionDependencies.map((row) => ({
       id: row.id,
-      rotation: `${row.rotation.code} - ${row.rotation.name}`,
+      rotation: canManageShiftGroup(actor, row.rotation.shiftGroupId) ? `${row.rotation.code} - ${row.rotation.name}` : "Rotación de otro grupo",
       effectiveFrom: row.effectiveFrom.toISOString().slice(0, 10),
       effectiveTo: row.effectiveTo?.toISOString().slice(0, 10) ?? null,
-      crews: [...new Set(row.days.map((day) => `${day.crew.code} - ${day.crew.name}`))].sort(),
+      crews: canManageShiftGroup(actor, row.rotation.shiftGroupId) ? [...new Set(row.days.map((day) => `${day.crew.code} - ${day.crew.name}`))].sort() : [],
       updatedAt: row.updatedAt.toISOString(),
     })),
   };
+  // R8.3 (R-4): el reemplazo reescribe fijos y deja convocatorias pendientes de
+  // personas concretas: todas tienen que estar en el alcance de legajos, o
+  // nada se muestra ni se escribe.
+  await assertEmployeesWritable(actor, [...assignmentPlan.map((row) => row.employeeId), ...pendingDependencies.holidayAssignments.map((row) => row.employeeId)], db);
   const canonical = {
     template: { id: template.id, updatedAt: template.updatedAt.toISOString() },
     requested: { effectiveFrom: input.effectiveFrom, startTime: input.startTime, endTime: input.endTime, code: input.code, name: input.name },
@@ -138,13 +147,13 @@ async function replacementPlan(templateId: string, input: ReplaceShiftTemplateSc
 }
 
 export const shiftTemplateScheduleService = {
-  async preview(templateId: string, input: ReplaceShiftTemplateScheduleInput) {
-    const plan = await replacementPlan(templateId, input, prisma);
+  async preview(templateId: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor) {
+    const plan = await replacementPlan(templateId, input, prisma, actor);
     const { template, ...publicPlan } = plan;
     return { ...publicPlan, template: { id: template.id, code: template.code, name: template.name } };
   },
 
-  async replace(templateId: string, input: ReplaceShiftTemplateScheduleInput, audit?: AuditContext) {
+  async replace(templateId: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor, audit?: AuditContext) {
     if (!input.confirmationToken) throw new AppError("Falta el token de confirmación del reemplazo.", 400, "SHIFT_TEMPLATE_REPLACEMENT_CONFIRMATION_REQUIRED");
     try {
       return await prisma.$transaction(async (tx) => {
@@ -154,7 +163,7 @@ export const shiftTemplateScheduleService = {
         // entre la relectura y la escritura.
         await lockNoveltyCoverageGlobally(tx);
         await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${templateId} FOR UPDATE`;
-        const plan = await replacementPlan(templateId, input, tx);
+        const plan = await replacementPlan(templateId, input, tx, actor);
         if (plan.confirmationToken !== input.confirmationToken) {
           throw new AppError("La configuración cambió desde la vista previa. Revisá el impacto actualizado y volvé a confirmar.", 409, "SHIFT_TEMPLATE_REPLACEMENT_STALE", {
             preview: { ...plan, template: { id: plan.template.id, code: plan.template.code, name: plan.template.name } },

@@ -409,6 +409,8 @@ Semana = lunes a domingo (convención propuesta; el fin de semana pertenece a la
 
 ## 14. Diseño de permisos
 
+> **Actualizado por §26 (R8, 2026-11-26):** Nivel 2 y Nivel 3 también administran plantillas y asignaciones fijas de sus grupos, y el Nivel 3 hereda los grupos de sus Nivel 2. Donde esta sección y §26 difieran, rige §26.
+
 ```
 Rol global (N1/N2/N3)  ×  Alcance de empleados (employeeAccessWhere, sin cambios)
                        ×  Alcance de administración de turnos (UserShiftGroupScope, nuevo)
@@ -517,7 +519,7 @@ RRHH siempre; N2/N3 con y sin `UserShiftGroupScope`; grupo correcto pero legajo 
 | **R5** | Vista previa del turno esperado (endpoint + calendario de solo lectura). | No | No |
 | **R6** | UI de administración de rotaciones. | No | — |
 | **R7** | Excepciones e intercambios (backend + UI). | Aditivo | Sólo personas con excepción |
-| **R8** | Permisos por grupo (`UserShiftGroupScope`, helper, endpoints, UI en Usuarios). | Aditivo | Sólo usuarios con alcance asignado |
+| **R8** | Permisos por grupo (`UserShiftGroupScope`, helper, endpoints, UI en Usuarios). **Diseño definitivo y subetapas R8.0–R8.7 en §26** (reemplaza la lista "sólo RRHH" de §14). | Aditivo | Sólo usuarios con alcance asignado |
 | **R9** | Piloto Planta en `development`/staging; luego producción con autorización. | — | — |
 | **R10** | Decisión sobre empleados con varias asignaciones fijas (P1–P3 en datos actuales), con la evidencia de R1. | Según decisión | Sí, acordado |
 
@@ -1811,6 +1813,170 @@ La revisión humana de un incidente diario toma `lockEmployeeDays` y luego `lock
 **B1 (preexistente; requisito antes de producción).** En development, `_prisma_migrations.checksum` difiere del archivo del repositorio en `20260826120000_special_hour_rules_scope_calendar_priority` (versión nunca commiteada) y `20261002120000_add_hour_concept_work_treatment` (versión de `bcb98b4`, previa al bloque HC-GUARDIA de `6519619`; HC-GUARDIA no existe en development). Sin deriva estructural. Antes de producción: `checksums` contra producción y explicar cada diferencia; nunca editar migraciones aplicadas.
 
 **Ensayo (R4.9D.4, preparado, sin ejecutar):** rama hija temporal de `development` con cómputo propio, inventario antes, `migrate deploy` sólo contra esa rama, inventario después, `compare`, `migrate status` (82) y `migrate diff` vacío, lectura con el backend de `pre-development`; la rama se conserva hasta revisar el resultado.
+
+---
+
+## 26. R8 — Permisos de turnos por responsable (plan aprobado, 2026-11-26)
+
+**Objetivo.** Nivel 2 y Nivel 3 consultan y administran, sin aprobación de RRHH, los grupos de turnos que les corresponden (plantillas, asignaciones fijas, rotaciones, equipos, versiones y membresías). No acceden a grupos ajenos aunque conozcan el ID. Nivel 1 conserva el acceso total. Sin sistema de aprobación de cambios.
+
+**Decisiones (usuario, 2026-11-26).**
+- **D-R8-1. Dos ejes para escrituras sobre personas.** Asignar o quitar una fija, alta, cierre, movimiento o cancelación de miembro, y reemplazo de horario de una plantilla: el usuario tiene que administrar el grupo **y** todos los legajos involucrados tienen que estar en su alcance (`employeeAccessWhere`). Es la recomendación de §14, ahora decidida.
+- **D-R8-2. El Nivel 3 sólo hereda.** No tiene filas propias: su alcance es la unión de los grupos de los Nivel 2 `ACTIVOS` que lo supervisan (`UserSupervisionAssignment`, N:M; un Nivel 3 puede tener varios Nivel 2). El backend rechaza asignar grupos directos a un Nivel 3.
+- **D-R8-3. Corrige §14.** Plantillas y asignaciones fijas dejan de ser sólo de RRHH. Siguen siendo sólo de RRHH: la administración de `ShiftGroup`, la asignación de alcances, las convocatorias a feriado y toda plantilla sin grupo.
+
+**Relación existente (verificada).** `UserSupervisionAssignment(supervisorUserId, supervisedUserId)` es N:M y sólo exige que el par sea único. Hoy el Nivel 2 hereda los legajos de sus Nivel 3 (`employeeAccessWhere`). R8 agrega la dirección inversa (Nivel 2 → Nivel 3) **sólo para grupos de turnos** y no modifica `employeeAccessWhere`.
+
+**Modelo.** `UserShiftGroupScope(id, userId FK Restrict, shiftGroupId FK Restrict, createdByUserId FK SetNull, createdAt)`, con `@@unique([userId, shiftGroupId])` e `@@index([shiftGroupId])`.
+- Sólo un Nivel 2 tiene filas; el rol lo valida el servicio de usuarios.
+- Sin filas = sin acceso, nunca acceso global.
+- Si un usuario deja de ser Nivel 2, sus filas se borran con auditoría. Si se inactiva, se conservan pero no rigen (la regla exige `ACTIVO`).
+- Un grupo INACTIVO deja sus filas inertes (§23.11). Un grupo con alcances no se elimina (`Restrict` → `SHIFT_GROUP_IN_USE`).
+
+**Reglas de autorización** (helper `shifts/shiftGroupAccess.ts`, en vivo, sin caché global: una revocación rige en la request siguiente).
+- ID ajeno en la ruta → `404` del recurso (no se distingue de uno inexistente). ID ajeno en el body → `403 SHIFT_GROUP_FORBIDDEN`. Legajo fuera de alcance → `403 EMPLOYEE_SCOPE_FORBIDDEN`.
+- Operaciones masivas: todo o nada.
+- Un efecto lateral sobre un recurso de otro grupo (`closeFixedAssignments`, reemplazo de horario, superposición con planificación ajena) se rechaza (409) con mensaje genérico. Para usuarios sin acceso total se quitan de mensajes y `details` los códigos y nombres de rotaciones o plantillas ajenas; Nivel 1 sigue viendo el detalle.
+- Lecturas para Nivel 2/3: grupos, plantillas, rotaciones y resumen, filtrados por grupo; miembros y vista previa, filtrados además por alcance de legajos (`hiddenMembersCount`).
+- Sin cambios: convocatorias, alertas, fichador, horas, francos, novedades, notificaciones y motores internos (resolver, obligaciones).
+
+**Subetapas** (cada una con `typecheck`/`test`/`build` verdes y parada para revisión): R8.0 preparación y este diseño · R8.1 esquema, migración y rollback · R8.2 helper y lecturas · R8.3 escrituras y contratos · R8.4 usuarios (backend, `/auth/me`) · R8.5 usuarios (UI) · R8.6 turnos (UI) · R8.7 cierre y regresión.
+
+**Riesgos abiertos.** (1) Legajos de un grupo sin responsable horario cargado: por D-R8-1 el responsable no puede asignarlos; antes del piloto, diagnóstico de sólo lectura. (2) Plantillas sin grupo (unas 11 de 15 en development; producción sin clasificar): Nivel 2/3 no las ven hasta completar R3.3/R3.4. (3) `HolidayWorkAssignmentsPage` usa el catálogo de plantillas, que vendrá filtrado: se verifica en R8.3. (4) Las exclusiones por persona son globales entre grupos: un Nivel 2 puede chocar con planificación ajena sin ver su detalle y debe escalarlo a RRHH.
+
+### 26.1 R8.1 — Esquema, migración y rollback (implementada y validada en local; NO aplicada a ninguna base compartida)
+
+- `schema.prisma`: modelo `UserShiftGroupScope` y relaciones inversas (`User.shiftGroupScopes`, `User.shiftGroupScopesCreated`, `ShiftGroup.userScopes`). Sin cambios de comportamiento: ningún código lee ni escribe la tabla todavía.
+- Migración `20261126120000_add_user_shift_group_scopes`: aditiva, tabla nueva y vacía, sin backfill.
+- Rollback `prisma/rollbacks/20261126120000_add_user_shift_group_scopes.down.sql`: una transacción con la tabla bloqueada; aborta si hay algún alcance asignado; borra la fila de `_prisma_migrations` (patrón de `20261125120000`).
+- **Validación (PostgreSQL 18 local, base descartable `r8_mig`):** historia completa sobre base limpia con `scripts/ci/migrate-clean-database.ts` y `migrate diff` vacío; par duplicado → 23505; borrar un grupo o un usuario con alcance → bloqueado por `RESTRICT`; grupo inexistente → FK; borrar al autor → `createdByUserId` NULL; rollback con filas → aborta sin cambios; rollback sin filas → tabla y fila de migración eliminadas, `migrate status` la muestra pendiente y `migrate deploy` la vuelve a aplicar con diff vacío.
+- Pendiente para cuando se autorice aplicarla en Neon development: configuración del inventario de conservación (`src/shared/migrationInventory`, hoy específica de R4.9) con `createdTables: ["UserShiftGroupScope"]`.
+
+### 26.2 R8.2 — Helper de alcance y lecturas (implementada; sin schema; escrituras sin cambios)
+
+- `shifts/shiftGroupAccess.ts`: `shiftGroupScopeWhere` (regla única), `resolveShiftGroupScope` (una query; ninguna para Nivel 1), `requestShiftGroupScope` (memo por request en `WeakMap`, sin caché global), filtros `shiftGroupWhereForScope`/`shiftTemplateWhereForScope`/`shiftRotationWhereForScope`, `canAccessShiftGroup` y `shiftGroupScopeCacheKey`. Las filas de un Nivel 3, o de un usuario que ya no es Nivel 2, nunca dan alcance.
+- `shifts/shiftRotationVisibility.ts`: personas de una rotación propia según `employeeAccessWhere` (`hiddenMemberCount`, `meta.hiddenCount`) y avisos con texto genérico para personas ocultas o turnos fijos de otro grupo. `ReadinessIssue.relatedShiftGroupId` es interno: `toPublicIssues` lo quita también de los errores de escritura (`ROTATION_NOT_READY`, `ROTATION_CONFIGURATION_CONFLICT`).
+- Lecturas filtradas: grupos, catálogo de plantillas, rotaciones (lista, detalle, versión, miembros), vista previa y resumen de asignaciones. La vista previa oculta a Nivel 2/3 id y código de plantillas ajenas, el origen de otra rotación y el detalle técnico de conflictos. Contratos en `BACKEND_API_CONTRACTS.md` (Turnos).
+- Nivel 1 conserva exactamente las mismas queries: los filtros sólo se agregan si el alcance restringe algo.
+- Sin cambios: motores internos (resolver, obligaciones, fichador, cobertura), convocatorias, alertas y todas las escrituras (siguen siendo de RRHH).
+- **Compatibilidad con R8.4.** Hasta que exista la API para asignar alcances, ningún Nivel 2/3 tiene filas: verán Turnos vacío (y el filtro "Turno" de convocatorias vacío). R8.2 no debe desplegarse sin R8.4 y R8.5. R8.4 sólo escribe filas: no hace falta invalidar nada, porque el alcance se resuelve por request y las cachés usan su huella. Para `inheritedShiftGroups` y `/auth/me`, R8.4 reutiliza `shiftGroupScopeWhere`/`resolveShiftGroupScope`.
+- **Pruebas:** `shiftGroupAccess.test.ts` (16), `shiftRotationVisibility.test.ts` (6), ajustes de firma en tests de servicios y controladores, y 2 casos nuevos de revocación en caché y alcance parcial. Integración opt-in `shiftGroupScope.integration.test.ts` (`SHIFT_GROUP_SCOPE_IT_DATABASE_URL`, 20 casos): N1 total, N2 con 1 y con 2 grupos, N3 heredando de dos N2, N2 sin grupos, IDs ajenos → 404, revocación inmediata con caché, supervisión quitada, N2 inactivo y N2 que cambia de rol, escrituras todavía 403. `shiftRotationAdmin.integration.test.ts` adaptada: Supervisión sin alcance recibe 404 y, con alcance, no ve a los 7 miembros fuera de su alcance de legajos (antes los veía). Nueva suite no agregada a `ci.yml` (pendiente de autorización).
+
+### 26.3 R8.3 — Escrituras de Nivel 2/3 (implementada; sin schema)
+
+- `shifts/shiftWriteAccess.ts`: `ShiftActor` (usuario + alcance por request), `assertShiftGroupWritable` (body → 403), `assertEmployeesWritable`/`employeesOutsideScope` (todo o nada), `redactShiftWriteError`/`withShiftActorErrors` (R-6) y `globalShiftActor` (tests y caminos internos). Nivel 1 no paga consultas extra.
+- Servicios con actor obligatorio: rotaciones (alta, edición, baja, activación, desactivación, finalización y su vista previa, equipos), versiones (alta, edición, baja), membresías (alta, baja, cambio de equipo, cancelación), asignaciones fijas (alta, edición, baja) y plantillas (alta, edición, baja, vista previa y reemplazo de horario). Recurso de la ruta fuera de alcance → 404; grupo del body → 403; legajos fuera de alcance → 403 antes de escribir.
+- Clasificación aplicada: planificación (grupo) = plantillas, rotación, equipos, versiones, activación y desactivación. Personas (grupo + legajo) = fijos, membresías, finalización (cierra o cancela membresías) y reemplazo de horario (reescribe fijos y deja convocatorias pendientes).
+- Efectos laterales: cerrar fijos de otro grupo (Opción C) → `409 ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE`. Cerrar fijos del propio grupo sigue permitido.
+- Sin cambios: validaciones de fechas, versiones, superposiciones, nocturnos, descansos, historial de asistencia y bloqueo histórico de plantillas (las guardas existentes corren igual, después del alcance); motores de cálculo y fichadas; grupos y convocatorias (sólo RRHH).
+- **Pruebas:** `shiftWriteAccess.test.ts` (13), `shiftWriteRoutes.test.ts` (inventario: las 24 rutas abiertas son exactamente las verificadas; grupos y convocatorias siguen siendo de RRHH), ajustes de firma en tests de servicios. Integración `shiftGroupScope.integration.test.ts` ampliada a 33 casos: plantillas, fijos (masiva mezclada sin escribir, por id ajeno 404), rotaciones, equipos, versiones (turno ajeno sin código), membresías (masiva mezclada, rotación ajena oculta, cierre de fijo ajeno rechazado, cierre de fijo propio permitido, miembro fuera de alcance 404), finalización con miembros ocultos 403, reemplazo de horario 403/404, herencia de Nivel 3 y su revocación, revocación de Nivel 2, auditoría con el `userId` real y grupos/convocatorias 403. Suite agregada a `ci.yml` (base `clock_it_ci_shift_group_scope`), de forma aditiva.
+- **Riesgo:** los mensajes ocultados pierden detalle también cuando el conflicto es del propio grupo (por ejemplo, otra rotación de Planta).
+
+### 26.4 R8.3.1 — Efectos indirectos sobre horarios reales (corrección, 2026-11-26)
+
+**Regla (reemplaza la clasificación de §26.3).** Una operación que sólo crea o administra estructura sin cambiar lo que rige exige el grupo. Toda operación que cambie, directa o indirectamente, horarios u obligaciones reales exige el grupo **y** todos los legajos realmente afectados en el alcance. Si falta uno, `403 EMPLOYEE_SCOPE_FORBIDDEN` antes de cualquier otra validación y sin escribir nada.
+
+| Operación | Afectados reales | Fuente reutilizada |
+|---|---|---|
+| Activar / desactivar rotación | Membresías vigentes o futuras (activar exige que ninguna haya empezado; desactivar, que no haya regido) | `openMemberIds` (filtro de `allMembers`) |
+| Crear, editar o borrar versión (grilla) | Sólo si la rotación está ACTIVA: miembros vigentes desde la fecha del cambio | `membersFrom` (el mismo conjunto del recálculo de cobertura) |
+| Activar o inactivar un equipo | Sólo en rotación ACTIVA: miembros vigentes o futuros del equipo | `openMemberIds(rotation, crewId)` |
+| Editar plantilla: horario, tolerancias, límites, umbrales o estado | Fijos HABILITADOS vigentes o futuros, convocatorias ACTIVAS futuras y miembros vigentes o futuros de rotaciones ACTIVAS que la usan | `templateAffectedEmployeeIds` (mismas fuentes que `recalculateTemplateCoverage`, sin historia ni inactivos; `rotationTemplateCoverageRanges` admite `activeRotationsOnly`) |
+| Borrar plantilla | Ídem (una convocatoria futura quedaría sin turno) | Ídem |
+
+Sólo grupo: alta de plantilla; nombre, código, descripción, categoría o grupo de una plantilla; alta, edición descriptiva o baja de rotación; alta de equipo y edición descriptiva; versiones de rotaciones INACTIVAS. Fijos, membresías, finalización y reemplazo de horario ya exigían legajos (§26.3). Nivel 1 no consulta nada extra. Las validaciones funcionales corren igual, después del alcance.
+
+**Pruebas:** 6 casos de integración nuevos (39 en total en `shiftGroupScope.integration.test.ts`):
+- Tolerancias, horario, estado o límite de una plantilla usada por un legajo ajeno → 403 sin cambios; el nombre sí se puede cambiar; RRHH sí puede editar.
+- Fijos DESHABILITADOS o vencidos no bloquean.
+- Borrar una plantilla con una convocatoria futura de un legajo ajeno → 403.
+- Activar con un miembro ajeno → 403 antes de `ROTATION_NOT_READY`.
+- En una rotación ACTIVA, desactivar, versionar o cambiar el estado de un equipo con un miembro ajeno → 403 sin cambios.
+- Una membresía ajena ya terminada no cuenta como afectada.
+
+Las 19 suites del job de integración pasan en local (309).
+
+### 26.5 R8.4 — Administración de alcances desde Usuarios (implementada; sin schema)
+
+- `users`: `shiftGroupIds` en alta y edición, con el mismo patrón que `supervisedUserIds`.
+  - Sólo Nivel 2. Los grupos tienen que existir, sin repetidos; uno que se agrega tiene que estar ACTIVO.
+  - La edición calcula qué se agregó y qué se quitó, y lo audita (`UserShiftGroupScope`, `before`/`after` con códigos y nombres) en la misma transacción.
+  - Quien deja de ser Nivel 2 pierde sus grupos, con el motivo en la auditoría. Inactivar no borra filas.
+- Respuesta de usuarios:
+  - `shiftGroups`: sólo para Nivel 2. Una fila desfasada de otro rol no se muestra.
+  - `inheritedShiftGroups`: sólo para Nivel 3, con `viaSupervisors`, calculado con la misma regla que el helper (supervisor Nivel 2 ACTIVO).
+- `auth`: `shiftGroupAccess` en login, refresh y `/auth/me` (`toShiftGroupAccess`). Es sólo una pista para la UI.
+- `shifts`: un grupo asignado a responsables no se elimina (`409 SHIFT_GROUP_IN_USE`, explícito antes del `Restrict`).
+- **Cachés:** el alcance no se cachea. Las cachés de lectura de usuarios ya se limpian en cada alta o edición (también recalculan la herencia de los Nivel 3). Las de turnos usan la huella del alcance. No hizo falta invalidación nueva.
+- **Pruebas:**
+  - Unitarias: 7 en `users.service.test.ts` y 2 en `users.repository.test.ts` (herencia de dos supervisores, uno inactivo y uno que dejó de ser Nivel 2), más fixtures completados con los campos nuevos.
+  - Integración: 8 casos nuevos en `shiftGroupScope.integration.test.ts` (47 en total): Nivel 2 con cero, uno y varios grupos, auditoría y autoría, validaciones, sólo RRHH administra, herencia con origen y doble origen, revocación inmediata, inactivación y reactivación, cambio de rol, login y `/auth/me`, y baja de un grupo asignado.
+  - Las 19 suites del CI pasan en local (317) y la suite backend completa también (4461).
+- **Riesgo menor:** renombrar o inactivar un grupo no limpia la caché de 30 s de Usuarios. Sólo afecta a cómo se muestra el grupo, nunca a la autorización.
+
+### 26.6 R8.5 — Usuarios: grupos de turnos en el frontend (implementada; sólo frontend)
+
+- `components/users/MultiOptionSelector.tsx`: selector múltiple genérico (buscador, check, chips, «Quitar todos», estados de carga y error con reintento). `SupervisedUsersSelector` pasa a ser un envoltorio, con el mismo marcado y las mismas etiquetas accesibles. Las clases `.supervised-users*` se renombran a `.multi-option-select*`.
+- `components/users/ShiftGroupAccessFields.tsx`:
+  - `ShiftGroupsSelector` (Nivel 2): ofrece grupos ACTIVOS y los ya asignados aunque estén inactivos, con badge.
+  - `InheritedShiftGroupsPanel` (Nivel 3): grupos heredados «vía» sus supervisores, sólo lectura, con estados vacíos explicados.
+  - Nivel 1: nota de acceso total.
+- `UsersPage`: el catálogo de grupos se pide al abrir el modal (cacheado).
+  - `shiftGroupIds` sólo se envía si se tocó el selector: editar otro dato, activar o inactivar nunca pisa grupos, y un catálogo con error los conserva. `[]` los quita.
+  - Aviso «Al guardar, se pierden accesos a turnos» y confirmación al guardar cuando un cambio de grupos, de supervisados, de rol o la inactivación de un Nivel 2 quita accesos propios o heredados. Calcula a qué Nivel 3 afecta: sólo los grupos que heredan únicamente de ese Nivel 2.
+  - `SHIFT_GROUP_INACTIVE` se explica en contexto, y los códigos `USER_SHIFT_*` tienen texto de respaldo en `apiClient`.
+- **Pruebas:**
+  - Unitarias: 14 nuevas en `UsersPage.test.tsx` y 3 en `userApiService.test.ts`. Frontend completo: 1736 tests, typecheck y build OK.
+  - QA visual en Chromium real (backend del worktree :4018 sobre la base local `r8_ui_qa`, Vite :5188) a 1366, 1920, tablet y 390 px: N2 con grupos (incluido uno inactivo), N2 sin grupos, error de catálogo, avisos de pérdida, N3 con y sin herencia. No hay desbordes ni scroll horizontal.
+
+### 26.7 R8.6 — Turnos para Nivel 2/3 en el frontend (implementada; sólo frontend)
+
+- **Sesión:** `shiftGroupAccess` de login y `/auth/me` en `User`. `AuthContext.refreshShiftGroupAccess()` lo relee al entrar a Turnos, así una asignación o revocación se ve sin reiniciar sesión.
+- **`utils/shiftGroupAccess.ts`:** `shiftGroupAccessOf`, `canManageGroup` y el hook `useShiftGroupAccess`. Nivel 1 administra todo; un `all` guardado para Nivel 2/3 se ignora; sin grupos, no hay acceso.
+- **Navegación:** «Turnos» en Gestión horaria para Nivel 2/3, con las mismas rutas.
+- **`ShiftsPage`:**
+  - Sin la pestaña «Grupos» para Nivel 2/3 (`?vista=grupos` cae en Turnos).
+  - Acciones por grupo (`ShiftGroupSections` recibe `canEditGroup`).
+  - Sin el filtro «Sin grupo».
+  - Estado vacío explicativo si no hay grupos (`EmptyState` admite `title`).
+- **`ShiftCreatePage` / `ShiftDetailPage`:** sin «Sin grupo» para Nivel 2/3 (`shiftGroupSelectOptions(..., { allowUngrouped })`), con preselección de su grupo. Se edita sólo si el grupo es administrable.
+- **`RotationDetailPage`:**
+  - `canEdit` según el grupo de la rotación.
+  - Aviso de `hiddenMemberCount`, también en la pestaña Personas.
+  - Activar, desactivar y finalizar quedan deshabilitados si hay personas fuera de alcance (el backend los rechaza).
+- **Vista previa:** `PreviewBlock.template.id/code` pueden ser `null` (`templateHidden`). `blockCodeText` muestra «Otro grupo» con el horario real, y el modal compara bloques por instante.
+- **Conflictos:** `fixedAssignmentText` admite `template: null`.
+- **Legajo → Turnos:**
+  - Se edita sólo lo de los grupos propios; lo de otros grupos queda como «Otro grupo», sólo lectura.
+  - Sólo se pueden agregar plantillas administrables.
+  - La pestaña queda fuera del `fieldset` de sólo lectura del legajo.
+- **Mensajes:** `apiClient` agrega `SHIFT_GROUP_FORBIDDEN` y `ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE`.
+- **Sin cambios:** administración de grupos y convocatorias (sólo RRHH), motores de cálculo, fichadas, feriados y notificaciones.
+- **Pruebas:**
+  - 17 casos nuevos: helper, creación de turno, Turnos con 0, 1 y varios grupos para Nivel 2/3, rotaciones, detalle de rotación, vista previa con plantilla oculta y legajo por grupo.
+  - 7 tests previos actualizados: describían a Nivel 2/3 con sólo lectura global, que R8 reemplaza.
+  - Frontend: 1753 tests, `tsc -b` y build OK.
+  - QA en Chromium real con backend del worktree sobre la base local `r8_ui_qa` (Stefi N2 Planta, Joaquín N3 heredando de dos N2, Gabriel N2 sin grupos, RRHH) a 1366, 1920, tablet y 390 px: sin desbordes ni scroll horizontal; 14 celdas con plantilla oculta en la vista previa.
+
+### 26.8 R8.7 — Validación final (2026-11-26)
+
+- **Mensajes de conflicto precisos (`shifts/shiftErrorScope.ts`).** Cada error de conflicto registra, donde se lanza, qué grupos y legajos menciona (en un `WeakMap`; nunca se serializa).
+  - Errores cubiertos: `SHIFT_ASSIGNMENT_OVERLAPS_ROTATION`, `ROTATION_MEMBERSHIP_OVERLAP`, `ROTATION_ACTIVATION_RETROACTIVE` y los avisos de `ROTATION_CONFIGURATION_CONFLICT`/`ROTATION_NOT_READY`, que conservan `relatedShiftGroupId`.
+  - Un Nivel 2/3 recibe el mensaje completo sólo si todo lo mencionado está en su alcance. Si algo es ajeno o falta el registro, recibe el texto genérico. `ROTATION_TRANSITION_OVERLAP` y `ROTATION_FINALIZE_STALE` siguen sin `details`, porque sus rótulos no traen el grupo. RRHH no cambia.
+- **Defectos corregidos:**
+  1. La vista previa del reemplazo de horario nombraba, a un Nivel 2/3, una rotación de otro grupo que usaba la plantilla (datos inconsistentes). Ahora la muestra como «Rotación de otro grupo», sin equipos.
+  2. Con sólo grupos inactivos, la UI ofrecía «Crear turno» y «Crear rotación» sin grupo elegible. Ahora crear exige un grupo activo propio.
+- **Inventario de migraciones:** `R8_PENDING_MIGRATIONS_CONFIG` (crea `UserShiftGroupScope`; preserva lo de R4.9 más `ShiftRotationDay`, `ShiftRotationBlock` y `UserSupervisionAssignment`). El CLI acepta `--config=r49|r8` (default `r49`, sin cambios). La integración opt-in `migrationInventory.r8.integration.test.ts` (`R8_MIGRATION_IT_DATABASE_URL`) cubre:
+  - rollback, inventario, `migrate deploy` → `ok`, tabla vacía y detección de cambios;
+  - rollback abortado con alcances cargados.
+
+  Igual que la suite de R4.9, no está en `ci.yml`. Neon development sigue sin la migración: aplicarla requiere autorización aparte.
+- **Pruebas nuevas:** 5 unitarias de redacción precisa, 1 integración (conflicto propio → mensaje completo), 1 del reemplazo de horario, 3 de `AuthContext` (refresco y revocación), 1 de UI con sólo un grupo inactivo, 1 de configuración del inventario y 2 de integración de la migración.
+- **Regresión:**
+  - Backend: 4468 tests, typecheck y build OK; las 19 suites del job de integración del CI pasan (318). La caracterización R1 y las suites de reloj, asistencia, simulación de Planta y cobertura no cambiaron.
+  - Frontend: 1757 tests, `tsc -b` y build OK.
+  - QA en Chromium: revocación con la pantalla abierta y recarga a 1366 y 390 px.
+  - Ningún archivo de motores (fichadas, horas, novedades, francos, feriados, resolver, obligaciones) fue modificado.
 
 ---
 

@@ -36,7 +36,24 @@ export type ReadinessIssue = {
   crewId?: string;
   employeeId?: string;
   grid?: RotationGridIssue;
+  /**
+   * R8: grupo de la plantilla ajena que menciona el mensaje
+   * (FIXED_ASSIGNMENT_OVERLAP). Dato interno para ocultar el detalle a quien
+   * no administra ese grupo; nunca se serializa (`shiftRotationVisibility.ts`).
+   */
+  relatedShiftGroupId?: string | null;
 };
+
+/** Quita los datos internos de un aviso antes de serializarlo. */
+export function toPublicIssue(issue: ReadinessIssue): ReadinessIssue {
+  if (!("relatedShiftGroupId" in issue)) return issue;
+  const { relatedShiftGroupId: _internal, ...rest } = issue;
+  return rest;
+}
+
+export function toPublicIssues(issues: readonly ReadinessIssue[]): ReadinessIssue[] {
+  return issues.map(toPublicIssue);
+}
 
 export type MembershipFacts = {
   id: string;
@@ -49,7 +66,7 @@ export type MembershipFacts = {
   employeeActive: boolean;
 };
 
-export type FixedAssignmentFacts = { employeeId: string; templateCode: string; status: "HABILITADO" | "DESHABILITADO"; effectiveFrom: string; effectiveTo: string | null };
+export type FixedAssignmentFacts = { employeeId: string; templateCode: string; templateShiftGroupId?: string | null; status: "HABILITADO" | "DESHABILITADO"; effectiveFrom: string; effectiveTo: string | null };
 export type RegimeFacts = { employeeId: string; kind: string; effectiveFrom: string; effectiveTo: string | null };
 
 /** Rangos de fechas calendario inclusivos ("YYYY-MM-DD"; `null` = abierto). */
@@ -136,7 +153,7 @@ export function assessRotation<T extends RotationTemplateRef>(input: {
     for (const fixed of input.fixedAssignments) {
       if (fixed.employeeId !== membership.employeeId || fixed.status !== "HABILITADO") continue;
       if (rangesOverlap(membership.effectiveFrom, membership.effectiveTo, fixed.effectiveFrom, fixed.effectiveTo)) {
-        issues.push({ code: "FIXED_ASSIGNMENT_OVERLAP", severity: "ERROR", employeeId: membership.employeeId, message: `${who} tiene el turno fijo ${fixed.templateCode} ${rangeText(fixed.effectiveFrom, fixed.effectiveTo)}, superpuesto con su membresía.` });
+        issues.push({ code: "FIXED_ASSIGNMENT_OVERLAP", severity: "ERROR", employeeId: membership.employeeId, message: `${who} tiene el turno fijo ${fixed.templateCode} ${rangeText(fixed.effectiveFrom, fixed.effectiveTo)}, superpuesto con su membresía.`, ...(fixed.templateShiftGroupId !== undefined ? { relatedShiftGroupId: fixed.templateShiftGroupId } : {}) });
       }
     }
     for (const regime of input.regimes) {

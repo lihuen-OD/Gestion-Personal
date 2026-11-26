@@ -22,7 +22,7 @@ import path from "node:path";
 import { parse } from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import { assertExpectedHost } from "../../src/modules/org-structure/reorg/targetIdentity";
-import { compareInventories, migrationChecksumDrift, R49_PENDING_MIGRATIONS_CONFIG, type InventorySnapshot } from "../../src/shared/migrationInventory/migrationInventory";
+import { compareInventories, INVENTORY_CONFIGS, migrationChecksumDrift, type InventoryConfig, type InventorySnapshot } from "../../src/shared/migrationInventory/migrationInventory";
 import { takeInventory } from "../../src/shared/migrationInventory/migrationInventory.reader";
 
 const arg = (name: string) => process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -49,6 +49,14 @@ function repoChecksums(): Record<string, string> {
   return result;
 }
 
+/** `--config=r49|r8` (default `r49`): qué migraciones pendientes describe el inventario. */
+function inventoryConfig(): InventoryConfig {
+  const key = arg("config") ?? "r49";
+  const config = INVENTORY_CONFIGS[key];
+  if (!config) throw new Error(`--config=${key} desconocida (opciones: ${Object.keys(INVENTORY_CONFIGS).join(", ")}).`);
+  return config;
+}
+
 async function main() {
   const mode = process.argv[2];
   if (mode === "snapshot") {
@@ -56,7 +64,7 @@ async function main() {
     if (existsSync(out)) throw new Error(`${out} ya existe: el inventario nunca pisa evidencia anterior.`);
     const { prisma, host } = connect();
     try {
-      const snapshot = await takeInventory(prisma, R49_PENDING_MIGRATIONS_CONFIG);
+      const snapshot = await takeInventory(prisma, inventoryConfig());
       writeFileSync(out, JSON.stringify(snapshot, null, 2), { mode: 0o600 });
       const applied = snapshot.migrations.filter((row) => row.finished && !row.rolledBack).length;
       console.log(`Inventario (${host}, base ${snapshot.meta.database}, read_only=${snapshot.meta.readOnly}): ${applied} migraciones aplicadas, ${Object.keys(snapshot.tables).length} tablas → ${out}`);
@@ -68,7 +76,7 @@ async function main() {
   if (mode === "compare") {
     const before = JSON.parse(readFileSync(required("before"), "utf8")) as InventorySnapshot;
     const after = JSON.parse(readFileSync(required("after"), "utf8")) as InventorySnapshot;
-    const result = compareInventories(before, after, R49_PENDING_MIGRATIONS_CONFIG);
+    const result = compareInventories(before, after, inventoryConfig());
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exitCode = 1;
     return;

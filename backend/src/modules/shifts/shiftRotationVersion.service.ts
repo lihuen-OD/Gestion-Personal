@@ -47,6 +47,9 @@ import {
   type TemplateRefWithGroup,
 } from "./shiftRotation.support";
 import { withRotationErrors } from "./shiftRotationErrors";
+import { canAccessShiftGroup, type ShiftGroupScope } from "./shiftGroupAccess";
+import { canSeeEmployee } from "./shiftRotationVisibility";
+import { assertEmployeesWritable, canManageShiftGroup, isGlobalActor, rotationViewerForActor, withShiftActorErrors, type ShiftActor } from "./shiftWriteAccess";
 import { formatDateKey, rangesOverlap } from "./shiftRotationReadiness";
 import { transitionIssuesForEntry } from "./shiftRotationTransitions";
 
@@ -95,11 +98,15 @@ function requireVersion(rotation: RotationFullRow, versionId: string) {
 }
 
 /** Valida la grilla propuesta (borrador) contra la rotación y sus plantillas. */
-async function validateDraft(db: Db, rotation: RotationFullRow, input: { cycleLengthWeeks: number; anchorWeekStart: string; effectiveFrom: string; days: VersionDayInput[] }) {
+async function validateDraft(db: Db, rotation: RotationFullRow, input: { cycleLengthWeeks: number; anchorWeekStart: string; effectiveFrom: string; days: VersionDayInput[] }, actor: ShiftActor) {
   const templateIds = [...new Set(input.days.flatMap((day) => day.blocks.map((block) => block.shiftTemplateId)))];
   const rows = await shiftRotationRepository.templatesByIds(templateIds, db);
   const templates = new Map<string, TemplateRefWithGroup>(rows.map((row) => [row.id, templateRef(row)]));
   const foreign = rows.filter((row) => row.shiftGroupId !== rotation.shiftGroupId);
+  if (foreign.length && !isGlobalActor(actor)) {
+    // R8.3: sin códigos ni grupos ajenos para quien no administra todo.
+    throw new AppError("La grilla usa turnos que no pertenecen al grupo de la rotación. Una rotación sólo usa turnos activos de su grupo.", 422, "ROTATION_TEMPLATE_OTHER_GROUP");
+  }
   if (foreign.length) {
     throw new AppError(`La grilla usa turnos de otro grupo: ${foreign.map((row) => row.code).join(", ")}. Una rotación sólo usa turnos activos de su grupo (${rotation.shiftGroup.code}).`, 422, "ROTATION_TEMPLATE_OTHER_GROUP", { templates: foreign.map((row) => row.code) });
   }
@@ -152,20 +159,48 @@ async function assertVersionBoundary(db: Db, rotation: RotationFullRow, versions
   return result.restsAtTransition;
 }
 
+/** R8.3: requireRotation + el grupo de la rotación tiene que ser administrable (si no, 404). */
+async function requireActorRotation(id: string, actor: ShiftActor, db: Db) {
+  const rotation = await requireRotation(id, db);
+  if (!canManageShiftGroup(actor, rotation.shiftGroupId)) throw notFound();
+  return rotation;
+}
+
+/** Descansos en la transición: sólo de personas que el actor puede ver. */
+async function restsForActor<T extends { employeeId: string }>(rests: T[], actor: ShiftActor): Promise<T[]> {
+  if (isGlobalActor(actor) || !rests.length) return rests;
+  const viewer = await rotationViewerForActor(actor, rests.map((rest) => rest.employeeId));
+  return rests.filter((rest) => canSeeEmployee(viewer, rest.employeeId));
+}
+
 function membersFrom(rotation: RotationFullRow, from: string) {
   return allMembers(rotation).filter((member) => keyOrNull(member.effectiveTo) === null || keyOrNull(member.effectiveTo)! >= from).map((member) => member.employeeId);
 }
 
+/**
+ * R8.3 (§26): en una rotación ACTIVA, una versión nueva, editada o borrada
+ * cambia lo que rige desde `from` para sus miembros de ahí en adelante (los
+ * mismos que recalcula la cobertura): todos tienen que estar en el alcance.
+ * Una rotación INACTIVA no rige (legacy): sólo exige el grupo.
+ */
+async function assertVersionEffectWritable(actor: ShiftActor, rotation: RotationFullRow, from: string, db: Db) {
+  if (rotation.status !== "ACTIVO") return;
+  await assertEmployeesWritable(actor, membersFrom(rotation, from), db);
+}
+
 export const shiftRotationVersionService = {
-  async get(rotationId: string, versionId: string) {
+  /** R8: versión de una rotación de un grupo no administrable → 404 (igual que inexistente). */
+  async get(rotationId: string, versionId: string, scope: ShiftGroupScope) {
     const rotation = await requireRotation(rotationId, prisma);
+    if (!canAccessShiftGroup(scope, rotation.shiftGroupId)) throw notFound();
     return versionResponse(rotation, requireVersion(rotation, versionId), todayAndTomorrow().today);
   },
 
-  async create(rotationId: string, input: CreateVersionInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async create(rotationId: string, input: CreateVersionInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
+      await assertVersionEffectWritable(actor, rotation, input.effectiveFrom, tx);
       const { today } = todayAndTomorrow();
       assertNotBefore(input.effectiveFrom, minimumVersionStart(rotation), "La nueva versión");
       const sorted = [...rotation.versions].sort((a, b) => a.effectiveFrom.getTime() - b.effectiveFrom.getTime());
@@ -173,7 +208,7 @@ export const shiftRotationVersionService = {
       if (later) {
         throw new AppError(`Ya hay una versión que empieza el ${formatDateKey(keyOf(later.effectiveFrom))}. Editá esa versión futura o elegí una fecha posterior.`, 409, "ROTATION_VERSION_EXISTS_AFTER");
       }
-      const draft = await validateDraft(tx, rotation, input);
+      const draft = await validateDraft(tx, rotation, input, actor);
       const previous = sorted.at(-1);
       const previousEnd = previous && (previous.effectiveTo === null || keyOf(previous.effectiveTo) >= input.effectiveFrom) ? previousCalendarDateKey(input.effectiveFrom) : null;
       const versions = rotationSnapshot(rotation).versions.map((version) => (previous && version.id === previous.id && previousEnd ? { ...version, effectiveTo: previousEnd } : version));
@@ -195,15 +230,16 @@ export const shiftRotationVersionService = {
       await auditService.registerWithin(tx, { ...audit, action: "CREATE", entity: "ShiftRotationVersion", entityId: created.id, description: `Se creó una versión de la rotación ${describeRotation(rotation)} ${rangeLabel(input.effectiveFrom, null)} (ciclo de ${input.cycleLengthWeeks} semana(s)).`, after: versionAuditSnapshot(createdRow, crewNames) });
       const coverage = await recalculateRotationCoverage(tx, affected, [{ from: input.effectiveFrom, to: null }], `versión nueva de la rotación ${describeRotation(rotation)}`);
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
-      return { ...versionResponse(after, createdRow, today), restsAtTransition: rests };
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return { ...versionResponse(after, createdRow, today), restsAtTransition: await restsForActor(rests, actor) };
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async update(rotationId: string, versionId: string, input: UpdateVersionInput, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async update(rotationId: string, versionId: string, input: UpdateVersionInput, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
       const version = requireVersion(rotation, versionId);
+      await assertVersionEffectWritable(actor, rotation, [keyOf(version.effectiveFrom), input.effectiveFrom].sort()[0]!, tx);
       const { today } = todayAndTomorrow();
       if (isVersionLocked(rotation, version, today)) {
         throw new AppError(`La versión ${rangeLabel(keyOf(version.effectiveFrom), keyOrNull(version.effectiveTo))} ya rigió y no se puede modificar. Creá una versión nueva desde mañana.`, 409, "ROTATION_VERSION_LOCKED");
@@ -218,7 +254,7 @@ export const shiftRotationVersionService = {
       const next = sorted[index + 1];
       if (previous && keyOf(previous.effectiveFrom) >= input.effectiveFrom) throw new AppError(`La versión no puede empezar antes del ${formatDateKey(nextCalendarDateKey(keyOf(previous.effectiveFrom)))} (la anterior empieza el ${formatDateKey(keyOf(previous.effectiveFrom))}).`, 409, "ROTATION_VERSION_ORDER");
       if (next && keyOf(next.effectiveFrom) <= input.effectiveFrom) throw new AppError(`La versión debe empezar antes del ${formatDateKey(keyOf(next.effectiveFrom))}, cuando empieza la siguiente.`, 409, "ROTATION_VERSION_ORDER");
-      const draft = await validateDraft(tx, rotation, input);
+      const draft = await validateDraft(tx, rotation, input, actor);
       const previousEnd = previous ? previousCalendarDateKey(input.effectiveFrom) : null;
       const snapshotVersions = rotationSnapshot(rotation).versions.map((candidate) => {
         if (candidate.id === versionId) return { ...draft, id: versionId, effectiveTo: keyOrNull(version.effectiveTo) };
@@ -242,15 +278,16 @@ export const shiftRotationVersionService = {
       await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "ShiftRotationVersion", entityId: versionId, description: `Se modificó la versión futura de la rotación ${describeRotation(rotation)}; rige ${rangeLabel(input.effectiveFrom, keyOrNull(version.effectiveTo))}.`, before: beforeSnapshot, after: versionAuditSnapshot(updatedRow, crewNames) });
       const coverage = await recalculateRotationCoverage(tx, affected, [{ from, to: keyOrNull(version.effectiveTo) }], `cambio de versión de la rotación ${describeRotation(rotation)}`);
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
-      return { ...versionResponse(after, updatedRow, today), restsAtTransition: rests };
-    }, ROTATION_TRANSACTION_OPTIONS));
+      return { ...versionResponse(after, updatedRow, today), restsAtTransition: await restsForActor(rests, actor) };
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 
-  async remove(rotationId: string, versionId: string, audit?: AuditContext) {
-    return withRotationErrors(() => prisma.$transaction(async (tx) => {
+  async remove(rotationId: string, versionId: string, actor: ShiftActor, audit?: AuditContext) {
+    return withShiftActorErrors(actor, () => withRotationErrors(() => prisma.$transaction(async (tx) => {
       await shiftRotationRepository.lockRotation(tx, rotationId);
-      const rotation = await requireRotation(rotationId, tx);
+      const rotation = await requireActorRotation(rotationId, actor, tx);
       const version = requireVersion(rotation, versionId);
+      await assertVersionEffectWritable(actor, rotation, keyOf(version.effectiveFrom), tx);
       const { today } = todayAndTomorrow();
       if (isVersionLocked(rotation, version, today)) {
         throw new AppError(`La versión ${rangeLabel(keyOf(version.effectiveFrom), keyOrNull(version.effectiveTo))} ya rigió y no se puede eliminar.`, 409, "ROTATION_VERSION_LOCKED");
@@ -279,7 +316,7 @@ export const shiftRotationVersionService = {
       const coverage = await recalculateRotationCoverage(tx, affected, [{ from, to: keyOrNull(version.effectiveTo) }], `eliminación de una versión futura de la rotación ${describeRotation(rotation)}`);
       if (coverage) await auditNoveltyCoverageRecalculationWithin(tx, coverage, audit);
       return { id: versionId };
-    }, ROTATION_TRANSACTION_OPTIONS));
+    }, ROTATION_TRANSACTION_OPTIONS)));
   },
 };
 

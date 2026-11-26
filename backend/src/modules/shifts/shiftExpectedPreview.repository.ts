@@ -35,6 +35,13 @@ function intersectingMembershipWhere(rotationId: string, from: Date, to: Date): 
 }
 
 export const shiftExpectedPreviewRepository = {
+  /** R8: grupo de cada plantilla, para ocultar las de grupos no administrables. */
+  async templateGroups(ids: string[], db: Db = prisma) {
+    if (!ids.length) return new Map<string, string | null>();
+    const rows = await db.shiftTemplate.findMany({ where: { id: { in: ids } }, select: { id: true, shiftGroupId: true } });
+    return new Map(rows.map((row) => [row.id, row.shiftGroupId]));
+  },
+
   findRotation(id: string, db: Db = prisma) {
     return db.shiftRotation.findUnique({ where: { id }, select: rotationPreviewSelect });
   },

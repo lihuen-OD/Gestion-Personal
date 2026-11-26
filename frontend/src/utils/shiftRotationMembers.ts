@@ -78,7 +78,8 @@ export function membershipRangeText(member: Pick<ShiftRotationMember, "effective
   return member.effectiveTo ? `del ${formatCalendarDate(member.effectiveFrom)} al ${formatCalendarDate(member.effectiveTo)}` : `desde el ${formatCalendarDate(member.effectiveFrom)}`;
 }
 
-export type FixedAssignmentConflict = { employee: string; template: string; effectiveFrom: string; effectiveTo: string | null };
+/** R8: `template` es `null` cuando el turno fijo es de un grupo que quien opera no administra. */
+export type FixedAssignmentConflict = { employee: string; template: string | null; effectiveFrom: string; effectiveTo: string | null };
 
 export type MemberActionError = {
   code: string;
@@ -116,5 +117,5 @@ export function describeMemberError(error: unknown, fallback: string): MemberAct
 
 export function fixedAssignmentText(conflict: FixedAssignmentConflict) {
   const range = conflict.effectiveTo ? `del ${formatCalendarDate(conflict.effectiveFrom)} al ${formatCalendarDate(conflict.effectiveTo)}` : `desde el ${formatCalendarDate(conflict.effectiveFrom)}`;
-  return `${conflict.employee}: turno fijo ${conflict.template} ${range}`;
+  return `${conflict.employee}: turno fijo ${conflict.template ?? "de otro grupo"} ${range}`;
 }

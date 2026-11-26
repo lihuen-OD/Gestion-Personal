@@ -263,7 +263,8 @@ export function EmployeeDetailPage() {
             : "Información consolidada del colaborador."
         }
       >
-        <fieldset className="readonly-scope" disabled={!editable}>
+        {/* R8: la pestaña Turnos decide su edición por grupo (EmployeeShiftsPanel). */}
+        <fieldset className="readonly-scope" disabled={!editable && tab !== 9}>
           {tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "loading" ? (
             <LoadingState text="Cargando información de esta sección..." />
           ) : tabsThatNeedOverviewDetails.has(tab) && detailsStatus === "error" ? (

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Badge } from "../ui/Badge";
 import { TableShell } from "../ui/TableShell";
 import type { PreviewCell, PreviewRow } from "../../services/api/shiftRotationApiService";
-import { blockTimeText, cycleWeekByDate, dayHeader, previewCellLabel, previewCellView, type PreviewCellView } from "../../utils/shiftRotationPreview";
+import { blockCodeText, blockTimeText, cycleWeekByDate, dayHeader, previewCellLabel, previewCellView, type PreviewCellView } from "../../utils/shiftRotationPreview";
 
 const PERSON_COLUMN = 220;
 // Ancho medido para "17:00–03:00 +1" sin invadir la columna vecina.
@@ -20,7 +20,7 @@ function CellContent({ view }: { view: PreviewCellView }) {
               {blockTimeText(block)}
               {block.template.crossesMidnight ? <abbr className="rotation-next-day" title="Termina al día siguiente">+1</abbr> : null}
             </span>
-            <span className="rotation-block-code">{view.kind === "FIXED" ? `Fijo · ${block.template.code}` : block.template.code}</span>
+            <span className={`rotation-block-code${block.templateHidden ? " is-hidden-template" : ""}`}>{view.kind === "FIXED" ? `Fijo · ${blockCodeText(block)}` : blockCodeText(block)}</span>
           </span>
         ))}
       </span>

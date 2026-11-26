@@ -1,10 +1,11 @@
+import type { PreviewBlock } from "../../services/api/shiftRotationApiService";
 import { AlertTriangle, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { Modal } from "../ui/Modal";
 import type { PreviewCell, PreviewRow } from "../../services/api/shiftRotationApiService";
 import { formatCalendarDate } from "../../utils/date";
 import { formatDurationMinutes } from "../../utils/hours";
-import { blockSpanText, blockTimeText, dayHeader, previewCellView, previewKindText, previewLabels } from "../../utils/shiftRotationPreview";
+import { blockCodeText, blockSpanText, blockTimeText, dayHeader, previewCellView, previewKindText, previewLabels } from "../../utils/shiftRotationPreview";
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div><dt>{label}</dt><dd>{children}</dd></div>;
@@ -24,8 +25,10 @@ export function RotationPreviewCellModal({ row, cell, close }: { row: PreviewRow
   const view = previewCellView(cell);
   const header = dayHeader(cell.date);
   const assignment = cell.assignment;
-  const plannedIds = cell.planning.blocks.map((block) => block.template.id).join("|");
-  const effectiveDiffers = cell.effective.blocks.length > 0 && cell.effective.blocks.map((block) => block.template.id).join("|") !== plannedIds;
+  // Con plantilla oculta (R8) se compara por horario real: el id no viene.
+  const blockKey = (block: PreviewBlock) => block.template.id ?? `${block.scheduledStartAt}|${block.scheduledEndAt}`;
+  const plannedIds = cell.planning.blocks.map(blockKey).join("|");
+  const effectiveDiffers = cell.effective.blocks.length > 0 && cell.effective.blocks.map(blockKey).join("|") !== plannedIds;
   const planReason = cell.planning.kind === "MISSING" || cell.planning.kind === "CONFLICT" ? previewLabels.planIssue(cell.planning.reason) : null;
   const transition = cell.transitionFromPrevious;
 
@@ -50,7 +53,7 @@ export function RotationPreviewCellModal({ row, cell, close }: { row: PreviewRow
             <ol className="rotation-preview-detail-blocks">
               {view.blocks.map((block) => (
                 <li key={`${block.blockIndex}-${block.scheduledStartAt}`}>
-                  <b>{block.template.code} · {blockTimeText(block)}</b>
+                  <b>{blockCodeText(block)} · {blockTimeText(block)}</b>
                   {block.template.crossesMidnight ? <abbr className="rotation-next-day" title="Termina al día siguiente">+1</abbr> : null}
                   <span>{blockSpanText(block)} · {formatDurationMinutes(block.durationMinutes)} · {previewLabels.blockSource(block.source)}</span>
                 </li>
@@ -66,7 +69,7 @@ export function RotationPreviewCellModal({ row, cell, close }: { row: PreviewRow
             <Fact label="Resultado">{previewLabels.obligation(cell.effective.obligation)}</Fact>
             <Fact label="Origen">{previewLabels.source(cell.effective.source)}</Fact>
             {cell.effective.reason ? <Fact label="Motivo">{previewLabels.reason(cell.effective.reason)}</Fact> : null}
-            {effectiveDiffers ? <Fact label="Turnos exigidos">{cell.effective.blocks.map((block) => `${block.template.code} · ${blockTimeText(block)}${block.template.crossesMidnight ? " (+1)" : ""}`).join("; ")}</Fact> : null}
+            {effectiveDiffers ? <Fact label="Turnos exigidos">{cell.effective.blocks.map((block) => `${blockCodeText(block)} · ${blockTimeText(block)}${block.template.crossesMidnight ? " (+1)" : ""}`).join("; ")}</Fact> : null}
           </dl>
         </section>
 

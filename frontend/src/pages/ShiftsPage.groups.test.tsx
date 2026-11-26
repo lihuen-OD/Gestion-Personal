@@ -24,10 +24,11 @@ vi.mock("../services/api/shiftAssignmentApiService", async (importOriginal) => {
   return { ...actual, shiftAssignmentApiService: { ...actual.shiftAssignmentApiService, getSummary: vi.fn() } };
 });
 vi.mock("../services/api/shiftGroupApiService", () => ({ shiftGroupApiService: { list: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() } }));
+vi.mock("../services/api/shiftRotationApiService", () => ({ shiftRotationApiService: { list: vi.fn().mockResolvedValue([]) } }));
 
 const ROLES = { rrhh: "Nivel 1 - RRHH", supervision: "Nivel 2 - Supervisión / Gestión", carga: "Nivel 3 - Administrativo de Carga Horaria" };
-function authAs(role: string) {
-  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo" }, login: vi.fn(), loginAs: vi.fn(), logout: vi.fn() });
+function authAs(role: string, groupIds: string[] = []) {
+  mockUseAuth.mockReturnValue({ user: { id: "u1", name: "Usuario", email: "u@test.com", password: "", role, status: "Activo", shiftGroupAccess: { all: false, groupIds } }, login: vi.fn(), loginAs: vi.fn(), logout: vi.fn(), refreshShiftGroupAccess: vi.fn() });
 }
 
 function group(id: string, name: string, sortOrder: number, status: "ACTIVO" | "INACTIVO" = "ACTIVO", templateCount = 0): ShiftGroup {
@@ -97,16 +98,13 @@ describe("estado actual de development: 0 grupos, 15 turnos", () => {
     expect(screen.getAllByRole("button", { name: /Crear grupo/ }).length).toBeGreaterThan(0);
   });
 
-  it.each([ROLES.supervision, ROLES.carga])("%s ve la agrupación y la información, sin acciones de administración", async (role) => {
+  it.each([ROLES.supervision, ROLES.carga])("R8: %s sin grupos asignados ve un estado vacío explicativo, sin pestañas ni acciones (nunca acceso global)", async (role) => {
     authAs(role);
-    const user = userEvent.setup();
     renderPage();
-    await screen.findByRole("region", { name: "Sin grupo" });
-    expect(screen.getByText("Aún no hay grupos configurados. Los turnos se muestran en «Sin grupo».")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Administrar grupos" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Grupos" }));
-    expect(screen.getByText("Aún no hay grupos configurados. Los turnos se muestran en «Sin grupo».")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Crear grupo/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Todavía no tenés grupos de turnos para administrar/)).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Sin grupo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Crear turno/ })).not.toBeInTheDocument();
   });
 });
 
@@ -175,5 +173,60 @@ describe("con grupos", () => {
     await screen.findByText("No pudimos cargar la lista de grupos.");
     expect(sectionTitles()).toEqual(["Oficina", "Planta", "Sin grupo", "Taller"]);
     expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
+  });
+});
+
+describe("R8: Nivel 2/3 con grupos", () => {
+  const PLANTA = group("g-pl", "Planta", 20, "ACTIVO", 1);
+  const TALLER = group("g-ta", "Taller", 30, "ACTIVO", 1);
+
+  beforeEach(() => {
+    // El backend ya filtra catálogos por alcance: devuelve sólo los grupos y turnos del usuario.
+    vi.mocked(workforceApiService.shiftTemplates).mockResolvedValue([template("Planta-01", "Planta 01", PLANTA), template("Taller-01", "Taller 01", TALLER)]);
+    vi.mocked(shiftGroupApiService.list).mockResolvedValue([PLANTA, TALLER]);
+  });
+
+  it("Nivel 2 con un grupo: acciones sólo en su grupo; sin pestaña Grupos ni «Sin grupo»", async () => {
+    authAs(ROLES.supervision, ["g-pl"]);
+    renderPage();
+    const planta = await screen.findByRole("region", { name: "Planta" });
+    const taller = screen.getByRole("region", { name: "Taller" });
+    expect(within(planta).getByRole("button", { name: "Inactivar Planta 01" })).toBeInTheDocument();
+    expect(within(taller).queryByRole("button", { name: /Inactivar/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Grupos" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Rotaciones" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /Crear turno/ }).length).toBeGreaterThan(0);
+    expect(within(screen.getByLabelText("Grupo")).queryByRole("option", { name: "Sin grupo" })).not.toBeInTheDocument();
+  });
+
+  it("Nivel 3 con grupos heredados (varios): acciones en todos ellos", async () => {
+    authAs(ROLES.carga, ["g-pl", "g-ta"]);
+    renderPage();
+    const planta = await screen.findByRole("region", { name: "Planta" });
+    expect(within(planta).getByRole("button", { name: "Inactivar Planta 01" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Taller" })).getByRole("button", { name: "Inactivar Taller 01" })).toBeInTheDocument();
+  });
+
+  it("?vista=grupos no abre la administración de grupos para Nivel 2/3", async () => {
+    authAs(ROLES.supervision, ["g-pl"]);
+    render(<MemoryRouter initialEntries={["/configuracion/turnos?vista=grupos"]}><ShiftsPage /></MemoryRouter>);
+    expect(await screen.findByRole("region", { name: "Planta" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Crear grupo/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("R8.7: Nivel 2 con sólo un grupo inactivo", () => {
+  it("ve su grupo, pero no se le ofrece crear turnos ni rotaciones", async () => {
+    const VIEJO = group("g-vi", "Depósito viejo", 60, "INACTIVO", 0);
+    vi.mocked(workforceApiService.shiftTemplates).mockResolvedValue([]);
+    vi.mocked(shiftGroupApiService.list).mockResolvedValue([VIEJO]);
+    authAs(ROLES.supervision, ["g-vi"]);
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByRole("region", { name: "Depósito viejo" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Crear turno/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Rotaciones" }));
+    expect(await screen.findByText(/Todavía no hay rotaciones configuradas/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Crear rotación/ })).not.toBeInTheDocument();
   });
 });

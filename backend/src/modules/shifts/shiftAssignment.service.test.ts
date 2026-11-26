@@ -13,6 +13,9 @@ import { assertFixedAssignmentsCompatibleWithRotations } from "./shiftRotationTr
 // Etapa 5: el recálculo de cobertura de novedades se prueba en
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
 import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { ALL_SHIFT_GROUPS } from "./shiftGroupAccess";
+import { globalShiftActor } from "./shiftWriteAccess";
+const RRHH_ACTOR = globalShiftActor({ id: "user-1", role: "NIVEL_1_RRHH" } as never);
 vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
   lockEmployeeCoverage: vi.fn(),
@@ -95,7 +98,7 @@ describe("shiftAssignmentService.summary", () => {
       { shiftTemplateId: "template-2", status: "OTRO", _count: { _all: 4 } },
     ]);
 
-    await expect(shiftAssignmentService.summary(user)).resolves.toEqual([
+    await expect(shiftAssignmentService.summary(user, ALL_SHIFT_GROUPS)).resolves.toEqual([
       { shiftTemplateId: "template-1", total: 5, enabled: 3, disabled: 2, other: 0 },
       { shiftTemplateId: "template-2", total: 4, enabled: 0, disabled: 0, other: 4 },
     ]);
@@ -104,16 +107,24 @@ describe("shiftAssignmentService.summary", () => {
   it("aplica al resumen el alcance TIME_RESPONSIBLE del usuario de Supervisión", async () => {
     repo.countByTemplateAndStatus.mockResolvedValue([]);
 
-    await shiftAssignmentService.summary(supervisor);
+    await shiftAssignmentService.summary(supervisor, ALL_SHIFT_GROUPS);
 
-    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining(employeeAccessWhere(supervisor)));
+    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining(employeeAccessWhere(supervisor)), {});
+  });
+
+  it("R8: con alcance parcial cuenta sólo plantillas de los grupos administrables", async () => {
+    repo.countByTemplateAndStatus.mockResolvedValue([]);
+
+    await shiftAssignmentService.summary(supervisor, { all: false, groupIds: new Set(["g-planta"]) });
+
+    expect(repo.countByTemplateAndStatus).toHaveBeenCalledWith(expect.objectContaining(employeeAccessWhere(supervisor)), { shiftGroupId: { in: ["g-planta"] } });
   });
 });
 
 describe("shiftAssignmentService.assign", () => {
   it("rechaza atómicamente un turno fijo superpuesto con una membresía de rotación", async () => {
     mockedRotationProtection.mockRejectedValueOnce(new AppError("conflicto", 409, "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION"));
-    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION" });
+    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user))).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_ASSIGNMENT_OVERLAPS_ROTATION" });
     expect(repo.create).not.toHaveBeenCalled();
   });
 
@@ -121,7 +132,7 @@ describe("shiftAssignmentService.assign", () => {
     repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
-    const result = await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+    const result = await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user));
 
     expect(result).toHaveLength(1);
     expect(repo.create).toHaveBeenCalledWith(
@@ -137,7 +148,7 @@ describe("shiftAssignmentService.assign", () => {
     repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockRejectedValue(prismaKnownError("P2003"));
 
-    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user)).rejects.toMatchObject({
+    await expect(shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user))).rejects.toMatchObject({
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
@@ -149,7 +160,7 @@ describe("shiftAssignmentService.assign", () => {
 
     let caught: unknown;
     try {
-      await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+      await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user));
     } catch (error) {
       caught = error;
     }
@@ -163,7 +174,7 @@ describe("shiftAssignmentService.assign", () => {
     repo.findExistingMany.mockResolvedValue([]);
     repo.create.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" } });
 
-    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user));
 
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftAssignment", entityId: "emp-1" }));
   });
@@ -175,7 +186,7 @@ describe("shiftAssignmentService.update", () => {
     repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", status: "HABILITADO", ...vigency, employee: { legajo: "100" }, shiftTemplate: template });
     repo.update.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", ...vigency, employee: { legajo: "100" }, shiftTemplate: template });
 
-    await shiftAssignmentService.update("assign-1", { status: "DESHABILITADO" }, user);
+    await shiftAssignmentService.update("assign-1", { status: "DESHABILITADO" }, globalShiftActor(user));
 
     expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ status: "DESHABILITADO", disabledByUserId: "user-1" }), { tx: true });
     // Etapa 5: deshabilitar cambia la jornada esperada → cobertura de su vigencia, en la misma transacción.
@@ -186,7 +197,7 @@ describe("shiftAssignmentService.update", () => {
     repo.findById.mockResolvedValue({ id: "assign-1", status: "HABILITADO", employee: { legajo: "100" }, shiftTemplate: template });
     repo.update.mockRejectedValue(prismaKnownError("P2003"));
 
-    await expect(shiftAssignmentService.update("assign-1", { status: "DESHABILITADO" }, user)).rejects.toMatchObject({
+    await expect(shiftAssignmentService.update("assign-1", { status: "DESHABILITADO" }, globalShiftActor(user))).rejects.toMatchObject({
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
@@ -198,7 +209,7 @@ describe("shiftAssignmentService.update", () => {
     repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", status: "HABILITADO", employee: { legajo: "100" }, shiftTemplate: template });
     repo.update.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" }, shiftTemplate: template });
 
-    await shiftAssignmentService.update("assign-1", { observation: "nota" }, user);
+    await shiftAssignmentService.update("assign-1", { observation: "nota" }, globalShiftActor(user));
 
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ entity: "ShiftAssignment", entityId: "emp-1" }));
     // Sólo la observación no cambia la jornada esperada: no se recalcula cobertura.
@@ -211,7 +222,7 @@ describe("shiftAssignmentService.remove", () => {
     repo.findById.mockResolvedValue({ id: "assign-1", employeeId: "emp-1", employee: { legajo: "100" }, shiftTemplate: template });
     repo.remove.mockResolvedValue(undefined);
 
-    await shiftAssignmentService.remove("assign-1");
+    await shiftAssignmentService.remove("assign-1", RRHH_ACTOR);
 
     expect(repo.remove).toHaveBeenCalledWith("assign-1", { tx: true });
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "DELETE", entity: "ShiftAssignment", entityId: "emp-1" }));
@@ -220,7 +231,7 @@ describe("shiftAssignmentService.remove", () => {
   it("rechaza eliminar una asignación inexistente (404), sin auditar nada", async () => {
     repo.findById.mockResolvedValue(null);
 
-    await expect(shiftAssignmentService.remove("assign-inexistente")).rejects.toMatchObject({
+    await expect(shiftAssignmentService.remove("assign-inexistente", RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 404,
       code: "SHIFT_ASSIGNMENT_NOT_FOUND",
     });
@@ -235,7 +246,7 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
 
     await shiftAssignmentService.assign(
       { employeeIds: ["emp-1"], shiftTemplateId: template.id, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
-      user,
+      globalShiftActor(user),
     );
 
     expect(repo.reEnable).toHaveBeenCalledWith(
@@ -254,7 +265,7 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
 
     await shiftAssignmentService.assign(
       { employeeIds: ["emp-1"], shiftTemplateId: template.id, effectiveFrom: new Date("2026-07-01"), effectiveTo: null, weekdays: [0, 6] },
-      user,
+      globalShiftActor(user),
     );
 
     expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ action: "ACTIVATE", entity: "ShiftAssignment", entityId: "emp-1" }));
@@ -264,7 +275,7 @@ describe("shiftAssignmentService.assign — reactivación (reEnable) con vigenci
     repo.findExistingMany.mockResolvedValue([{ employeeId: "emp-1", id: "assign-1", status: "HABILITADO" }]);
     repo.findById.mockResolvedValue({ id: "assign-1", employee: { legajo: "100" } });
 
-    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, user);
+    await shiftAssignmentService.assign({ employeeIds: ["emp-1"], ...baseAssignInput }, globalShiftActor(user));
 
     expect(repo.reEnable).not.toHaveBeenCalled();
     expect(repo.create).not.toHaveBeenCalled();
@@ -278,7 +289,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
     repo.findById.mockResolvedValue(baseBefore);
     repo.update.mockResolvedValue({ ...baseBefore, weekdays: [1, 2, 3] });
 
-    await shiftAssignmentService.update("assign-1", { weekdays: [1, 2, 3] }, user);
+    await shiftAssignmentService.update("assign-1", { weekdays: [1, 2, 3] }, globalShiftActor(user));
 
     expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ weekdays: [1, 2, 3] }), { tx: true });
   });
@@ -287,7 +298,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
     repo.findById.mockResolvedValue(baseBefore); // effectiveFrom: 2026-01-01
     repo.update.mockResolvedValue({ ...baseBefore, effectiveTo: new Date("2026-12-31") });
 
-    await shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2026-12-31") }, user);
+    await shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2026-12-31") }, globalShiftActor(user));
 
     expect(repo.update).toHaveBeenCalledWith("assign-1", expect.objectContaining({ effectiveTo: new Date("2026-12-31") }), { tx: true });
   });
@@ -295,7 +306,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
   it("rechaza effectiveTo anterior al effectiveFrom ya guardado, aunque el payload solo mande effectiveTo", async () => {
     repo.findById.mockResolvedValue(baseBefore); // effectiveFrom: 2026-01-01
 
-    await expect(shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2025-12-31") }, user)).rejects.toMatchObject({
+    await expect(shiftAssignmentService.update("assign-1", { effectiveTo: new Date("2025-12-31") }, globalShiftActor(user))).rejects.toMatchObject({
       statusCode: 400,
       code: "SHIFT_ASSIGNMENT_INVALID_RANGE",
     });
@@ -305,7 +316,7 @@ describe("shiftAssignmentService.update — vigencia (Etapa 8I)", () => {
   it("rechaza effectiveFrom posterior al effectiveTo ya guardado", async () => {
     repo.findById.mockResolvedValue({ ...baseBefore, effectiveTo: new Date("2026-06-30") });
 
-    await expect(shiftAssignmentService.update("assign-1", { effectiveFrom: new Date("2026-07-01") }, user)).rejects.toMatchObject({
+    await expect(shiftAssignmentService.update("assign-1", { effectiveFrom: new Date("2026-07-01") }, globalShiftActor(user))).rejects.toMatchObject({
       statusCode: 400,
       code: "SHIFT_ASSIGNMENT_INVALID_RANGE",
     });

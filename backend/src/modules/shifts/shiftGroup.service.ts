@@ -22,6 +22,7 @@ import { AppError } from "../../shared/errors/AppError";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { shiftGroupRepository } from "./shiftGroup.repository";
+import { shiftGroupWhereForScope, type ShiftGroupScope } from "./shiftGroupAccess";
 import type { CreateShiftGroupInput, ListShiftGroupsQuery, UpdateShiftGroupInput } from "./shiftGroup.schemas";
 
 type ShiftGroupRow = Prisma.ShiftGroupGetPayload<{ include: { _count: { select: { templates: true } } } }>;
@@ -96,8 +97,9 @@ function notFound() {
 }
 
 export const shiftGroupService = {
-  async list(query: ListShiftGroupsQuery): Promise<ShiftGroupResponse[]> {
-    const rows = await shiftGroupRepository.findMany(query.status);
+  /** R8: sólo los grupos administrables (`shiftGroupAccess.ts`); Nivel 1 ve todos. */
+  async list(query: ListShiftGroupsQuery, scope: ShiftGroupScope): Promise<ShiftGroupResponse[]> {
+    const rows = await shiftGroupRepository.findMany(query.status, shiftGroupWhereForScope(scope));
     return rows.map(toResponse);
   },
 
@@ -160,6 +162,15 @@ export const shiftGroupService = {
           if (before._count.rotations > 0) {
             throw new AppError(
               `No se puede eliminar el grupo ${describeShiftGroup(before)} porque tiene ${before._count.rotations} rotación(es) asociada(s). Inactivalo para conservar la configuración histórica.`,
+              409,
+              "SHIFT_GROUP_IN_USE",
+            );
+          }
+          // R8.4: un grupo asignado a responsables (UserShiftGroupScope) no se
+          // borra: se quitan desde Usuarios (auditado) o se inactiva.
+          if (before._count.userScopes > 0) {
+            throw new AppError(
+              `No se puede eliminar el grupo ${describeShiftGroup(before)} porque está asignado a ${before._count.userScopes} responsable(s). Quitalo desde Usuarios o inactivalo.`,
               409,
               "SHIFT_GROUP_IN_USE",
             );

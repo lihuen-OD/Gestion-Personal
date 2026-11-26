@@ -76,6 +76,8 @@ describe("navigation — accesos por nivel (2026-11-17)", () => {
     expect(hourlyItemsFor("Nivel 2 - Supervisión / Gestión")).toEqual([
       "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
       "Bandeja de revisión /pendientes", "Novedades /novedades", "Notificaciones /notificaciones",
+      // R8: Turnos de sus grupos (sin grupos, la pantalla muestra un estado vacío).
+      "Turnos /configuracion/turnos",
     ]);
   });
 
@@ -84,6 +86,7 @@ describe("navigation — accesos por nivel (2026-11-17)", () => {
     expect(hourlyItemsFor("Nivel 3 - Administrativo de Carga Horaria")).toEqual([
       "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
       "Novedades horarias /novedades", "Notificaciones /notificaciones",
+      "Turnos /configuracion/turnos",
     ]);
   });
 

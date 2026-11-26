@@ -6,6 +6,8 @@ import {
   preservedColumns,
   quoteIdent,
   R49_PENDING_MIGRATIONS_CONFIG,
+  R8_PENDING_MIGRATIONS_CONFIG,
+  INVENTORY_CONFIGS,
   tableInventorySql,
   type InventoryConfig,
   type InventorySnapshot,
@@ -66,6 +68,15 @@ describe("quoteIdent / preservedColumns / tableInventorySql", () => {
     expect(R49_PENDING_MIGRATIONS_CONFIG.newColumns).toEqual({ AttendanceInactivityIncident: ["scheduledStartAt"], WorkShift: ["templateRulesSnapshot"] });
     expect(R49_PENDING_MIGRATIONS_CONFIG.droppedTables).toEqual(["ShiftRotationSlot"]);
     expect(R49_PENDING_MIGRATIONS_CONFIG.preservedTables).toEqual(expect.arrayContaining(["AttendancePunch", "WorkShift", "TimeEntry", "AttendanceInactivityIncident", "AuditLog"]));
+  });
+});
+
+describe("configuración de R8", () => {
+  it("crea UserShiftGroupScope sin columnas nuevas ni tablas eliminadas, y preserva todo lo de R4.9 más rotaciones y supervisión", () => {
+    expect(R8_PENDING_MIGRATIONS_CONFIG).toMatchObject({ newColumns: {}, droppedTables: [], createdTables: ["UserShiftGroupScope"] });
+    expect(R8_PENDING_MIGRATIONS_CONFIG.preservedTables).toEqual(expect.arrayContaining([...R49_PENDING_MIGRATIONS_CONFIG.preservedTables, "ShiftRotationDay", "ShiftRotationBlock", "UserSupervisionAssignment"]));
+    expect(R8_PENDING_MIGRATIONS_CONFIG.preservedTables).not.toContain("UserShiftGroupScope");
+    expect(INVENTORY_CONFIGS).toEqual({ r49: R49_PENDING_MIGRATIONS_CONFIG, r8: R8_PENDING_MIGRATIONS_CONFIG });
   });
 });
 
