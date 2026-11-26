@@ -4,6 +4,7 @@ import { prisma } from "../../shared/prisma/client";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
 import { periodDayOffUncountedMinutes } from "../employee-day-offs/employeeDayOffAccounting";
 import { noveltyOverlapsRangeWhere } from "../novelties/novelties.dateRange";
+import { withoutEffectiveTimeResponsibleWhere } from "../employees/employeeAccess";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -215,14 +216,12 @@ export const dashboardRepository = {
   // ── Assignments ───────────────────────────────────────────────────────────
 
   /**
-   * Count active employees who have NO assignment of type TIME_RESPONSIBLE.
+   * Legajos activos del alcance sin responsable de carga efectivo
+   * (`withoutEffectiveTimeResponsibleWhere`, combinado con AND).
    */
   countMissingTimeResponsible(accessWhere: Prisma.EmployeeWhereInput) {
     return prisma.employee.count({
-      where: {
-        ...activeWhere(accessWhere),
-        assignments: { none: { type: "TIME_RESPONSIBLE" } },
-      },
+      where: { AND: [activeWhere(accessWhere), withoutEffectiveTimeResponsibleWhere()] },
     });
   },
 

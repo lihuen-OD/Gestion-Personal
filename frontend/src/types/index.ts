@@ -52,7 +52,7 @@ export interface Employee {
   gender: string; civilStatus: string; nationality: string; phone: string; mobile: string; email: string;
   address: string; addressStreet: string; addressNumber: string; city: string; department: string; province: string; zip: string; domicilio: EmployeeAddress; emergencyContact: string; emergencyRelation: string; emergencyPhone: string;
   company: string; companies?: string[]; businessUnit: string; establishment: string; costCenter: string; sector: string; position: string; positionId?: string; puestoId?: string; puestoNombre?: string;
-  receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[];
+  receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[]; timeResponsibleUserIds?: string[];
   startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportLocality?: string; transportRoute: string; transportNotes: string; enabledHours: string[];
   enabledHourConcepts?: Array<HourConcept & { enabled: true }>;
   status: EmployeeStatus;

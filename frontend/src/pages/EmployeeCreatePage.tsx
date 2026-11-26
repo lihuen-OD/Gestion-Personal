@@ -12,6 +12,7 @@ import {
 } from "../components/employees/EmployeeLaborFields";
 import { ContactAddressFields } from "../components/employees/ContactAddressFields";
 import { PeopleMultiSearch } from "../components/employees/PeopleMultiSearch";
+import { TimeResponsibleUsersSelector } from "../components/employees/TimeResponsibleUsersSelector";
 import { PositionScopeCard } from "../components/employees/PositionScopeCard";
 import { usePositionOptions } from "../components/employees/options/positionOptions";
 import { useLaborSelectOptions } from "../components/employees/options/laborOptions";
@@ -140,9 +141,6 @@ export function EmployeeCreatePage() {
   const selectedPosition = usePositionOptions().find((position) => position.id === value.positionId);
   const structureOptions = useStructureSelectOptions({ costCenter: value.costCenter });
   const enabledHourOptions = useHourOptions();
-  const timeResponsibleNames = value.timeResponsibles?.length
-    ? value.timeResponsibles
-    : [value.timeResponsible].filter(Boolean);
 
   const upd = (field: keyof Employee, next: Employee[keyof Employee]) =>
     setValue({ ...value, [field]: next });
@@ -425,17 +423,16 @@ export function EmployeeCreatePage() {
                   empleado.
                 </p>
                 <div className="form-grid">
-                  <PeopleMultiSearch
-                    label="Responsables de carga horaria"
-                    selected={timeResponsibleNames}
-                    onChange={(names) =>
+                  <TimeResponsibleUsersSelector
+                    selectedIds={value.timeResponsibleUserIds || []}
+                    onChange={({ ids, names }) =>
                       setValue({
                         ...value,
+                        timeResponsibleUserIds: ids,
                         timeResponsibles: names,
                         timeResponsible: names[0] || "",
                       })
                     }
-                    excludeId={value.id}
                   />
                   <Field
                     label="Fecha desde"

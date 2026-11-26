@@ -11,19 +11,20 @@ import { activeTimeResponsibleWhere } from "../employees/employeeAccess";
  *
  * Por legajo, la unión deduplicada de:
  * A. RRHH: usuarios ACTIVO con rol Nivel 1.
- * B. Responsables directos: usuarios ACTIVO (cualquier rol) con un
+ * B. Responsables directos: usuarios Nivel 2 ACTIVO con un
  *    EmployeeAssignment TIME_RESPONSIBLE vigente en `referenceDateKey`
  *    (criterio canónico `activeTimeResponsibleWhere`, el mismo del alcance).
- * C. Supervisores heredados: por cada responsable directo que sea Nivel 3
- *    ACTIVO, los Nivel 2 ACTIVO que lo supervisan (UserSupervisionAssignment).
+ *    Una fila a nombre de otro rol no concede el aviso (sólo el Nivel 2 es
+ *    responsable directo).
+ * C. Nivel 3 heredados: por cada responsable directo, los Nivel 3 ACTIVO que
+ *    supervisa (UserSupervisionAssignment), igual que el alcance de legajos.
  *    Los roles y estados de ambos lados se verifican al resolver: una relación
  *    desfasada (rol cambiado, usuario inactivo) no concede el aviso.
  *
  * `EmployeeAssignment.role` es legacy y nunca se usa: el rol sale de User.
  *
  * Batch: a lo sumo 3 consultas para cualquier cantidad de legajos (RRHH,
- * asignaciones vigentes con su usuario, supervisiones de los Nivel 3
- * encontrados); el Map se arma en memoria.
+ * asignaciones vigentes de Nivel 2, Nivel 3 que supervisan esos Nivel 2); el Map se arma en memoria.
  *
  * `db`: el post-proceso durable de una fichada resuelve dentro de la
  * transacción de su paso, para leer con la misma conexión que escribe.
@@ -43,36 +44,36 @@ export async function resolveEmployeeNotificationRecipientsBatch(
     db.user.findMany({ where: { role: roles.rrhh, status: "ACTIVO" }, select: { id: true } }),
     db.employeeAssignment.findMany({
       where: {
-        AND: [activeTimeResponsibleWhere(referenceDateKey), { employeeId: { in: uniqueEmployeeIds } }, { user: { status: "ACTIVO" } }],
+        AND: [activeTimeResponsibleWhere(referenceDateKey), { employeeId: { in: uniqueEmployeeIds } }, { user: { role: roles.supervision, status: "ACTIVO" } }],
       },
-      select: { employeeId: true, userId: true, user: { select: { role: true } } },
+      select: { employeeId: true, userId: true },
     }),
   ]);
 
   const directByEmployee = new Map<string, Set<string>>();
-  const supervisedCandidates = new Set<string>();
+  const directSupervisors = new Set<string>();
   for (const assignment of assignments) {
     if (!assignment.userId) continue;
     const direct = directByEmployee.get(assignment.employeeId) ?? new Set<string>();
     direct.add(assignment.userId);
     directByEmployee.set(assignment.employeeId, direct);
-    if (assignment.user?.role === roles.cargaHoraria) supervisedCandidates.add(assignment.userId);
+    directSupervisors.add(assignment.userId);
   }
 
-  const supervisorsBySupervised = new Map<string, string[]>();
-  if (supervisedCandidates.size) {
+  const supervisedBySupervisor = new Map<string, string[]>();
+  if (directSupervisors.size) {
     const supervisions = await db.userSupervisionAssignment.findMany({
       where: {
-        supervisedUserId: { in: Array.from(supervisedCandidates) },
+        supervisorUserId: { in: Array.from(directSupervisors) },
         supervised: { role: roles.cargaHoraria, status: "ACTIVO" },
         supervisor: { role: roles.supervision, status: "ACTIVO" },
       },
       select: { supervisorUserId: true, supervisedUserId: true },
     });
     for (const supervision of supervisions) {
-      const list = supervisorsBySupervised.get(supervision.supervisedUserId) ?? [];
-      list.push(supervision.supervisorUserId);
-      supervisorsBySupervised.set(supervision.supervisedUserId, list);
+      const list = supervisedBySupervisor.get(supervision.supervisorUserId) ?? [];
+      list.push(supervision.supervisedUserId);
+      supervisedBySupervisor.set(supervision.supervisorUserId, list);
     }
   }
 
@@ -81,7 +82,7 @@ export async function resolveEmployeeNotificationRecipientsBatch(
     const recipients = new Set<string>(rrhhIds);
     for (const responsibleId of directByEmployee.get(employeeId) ?? []) {
       recipients.add(responsibleId);
-      for (const supervisorId of supervisorsBySupervised.get(responsibleId) ?? []) recipients.add(supervisorId);
+      for (const supervisedId of supervisedBySupervisor.get(responsibleId) ?? []) recipients.add(supervisedId);
     }
     result.set(employeeId, Array.from(recipients));
   }

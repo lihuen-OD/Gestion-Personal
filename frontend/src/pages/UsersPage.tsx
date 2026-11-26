@@ -421,13 +421,13 @@ export function UsersPage() {
           {losesSupervised ? (
             <div className="info-note compact" role="note">
               <b>Al guardar, dejará de supervisar responsables de carga</b>
-              <p>Con el rol {draft.role} se quitan sus responsables supervisados ({peopleList(editingUser!.supervisedUsers!)}) y deja de ver los legajos que tenían asignados.</p>
+              <p>Con el rol {draft.role} se quitan sus responsables supervisados ({peopleList(editingUser!.supervisedUsers!)}), que dejan de heredar los legajos asignados a este usuario.</p>
             </div>
           ) : null}
           {losesSupervisors ? (
             <div className="info-note compact" role="note">
               <b>Al guardar, dejará de ser responsable de carga supervisado</b>
-              <p>{peopleList(editingUser!.supervisorUsers!)} dejará{editingUser!.supervisorUsers!.length === 1 ? "" : "n"} de acceder a los legajos asignados a este usuario.</p>
+              <p>Dejará de heredar los legajos asignados a {peopleList(editingUser!.supervisorUsers!)}.</p>
             </div>
           ) : null}
           <label className="user-form-wide">

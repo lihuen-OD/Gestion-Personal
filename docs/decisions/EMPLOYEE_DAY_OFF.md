@@ -163,7 +163,7 @@ Cancelar el franco resuelve las alertas `ACTIVIDAD_EN_FRANCO` pendientes de esas
 Los tres niveles operativos pueden leer y guardar, siempre dentro de `employeeAccessWhere(user)`:
 
 - Nivel 1 RRHH: todo el padrón.
-- Nivel 2 y Nivel 3: legajos con `EmployeeAssignment TIME_RESPONSIBLE` vigente (hoy es la misma regla para ambos, `PROJECT_CONTEXT.md` §Nivel 2).
+- Nivel 2: sus `EmployeeAssignment TIME_RESPONSIBLE` vigentes directos. Nivel 3: la unión heredada de los legajos de sus Nivel 2 activos (`PROJECT_CONTEXT.md` §Nivel 2).
 
 El backend verifica el alcance de **cada** `employeeId` del lote antes de escribir: un UUID fuera del alcance devuelve `403 EMPLOYEE_SCOPE_FORBIDDEN` y no se guarda nada. Endpoints autenticados: aplica el limitador global (no son públicos).
 

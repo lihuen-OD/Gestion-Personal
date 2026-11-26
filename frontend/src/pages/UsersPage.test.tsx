@@ -193,7 +193,7 @@ describe("UsersPage — responsables de carga supervisados (Nivel 2)", () => {
     expect(within(options).getAllByRole("button").map((button) => button.textContent)).toEqual(["CARGA PAÑOLpanol@test.com", "CARGA PLANTAplanta@test.com"]);
     expect(within(options).queryByText("OTRO ENCARGADO")).not.toBeInTheDocument();
     expect(within(options).queryByText("CARGA VIEJA")).not.toBeInTheDocument();
-    expect(screen.getByText(/podrá acceder a los legajos asignados a los responsables de carga seleccionados/)).toBeInTheDocument();
+    expect(screen.getByText(/heredan los legajos y grupos de turnos asignados a este usuario/)).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Rol *"), "Nivel 1 - RRHH");
     expect(screen.queryByRole("region", { name: "Responsables de carga supervisados" })).not.toBeInTheDocument();
