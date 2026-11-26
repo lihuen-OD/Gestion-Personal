@@ -139,6 +139,8 @@ describe.skipIf(!url)("Horas manuales + fichada contra PostgreSQL local", () => 
     rrhh = { id: rrhhUser.id, role: "NIVEL_1_RRHH" } as unknown as Express.AuthUser;
     supervisor = { id: supervisorUser.id, role: "NIVEL_2_SUPERVISION" } as unknown as Express.AuthUser;
     carga = { id: cargaUser.id, role: "NIVEL_3_CARGA_HORARIA" } as unknown as Express.AuthUser;
+    // Carga horaria hereda los legajos de Supervisión (N2 directo, N3 heredado).
+    await holder.userSupervisionAssignment.create({ data: { supervisorUserId: supervisorUser.id, supervisedUserId: cargaUser.id } });
     for (const [index, key] of EMPLOYEES.entries()) {
       const employee = await holder.employee.create({ data: { legajo: `MH-${index + 1}`, cuil: `20-8${index + 1}`, dni: `8${index + 1}`, firstName: "Prueba", lastName: `Manual ${key}` } });
       ids[key] = employee.id;
@@ -146,7 +148,6 @@ describe.skipIf(!url)("Horas manuales + fichada contra PostgreSQL local", () => 
       // "outside" queda fuera del alcance de Supervisión y de Carga horaria.
       if (key !== "outside") {
         await holder.employeeAssignment.create({ data: { employeeId: employee.id, userId: supervisorUser.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
-        await holder.employeeAssignment.create({ data: { employeeId: employee.id, userId: cargaUser.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
       }
     }
 

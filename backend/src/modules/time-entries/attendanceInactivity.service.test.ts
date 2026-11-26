@@ -253,7 +253,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     });
   });
 
-  it("SIN_ACTIVIDAD_REGISTRADA: destinatarios en batch = RRHH + responsable Nivel 3 + Nivel 2 que lo supervisa, vigencia evaluada en la fecha operativa", async () => {
+  it("SIN_ACTIVIDAD_REGISTRADA: destinatarios en batch = RRHH + responsable Nivel 2 + Nivel 3 que hereda, vigencia evaluada en la fecha operativa", async () => {
     mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1"), obligationCandidate("employee-2")] });
     mockedPrisma.employee.findMany.mockResolvedValue([employeeRow(), employeeRow({ id: "employee-2" })]);
     mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([
@@ -261,7 +261,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       { id: "incident-2", employeeId: "employee-2", employee: employeeRow({ id: "employee-2" }) },
     ]);
     mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
-    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "joaquin", user: { role: "NIVEL_3_CARGA_HORARIA" } }]);
+    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "eugenia" }]);
     mockedPrisma.userSupervisionAssignment.findMany.mockResolvedValueOnce([{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }]);
     const recipientsByIncident: Record<string, string[]> = {};
     const tx = {
@@ -275,7 +275,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
 
     const result = await detectAttendanceInactivity(dateKey);
 
-    expect(recipientsByIncident).toEqual({ "incident-1": ["user-rrhh", "joaquin", "eugenia"], "incident-2": ["user-rrhh"] });
+    expect(recipientsByIncident).toEqual({ "incident-1": ["user-rrhh", "eugenia", "joaquin"], "incident-2": ["user-rrhh"] });
     expect(result.notified).toBe(4);
     // Una consulta de asignaciones para todos los incidentes (sin N+1), con la fecha operativa.
     expect(mockedPrisma.employeeAssignment.findMany).toHaveBeenCalledTimes(1);

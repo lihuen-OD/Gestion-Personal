@@ -1083,7 +1083,7 @@ describe("createShiftAlert — eventAt de la notificación (docs/decisions/NOTIF
   });
 });
 
-describe("createShiftAlert — destinatarios (RRHH + responsables + Nivel 2 heredados)", () => {
+describe("createShiftAlert — destinatarios (RRHH + responsables Nivel 2 + Nivel 3 heredados)", () => {
   it("ALERTA_FICHADA: resuelve los destinatarios en la fecha del hecho (actualAt) y con la transacción del paso, y notifica exactamente a ese conjunto", async () => {
     const actualAt = new Date("2026-11-10T11:20:00.000Z");
     const stepTx = { shiftAlert: { upsert: vi.fn().mockResolvedValue({ id: "alert-7" }) } };

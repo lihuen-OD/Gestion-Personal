@@ -366,46 +366,37 @@ describe("employeeApiService.replaceAssignments — ya no envía 'role' para TIM
     vi.clearAllMocks();
   });
 
-  it("manda role: null aunque el legajo tenga un valor legacy en timeResponsibleRole", async () => {
-    vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
-      // userApiService.getAll recorre las páginas de /users (collectAllPages).
-      if (typeof url === "string" && url.startsWith("/users?")) {
-        return {
-          data: [
-            {
-              id: "user-1",
-              name: "15taller@losodwyer.com",
-              email: "15taller@losodwyer.com",
-              role: "NIVEL_3_CARGA_HORARIA",
-              status: "ACTIVO",
-              employee: { id: "employee-2", legajo: "200", firstName: "15", lastName: "Taller" },
-            },
-          ],
-        } as never;
-      }
-      return { data: employeePayload } as never;
-    });
+  it("manda el userId elegido con role y personName nulos, sin resolver usuarios por nombre", async () => {
+    vi.mocked(apiRequest).mockImplementation(async () => ({ data: employeePayload }) as never);
 
     const employee = mapEmployeeFromApi(employeePayload);
     const updated = {
       ...employee,
-      timeResponsibles: ["15 Taller"],
-      timeResponsible: "15 Taller",
+      timeResponsibles: ["Planta"],
+      timeResponsible: "Planta",
+      timeResponsibleUserIds: ["user-1", "user-1"],
       timeResponsibleRole: "Nivel 2 - Supervisión / Gestión",
     };
 
     await employeeApiService.replaceAssignments(updated);
 
+    expect(vi.mocked(apiRequest).mock.calls.some(([calledUrl]) => typeof calledUrl === "string" && calledUrl.startsWith("/users"))).toBe(false);
     const assignmentsCall = vi.mocked(apiRequest).mock.calls.find(([calledUrl]) => calledUrl === `/employees/${updated.id}/assignments`);
-    expect(assignmentsCall).toBeDefined();
-    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string; role: string | null; userId: string | null }> } };
-    const timeResponsibleAssignment = body.body.assignments.find((item) => item.type === "TIME_RESPONSIBLE");
+    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string; role: string | null; userId: string | null; personName: string | null }> } };
+    const timeResponsibles = body.body.assignments.filter((item) => item.type === "TIME_RESPONSIBLE");
+    // La asignación identifica *quién* (userId, deduplicado), nunca un nombre suelto ni un nivel.
+    expect(timeResponsibles).toEqual([expect.objectContaining({ userId: "user-1", personName: null, role: null })]);
+  });
 
-    expect(timeResponsibleAssignment).toBeDefined();
-    expect(timeResponsibleAssignment?.role).toBeNull();
-    // El vínculo real sigue resolviéndose por userId — la asignación identifica
-    // *quién* es responsable, nunca *qué nivel* tiene (eso vive en User.role).
-    expect(timeResponsibleAssignment?.userId).toBe("user-1");
+  it("un responsable legacy sólo por nombre (sin usuario) no se reenvía como TIME_RESPONSIBLE", async () => {
+    vi.mocked(apiRequest).mockImplementation(async () => ({ data: employeePayload }) as never);
+    const updated = { ...mapEmployeeFromApi(employeePayload), timeResponsibles: ["Wicky Stefania"], timeResponsibleUserIds: [] };
+
+    await employeeApiService.replaceAssignments(updated);
+
+    const assignmentsCall = vi.mocked(apiRequest).mock.calls.find(([calledUrl]) => calledUrl === `/employees/${updated.id}/assignments`);
+    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string }> } };
+    expect(body.body.assignments.filter((item) => item.type === "TIME_RESPONSIBLE")).toEqual([]);
   });
 });
 

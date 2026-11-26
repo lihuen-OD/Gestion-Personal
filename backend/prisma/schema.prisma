@@ -581,12 +581,12 @@ model User {
   @@index([status])
 }
 
-// Un usuario Nivel 2 (supervisor) hereda, de forma dinámica, el alcance de
-// cada Nivel 3 (supervisado) que tiene asignado: los legajos con un
-// EmployeeAssignment TIME_RESPONSIBLE vigente de ese Nivel 3
-// (employees/employeeAccess.ts). No copia asignaciones. Los roles de ambos
-// extremos los valida users.service.ts (cross-table, no expresable como
-// CHECK); employeeAccessWhere además exige rol Nivel 3 al supervisado.
+// Un usuario Nivel 2 (supervisor) recibe asignaciones TIME_RESPONSIBLE
+// directas. Cada Nivel 3 (supervisado) hereda, de forma dinámica, el alcance
+// de los Nivel 2 activos que lo supervisan (employees/employeeAccess.ts). No
+// copia asignaciones. Los roles de ambos extremos los valida users.service.ts
+// (cross-table, no expresable como CHECK); employeeAccessWhere además exige
+// rol Nivel 2 ACTIVO al supervisor.
 // Restrict: un usuario con relaciones no se borra físicamente.
 model UserSupervisionAssignment {
   id               String   @id @default(uuid())

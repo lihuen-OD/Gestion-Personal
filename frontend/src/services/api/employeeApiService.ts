@@ -8,7 +8,6 @@ import { mapNoveltyTypeFromApi } from "./noveltyTypeApiService";
 import { orgStructureApiService } from "./orgStructureApiService";
 import { positionApiService } from "./positionApiService";
 import { mapTimeEntryFromApi, type ApiTimeEntry } from "./timeEntryApiService";
-import { userApiService } from "./userApiService";
 import { cachePolicies, cachedData, invalidateCacheFamily, NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES } from "../cache";
 import type { TimeGridDayOff } from "./employeeDayOffApiService";
 import type { NoveltyCoverageItem, NoveltyCoverageState, NoveltyTypeAccounting, PeriodAccounting } from "../../types/workedTimeAccounting.types";
@@ -306,6 +305,7 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
   const assignmentName = (link: NonNullable<ApiEmployee["assignments"]>[number]) => link.personName || link.user?.name || "";
   const directManagers = compact((item.assignments || []).filter((link) => link.type === "DIRECT_MANAGER").map(assignmentName));
   const timeResponsibles = compact((item.assignments || []).filter((link) => link.type === "TIME_RESPONSIBLE").map(assignmentName));
+  const timeResponsibleUserIds = compact((item.assignments || []).filter((link) => link.type === "TIME_RESPONSIBLE").map((link) => link.userId || ""));
   const directManagerAssignment = item.assignments?.find((link) => link.type === "DIRECT_MANAGER");
   const timeResponsibleAssignment = item.assignments?.find((link) => link.type === "TIME_RESPONSIBLE");
   const address = item.address;
@@ -380,6 +380,7 @@ export function mapEmployeeFromApi(item: ApiEmployee): Employee {
     directManagers,
     timeResponsible: timeResponsibles[0] || "",
     timeResponsibles,
+    timeResponsibleUserIds,
     startDate: currentLaborPeriod.startDate,
     endDate: currentLaborPeriod.endDate,
     exitReason: currentLaborPeriod.exitReason,
@@ -553,15 +554,13 @@ function transportPayload(employee: Employee) {
   };
 }
 
-async function assignmentsPayload(employee: Employee) {
+// Responsables de carga: siempre por `userId` (usuarios Nivel 2 activos, lo
+// valida el backend); nunca se resuelve un usuario por nombre.
+function assignmentsPayload(employee: Employee) {
   const directManagerNames = employee.directManagers || (employee.directManager ? [employee.directManager] : []);
-  const timeResponsibleNames = employee.timeResponsibles || (employee.timeResponsible ? [employee.timeResponsible] : []);
-  if (!directManagerNames.length && !timeResponsibleNames.length) return { assignments: [] };
-
-  const users = timeResponsibleNames.length ? await userApiService.getAll().catch(() => []) : [];
-  const userByName = new Map(users.map((user) => [user.employeeName || user.name, user]));
+  const timeResponsibleUserIds = Array.from(new Set((employee.timeResponsibleUserIds || []).filter(Boolean)));
   const assignments = [
-    ...directManagerNames.map((personName) => ({
+    ...directManagerNames.filter((personName) => personName?.trim()).map((personName) => ({
       type: "DIRECT_MANAGER" as const,
       personName,
       role: null,
@@ -570,20 +569,17 @@ async function assignmentsPayload(employee: Employee) {
       status: employee.directManagerStatus || null,
       notes: employee.directManagerNotes || null,
     })),
-    ...timeResponsibleNames.map((personName) => {
-      const linkedUser = userByName.get(personName);
-      return {
-        type: "TIME_RESPONSIBLE" as const,
-        userId: linkedUser?.id || null,
-        personName,
-        role: null,
-        effectiveFrom: employee.timeResponsibleFrom || null,
-        effectiveTo: employee.timeResponsibleTo || null,
-        status: employee.timeResponsibleStatus || null,
-        notes: employee.timeResponsibleNotes || null,
-      };
-    }),
-  ].filter((item) => item.personName?.trim());
+    ...timeResponsibleUserIds.map((userId) => ({
+      type: "TIME_RESPONSIBLE" as const,
+      userId,
+      personName: null,
+      role: null,
+      effectiveFrom: employee.timeResponsibleFrom || null,
+      effectiveTo: employee.timeResponsibleTo || null,
+      status: employee.timeResponsibleStatus || null,
+      notes: employee.timeResponsibleNotes || null,
+    })),
+  ];
   return { assignments };
 }
 
@@ -613,7 +609,7 @@ async function syncEmployeeExtras(
     );
   }
 
-  const { assignments } = await assignmentsPayload(employee);
+  const { assignments } = assignmentsPayload(employee);
   if (assignments.length) {
     requests.push(
       apiRequest(`/employees/${employeeId}/assignments`, {
@@ -957,7 +953,7 @@ export const employeeApiService = {
   async replaceAssignments(employee: Employee) {
     const response = await apiRequest<ApiEmployeeItemResponse>(`/employees/${employee.id}/assignments`, {
       method: "PUT",
-      body: await assignmentsPayload(employee),
+      body: assignmentsPayload(employee),
     });
     await invalidateEmployeeDependentCaches("employee assignments updated");
     return mapEmployeeFromApi(response.data);

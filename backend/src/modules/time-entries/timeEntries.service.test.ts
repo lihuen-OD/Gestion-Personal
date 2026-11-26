@@ -1120,7 +1120,7 @@ describe("clockPhotoPunch — reglas de ingreso y salida (F0: antes probadas só
 
       vi.mocked(attendanceRecipients).mockResolvedValueOnce(["rrhh", "joaquin", "eugenia"]);
       await notifyMissingExit(activeEmployee.id, excedidaShift.id, excedidaShift.startAt, { db: stepTx as never, rethrow: true });
-      // FALTA_SALIDA: destinatarios (RRHH + responsables + Nivel 2 heredados)
+      // FALTA_SALIDA: destinatarios (RRHH + responsables Nivel 2 + Nivel 3 heredados)
       // resueltos en la fecha de inicio de la jornada y dentro de la tx del paso.
       expect(attendanceRecipients).toHaveBeenCalledWith(activeEmployee.id, excedidaShift.startAt, stepTx);
       expect(mockedNotifyUsers).toHaveBeenCalledWith(["rrhh", "joaquin", "eugenia"], expect.objectContaining({ type: "FALTA_SALIDA", entityType: "WorkShift", entityId: excedidaShift.id, eventAt: excedidaShift.startAt }), stepTx);

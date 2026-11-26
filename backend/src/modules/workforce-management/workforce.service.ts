@@ -74,7 +74,7 @@ export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
 
 /**
  * Destinatarios de un aviso operativo del legajo: RRHH + responsables
- * directos + supervisores Nivel 2 heredados de responsables Nivel 3
+ * directos Nivel 2 + Nivel 3 heredados
  * (employeeNotificationRecipients.ts). `eventAt`: instante del hecho que
  * origina el aviso; la vigencia de TIME_RESPONSIBLE se evalúa en su día
  * Argentina, no en el momento en que se procesa o reintenta.

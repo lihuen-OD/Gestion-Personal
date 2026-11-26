@@ -13,13 +13,13 @@ import { clearEmployeeReadCaches } from "./employees.controller";
  *
  * Quién la llama (después del commit, nunca dentro de la transacción):
  * - Legajos → responsables/asignaciones (`replaceAssignments`): agrega o quita
- *   un TIME_RESPONSIBLE, que cambia el alcance del responsable directo y el de
- *   todo Nivel 2 que lo supervise.
- * - Usuarios → alta/edición: rol y supervisión Nivel 2 → Nivel 3.
+ *   un TIME_RESPONSIBLE, que cambia el alcance del Nivel 2 responsable y el
+ *   de todo Nivel 3 que él supervise.
+ * - Usuarios → alta/edición: rol, estado y supervisión Nivel 2 → Nivel 3.
  *
  * Limpia, completas, las cachés de lectura con clave por usuario cuya
  * respuesta sale de `employeeAccessWhere` (las claves no permiten ubicar a
- * "todos los Nivel 2 que supervisan a X", y estos cambios son operaciones de
+ * "todos los Nivel 3 que supervisa X", y estos cambios son operaciones de
  * administración poco frecuentes):
  * - Legajos: detalle, grilla horaria, listado, resumen, organigrama, opciones;
  * - Horas/asistencia: listado, resumen, período por persona, asistencia,

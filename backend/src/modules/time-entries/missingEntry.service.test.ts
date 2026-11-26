@@ -104,15 +104,12 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
     );
   });
 
-  it("FALTA_INGRESO: notifica a RRHH + responsable Nivel 3 + Nivel 2 que lo supervisa, una fila por destinatario", async () => {
+  it("FALTA_INGRESO: notifica a RRHH + responsable Nivel 2 + Nivel 3 que hereda, una fila por destinatario", async () => {
     mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [candidate("employee-1")] });
     mockedPrisma.employee.findMany.mockResolvedValue([employeeRow("employee-1")]);
     mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow("employee-1") }]);
     mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
-    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([
-      { employeeId: "employee-1", userId: "joaquin", user: { role: "NIVEL_3_CARGA_HORARIA" } },
-      { employeeId: "employee-1", userId: "eugenia", user: { role: "NIVEL_2_SUPERVISION" } },
-    ]);
+    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "eugenia" }]);
     mockedPrisma.userSupervisionAssignment.findMany.mockResolvedValueOnce([{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }]);
     const createMany = vi.fn();
     const tx = { systemNotification: { createMany }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
@@ -121,8 +118,7 @@ describe("checkMissingExpectedEntries — Etapa 15M.19B", () => {
     await checkMissingExpectedEntries(new Date("2026-09-18T11:11:00.000Z"));
 
     const rows = createMany.mock.calls[0]![0].data as Array<{ recipientUserId: string; type: string }>;
-    // Eugenia es directa y además heredada: una sola fila.
-    expect(rows.map((row) => row.recipientUserId)).toEqual(["user-rrhh", "joaquin", "eugenia"]);
+    expect(rows.map((row) => row.recipientUserId)).toEqual(["user-rrhh", "eugenia", "joaquin"]);
     expect(rows.every((row) => row.type === "FALTA_INGRESO")).toBe(true);
   });
 

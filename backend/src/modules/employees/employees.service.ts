@@ -1058,6 +1058,16 @@ export const employeesService = {
   },
 
   async replaceAssignments(id: string, input: ReplaceEmployeeAssignmentsInput, audit?: AuditContext) {
+    // Responsable de carga = usuario Nivel 2 ACTIVO referenciado por userId.
+    // Un nombre sin usuario, un Nivel 1/3 o un usuario inactivo no abrirían
+    // alcance a nadie (employeeAccessWhere), así que se rechazan.
+    const responsibleIds = input.assignments.filter((assignment) => assignment.type === "TIME_RESPONSIBLE").map((assignment) => assignment.userId);
+    if (responsibleIds.length) {
+      const valid = await execute(() => employeesRepository.findActiveSupervisionUserIds(responsibleIds.filter((userId): userId is string => Boolean(userId))));
+      if (responsibleIds.some((userId) => !userId || !valid.has(userId))) {
+        throw new AppError("El responsable de carga horaria debe ser un usuario Nivel 2 activo.", 422, "TIME_RESPONSIBLE_REQUIRES_N2_USER");
+      }
+    }
     const before = await execute(() => employeesRepository.findAssignmentsAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.replaceAssignments(id, input.assignments));
     await auditService.register({

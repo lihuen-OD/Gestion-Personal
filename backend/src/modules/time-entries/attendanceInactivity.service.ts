@@ -269,7 +269,7 @@ export const INACTIVITY_CANDIDATE_SELECT = {
  * deja `notifiedAt` en NULL y el próximo tick/catch-up lo reintenta.
  * Garantía limitada a los registros internos `SystemNotification`: este flujo
  * no tiene entregas externas (push/mail).
- * Destinatarios en batch (RRHH + responsables directos + Nivel 2 heredados),
+ * Destinatarios en batch (RRHH + responsables Nivel 2 + Nivel 3 heredados),
  * vigencia evaluada en la fecha operativa del incidente — no en el día en que
  * corre el chequeo (un catch-up de días anteriores usa los responsables de
  * ese día).

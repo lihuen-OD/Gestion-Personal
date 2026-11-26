@@ -2,7 +2,8 @@ import type { UserSupervisionPerson } from "../../types";
 import { MultiOptionSelector } from "./MultiOptionSelector";
 
 /**
- * Responsables de carga (usuarios Nivel 3) que supervisa un Nivel 2. Usa el
+ * Responsables de carga (usuarios Nivel 3) que supervisa un Nivel 2 y que
+ * heredan sus legajos y grupos de turnos. Usa el
  * selector múltiple compartido (`MultiOptionSelector`).
  */
 export function SupervisedUsersSelector({
@@ -20,7 +21,7 @@ export function SupervisedUsersSelector({
   return (
     <MultiOptionSelector
       title="Responsables de carga supervisados"
-      help="Este usuario podrá acceder a los legajos asignados a los responsables de carga seleccionados. Si se les agregan o quitan legajos, el acceso se actualiza solo."
+      help="Los responsables de carga seleccionados heredan los legajos y grupos de turnos asignados a este usuario. Si se le agregan o quitan, el acceso se actualiza solo."
       options={options.map((person) => ({ id: person.id, label: person.name, detail: person.email, inactive: person.status === "Inactivo" }))}
       selectedIds={selectedIds}
       onChange={onChange}

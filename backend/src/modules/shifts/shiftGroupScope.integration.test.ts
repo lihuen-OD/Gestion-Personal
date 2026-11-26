@@ -126,13 +126,16 @@ describe.skipIf(!url)("R8 — turnos con alcance por grupo y por legajo (Postgre
       template[key] = (await holder.shiftTemplate.create({ data: { code, name: `Turno ${code}`, startTime: start, endTime: end, shiftGroupId: groupKey ? group[groupKey] : null } })).id;
     }
 
-    // Legajos: "visible" y "taller" a cargo de Joaquín (Stefi y Eugenia los
-    // heredan por supervisión); "hidden" sin responsable horario.
+    // Legajos: "visible", "taller", "libre" y "libre2" asignados directamente a
+    // Stefi y a Eugenia (Nivel 2); Joaquín (Nivel 3) los hereda por
+    // supervisión; "hidden" sin responsable horario.
     for (const [key, legajo, lastName] of [["visible", "R8-1", "Uno"], ["hidden", "R8-2", "Oculto"], ["taller", "R8-3", "Tres"], ["libre", "R8-4", "Cuatro"], ["libre2", "R8-5", "Cinco"], ["hidden2", "R8-6", "Escondido"]] as const) {
       employee[key] = (await holder.employee.create({ data: { legajo, cuil: `20-9${legajo}`, dni: `9${legajo}`, firstName: "Prueba", lastName } })).id;
     }
     for (const key of ["visible", "taller", "libre", "libre2"] as const) {
-      await holder.employeeAssignment.create({ data: { employeeId: employee[key], userId: users.joaquin.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
+      for (const responsible of [users.stefi, users.eugenia]) {
+        await holder.employeeAssignment.create({ data: { employeeId: employee[key], userId: responsible.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
+      }
     }
     await holder.userSupervisionAssignment.create({ data: { supervisorUserId: users.stefi.id, supervisedUserId: users.joaquin.id } });
     await holder.userSupervisionAssignment.create({ data: { supervisorUserId: users.eugenia.id, supervisedUserId: users.joaquin.id } });

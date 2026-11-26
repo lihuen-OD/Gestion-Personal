@@ -5,6 +5,7 @@ import { assertClosurePeriodsWritable } from "../../shared/monthlyClosure/closur
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { argentinaCalendarDate, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { employeeReferenceSelect } from "../../shared/audit/employeeReference";
+import { withoutEffectiveTimeResponsibleWhere } from "./employeeAccess";
 import type {
   CreateEmployeeDocumentInput,
   CreateEmployeeInput,
@@ -980,11 +981,8 @@ export const employeesRepository = {
         },
       }),
       prisma.employee.count({
-        where: {
-          ...accessWhere,
-          status: EmployeeStatus.ACTIVO,
-          assignments: { none: { type: "TIME_RESPONSIBLE" } },
-        },
+        // AND (no spread): la clave `assignments` pisaría el alcance N2/N3.
+        where: { AND: [accessWhere, { status: EmployeeStatus.ACTIVO }, withoutEffectiveTimeResponsibleWhere()] },
       }),
     ]);
     const active = statusGroups.find((group) => group.status === EmployeeStatus.ACTIVO)?._count._all || 0;
@@ -1655,6 +1653,16 @@ export const employeesRepository = {
       select: { id: true },
     });
     return findEmployeeDetailByIdOrThrow(employeeId);
+  },
+
+  /** Subconjunto de `userIds` que hoy son Nivel 2 ACTIVO (únicos responsables de carga válidos). */
+  async findActiveSupervisionUserIds(userIds: string[]) {
+    if (!userIds.length) return new Set<string>();
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds }, role: "NIVEL_2_SUPERVISION", status: "ACTIVO" },
+      select: { id: true },
+    });
+    return new Set(users.map((user) => user.id));
   },
 
   async replaceAssignments(employeeId: string, assignments: EmployeeAssignmentInput[]) {
