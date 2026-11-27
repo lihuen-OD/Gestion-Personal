@@ -204,7 +204,7 @@ describe("getNextCode — código automático autoritativo", () => {
 
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12/§14: editar (sobre todo
 // corregir workTreatment) o eliminar un concepto cambia los números de
-// grillas, Carga de horas, Bandeja, dashboard y cierres — se invalidan todas
+// grillas, Carga de horas, dashboard y cierres — se invalidan todas
 // esas familias al guardar, sin depender del TTL.
 describe("hourConceptApiService — mutaciones del concepto e invalidación de lecturas derivadas", () => {
   const apiConcept = { id: "concept-1", code: "HOR-005", name: "Prueba 02", kind: "OTRO", status: "ACTIVO", loadMode: "BOTH", systemRole: null, workTreatment: "WITHIN_BASE", createdAt: "", updatedAt: "" };
@@ -215,7 +215,7 @@ describe("hourConceptApiService — mutaciones del concepto e invalidación de l
   });
 
   it("cubre las familias que muestran horas del concepto", () => {
-    expect([...HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES].sort()).toEqual(["dashboard", "employees", "hour-concepts", "monthly-closures", "novelties", "pending", "time-entries"]);
+    expect([...HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES].sort()).toEqual(["dashboard", "employees", "hour-concepts", "monthly-closures", "novelties", "time-entries"]);
   });
 
   it.each([

@@ -367,7 +367,7 @@ describe.skipIf(!url)("R4.4 — fichador con bloques de rotación contra Postgre
     expect(await holder.timeEntry.count({ where: { workShiftId: manualShift!.id } })).toBe(0);
 
     await seed();
-    await holder.monthlyTimeClosure.create({ data: { employeeId: jose(), period: "2026-11", status: "APROBADO" } });
+    await holder.monthlyTimeClosure.create({ data: { employeeId: jose(), period: "2026-11", status: "CERRADO" } });
     await punch(jose(), "IN", at(FRI_A, "07:00"));
     expect((await punch(jose(), "OUT", at(FRI_A, "11:02"))).status).toBe(201);
     expect((await shiftsOf(jose()))[0]!.status).toBe("OBSERVADO");

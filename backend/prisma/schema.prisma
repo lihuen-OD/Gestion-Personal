@@ -360,16 +360,7 @@ enum AuditAction {
 
 enum MonthlyClosureStatus {
   ABIERTO
-  ENVIADO
-  APROBADO
-  DEVUELTO
-  CORRECCION_PENDIENTE
-}
-
-enum CorrectionRequestStatus {
-  PENDIENTE
-  APROBADA
-  RECHAZADA
+  CERRADO
 }
 
 enum NotificationStatus {
@@ -523,10 +514,8 @@ model User {
   storageFilesDeleted                StorageFile[]                  @relation("StorageFileDeletedBy")
   auditLogs                          AuditLog[]
   notifications                      SystemNotification[]           @relation("NotificationRecipient")
-  closuresSubmitted                  MonthlyTimeClosure[]           @relation("ClosureSubmittedBy")
-  closuresReviewed                   MonthlyTimeClosure[]           @relation("ClosureReviewedBy")
-  correctionsCreated                 TimeCorrectionRequest[]        @relation("CorrectionCreatedBy")
-  correctionsReviewed                TimeCorrectionRequest[]        @relation("CorrectionReviewedBy")
+  closuresClosed                     MonthlyTimeClosure[]           @relation("ClosureClosedBy")
+  closuresReopened                   MonthlyTimeClosure[]           @relation("ClosureReopenedBy")
   inactivityIncidentsReviewed        AttendanceInactivityIncident[] @relation("InactivityIncidentReviewedBy")
   noveltiesApproved                  Novelty[]                      @relation("NoveltyApprovedBy")
   timeEntriesApproved                TimeEntry[]                    @relation("TimeEntryApprovedBy")
@@ -1073,7 +1062,6 @@ model Employee {
   documents                 EmployeeDocument[]
   storageFiles              StorageFile[]
   monthlyClosures           MonthlyTimeClosure[]
-  correctionRequests        TimeCorrectionRequest[]
   shiftAlerts               ShiftAlert[]
   inactivityIncidents       AttendanceInactivityIncident[]
   doubleHourAssignments     DoubleHourRuleEmployee[]
@@ -1573,7 +1561,6 @@ model NoveltyType {
   /// Etapa 15L.2A: observaciones internas editables desde el catalogo.
   notes                       String?
   exportsToFinnegans          Boolean                       @default(false)
-  requiresApproval            Boolean                       @default(true)
   requiresDocumentation       Boolean                       @default(false)
   allowsHours                 Boolean                       @default(false)
   allowsDateRange             Boolean                       @default(true)
@@ -1591,7 +1578,6 @@ model NoveltyType {
   /// Etapa 15L.6: reemplaza FinnegansNoveltyLink.name.
   finnegansName               String?
   allowedLoadRoles            Json                          @default("[]")
-  approvalRoles               Json                          @default("[]")
   /// Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md). La
   /// coherencia entre estos campos la exige el backend y el CHECK
   /// "NoveltyType_coverage_config_check".
@@ -1624,7 +1610,7 @@ model Novelty {
   id                  String         @id @default(uuid())
   employeeId          String
   noveltyTypeId       String
-  status              ApprovalStatus @default(PENDIENTE)
+  status              ApprovalStatus @default(APROBADO)
   fromDate            DateTime       @db.Date
   toDate              DateTime?      @db.Date
   quantityHours       Decimal?       @db.Decimal(8, 2)
@@ -1817,7 +1803,7 @@ model TimeEntry {
   segmentStartAt    DateTime?        @db.Timestamptz(3)
   segmentEndAt      DateTime?        @db.Timestamptz(3)
   source            WorkShiftSource?
-  status            ApprovalStatus   @default(BORRADOR)
+  status            ApprovalStatus   @default(APROBADO)
   observation       String?
   createdByUserId   String?
   approvedByUserId  String?
@@ -1826,13 +1812,12 @@ model TimeEntry {
   createdAt         DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
 
-  employee           Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  hourConcept        HourConcept             @relation(fields: [hourConceptId], references: [id])
-  workShift          WorkShift?              @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
-  timeSegment        TimeSegment?            @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
-  createdBy          User?                   @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
-  approvedBy         User?                   @relation("TimeEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
-  correctionRequests TimeCorrectionRequest[]
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  hourConcept HourConcept  @relation(fields: [hourConceptId], references: [id])
+  workShift   WorkShift?   @relation(fields: [workShiftId], references: [id], onDelete: SetNull)
+  timeSegment TimeSegment? @relation(fields: [timeSegmentId], references: [id], onDelete: SetNull)
+  createdBy   User?        @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy  User?        @relation("TimeEntryApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
 
   @@index([employeeId, period])
   @@index([employeeId, hourConceptId, date])
@@ -1911,49 +1896,24 @@ model WorkShift {
 }
 
 model MonthlyTimeClosure {
-  id                String                  @id @default(uuid())
-  employeeId        String
-  period            String
-  status            MonthlyClosureStatus    @default(ABIERTO)
-  snapshot          Json?
-  submittedByUserId String?
-  submittedAt       DateTime?               @db.Timestamptz(3)
-  reviewedByUserId  String?
-  reviewedAt        DateTime?               @db.Timestamptz(3)
-  reviewNote        String?
-  createdAt         DateTime                @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime                @updatedAt @db.Timestamptz(3)
-  employee          Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  submittedBy       User?                   @relation("ClosureSubmittedBy", fields: [submittedByUserId], references: [id])
-  reviewedBy        User?                   @relation("ClosureReviewedBy", fields: [reviewedByUserId], references: [id])
-  corrections       TimeCorrectionRequest[]
+  id               String               @id @default(uuid())
+  employeeId       String
+  period           String
+  status           MonthlyClosureStatus @default(ABIERTO)
+  snapshot         Json?
+  closedByUserId   String?
+  closedAt         DateTime?            @db.Timestamptz(3)
+  reopenedByUserId String?
+  reopenedAt       DateTime?            @db.Timestamptz(3)
+  reopenReason     String?
+  createdAt        DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime             @updatedAt @db.Timestamptz(3)
+  employee         Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  closedBy         User?                @relation("ClosureClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  reopenedBy       User?                @relation("ClosureReopenedBy", fields: [reopenedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, period])
   @@index([period, status])
-}
-
-model TimeCorrectionRequest {
-  id               String                  @id @default(uuid())
-  employeeId       String
-  timeEntryId      String
-  closureId        String?
-  previousHours    Decimal                 @db.Decimal(8, 2)
-  proposedHours    Decimal                 @db.Decimal(8, 2)
-  reason           String
-  status           CorrectionRequestStatus @default(PENDIENTE)
-  createdByUserId  String
-  reviewedByUserId String?
-  reviewedAt       DateTime?               @db.Timestamptz(3)
-  reviewNote       String?
-  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
-  employee         Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  timeEntry        TimeEntry               @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
-  closure          MonthlyTimeClosure?     @relation(fields: [closureId], references: [id], onDelete: SetNull)
-  createdBy        User                    @relation("CorrectionCreatedBy", fields: [createdByUserId], references: [id])
-  reviewedBy       User?                   @relation("CorrectionReviewedBy", fields: [reviewedByUserId], references: [id])
-
-  @@index([status, createdAt])
-  @@index([employeeId, status])
 }
 
 model SystemNotification {
@@ -2768,7 +2728,7 @@ model HourConceptBreakdown {
   startAt           DateTime?                  @db.Timestamptz(3)
   endAt             DateTime?                  @db.Timestamptz(3)
   source            HourConceptBreakdownSource
-  status            ApprovalStatus             @default(BORRADOR)
+  status            ApprovalStatus             @default(APROBADO)
   workShiftId       String?
   timeSegmentId     String?
   hourConceptRuleId String?

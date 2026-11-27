@@ -27,7 +27,7 @@ describe("employeeDayOffApiService (docs/decisions/EMPLOYEE_DAY_OFF.md)", () => 
     expect(apiRequest).toHaveBeenCalledWith("/employee-day-offs", { method: "PUT", body: input });
     const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
     // Etapa 5: también Novedades (el franco reinterpreta su cobertura).
-    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "notifications", "novelties", "pending", "shift-alerts", "time-entries"]);
+    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "notifications", "novelties", "shift-alerts", "time-entries"]);
   });
 
   it("si el guardado falla no invalida nada", async () => {

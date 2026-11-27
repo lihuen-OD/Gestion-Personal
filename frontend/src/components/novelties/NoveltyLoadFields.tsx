@@ -33,14 +33,12 @@ export function NoveltyLoadFields({
   values,
   onChange,
   issues,
-  isRrhh,
   disabled,
 }: {
   type: NoveltyType;
   values: NoveltyLoadValues;
   onChange: (values: NoveltyLoadValues) => void;
   issues?: NoveltyLoadIssue[];
-  isRrhh: boolean;
   disabled?: boolean;
 }) {
   const id = useId();
@@ -92,14 +90,6 @@ export function NoveltyLoadFields({
         </Field>
         {values.file ? <small>Archivo seleccionado: {values.file.name}</small> : null}
       </div>
-    ) : null}
-
-    {layout.requiresApproval ? (
-      <p className="info-note compact">
-        {isRrhh
-          ? "Este tipo requiere aprobación. Como RRHH, la novedad queda aprobada al guardarla."
-          : "Esta novedad quedará pendiente hasta ser aprobada. Mientras esté pendiente será visible, pero no sumará al total."}
-      </p>
     ) : null}
   </div>;
 }

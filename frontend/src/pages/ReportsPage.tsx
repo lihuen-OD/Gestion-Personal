@@ -26,11 +26,11 @@ export function ReportsPage() {
     loadedHours: 0,
     loadCoverage: 0,
     pendingLoads: 0,
-    reviewLoads: 0,
+    pendingShiftAlerts: 0,
     expiredDocuments: 0,
     expiringDocuments: 0,
     missingResponsible: 0,
-    pendingNovelties: 0,
+    noveltyReviewDays: 0,
     headcountByCompany: [],
     headcountByZone: [],
   });
@@ -68,5 +68,5 @@ export function ReportsPage() {
     </>;
   }
 
-  return <><PageHeader eyebrow="INDICADORES DE GESTIÓN" title="Reportes de gestión" description="Panel visual calculado desde legajos, novedades, transporte, documentación y carga horaria." /><div className="stat-grid"><StatCard label="Ausentismo mensual" value={`${metrics.absenceRate}%`} detail={`${metrics.absenceDays} días registrados`} icon={Activity} tone="orange" /><StatCard label="Rotación anual" value={`${metrics.turnoverRate}%`} detail={`${metrics.exits} egresos en 2026`} icon={Users} /><StatCard label="Cargas pendientes" value={metrics.pendingLoads} detail={`${metrics.reviewLoads} personas en revisión`} icon={Clock3} tone="red" /><StatCard label="Personas transportadas" value={metrics.transported} detail="Según legajos activos" icon={Building2} tone="green" /></div><div className="dashboard-grid"><Section title="Dotación por zona vigente" subtitle={`Total general: ${metrics.active} personas únicas. Una persona puede aparecer en varias zonas; las cantidades por zona no se suman.`}><DashboardBars rows={metrics.headcountByZone} /></Section><Section title="Documentación crítica" subtitle="Alertas documentales vinculadas a legajos"><div className="alerts"><Alert label="Documentos vencidos" value={`${metrics.expiredDocuments} registros`} tone="red" /><Alert label="Documentos por vencer" value={`${metrics.expiringDocuments} registros`} tone="orange" /><Alert label="Novedades pendientes" value={`${metrics.pendingNovelties} registros`} tone="purple" /></div></Section></div><Section title="Transporte por localidad" subtitle="Personas con transporte de empresa en legajo"><DashboardBars rows={metrics.transportByCity} /></Section></>;
+  return <><PageHeader eyebrow="INDICADORES DE GESTIÓN" title="Reportes de gestión" description="Panel visual calculado desde legajos, novedades, transporte, documentación y carga horaria." /><div className="stat-grid"><StatCard label="Ausentismo mensual" value={`${metrics.absenceRate}%`} detail={`${metrics.absenceDays} días registrados`} icon={Activity} tone="orange" /><StatCard label="Rotación anual" value={`${metrics.turnoverRate}%`} detail={`${metrics.exits} egresos en 2026`} icon={Users} /><StatCard label="Personas sin horas" value={metrics.pendingLoads} detail={`${metrics.pendingShiftAlerts} alertas de turnos pendientes`} icon={Clock3} tone="red" /><StatCard label="Personas transportadas" value={metrics.transported} detail="Según legajos activos" icon={Building2} tone="green" /></div><div className="dashboard-grid"><Section title="Dotación por zona vigente" subtitle={`Total general: ${metrics.active} personas únicas. Una persona puede aparecer en varias zonas; las cantidades por zona no se suman.`}><DashboardBars rows={metrics.headcountByZone} /></Section><Section title="Documentación crítica" subtitle="Alertas documentales vinculadas a legajos"><div className="alerts"><Alert label="Documentos vencidos" value={`${metrics.expiredDocuments} registros`} tone="red" /><Alert label="Documentos por vencer" value={`${metrics.expiringDocuments} registros`} tone="orange" /><Alert label="Días de novedad por revisar" value={`${metrics.noveltyReviewDays} días`} tone="purple" /><Alert label="Alertas de turnos pendientes" value={`${metrics.pendingShiftAlerts} alertas`} tone="red" /></div></Section></div><Section title="Transporte por localidad" subtitle="Personas con transporte de empresa en legajo"><DashboardBars rows={metrics.transportByCity} /></Section></>;
 }

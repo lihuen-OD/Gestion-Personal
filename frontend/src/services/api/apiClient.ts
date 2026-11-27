@@ -147,7 +147,6 @@ const errorMessagesByCode: Record<string, string> = {
   TIME_ENTRY_CLOCK_HOURS_EXIST: "Esa fecha ya tiene horas registradas por el fichador. Para reemplazarlas, corregí esa carga desde el detalle del día.",
   MANUAL_HOURS_CONFLICT_NOT_FOUND: "No encontramos la revisión solicitada.",
   MANUAL_HOURS_CONFLICT_ALREADY_RESOLVED: "Esta revisión ya fue resuelta. Actualizá la pantalla para ver la decisión tomada.",
-  MANUAL_HOURS_CORRECTION_REASON_REQUIRED: "El período ya fue enviado o aprobado: indicá el motivo de la corrección.",
   SHIFT_ALERT_REQUIRES_HOURS_DECISION: "Esta revisión se resuelve desde Carga de horas, eligiendo qué horas se computan.",
   TIME_ENTRY_LOCKED: "Las cargas aprobadas o cerradas no se pueden editar.",
   TIME_ENTRY_STATUS_NOT_SUBMITTABLE: "Solo se pueden enviar cargas en borrador o devueltas.",

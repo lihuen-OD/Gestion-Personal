@@ -946,7 +946,7 @@ export const timeEntriesRepository = {
   // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -972,15 +972,6 @@ export const timeEntriesRepository = {
               status: { in: countableStatuses },
             },
           },
-        },
-      }),
-      prisma.timeEntry.groupBy({
-        by: ["employeeId"],
-        orderBy: { employeeId: "asc" },
-        where: {
-          period,
-          employee: employeeAccessWhere,
-          status: ApprovalStatus.EN_REVISION,
         },
       }),
       prisma.timeEntry.aggregate({
@@ -1021,8 +1012,9 @@ export const timeEntriesRepository = {
     return {
       activeEmployees,
       employeesWithEntries,
+      // Personas activas sin horas computables en el período (seguimiento
+      // operativo de carga, no un estado de aprobación).
       pendingEmployees,
-      reviewEmployees: reviewEmployeeGroups.length,
       // "Total trabajado": sólo trabajo real (sin cambios). La cobertura de
       // novedades va aparte y el total computable la suma (aditivo).
       countableHours,
@@ -2324,7 +2316,9 @@ export const timeEntriesRepository = {
           include: timeEntryInclude,
         });
 
-        if (existing && !editableStatuses.includes(existing.status)) {
+        // Las cargas son efectivas al guardar (APROBADO) y no bloquean sumar el
+        // tramo, igual que en el fichador; el mes CERRADO lo protege su guard.
+        if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
           throw new Error(`TIME_ENTRY_LOCKED:${existing.id}`);
         }
 
@@ -2712,12 +2706,11 @@ export const timeEntriesRepository = {
     const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(before.employeeId, date);
     // D-5: en un período protegido sólo pasa la corrección explícita de RRHH
     // con motivo (el servicio ya lo exige); el lock compartido se toma igual.
-    const explicitCorrection = Boolean(autoApprovedByUserId && input.correctionReason);
     return prisma.$transaction(async (tx) => {
       await assertClosurePeriodsWritable(tx, [
         { employeeId: before.employeeId, period: periodFromCalendarDate(before.date) },
         { employeeId: before.employeeId, period: periodFromCalendarDate(date) },
-      ], { explicitCorrection, message: "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise." });
+      ], { explicitCorrection: false, message: "El período está cerrado. Reabrilo antes de modificar horas." });
       return tx.timeEntry.update({
       where: { id },
       data: {
@@ -2738,35 +2731,4 @@ export const timeEntriesRepository = {
     });
   },
 
-  submit(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "EN_REVISION" },
-      include: timeEntryInclude,
-    });
-  },
-
-  approve(id: string, approvedByUserId: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "APROBADO", approvedByUserId, approvedAt: new Date(), rejectedAt: null },
-      include: timeEntryInclude,
-    });
-  },
-
-  reject(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null, rejectedAt: new Date() },
-      include: timeEntryInclude,
-    });
-  },
-
-  returnForCorrection(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null, rejectedAt: null },
-      include: timeEntryInclude,
-    });
-  },
 };

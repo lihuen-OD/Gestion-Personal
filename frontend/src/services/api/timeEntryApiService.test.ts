@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { mapTimeEntryFromApi, timeEntryApiService } from "./timeEntryApiService";
 import type { TimeEntry } from "../../types";
 
-// Etapa 11B: la Bandeja de revisión (HoursPage.tsx, vista "Por registro")
-// perdía appliedMultiplier al mapear la respuesta cruda del backend al tipo
+// Etapa 11B: los listados de horas (`GET /time-entries`)
+// perdían appliedMultiplier al mapear la respuesta cruda del backend al tipo
 // TimeEntry del frontend — el backend ya lo devolvía (escalar de TimeEntry,
 // sin select restrictivo en el listado plano), pero mapTimeEntryFromApi
 // nunca lo leía. Estos tests cubren el mapeo nuevo, sin tocar `isSpecial`
 // (Conceptos Horarios, dominio distinto — ver 8A/11A).
-describe("mapTimeEntryFromApi — Horas Especiales en la Bandeja de revisión (Etapa 11B)", () => {
+describe("mapTimeEntryFromApi — Horas Especiales en los listados de horas (Etapa 11B)", () => {
   const base = {
     id: "entry-1",
     employeeId: "employee-1",
@@ -157,23 +157,17 @@ describe("timeEntryApiService.save — knownExistingId evita el GET redundante (
     createSpy.mockRestore();
   });
 
-  it("status 'En revisión' con resultado que aún no quedó en revisión: sigue disparando submit()", async () => {
+  it("sin flujo de aprobación: guardar no encadena ningún envío a revisión, devuelve lo que guardó el backend", async () => {
     const updateSpy = vi
       .spyOn(timeEntryApiService, "update")
       .mockResolvedValue({ id: "entry-existing", status: "Aprobado" } as TimeEntry);
-    const submitSpy = vi
-      .spyOn(timeEntryApiService, "submit")
-      .mockResolvedValue({ id: "entry-existing", status: "En revisión" } as TimeEntry);
 
-    const result = await timeEntryApiService.save(
-      { ...payload, status: "En revisión" },
-      { knownExistingId: "entry-existing" },
-    );
+    const result = await timeEntryApiService.save(payload, { knownExistingId: "entry-existing" });
 
-    expect(submitSpy).toHaveBeenCalledWith("entry-existing");
-    expect(result).toEqual({ id: "entry-existing", status: "En revisión" });
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ id: "entry-existing", status: "Aprobado" });
+    expect("submit" in timeEntryApiService).toBe(false);
 
     updateSpy.mockRestore();
-    submitSpy.mockRestore();
   });
 });

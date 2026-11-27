@@ -62,7 +62,6 @@ export interface NoveltyTypeCoverage {
 
 export interface NoveltyTypeRules {
   exportsToFinnegans: boolean;
-  requiresApproval: boolean;
   requiresDocumentation: boolean;
   allowsHours: boolean;
   timeEntryBehavior: NoveltyTimeEntryBehavior;
@@ -83,7 +82,6 @@ export interface NoveltyType {
   rules: NoveltyTypeRules;
   coverage: NoveltyTypeCoverage;
   allowedLoadRoles: Role[];
-  approvalRoles: Role[];
   // Etapa 15L.6: reemplaza FinnegansNoveltyLink (1:N) -- 1:1 físico, igual
   // que finnegansValueUnit/finnegansRequiresValidity en NoveltyTypeRules.
   finnegansCode: string | null;
@@ -99,6 +97,5 @@ export interface NoveltyTypeFilters {
   search: string;
   kind: string;
   exportsToFinnegans: string;
-  requiresApproval: string;
   status: string;
 }

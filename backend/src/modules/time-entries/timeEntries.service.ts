@@ -77,7 +77,6 @@ import type {
   ClockEmployeeSearchQuery,
   ListTimeEntriesQuery,
   PreviewWorkShiftInput,
-  RejectTimeEntryInput,
   TimeEntriesExportQuery,
   TimeEntriesPeriodEmployeesQuery,
   TimeEntriesSummaryQuery,
@@ -352,23 +351,6 @@ async function runValidationsInPriorityOrder(validations: Array<() => Promise<vo
   const results = await Promise.allSettled(validations.map((validation) => validation()));
   for (const result of results) {
     if (result.status === "rejected") throw result.reason;
-  }
-}
-
-// Etapa 6L.3 (ajuste): la aprobación final de una carga horaria es
-// exclusiva de RRHH — Supervisión ya no puede aprobar/rechazar/devolver
-// cargas de terceros, aunque siga pudiendo revisarlas visualmente. Esto es
-// más estricto que el guard de autoaprobación de abajo: antes bloqueaba sólo
-// que alguien se aprobara a sí mismo, ahora Nivel 2 queda afuera del todo.
-function assertCanApprove(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh) {
-    throw new AppError("Only RRHH can approve, reject or return time entries", 403, "FORBIDDEN");
-  }
-}
-
-function assertCanAdminShift(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh && user.role !== roles.supervision) {
-    throw new AppError("Only RRHH or supervision can manage attendance shifts", 403, "FORBIDDEN");
   }
 }
 
@@ -1294,14 +1276,13 @@ export const timeEntriesService = {
   // evaluación de salida usa el turno que adoptó el ingreso, así que primero se
   // procesa el post-proceso pendiente del ingreso de esta jornada.
   async closeWorkShiftManually(id: string, input: AdminCloseWorkShiftInput, user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { workShiftId: string }) => Promise<unknown> } = {}) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     if (before.status !== "ABIERTO") {
       throw new AppError("Solo se pueden cerrar manualmente jornadas abiertas.", 400, "WORK_SHIFT_NOT_OPEN");
     }
-    if (before.timeEntries.some((entry) => entry.status === "APROBADO" || entry.status === "CERRADO")) {
-      throw new AppError("La jornada tiene cargas aprobadas o cerradas.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
+    if (before.timeEntries.some((entry) => entry.status === "CERRADO")) {
+      throw new AppError("La jornada tiene cargas cerradas.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
     }
     await hooks.settleClockPunchPostProcess?.({ workShiftId: before.id });
 
@@ -1351,7 +1332,6 @@ export const timeEntriesService = {
   },
 
   async observeWorkShift(id: string, input: AdminWorkShiftReasonInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     const item = await timeEntriesRepository.observeWorkShift(id, input.reason);
@@ -1368,7 +1348,6 @@ export const timeEntriesService = {
   },
 
   async markMissingOut(id: string, input: AdminWorkShiftReasonInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     if (before.status !== "ABIERTO") {
@@ -1398,20 +1377,14 @@ export const timeEntriesService = {
       () => ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date),
       () => assertPeriodAllowsCreate(input.employeeId, periodFromCalendarDate(input.date)),
     ]);
-    // Etapa 6L.3: RRHH ya es quien aprueba, así que su propia carga manual no
-    // pasa por BORRADOR/EN_REVISION — queda aplicada/aprobada de una. Nivel
-    // 2/3 mantienen el flujo previo (BORRADOR, luego "Enviar a revisión").
-    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
-    const item = await execute(() => timeEntriesRepository.create(input, user.id, autoApprovedByUserId));
+    const item = await execute(() => timeEntriesRepository.create(input, user.id, user.id));
 
     await auditService.register({
       ...audit,
       action: "CREATE",
       entity: "TimeEntry",
       entityId: item.id,
-      description: autoApprovedByUserId
-        ? `Se cargó y aplicó ${item.hours.toString()} hs (RRHH) para el legajo ${item.employee.legajo}.`
-        : `Se cargó ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
+      description: `Se cargó y aplicó ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
       after: item as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
@@ -1977,18 +1950,8 @@ export const timeEntriesService = {
       where: { employeeId_period: { employeeId: before.employeeId, period: before.period } },
       select: { status: true },
     });
-    const requiresCorrectionRequest = isMonthlyClosureLocked(monthlyClosure);
-    if (requiresCorrectionRequest && user.role !== roles.rrhh) {
-      throw new AppError(
-        "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise.",
-        409,
-        "PERIOD_CLOSED_REQUIRES_CORRECTION",
-      );
-    }
-    if (before.status === "APROBADO" || requiresCorrectionRequest) {
-      if (!input.correctionReason) {
-        throw new AppError("Indicá el motivo de la corrección de la hora registrada.", 400, "TIME_ENTRY_CORRECTION_REASON_REQUIRED");
-      }
+    if (isMonthlyClosureLocked(monthlyClosure)) {
+      throw new AppError("El período está cerrado. Reabrilo antes de modificar horas.", 409, "PERIOD_CLOSED");
     }
 
     const employeeId = before.employeeId;
@@ -2002,101 +1965,16 @@ export const timeEntriesService = {
       () => ensureNoDuplicate(employeeId, hourConceptId, date, id),
     ]);
 
-    // Etapa 6L.3: toda edición hecha por RRHH aplica/aprueba directamente,
-    // sea que esté corrigiendo una carga ya aprobada (arriba, con
-    // correctionReason) o editando una que seguía en BORRADOR/EN_REVISION/
-    // DEVUELTO — RRHH nunca necesita mandarse una carga propia a revisión.
-    // Nivel 2/3 no reciben este parámetro, así que el status no se toca acá,
-    // igual que antes de esta etapa.
-    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
-    const item = await execute(() => timeEntriesRepository.update(id, before, input, autoApprovedByUserId));
+    // Toda edición de N1/N2/N3 queda efectiva (APROBADO) con su autor.
+    const item = await execute(() => timeEntriesRepository.update(id, before, input, user.id));
     await auditService.register({
       ...audit,
       action: "UPDATE",
       entity: "TimeEntry",
       entityId: item.id,
-      description: `Se actualizo carga horaria del legajo ${item.employee.legajo}.${input.correctionReason ? ` Motivo: ${input.correctionReason}` : ""}`,
+      description: `Se actualizo carga horaria del legajo ${item.employee.legajo}.`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async submit(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "BORRADOR" && before.status !== "DEVUELTO") {
-      throw new AppError("Only draft or returned entries can be submitted", 400, "TIME_ENTRY_STATUS_NOT_SUBMITTABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.submit(id));
-    await auditService.register({
-      ...audit,
-      action: "UPDATE",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se envio a revision carga horaria del legajo ${item.employee.legajo}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be approved", 400, "TIME_ENTRY_STATUS_NOT_APPROVABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.approve(id, user.id));
-    await auditService.register({
-      ...audit,
-      action: "APPROVE",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se aprobo carga horaria del legajo ${item.employee.legajo}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async reject(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be rejected", 400, "TIME_ENTRY_STATUS_NOT_REJECTABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.reject(id));
-    await auditService.register({
-      ...audit,
-      action: "REJECT",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se rechazo carga horaria del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async returnForCorrection(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be returned", 400, "TIME_ENTRY_STATUS_NOT_RETURNABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.returnForCorrection(id));
-    await auditService.register({
-      ...audit,
-      action: "RETURN",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se devolvio carga horaria del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
   },
@@ -2130,7 +2008,7 @@ export const timeEntriesService = {
       const unapproved = findUnapprovedEmployeeIdsForExport(employeeIds, closuresByEmployeeId);
       if (unapproved.length) {
         throw new AppError(
-          "El período debe estar aprobado antes de exportar para liquidación.",
+          "El período debe estar cerrado antes de exportar para liquidación.",
           409,
           "MONTHLY_CLOSURE_NOT_APPROVED",
         );

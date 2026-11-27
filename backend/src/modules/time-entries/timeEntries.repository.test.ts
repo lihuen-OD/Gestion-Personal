@@ -275,7 +275,7 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
   it("corregir las horas a mano (cualquier rol) fija source ADMIN: la fila pasa a ser horas reconocidas por una persona (EMPLOYEE_DAY_OFF.md §7.1)", async () => {
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
-    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8, correctionReason: "Trabajó en su franco" } as never);
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8 } as never);
 
     const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ hours: 8, source: "ADMIN" });
@@ -2397,30 +2397,29 @@ describe("summary — horas contables = total trabajado (base + horas adicionale
 
   // Etapa 14C.2: ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md — las
   // queries pasaron de `prisma.$transaction([...])` a `Promise.all([...])`.
-  it("usa Promise.all (no $transaction) — las 6 queries son independientes entre sí", async () => {
+  it("usa Promise.all (no $transaction) — las consultas son independientes entre sí", async () => {
     await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.employee.count).toHaveBeenCalledTimes(3);
-    expect(mockedPrisma.timeEntry.groupBy).toHaveBeenCalledTimes(1);
+    // Sin conteo de cargas EN_REVISION: el circuito de aprobación fue retirado.
+    expect(mockedPrisma.timeEntry.groupBy).not.toHaveBeenCalled();
     expect(mockedPrisma.timeEntry.aggregate).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.hourConceptBreakdown.aggregate).toHaveBeenCalledTimes(1);
   });
 
-  it("mantiene el mismo cálculo de activeEmployees/coverage/reviewEmployees/pendingEmployees", async () => {
+  it("mantiene el mismo cálculo de activeEmployees/coverage/pendingEmployees y ya no informa reviewEmployees", async () => {
     mockedPrisma.employee.count.mockReset();
     mockedPrisma.employee.count.mockResolvedValueOnce(10).mockResolvedValueOnce(4).mockResolvedValueOnce(6);
-    mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "e1" }, { employeeId: "e2" }]);
-
     const result = await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
 
     expect(result).toMatchObject({
       activeEmployees: 10,
       employeesWithEntries: 4,
       pendingEmployees: 6,
-      reviewEmployees: 2,
       coverage: 40,
     });
+    expect(result).not.toHaveProperty("reviewEmployees");
   });
 });
 
@@ -3327,9 +3326,9 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
 // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): las escrituras verifican el
 // cierre DENTRO de su transacción, después de tomar el lock compartido.
 describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
-  const protectedClosure = (period: string) => [{ employeeId: "employee-1", period, status: "APROBADO" }];
+  const protectedClosure = (period: string) => [{ employeeId: "employee-1", period, status: "CERRADO" }];
 
-  it("create toma el lock compartido y rechaza un período aprobado sin escribir", async () => {
+  it("create toma el lock compartido y rechaza un período CERRADO sin escribir", async () => {
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValueOnce(protectedClosure("2026-09"));
 
     await expect(timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z"), hours: 8 } as never, "user-1"))
@@ -3338,15 +3337,14 @@ describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
     expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
   });
 
-  it("update en período protegido sólo pasa como corrección explícita de RRHH con motivo", async () => {
+  it("update en período CERRADO se rechaza para todos, también RRHH", async () => {
     const before = { employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z") };
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue(protectedClosure("2026-09"));
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, null)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
     await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, "user-rrhh")).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
-    await timeEntriesRepository.update("entry-1", before, { hours: 7, correctionReason: "Error de carga" } as never, "user-rrhh");
-    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
   });
 });

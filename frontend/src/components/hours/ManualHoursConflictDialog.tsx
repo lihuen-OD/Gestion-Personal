@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
-import { ApiError, getUserErrorMessage } from "../../services/api/apiClient";
+import { getUserErrorMessage } from "../../services/api/apiClient";
 import { manualHoursConflictApiService, type ManualHoursConflict, type ManualHoursDecision } from "../../services/api/manualHoursConflictApiService";
 import { approvalStatusLabel } from "../../services/api/timeEntryApiService";
 import { formatCalendarDate, formatDateTime, formatInstantTime } from "../../utils/date";
@@ -33,8 +33,6 @@ export function manualHoursDecisionText(conflict: Pick<ManualHoursConflict, "dec
 export function ManualHoursConflictDialog({ conflict, close, onResolved }: { conflict: ManualHoursConflict; close: () => void; onResolved: (resolved: ManualHoursConflict) => void }) {
   const [current, setCurrent] = useState(conflict);
   const [pendingDecision, setPendingDecision] = useState<ManualHoursDecision | null>(null);
-  const [reasonRequired, setReasonRequired] = useState(false);
-  const [correctionReason, setCorrectionReason] = useState("");
   const [error, setError] = useState("");
   const pending = current.status === "PENDIENTE";
   const multipleDays = current.days.length > 1;
@@ -43,11 +41,10 @@ export function ManualHoursConflictDialog({ conflict, close, onResolved }: { con
     setError("");
     setPendingDecision(decision);
     try {
-      const resolved = await manualHoursConflictApiService.resolve(current.id, decision, reasonRequired ? correctionReason : undefined);
+      const resolved = await manualHoursConflictApiService.resolve(current.id, decision);
       setCurrent(resolved);
       onResolved(resolved);
     } catch (caught) {
-      if (caught instanceof ApiError && caught.code === "MANUAL_HOURS_CORRECTION_REASON_REQUIRED") setReasonRequired(true);
       setError(getUserErrorMessage(caught, "No pudimos guardar la decisión. Intentá nuevamente."));
     } finally {
       setPendingDecision(null);
@@ -55,10 +52,6 @@ export function ManualHoursConflictDialog({ conflict, close, onResolved }: { con
   });
 
   const resolve = (decision: ManualHoursDecision) => {
-    if (reasonRequired && correctionReason.trim().length < 2) {
-      setError("Indicá el motivo de la corrección.");
-      return;
-    }
     void run(decision);
   };
 
@@ -118,13 +111,6 @@ export function ManualHoursConflictDialog({ conflict, close, onResolved }: { con
             {current.resolvedAt ? ` el ${formatDateTime(current.resolvedAt)}.` : ""}
           </p>
         )}
-
-        {pending && reasonRequired ? (
-          <label className="field">
-            <span>Motivo de la corrección *</span>
-            <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} maxLength={600} rows={2} placeholder="Queda registrado en auditoría: el período ya fue enviado o aprobado." />
-          </label>
-        ) : null}
 
         {error ? <div className="rule-form-alert-error" role="alert"><AlertTriangle size={16} /><span>{error}</span></div> : null}
 

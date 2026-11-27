@@ -46,10 +46,10 @@ export const manualHoursConflictApiService = {
     return response.data;
   },
 
-  async resolve(id: string, decision: ManualHoursDecision, correctionReason?: string): Promise<ManualHoursConflict> {
+  async resolve(id: string, decision: ManualHoursDecision): Promise<ManualHoursConflict> {
     const response = await apiRequest<{ data: ManualHoursConflict }>(`/time-entries/manual-hours-conflicts/${encodeURIComponent(id)}/resolve`, {
       method: "POST",
-      body: { decision, ...(correctionReason?.trim() ? { correctionReason: correctionReason.trim() } : {}) },
+      body: { decision },
     });
     await Promise.all(RESOLUTION_DEPENDENT_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, "manual hours conflict resolved")));
     return response.data;

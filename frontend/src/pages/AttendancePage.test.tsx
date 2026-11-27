@@ -107,7 +107,6 @@ function buildGenericActiveType(): NoveltyType {
     status: "ACTIVO",
     rules: {
       exportsToFinnegans: false,
-      requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
       timeEntryBehavior: "NO_BLOQUEA",
@@ -118,7 +117,6 @@ function buildGenericActiveType(): NoveltyType {
     },
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
-    approvalRoles: [],
     finnegansCode: null,
     finnegansName: null,
     createdAt: "",

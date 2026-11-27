@@ -28,11 +28,11 @@ export type DashboardMetrics = {
   loadedHours: number;
   loadCoverage: number;
   pendingLoads: number;
-  reviewLoads: number;
+  pendingShiftAlerts: number;
   expiredDocuments: number;
   expiringDocuments: number;
   missingResponsible: number;
-  pendingNovelties: number;
+  noveltyReviewDays: number;
   headcountByCompany: DashboardMetricRow[];
   headcountByZone: DashboardMetricRow[];
 };

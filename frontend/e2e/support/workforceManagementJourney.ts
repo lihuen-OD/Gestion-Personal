@@ -339,7 +339,7 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     initialEndpoints: "GET /time-entries/period-employees, /time-entries/summary, /org-structure (grilla); GET /employees/:id/time-grid, /novelties?employeeId= (detalle)",
     frontendCache: "Sí — cachePolicies.timeEntriesAggregates 30s (period-employees/summary)",
     backendCache: "Sí — TTL 20s (period-employees, summary), 15s (list)",
-    writesData: "Sí (guardar hora, desglose manual, submit) — no ejecutado esta etapa",
+    writesData: "Sí (guardar hora, desglose manual) — no ejecutado esta etapa",
     safeToMeasure: "Sí",
     observation: "period-employees ya optimizado en 14C.2 (6447→4138ms) pero sigue en rango Crítico. Silent refresh ya implementado (Etapa 9F).",
   },
@@ -348,24 +348,12 @@ export const SUBMODULE_INVENTORY: SubmoduleInventoryRow[] = [
     route: "/cierres",
     page: "MonthlyClosuresPage.tsx",
     services: "workforceApiService.ts, employeeApiService.ts",
-    initialEndpoints: "GET /workforce/closures?period=..., /workforce/corrections, /employees/options",
+    initialEndpoints: "GET /workforce/closures?period=..., /employees/options",
     frontendCache: "No",
     backendCache: "No",
-    writesData: "Sí (aprobar/enviar/devolver cierre, aprobar/rechazar corrección) — no ejecutado esta etapa",
+    writesData: "Sí (cerrar / reabrir período) — no ejecutado esta etapa",
     safeToMeasure: "Sí",
-    observation: "closures sin paginación (trae todo el período); corrections con take:500 hardcodeado sin skip real — nunca medido por ningún journey previo (14B.3 no lo incluye).",
-  },
-  {
-    submodule: "F. Bandeja de revisión",
-    route: "/pendientes",
-    page: "HoursPage.tsx (prop pendingOnly)",
-    services: "timeEntryApiService.ts, pendingApiService.ts, noveltyApiService.ts, employeeApiService.ts, orgStructureApiService.ts",
-    initialEndpoints: "GET /time-entries?status=EN_REVISION&view=..., /time-entries/summary, /pending, /org-structure",
-    frontendCache: "Sí — cachePolicies.pendingQueue 30s (sólo /pending)",
-    backendCache: "No",
-    writesData: "Sí (aprobar/rechazar/devolver registro, novedad y desglose manual — 3 flujos distintos) — no ejecutado esta etapa",
-    safeToMeasure: "Sí, con cuidado: los botones Aprobar/Rechazar/Devolver comparten aria-label genérico entre registro/novedad/desglose — el journey nunca usa un locator de rol sin scope (ver hallazgo en el reporte).",
-    observation: "findManyByEmployeeGrouped (vista \"Por persona\") documentado 2 veces en 14C.2 como pendiente de optimizar ($transaction antipattern) — nunca corregido.",
+    observation: "closures sin paginación (trae todo el período) — nunca medido por ningún journey previo (14B.3 no lo incluye).",
   },
   {
     submodule: "G. Novedades",
@@ -442,7 +430,6 @@ export type CoverageMatrixRow = {
 export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "Login", submodule: "Login", action: "Login (acceso rápido RRHH)", route: "/", component: "LoginPage.tsx", expectedEndpoint: "POST /auth/login (vía loginAs)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Mismo mecanismo que 14D.1/14F.1 — acceso rápido demo Nivel 1, sin credenciales reales." },
 
-
   { zone: "B. Asistencia", submodule: "B. Asistencia", action: "Entrar a Asistencia (carga inicial del día)", route: "/asistencia", component: "AttendancePage.tsx", expectedEndpoint: "GET /time-entries/attendance?date=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "B. Asistencia", submodule: "B. Asistencia", action: "Cambiar fecha del día", route: "/asistencia", component: "AttendancePage.tsx (input date)", expectedEndpoint: "GET /time-entries/attendance?date=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "B. Asistencia", submodule: "B. Asistencia", action: "Buscar en problemas de fichada", route: "/asistencia", component: "AttendancePage.tsx (observedQuery)", expectedEndpoint: "GET /time-entries/attendance/observations?search=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Debounce 300ms — término tomado en runtime, nunca inventado ni logueado." },
@@ -474,28 +461,16 @@ export const COVERAGE_MATRIX: CoverageMatrixRow[] = [
   { zone: "D. Carga de horas", submodule: "D. Carga de horas", action: "Guardar hora / Guardar desglose manual / Enviar a revisión", route: "/horas/:id", component: "EmployeeHoursPage.tsx (botones Guardar*)", expectedEndpoint: "POST/PATCH /time-entries, PUT /employees/:id/hour-concept-breakdowns/manual", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — cargaría horas reales, posiblemente asociadas a liquidación.", risk: "Alto si se ejecutara", observation: "3 endpoints agrupados en una fila — comparten el mismo criterio de exclusión." },
   { zone: "D. Carga de horas", submodule: "D. Carga de horas", action: "Exportar horas", route: "/horas", component: "HoursPage.tsx (botón \"Exportar horas\")", expectedEndpoint: "GET /time-entries/export?period=... (sólo lectura)", type: "Lectura", measurable: "Sí", measured: "No", reasonIfNot: "El endpoint es GET, pero el click dispara una descarga de archivo con datos de horas — prohibido por defecto (Parte 4: \"no generar exportación sensible\"/\"no descarga por defecto\").", risk: "Medio (descarga de datos, no persiste nada)", observation: "Se documenta como candidato para una etapa futura detrás de un flag explícito, no implementado acá." },
 
-  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Entrar a Cierres mensuales (período actual)", route: "/cierres", component: "MonthlyClosuresPage.tsx", expectedEndpoint: "GET /workforce/closures?period=..., /workforce/corrections, /employees/options", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Nunca medido por ningún journey previo — closures no pagina (trae todo el período)." },
-  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Cambiar período", route: "/cierres", component: "MonthlyClosuresPage.tsx (input month)", expectedEndpoint: "GET /workforce/closures?period=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "corrections y employees/options no dependen del período elegido — se re-piden igual (over-fetch potencial, ver reporte)." },
-  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Aprobar seleccionados / Enviar cierre a RH / Devolver cierre", route: "/cierres", component: "MonthlyClosuresPage.tsx", expectedEndpoint: "POST /workforce/closures/approve | submit | :id/return", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — cierra/reabre un período real de liquidación.", risk: "Alto si se ejecutara", observation: "3 endpoints agrupados en una fila." },
-  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Aprobar/Rechazar corrección", route: "/cierres", component: "MonthlyClosuresPage.tsx", expectedEndpoint: "POST /workforce/corrections/:id/approve | reject", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
-
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Entrar a Bandeja de revisión (Por registro)", route: "/pendientes", component: "HoursPage.tsx (pendingOnly)", expectedEndpoint: "GET /time-entries?status=EN_REVISION&view=byEmployee, /time-entries/summary, /pending, /org-structure", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Cambiar a pestaña \"Por persona\"", route: "/pendientes", component: "HoursPage.tsx (Tabs)", expectedEndpoint: "GET /time-entries?view=byEmployee (findManyByEmployeeGrouped)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Vista con el $transaction antipattern documentado 2 veces en 14C.2, nunca corregido — candidato fuerte." },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Buscar en Bandeja de revisión", route: "/pendientes", component: "HoursPage.tsx (SearchInput)", expectedEndpoint: "GET /time-entries?search=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Cambiar período", route: "/pendientes", component: "HoursPage.tsx (input month)", expectedEndpoint: "GET /time-entries?period=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Abrir detalle (Ver detalle, Por persona)", route: "/pendientes → /horas/:id", component: "HoursPage.tsx (link \"Ver detalle\") → EmployeeHoursPage.tsx", expectedEndpoint: "GET /employees/:id/time-grid?period=...", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "El link \"Ver detalle\" sólo existe en la pestaña \"Por persona\" y sólo si hay al menos una fila.", risk: "Bajo", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Volver a Bandeja de revisión", route: "/horas/:id → /pendientes", component: "EmployeeHoursPage.tsx (back-link)", expectedEndpoint: "GET /time-entries?view=byEmployee (revisita)", type: "Lectura", measurable: "Sí", measured: "Parcial", reasonIfNot: "Depende de la acción anterior.", risk: "Bajo", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Aprobar/Rechazar/Devolver registro", route: "/pendientes", component: "HoursPage.tsx (aria-label=\"Aprobar\"/\"Rechazar\"/\"Devolver\")", expectedEndpoint: "POST /time-entries/:id/approve | reject | return", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "HALLAZGO: aria-label genérico compartido entre filas de registro/novedad/desglose — el journey nunca usa un locator de rol sin scope explícito para evitar clicks accidentales." },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Aprobar/Rechazar novedad (desde Bandeja)", route: "/pendientes", component: "HoursPage.tsx (aria-label=\"Aprobar novedad\"/\"Rechazar novedad\")", expectedEndpoint: "POST /novelties/:id/approve | reject", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
-  { zone: "F. Bandeja de revisión", submodule: "F. Bandeja de revisión", action: "Aprobar/Rechazar/Devolver desglose manual", route: "/pendientes", component: "HoursPage.tsx (aria-label=\"...desglose\")", expectedEndpoint: "POST /employees/:employeeId/hour-concept-breakdowns/manual/:id/approve | reject | return", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "—" },
+  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Entrar a Cierres mensuales (período actual)", route: "/cierres", component: "MonthlyClosuresPage.tsx", expectedEndpoint: "GET /workforce/closures?period=..., /employees/options", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Nunca medido por ningún journey previo — closures no pagina (trae todo el período)." },
+  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Cambiar período", route: "/cierres", component: "MonthlyClosuresPage.tsx (input month)", expectedEndpoint: "GET /workforce/closures?period=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "employees/options no depende del período elegido — se re-pide igual (over-fetch potencial, ver reporte)." },
+  { zone: "E. Cierres mensuales", submodule: "E. Cierres mensuales", action: "Cerrar período / Reabrir período", route: "/cierres", component: "MonthlyClosuresPage.tsx", expectedEndpoint: "POST /workforce/closures/close | :id/reopen", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — cierra/reabre un período real de liquidación.", risk: "Alto si se ejecutara", observation: "2 endpoints agrupados en una fila." },
 
   { zone: "G. Novedades", submodule: "G. Novedades", action: "Entrar a Novedades", route: "/novedades", component: "NoveltiesPage.tsx", expectedEndpoint: "GET /novelties?page=1&take=25", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "G. Novedades", submodule: "G. Novedades", action: "Buscar en Novedades", route: "/novedades", component: "NoveltiesPage.tsx (FilterPanel search)", expectedEndpoint: "GET /novelties?search=...", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Debounce por defecto (useDebouncedValue)." },
   { zone: "G. Novedades", submodule: "G. Novedades", action: "Abrir modal \"Nueva novedad\" sin guardar", route: "/novedades", component: "NoveltiesPage.tsx → NoveltyModal.tsx", expectedEndpoint: "GET /novelty-types, /hour-concepts (catálogos del modal)", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Catálogos se piden recién al abrir el modal (lazy)." },
   { zone: "G. Novedades", submodule: "G. Novedades", action: "Cancelar \"Nueva novedad\"", route: "/novedades", component: "NoveltyModal.tsx (Modal close)", expectedEndpoint: "—", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "Se cierra sin tocar ningún campo obligatorio ni el botón de guardar." },
   { zone: "G. Novedades", submodule: "G. Novedades", action: "Guardar nueva novedad", route: "/novedades", component: "NoveltyModal.tsx", expectedEndpoint: "POST /novelties", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto — crearía una novedad real (licencia/ausencia) para un empleado real.", risk: "Alto si se ejecutara", observation: "—" },
-  { zone: "G. Novedades", submodule: "G. Novedades", action: "Aprobar/Rechazar/Eliminar novedad", route: "/novedades", component: "NoveltyTable.tsx", expectedEndpoint: "POST /novelties/:id/approve | reject, DELETE /novelties/:id", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "3 endpoints agrupados en una fila." },
-  { zone: "G. Novedades", submodule: "G. Novedades", action: "Aprobar pendientes visibles (bulk)", route: "/novedades", component: "NoveltiesPage.tsx (botón bulk)", expectedEndpoint: "POST /novelties/bulk-approve", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "Backend hace N+1 secuencial (novelties.service.ts) — no medible sin ejecutarlo, documentado como candidato." },
+  { zone: "G. Novedades", submodule: "G. Novedades", action: "Corregir/Eliminar novedad", route: "/novedades", component: "NoveltyTable.tsx", expectedEndpoint: "PATCH /novelties/:id, DELETE /novelties/:id", type: "Escritura", measurable: "Sí", measured: "No", reasonIfNot: "Prohibido por defecto.", risk: "Alto si se ejecutara", observation: "3 endpoints agrupados en una fila." },
 
   { zone: "H. Notificaciones", submodule: "H. Notificaciones", action: "Entrar a Notificaciones (Todas)", route: "/notificaciones", component: "NotificationsPage.tsx", expectedEndpoint: "GET /workforce/notifications?page=1&take=20", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
   { zone: "H. Notificaciones", submodule: "H. Notificaciones", action: "Filtrar por \"No leídas\"", route: "/notificaciones", component: "NotificationsPage.tsx (select Estado)", expectedEndpoint: "GET /workforce/notifications?status=NO_LEIDA", type: "Lectura", measurable: "Sí", measured: "Sí", reasonIfNot: "—", risk: "Bajo", observation: "—" },
@@ -581,7 +556,7 @@ export function buildMarkdownReport(rawRun: WorkforceJourneyRun): string {
   lines.push("## 1. Resumen ejecutivo");
   lines.push("");
   lines.push(
-    `Recorrido macro de los 9 submódulos de Gestión horaria: ${summary.coveredActions}/${summary.totalActions} acciones cubiertas, ${summary.skippedActions} salteadas (${summary.writesSkipped} de ellas por ser de escritura, con motivo documentado cada una), ${summary.httpErrors} respuestas HTTP >= 400, ${summary.consoleErrors} errores de consola. ${summary.verySlowActions} acción(es) en rango Crítico (> ${run.slowThresholdMs}ms) y ${summary.slowActions} en rango Lento (${run.mediumThresholdMs}-${run.slowThresholdMs}ms). Cero escrituras ejecutadas — modo \`${run.mode}\` en todo el recorrido.`,
+    `Recorrido macro de los 8 submódulos de Gestión horaria: ${summary.coveredActions}/${summary.totalActions} acciones cubiertas, ${summary.skippedActions} salteadas (${summary.writesSkipped} de ellas por ser de escritura, con motivo documentado cada una), ${summary.httpErrors} respuestas HTTP >= 400, ${summary.consoleErrors} errores de consola. ${summary.verySlowActions} acción(es) en rango Crítico (> ${run.slowThresholdMs}ms) y ${summary.slowActions} en rango Lento (${run.mediumThresholdMs}-${run.slowThresholdMs}ms). Cero escrituras ejecutadas — modo \`${run.mode}\` en todo el recorrido.`,
   );
   lines.push("");
 
@@ -755,8 +730,8 @@ export function buildMarkdownReport(rawRun: WorkforceJourneyRun): string {
   lines.push("");
   lines.push("Contexto histórico relevante para esta priorización (no medido por este journey, ya documentado en etapas previas):");
   lines.push("- `GET /shifts/alerts` (Alertas de turnos) fue medido en 3906ms (Crítico) por el journey general 14B.3 y nunca se revisó desde entonces.");
-  lines.push("- `findManyByEmployeeGrouped` (Bandeja de revisión, vista \"Por persona\") usa el mismo antipatrón `$transaction` ya corregido en otros endpoints por 14C.2 — documentado 2 veces como pendiente, nunca corregido.");
-  lines.push("- `GET /workforce/closures` y `GET /workforce/corrections` (Cierres mensuales) nunca fueron medidos por ningún journey anterior a 14G.1.");
+  lines.push("- `findManyByEmployeeGrouped` (vista \"Por persona\" de `GET /time-entries`) usa el mismo antipatrón `$transaction` ya corregido en otros endpoints por 14C.2 — documentado 2 veces como pendiente, nunca corregido.");
+  lines.push("- `GET /workforce/closures` (Cierres mensuales) nunca fue medido por ningún journey anterior a 14G.1.");
   lines.push("- Fichador queda deliberadamente fuera de cualquier ranking de optimización — ver `docs/PERFORMANCE_STANDARDS.md` §10 (categoría crítica D, no optimizar sin etapa dedicada).");
   lines.push("");
 

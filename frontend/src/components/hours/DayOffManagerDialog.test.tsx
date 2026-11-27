@@ -28,7 +28,7 @@ const people = [
 function renderDialog(props: Partial<Parameters<typeof DayOffManagerDialog>[0]> = {}) {
   const onSaved = vi.fn();
   const close = vi.fn();
-  render(<DayOffManagerDialog initialDate="2026-11-05" canCorrectClosedPeriods={false} close={close} onSaved={onSaved} {...props} />);
+  render(<DayOffManagerDialog initialDate="2026-11-05" close={close} onSaved={onSaved} {...props} />);
   return { onSaved, close };
 }
 
@@ -64,7 +64,6 @@ describe("DayOffManagerDialog — Gestionar francos", () => {
 
     await waitFor(() => expect(employeeDayOffApiService.save).toHaveBeenCalledWith({
       date: "2026-11-05",
-      correctionReason: null,
       employees: [
         { employeeId: "e1", status: "ACTIVO", notes: "Pedido del encargado" },
         { employeeId: "e3", status: "ACTIVO", notes: "Pedido del encargado" },
@@ -83,27 +82,14 @@ describe("DayOffManagerDialog — Gestionar francos", () => {
     fireEvent.click(await checkboxOf("Pérez"));
     fireEvent.click(screen.getByRole("button", { name: "Cancelar franco (1)" }));
 
-    await waitFor(() => expect(employeeDayOffApiService.save).toHaveBeenCalledWith({ date: "2026-11-05", correctionReason: null, employees: [{ employeeId: "e2", status: "CANCELADO" }] }));
+    await waitFor(() => expect(employeeDayOffApiService.save).toHaveBeenCalledWith({ date: "2026-11-05", employees: [{ employeeId: "e2", status: "CANCELADO" }] }));
   });
 
-  it("convocado al feriado o período cerrado (sin ser RRHH): no se puede seleccionar", async () => {
+  it("convocado al feriado o período CERRADO (cualquier rol): no se puede seleccionar", async () => {
     renderDialog();
 
     expect(await checkboxOf("Sosa")).toBeDisabled();
     expect(await checkboxOf("Vera")).toBeDisabled();
-  });
-
-  it("RRHH con período cerrado: exige el motivo y lo envía", async () => {
-    renderDialog({ canCorrectClosedPeriods: true });
-
-    fireEvent.click(await checkboxOf("Vera"));
-    fireEvent.click(screen.getByRole("button", { name: "Asignar franco (1)" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Indicá el motivo de la corrección");
-    expect(employeeDayOffApiService.save).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByPlaceholderText(/Queda registrado en auditoría/), { target: { value: "Franco acordado y omitido" } });
-    fireEvent.click(screen.getByRole("button", { name: "Asignar franco (1)" }));
-    await waitFor(() => expect(employeeDayOffApiService.save).toHaveBeenCalledWith(expect.objectContaining({ correctionReason: "Franco acordado y omitido" })));
   });
 
   it("muestra el error del backend dentro del modal (p. ej. 409 por convocatoria) y no avisa a la grilla", async () => {

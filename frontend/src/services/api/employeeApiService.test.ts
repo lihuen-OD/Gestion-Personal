@@ -135,38 +135,23 @@ describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
   });
 });
 
-describe("employeeApiService — invalidación de cache 'time-entries'/'pending' tras mutar HourConceptBreakdown (Etapa 11A)", () => {
-  // Bug encontrado durante la auditoría 11A: estos 5 métodos no invalidaban
+describe("employeeApiService — invalidación de cache 'time-entries' tras mutar HourConceptBreakdown (Etapa 11A)", () => {
+  // Bug encontrado durante la auditoría 11A: estos métodos no invalidaban
   // ningún cache de frontend — la columna "Especiales" de la grilla de
-  // período (family "time-entries") y la Bandeja de revisión (family
-  // "pending") podían quedar hasta 30s desactualizadas tras guardar/aprobar/
-  // rechazar/devolver un desglose manual, o recalcular los automáticos.
-  it("saveManualHourConceptBreakdown invalida 'time-entries' y 'pending'", async () => {
+  // período (family "time-entries") podía quedar hasta 30s desactualizada
+  // tras guardar un desglose manual o recalcular los automáticos.
+  it("saveManualHourConceptBreakdown invalida 'time-entries' y 'dashboard'", async () => {
     const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
     vi.mocked(apiRequest).mockResolvedValue({ data: { id: "breakdown-1" } });
 
     await employeeApiService.saveManualHourConceptBreakdown("employee-1", { date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 120 });
 
     expect(spy).toHaveBeenCalledWith("time-entries", expect.any(String));
-    expect(spy).toHaveBeenCalledWith("pending", expect.any(String));
+    expect(spy).toHaveBeenCalledWith("dashboard", expect.any(String));
     spy.mockRestore();
   });
 
-  it("approve/reject/returnManualHourConceptBreakdown invalidan 'time-entries' y 'pending'", async () => {
-    const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "breakdown-1" } });
-
-    await employeeApiService.approveManualHourConceptBreakdown("employee-1", "breakdown-1");
-    await employeeApiService.rejectManualHourConceptBreakdown("employee-1", "breakdown-1", "motivo");
-    await employeeApiService.returnManualHourConceptBreakdown("employee-1", "breakdown-1", "motivo");
-
-    expect(spy).toHaveBeenCalledWith("time-entries", expect.any(String));
-    expect(spy).toHaveBeenCalledWith("pending", expect.any(String));
-    expect(spy.mock.calls.filter(([family]) => family === "time-entries")).toHaveLength(3);
-    spy.mockRestore();
-  });
-
-  it("recalculateAutomaticHourConceptBreakdowns invalida 'time-entries' (no cambia estado de revisión, no hace falta 'pending')", async () => {
+  it("recalculateAutomaticHourConceptBreakdowns invalida 'time-entries'", async () => {
     const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
     vi.mocked(apiRequest).mockResolvedValue({ data: { employeeId: "employee-1", period: "2026-08", processedShifts: 0, eligibleConcepts: 0, generated: 0, removed: 0 } });
 

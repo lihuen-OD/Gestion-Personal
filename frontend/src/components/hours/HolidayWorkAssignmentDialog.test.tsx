@@ -67,8 +67,8 @@ const onSaved = vi.fn();
 
 // El diálogo no depende del rol: Nivel 1, 2 y 3 convocan; el backend filtra
 // los candidatos y valida el alcance del guardado.
-function renderPage(canCorrectClosedPeriods = true) {
-  return render(<HolidayWorkAssignmentDialog initialMonth="2026-08" canCorrectClosedPeriods={canCorrectClosedPeriods} close={close} onSaved={onSaved} />);
+function renderPage() {
+  return render(<HolidayWorkAssignmentDialog initialMonth="2026-08" close={close} onSaved={onSaved} />);
 }
 
 beforeEach(() => {
@@ -110,9 +110,9 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     await waitFor(() => expect(holidayWorkAssignmentApiService.getCandidates).toHaveBeenCalledWith(expect.objectContaining({ date: "2026-08-27" })));
   });
 
-  async function openFirstDate(user: ReturnType<typeof userEvent.setup>, canCorrectClosedPeriods = true) {
+  async function openFirstDate(user: ReturnType<typeof userEvent.setup>) {
     vi.mocked(holidayWorkAssignmentApiService.getHolidayDates).mockResolvedValue([{ date: "2026-08-27", rules: [{ id: "rule-1", name: "Feriados" }] }]);
-    renderPage(canCorrectClosedPeriods);
+    renderPage();
     await user.click(await screen.findByRole("button", { name: /jue.*27 ago/i }));
     await screen.findByRole("heading", { name: /Convocatoria — / });
   }
@@ -357,7 +357,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     await user.click(checkbox);
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
 
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [{ employeeId: "employee-1", status: "CANCELADA" }], null));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [{ employeeId: "employee-1", status: "CANCELADA" }]));
   });
 
   it("19 — al guardar avisa a la grilla (onSaved); un legajo fuera del alcance muestra el error del servidor y no avisa", async () => {
@@ -377,41 +377,25 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     expect(onSaved).toHaveBeenCalledTimes(1);
   });
 
-  it("21 — período cerrado para Nivel 2/3: fila bloqueada con motivo (ni marcar ni desmarcar ni editar)", async () => {
+  it("21 — período CERRADO para cualquier rol: fila bloqueada con motivo (ni marcar ni desmarcar ni editar)", async () => {
     vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({ items: [candidate({ periodLocked: true }), candidate({ id: "employee-2", legajo: "200", firstName: "Ana", lastName: "Gómez" })], meta: { total: 2, page: 1, pageSize: 300, hasMore: false } });
     vi.mocked(holidayWorkAssignmentApiService.getAssignmentsByDate).mockResolvedValue({
       date: "2026-08-27",
       assignments: [{ id: "hwa-1", date: "2026-08-27", employeeId: "employee-1", status: "ACTIVA", shiftTemplateId: null, expectedStartTime: null, expectedEndTime: null, notes: "Guardia", createdAt: "", updatedAt: "", employee: { id: "employee-1", legajo: "100", firstName: "Juan", lastName: "Pérez", status: "ACTIVO" } }],
     });
     const user = userEvent.setup();
-    await openFirstDate(user, false);
+    await openFirstDate(user);
 
     const locked = await screen.findByLabelText(/Trabaja este feriado — Pérez, Juan/i) as HTMLInputElement;
     expect(locked).toBeDisabled();
     expect(locked.checked).toBe(true);
-    expect(locked).toHaveAttribute("title", expect.stringContaining("sólo RRHH puede corregirlo"));
+    expect(locked).toHaveAttribute("title", expect.stringContaining("reabrilo desde Cierres mensuales"));
     expect(screen.queryByLabelText(/Observación — Pérez, Juan/i)).not.toBeInTheDocument();
     expect(screen.getByText("Guardia")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Deseleccionar todos" }));
     expect(locked.checked).toBe(true);
     expect(screen.queryByLabelText(/Motivo de la corrección/i)).not.toBeInTheDocument();
-  });
-
-  it("22 — período cerrado para RRHH: pide el motivo y lo envía", async () => {
-    vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({ items: [candidate({ periodLocked: true })], meta: { total: 1, page: 1, pageSize: 300, hasMore: false } });
-    const user = userEvent.setup();
-    await openFirstDate(user, true);
-
-    await user.click(await screen.findByLabelText(/Trabaja este feriado — Pérez, Juan/i));
-    const reason = screen.getByLabelText(/Motivo de la corrección/i);
-    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Indicá el motivo de la corrección");
-    expect(holidayWorkAssignmentApiService.saveAssignments).not.toHaveBeenCalled();
-
-    await user.type(reason, "Pedido de planta");
-    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "employee-1", status: "ACTIVA" })], "Pedido de planta"));
   });
 
   // §20 (D9, defecto de Planta): nunca se autocompleta un turno; el turno del día es el real y,
@@ -437,7 +421,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     expect(select.value).toBe("");
     expect(within(select).getByRole("option", { name: "El turno del día" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "employee-1", shiftTemplateId: null })], null));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "employee-1", shiftTemplateId: null })]));
   });
 
   it("24 — conflicto de rotación sin plantilla: no guarda y pide el turno; al elegirlo, guarda con la plantilla", async () => {
@@ -458,7 +442,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
 
     await user.selectOptions(select, "template-manana");
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "template-manana" })], null));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "template-manana" })]));
   });
 
   it("24b — descanso de rotación sin plantilla: se convoca sin turno (sólo ausencia diaria)", async () => {
@@ -473,7 +457,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     expect(select).toHaveAttribute("aria-invalid", "false");
     expect(within(select).getByRole("option", { name: "Sin turno" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: null })], null));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: null })]));
   });
 
   it("25 — el aviso de conflicto de rotación devuelto por el servidor se muestra al guardar", async () => {
@@ -509,7 +493,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["Sin turno", "GUARDIA · Guardia de feriado", "PL-07-17 07:00–17:00"]);
     await user.selectOptions(select, "pl-m");
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
-    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", expect.arrayContaining([expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "pl-m" })]), null));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", expect.arrayContaining([expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "pl-m" })])));
   });
 
   it("20 — cerrar el diálogo llama a close", async () => {

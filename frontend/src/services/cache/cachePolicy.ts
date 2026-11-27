@@ -10,7 +10,6 @@ export type CacheFamily =
   | "employees"
   | "time-entries"
   | "novelties"
-  | "pending"
   | "work-regimes"
   | "audit"
   | "notifications"
@@ -20,15 +19,13 @@ export type CacheFamily =
 
 // Familias que muestran contabilidad de horas (total trabajado, equivalencia
 // para liquidación, cierres): Legajo y grilla por legajo ("employees"), Carga
-// de horas y Por persona ("time-entries"), Bandeja ("pending"), dashboard y
-// cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
+// de horas y Por persona ("time-entries"), dashboard y cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
 // concepto horario, una regla de Hora Especial o la convocatoria de un
 // feriado (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12, §15 y §16). Mismo alcance que
 // backend/src/modules/time-entries/workedTimeReadCaches.ts.
 export const WORKED_TIME_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [
   "employees",
   "time-entries",
-  "pending",
   "dashboard",
   "monthly-closures",
 ];
@@ -181,13 +178,6 @@ export const cachePolicies = {
   },
   timeEntriesAggregates: {
     family: "time-entries",
-    ttlMs: 30_000,
-    persist: false,
-    sensitive: true,
-    schemaVersion: CACHE_SCHEMA_VERSION,
-  },
-  pendingQueue: {
-    family: "pending",
     ttlMs: 30_000,
     persist: false,
     sensitive: true,

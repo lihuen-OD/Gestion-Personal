@@ -46,10 +46,8 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     finnegansName: null,
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
-    approvalRoles: [],
     rules: {
       exportsToFinnegans: false,
-      requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
       timeEntryBehavior: "NO_BLOQUEA",
@@ -169,7 +167,6 @@ describe("NoveltyTypeDetailPage — color", () => {
 // Etapa 7 (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §14).
 describe("NoveltyTypeDetailPage — Etapa 7 (cobertura)", () => {
   const vacations = () => buildNoveltyType({
-    rules: { ...buildNoveltyType().rules, requiresApproval: true },
     coverage: { ...buildNoveltyType().coverage, mode: "EXPECTED_SCHEDULE", dayRule: "WORK_OBLIGATION", appliesSpecialHours: true, countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" },
   });
 
@@ -181,7 +178,7 @@ describe("NoveltyTypeDetailPage — Etapa 7 (cobertura)", () => {
     expect(screen.getByRole("radio", { name: /Según la jornada que debía cumplir/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /No puede coexistir/ })).toBeChecked();
     expect(screen.getByText("Cubre las horas que la persona debía trabajar cada día.")).toBeInTheDocument();
-    expect(screen.getByText("Requiere aprobación antes de sumar horas.")).toBeInTheDocument();
+    expect(screen.queryByText(/Requiere aprobación/)).not.toBeInTheDocument();
     expect(screen.queryByText(/puede recalcular novedades/)).not.toBeInTheDocument();
   });
 
@@ -208,9 +205,9 @@ describe("NoveltyTypeDetailPage — Etapa 7 (round-trip y cambios inocuos)", () 
   const apiRow: ApiNoveltyType = {
     id: "nt-1", code: "NOV-002", name: "Maternidad", uiColor: "pink", kind: "LICENCIA", status: "ACTIVO",
     description: "Licencia por maternidad", notes: "Nota interna",
-    exportsToFinnegans: true, requiresApproval: true, requiresDocumentation: true, allowsHours: false,
+    exportsToFinnegans: true, requiresDocumentation: true, allowsHours: false,
     timeEntryBehavior: "BLOQUEA_NUEVA_CARGA", allowsDateRange: true, finnegansValueUnit: "DAYS", finnegansRequiresValidity: true,
-    finnegansCode: "MAT", finnegansName: "Maternidad", allowedLoadRoles: ["Nivel 1 - RRHH"], approvalRoles: ["Nivel 1 - RRHH"],
+    finnegansCode: "MAT", finnegansName: "Maternidad", allowedLoadRoles: ["Nivel 1 - RRHH"],
     coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "SELECTED_WEEKDAYS", coverageWeekdays: [1, 2, 3, 4, 5],
     coverageOnDayOff: "COVER", coverageOnHoliday: "ONLY_IF_CONVOKED", coverageAppliesSpecialHours: false, coverageCountsTowardTotal: true,
     realWorkCompatibility: "INCOMPATIBLE", requiresObservation: true, createdAt: "", updatedAt: "",

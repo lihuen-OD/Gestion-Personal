@@ -43,54 +43,6 @@ describe("workforceApiService.createDoubleHourRule", () => {
   });
 });
 
-// Etapa 9G: aprobar una corrección post-cierre reescribe TimeEntry.hours en
-// el backend (workforce.service.ts:approveCorrection), que afecta la
-// métrica "Horas cargadas" del dashboard. El backend ya invalida su propio
-// cache (auditService.register limpia dashboardMetricsCache siempre), pero
-// el cache del lado del frontend (dashboardMetricsApiService, TTL propio de
-// 30s) es una capa aparte — nada la invalidaba antes de este fix.
-describe("workforceApiService.reviewCorrection — invalidación de dashboard (Etapa 9G)", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("al aprobar, invalida el cache de dashboard del lado del frontend", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "APROBADA" } });
-
-    await workforceApiService.reviewCorrection("correction-1", "approve");
-
-    expect(invalidateCacheFamily).toHaveBeenCalledWith("dashboard", expect.any(String));
-  });
-
-  it("al rechazar, NO invalida el cache de dashboard — rejectCorrection no toca TimeEntry", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "RECHAZADA" } });
-
-    await workforceApiService.reviewCorrection("correction-1", "reject");
-
-    expect(invalidateCacheFamily).not.toHaveBeenCalledWith("dashboard", expect.any(String));
-  });
-
-  // Etapa 14G.8: ambas ramas invalidan "monthly-closures" -- rechazar también
-  // afecta la lista de correcciones (TimeCorrectionRequest.status cambia),
-  // aunque no toque TimeEntry/dashboard.
-  it("aprobar y rechazar invalidan la familia 'monthly-closures' (lista de correcciones/cierres)", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "APROBADA" } });
-    await workforceApiService.reviewCorrection("correction-1", "approve");
-    expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
-
-    vi.mocked(invalidateCacheFamily).mockClear();
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "RECHAZADA" } });
-    await workforceApiService.reviewCorrection("correction-1", "reject");
-    expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
-  });
-
-  it("sigue devolviendo el registro de la corrección (sin cambiar el contrato)", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "correction-1", status: "APROBADA" } });
-
-    const result = await workforceApiService.reviewCorrection("correction-1", "approve");
-
-    expect(result).toEqual({ id: "correction-1", status: "APROBADA" });
-  });
-});
-
 // Etapa 14F.2: antes de esta etapa, unreadNotificationCount() llamaba
 // apiRequest directo sin ningún dedupe/cache frontend — en StrictMode
 // (AppShell monta el effect dos veces) esto generaba 2 requests idénticos
@@ -268,7 +220,7 @@ describe("workforceApiService.readNotification — invalidación del badge (Etap
 // idénticos por mount, confirmado en el journey de 14G.6/14G.7 ("Entrar a
 // Cierres mensuales": GET /workforce/closures x2, GET /workforce/corrections
 // x2). Mismo patrón exacto que unreadNotificationCount/notifications.
-describe("workforceApiService.closures/corrections — dedupe/cache frontend (Etapa 14G.8)", () => {
+describe("workforceApiService.closures — dedupe/cache frontend", () => {
   beforeEach(async () => {
     vi.mocked(apiRequest).mockReset();
     vi.mocked(invalidateCacheFamily).mockClear();
@@ -310,41 +262,9 @@ describe("workforceApiService.closures/corrections — dedupe/cache frontend (Et
     expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 
-  it("corrections: dos llamadas concurrentes generan un solo request real (dedupe in-flight)", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "correction-1" }] });
-
-    const [a, b] = await Promise.all([workforceApiService.corrections("2026-08", "PENDIENTE"), workforceApiService.corrections("2026-08", "PENDIENTE")]);
-
-    expect(a).toEqual([{ id: "correction-1" }]);
-    expect(b).toEqual([{ id: "correction-1" }]);
-    expect(apiRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it("corrections: una segunda llamada dentro del TTL usa cache, no repite el request", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "correction-1" }] });
-
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-
-    expect(apiRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it("corrections: pide período y estado al backend (sin filtrar en el cliente); otro período es otro request", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "correction-1" }] });
-
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-    await workforceApiService.corrections("2026-07", "PENDIENTE");
-
-    const urls = vi.mocked(apiRequest).mock.calls.map((call) => String(call[0]));
-    expect(urls).toEqual(["/workforce/corrections?period=2026-08&status=PENDIENTE", "/workforce/corrections?period=2026-07&status=PENDIENTE"]);
-  });
-
   it.each([
-    ["submitClosures", () => workforceApiService.submitClosures("2026-08", ["emp-1"])],
-    ["approveClosures", () => workforceApiService.approveClosures(["closure-1"])],
-    ["returnClosure", () => workforceApiService.returnClosure("closure-1", "falta revisar")],
-    ["createCorrection", () => workforceApiService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" })],
+    ["closeClosures", () => workforceApiService.closeClosures("2026-08", ["emp-1"])],
+    ["reopenClosure", () => workforceApiService.reopenClosure("closure-1", "falta revisar")],
   ])("%s invalida la familia 'monthly-closures'", async (_name, mutate) => {
     vi.mocked(apiRequest).mockResolvedValue({ data: [] });
 
@@ -353,19 +273,16 @@ describe("workforceApiService.closures/corrections — dedupe/cache frontend (Et
     expect(invalidateCacheFamily).toHaveBeenCalledWith("monthly-closures", expect.any(String));
   });
 
-  it("después de invalidar 'monthly-closures' (p. ej. tras aprobar un cierre), closures/corrections vuelven a pedirse", async () => {
-    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "ENVIADO" }] });
+  it("después de invalidar 'monthly-closures', closures vuelve a pedirse", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "CERRADO" }] });
     await workforceApiService.closures("2026-08");
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-    expect(apiRequest).toHaveBeenCalledTimes(2);
+    expect(apiRequest).toHaveBeenCalledTimes(1);
 
     await invalidateCacheFamily("monthly-closures", "unit test");
 
-    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "APROBADO" }] });
+    vi.mocked(apiRequest).mockResolvedValue({ data: [{ id: "closure-1", status: "CERRADO" }] });
     await workforceApiService.closures("2026-08");
-    await workforceApiService.corrections("2026-08", "PENDIENTE");
-
-    expect(apiRequest).toHaveBeenCalledTimes(4);
+    expect(apiRequest).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -480,14 +397,14 @@ describe("workforceApiService.shiftTemplates/doubleHourRules/doubleHourRulesCale
 describe("workforceApiService — reglas de Hora Especial invalidan las pantallas de horas", () => {
   beforeEach(() => vi.clearAllMocks());
   // Etapa 5: también Novedades (la regla reinterpreta su cobertura).
-  const expectedFamilies = ["workforce-config", "employees", "time-entries", "pending", "dashboard", "monthly-closures", "novelties"];
+  const expectedFamilies = ["workforce-config", "employees", "time-entries", "dashboard", "monthly-closures", "novelties"];
   const invalidatedFamilies = () => vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
 
   it.each([
     ["crear", () => workforceApiService.createDoubleHourRule({ name: "Feriado" } as DoubleHourRuleInput)],
     ["editar", () => workforceApiService.updateDoubleHourRule("rule-1", { multiplier: 2 })],
     ["quitar", () => workforceApiService.removeDoubleHourRule("rule-1")],
-  ])("al %s una regla invalida configuración, legajo, Carga de horas, Bandeja, dashboard y cierres", async (_label, run) => {
+  ])("al %s una regla invalida configuración, legajo, Carga de horas, dashboard y cierres", async (_label, run) => {
     vi.mocked(apiRequest).mockResolvedValue({ data: { id: "rule-1" } });
 
     await run();

@@ -7,19 +7,16 @@ import { validateQuery } from "../../shared/validation/validateQuery";
 import { roles } from "../../shared/security/roles";
 import { deletionConfirmationSchema } from "../../shared/deletion/deletionPlan";
 import { workforceController as c } from "./workforce.controller";
-import { calendarRangeQuerySchema, closureBulkSchema, closureSubmitSchema, correctionCreateSchema, correctionReviewSchema, correctionsQuerySchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, replaceShiftTemplateSchedulePreviewSchema, replaceShiftTemplateScheduleSchema, returnClosureSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
+import { calendarRangeQuerySchema, closureSubmitSchema, doubleRuleSchema, listNotificationsQuerySchema, periodQuerySchema, reopenClosureSchema, replaceShiftTemplateSchedulePreviewSchema, replaceShiftTemplateScheduleSchema, shiftTemplateSchema, updateDoubleRuleSchema, updateShiftTemplateSchema } from "./workforce.schemas";
 
 export const workforceRouter=Router();
 workforceRouter.use(requireAuth);
 const all=[roles.rrhh,roles.supervision,roles.cargaHoraria];
 workforceRouter.get("/closures",requireAnyRole(all),validateQuery(periodQuerySchema),asyncHandler(c.closures));
-workforceRouter.post("/closures/submit",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(closureSubmitSchema),asyncHandler(c.submit));
-workforceRouter.post("/closures/approve",requireAnyRole([roles.rrhh]),validateBody(closureBulkSchema),asyncHandler(c.approve));
-workforceRouter.post("/closures/:id/return",requireAnyRole([roles.rrhh]),validateBody(returnClosureSchema),asyncHandler(c.returnClosure));
-workforceRouter.get("/corrections",requireAnyRole(all),validateQuery(correctionsQuerySchema),asyncHandler(c.corrections));
-workforceRouter.post("/corrections",requireAnyRole([roles.supervision,roles.cargaHoraria]),validateBody(correctionCreateSchema),asyncHandler(c.createCorrection));
-workforceRouter.post("/corrections/:id/approve",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.approveCorrection));
-workforceRouter.post("/corrections/:id/reject",requireAnyRole([roles.rrhh]),validateBody(correctionReviewSchema),asyncHandler(c.rejectCorrection));
+// Vista previa estructurada de bloqueantes (sin cache: refleja cada resolución al instante).
+workforceRouter.get("/closures/blockers",requireAnyRole(all),validateQuery(periodQuerySchema),asyncHandler(c.closureBlockers));
+workforceRouter.post("/closures/close",requireAnyRole(all),validateBody(closureSubmitSchema),asyncHandler(c.close));
+workforceRouter.post("/closures/:id/reopen",requireAnyRole(all),validateBody(reopenClosureSchema),asyncHandler(c.reopen));
 workforceRouter.get("/notifications",requireAnyRole(all),validateQuery(listNotificationsQuerySchema),asyncHandler(c.notifications));
 workforceRouter.post("/notifications/:id/read",requireAnyRole(all),asyncHandler(c.readNotification));
 workforceRouter.get("/notifications-unread-count",requireAnyRole(all),asyncHandler(c.unreadNotificationCount));

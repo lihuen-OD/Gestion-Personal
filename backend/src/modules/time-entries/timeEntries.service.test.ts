@@ -267,11 +267,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Etapa 15E.2: default seguro para todos los tests de exportByPerson que
   // no ejercitan específicamente el gate de cierre — cualquier employeeId
-  // consultado resuelve como si tuviera un cierre APROBADO para el período,
+  // consultado resuelve como si tuviera un cierre CERRADO para el período,
   // así los tests existentes (previos a 15E.2) no necesitan mockear esto
   // uno por uno. Los tests que sí prueban el bloqueo lo sobreescriben.
   repo.findClosuresForExport.mockImplementation(async (employeeIds: string[]) =>
-    employeeIds.map((employeeId) => ({ employeeId, status: "APROBADO" })),
+    employeeIds.map((employeeId) => ({ employeeId, status: "CERRADO" })),
   );
   repo.findBreakdownsForExport.mockResolvedValue([]);
   repo.findEmployeesForExport.mockResolvedValue([]);
@@ -449,16 +449,16 @@ describe("create — flujo de aprobación por rol (Etapa 6L.3)", () => {
     expect(repo.create).toHaveBeenCalledWith(createInput, rrhhUser.id, rrhhUser.id);
   });
 
-  it("Nivel 2 crea Hora normal y queda pendiente/en revisión: no se pasa autoApprovedByUserId", async () => {
+  it("Nivel 2 crea Hora normal efectiva al guardar (sin revisión posterior)", async () => {
     await timeEntriesService.create(createInput, nivel2User);
 
-    expect(repo.create).toHaveBeenCalledWith(createInput, nivel2User.id, null);
+    expect(repo.create).toHaveBeenCalledWith(createInput, nivel2User.id, nivel2User.id);
   });
 
-  it("Nivel 3 crea Hora normal y queda pendiente/en revisión: no se pasa autoApprovedByUserId", async () => {
+  it("Nivel 3 crea Hora normal efectiva al guardar (sin revisión posterior)", async () => {
     await timeEntriesService.create(createInput, nivel3User);
 
-    expect(repo.create).toHaveBeenCalledWith(createInput, nivel3User.id, null);
+    expect(repo.create).toHaveBeenCalledWith(createInput, nivel3User.id, nivel3User.id);
   });
 });
 
@@ -487,7 +487,7 @@ describe("create — bloqueo por MonthlyTimeClosure (Etapa 15E)", () => {
     repo.create.mockResolvedValue(createdEntry);
   });
 
-  it.each(["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"] as const)(
+  it.each(["CERRADO"] as const)(
     "bloquea crear una hora nueva cuando el cierre está %s, incluso para RRHH",
     async (status) => {
       mockedMonthlyClosureFindUnique.mockResolvedValue({ status });
@@ -501,7 +501,7 @@ describe("create — bloqueo por MonthlyTimeClosure (Etapa 15E)", () => {
   );
 
   it("bloquea a Supervisión (Nivel 2) igual que a RRHH", async () => {
-    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "CERRADO" });
 
     await expect(timeEntriesService.create(createInput, nivel2User)).rejects.toMatchObject({
       code: "MONTHLY_CLOSURE_LOCKED",
@@ -510,7 +510,7 @@ describe("create — bloqueo por MonthlyTimeClosure (Etapa 15E)", () => {
   });
 
   it("bloquea a Nivel 3 igual que a RRHH", async () => {
-    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "CERRADO" });
 
     await expect(timeEntriesService.create(createInput, nivel3User)).rejects.toMatchObject({
       code: "MONTHLY_CLOSURE_LOCKED",
@@ -518,7 +518,7 @@ describe("create — bloqueo por MonthlyTimeClosure (Etapa 15E)", () => {
     expect(repo.create).not.toHaveBeenCalled();
   });
 
-  it.each(["ABIERTO", "DEVUELTO"] as const)("permite crear cuando el cierre está %s", async (status) => {
+  it.each(["ABIERTO"] as const)("permite crear cuando el cierre está %s (incluido reabierto)", async (status) => {
     mockedMonthlyClosureFindUnique.mockResolvedValue({ status });
 
     await expect(timeEntriesService.create(createInput, rrhhUser)).resolves.toBe(createdEntry);
@@ -572,17 +572,18 @@ describe("update — flujo de aprobación por rol (Etapa 6L.3)", () => {
     expect(repo.update).toHaveBeenCalledWith("entry-1", existingEntry, { hours: 6 }, rrhhUser.id);
   });
 
-  it("Nivel 3 actualiza Hora normal y el status queda intacto (sin autoaprobación)", async () => {
+  it("Nivel 3 actualiza Hora normal y queda efectiva al guardar", async () => {
     await timeEntriesService.update("entry-1", { hours: 6 }, nivel3User);
 
-    expect(repo.update).toHaveBeenCalledWith("entry-1", existingEntry, { hours: 6 }, null);
+    expect(repo.update).toHaveBeenCalledWith("entry-1", existingEntry, { hours: 6 }, nivel3User.id);
   });
 
-  it("un período cerrado sigue bloqueando la edición de Nivel 2/3 aunque RRHH edite libre (no se rompe el bloqueo de cierre)", async () => {
-    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "APROBADO" });
+  it.each([["Nivel 3", () => nivel3User], ["RRHH", () => rrhhUser]] as const)("un período CERRADO bloquea la edición de %s hasta reabrirlo", async (_label, user) => {
+    mockedMonthlyClosureFindUnique.mockResolvedValue({ status: "CERRADO" });
 
-    await expect(timeEntriesService.update("entry-1", { hours: 6 }, nivel3User)).rejects.toMatchObject({
-      code: "PERIOD_CLOSED_REQUIRES_CORRECTION",
+    await expect(timeEntriesService.update("entry-1", { hours: 6 }, user())).rejects.toMatchObject({
+      statusCode: 409,
+      code: "PERIOD_CLOSED",
     });
     expect(repo.update).not.toHaveBeenCalled();
   });
@@ -678,75 +679,6 @@ describe("create/update — orden de prioridad de errores se mantiene igual al p
   });
 });
 
-describe("approve/reject/return — la aprobación final es exclusiva de RRHH (Etapa 6L.3, ajuste)", () => {
-  const rrhhUser = { id: "user-rrhh", role: "NIVEL_1_RRHH" } as Express.AuthUser;
-  const supervisionUser = { id: "user-sup", role: "NIVEL_2_SUPERVISION" } as Express.AuthUser;
-  const nivel3User = { id: "user-n3", role: "NIVEL_3_CARGA_HORARIA" } as Express.AuthUser;
-  const ownEntryInReview = { id: "entry-1", status: "EN_REVISION", createdByUserId: "user-sup", employee: { legajo: "100" } };
-  const nivel2EntryInReview = { id: "entry-2", status: "EN_REVISION", createdByUserId: "user-sup", employee: { legajo: "101" } };
-  const nivel3EntryInReview = { id: "entry-3", status: "EN_REVISION", createdByUserId: "user-n3", employee: { legajo: "102" } };
-
-  it("RRHH aprueba una carga de Nivel 2", async () => {
-    repo.findById.mockResolvedValue(nivel2EntryInReview);
-    repo.approve.mockResolvedValue({ id: "entry-2", status: "APROBADO", employee: { legajo: "101" } });
-
-    await expect(timeEntriesService.approve("entry-2", rrhhUser)).resolves.toMatchObject({ status: "APROBADO" });
-    expect(repo.approve).toHaveBeenCalledWith("entry-2", rrhhUser.id);
-  });
-
-  it("RRHH aprueba una carga de Nivel 3", async () => {
-    repo.findById.mockResolvedValue(nivel3EntryInReview);
-    repo.approve.mockResolvedValue({ id: "entry-3", status: "APROBADO", employee: { legajo: "102" } });
-
-    await expect(timeEntriesService.approve("entry-3", rrhhUser)).resolves.toMatchObject({ status: "APROBADO" });
-    expect(repo.approve).toHaveBeenCalledWith("entry-3", rrhhUser.id);
-  });
-
-  it("Nivel 2 no puede aprobar una carga propia", async () => {
-    repo.findById.mockResolvedValue(ownEntryInReview);
-
-    await expect(timeEntriesService.approve("entry-1", supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
-    expect(repo.approve).not.toHaveBeenCalled();
-  });
-
-  it("Nivel 2 no puede aprobar una carga ajena (ni siquiera de Nivel 3): el rol se valida antes de buscar la carga", async () => {
-    repo.findById.mockResolvedValue(nivel3EntryInReview);
-
-    await expect(timeEntriesService.approve("entry-3", supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
-    expect(repo.approve).not.toHaveBeenCalled();
-    expect(repo.findById).not.toHaveBeenCalled();
-  });
-
-  it("Nivel 3 no puede aprobar ninguna carga (ni propia ni ajena)", async () => {
-    repo.findById.mockResolvedValue(nivel2EntryInReview);
-
-    await expect(timeEntriesService.approve("entry-2", nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
-    expect(repo.approve).not.toHaveBeenCalled();
-  });
-
-  it("RRHH sigue pudiendo rechazar una carga de Nivel 2/3", async () => {
-    repo.findById.mockResolvedValue(nivel2EntryInReview);
-    repo.reject.mockResolvedValue({ id: "entry-2", status: "RECHAZADO", employee: { legajo: "101" } });
-
-    await expect(timeEntriesService.reject("entry-2", { reason: "Datos incorrectos" }, rrhhUser)).resolves.toMatchObject({ status: "RECHAZADO" });
-  });
-
-  it("RRHH sigue pudiendo devolver una carga de Nivel 2/3", async () => {
-    repo.findById.mockResolvedValue(nivel2EntryInReview);
-    repo.returnForCorrection.mockResolvedValue({ id: "entry-2", status: "DEVUELTO", employee: { legajo: "101" } });
-
-    await expect(timeEntriesService.returnForCorrection("entry-2", { reason: "Falta observación" }, rrhhUser)).resolves.toMatchObject({ status: "DEVUELTO" });
-  });
-
-  it("Nivel 2 no puede rechazar ni devolver cargas ajenas", async () => {
-    repo.findById.mockResolvedValue(nivel3EntryInReview);
-
-    await expect(timeEntriesService.reject("entry-3", { reason: "x" }, supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(timeEntriesService.returnForCorrection("entry-3", { reason: "x" }, supervisionUser)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(repo.reject).not.toHaveBeenCalled();
-    expect(repo.returnForCorrection).not.toHaveBeenCalled();
-  });
-});
 
 // F0 del fichador standalone (docs/decisions/FICHADOR_STANDALONE_PWA_PLAN.md):
 // se retiraron los caminos legacy sin foto (clockInByEmployee/clockOutByEmployee
@@ -2769,14 +2701,14 @@ describe("exportByPerson — contabilidad de tiempo trabajado", () => {
   /**
    * Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
    * exportación DEFINITIVA (includeInReview=false, el default) exige que
-   * MonthlyTimeClosure esté APROBADO para cada empleado incluido (también
+   * MonthlyTimeClosure esté CERRADO para cada empleado incluido (también
    * quienes sólo tienen conceptos). Sin cierre, o con cualquier otro estado,
    * se bloquea el export completo antes de construir filas — nunca parcial.
    */
   describe("gate de cierre mensual aprobado para exportación definitiva (Etapa 15E.2)", () => {
-    it("cierre APROBADO: permite la exportación y la marca como definitiva", async () => {
+    it("cierre CERRADO: permite la exportación y la marca como definitiva", async () => {
       repo.findForExport.mockResolvedValue([exportEntry()]);
-      repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "APROBADO" }]);
+      repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status: "CERRADO" }]);
 
       const result = await timeEntriesService.exportByPerson({ period: "2026-08", includeInReview: false }, rrhhUser);
 
@@ -2795,8 +2727,8 @@ describe("exportByPerson — contabilidad de tiempo trabajado", () => {
       expect(repo.findEmployeesForExport).not.toHaveBeenCalled();
     });
 
-    it.each(["ABIERTO", "ENVIADO", "DEVUELTO", "CORRECCION_PENDIENTE"] as const)(
-      "cierre en estado %s (no APROBADO): bloquea sin generar el archivo",
+    it.each(["ABIERTO"] as const)(
+      "cierre en estado %s (no CERRADO): bloquea sin generar el archivo",
       async (status) => {
         repo.findForExport.mockResolvedValue([exportEntry()]);
         repo.findClosuresForExport.mockResolvedValue([{ employeeId: "employee-1", status }]);
@@ -2811,8 +2743,8 @@ describe("exportByPerson — contabilidad de tiempo trabajado", () => {
       repo.findForExport.mockResolvedValue([exportEntry({ employeeId: "employee-1" })]);
       repo.findBreakdownsForExport.mockResolvedValue([exportBreakdown(colectivo, 3, 60, 1, "employee-2")]);
       repo.findClosuresForExport.mockResolvedValue([
-        { employeeId: "employee-1", status: "APROBADO" },
-        { employeeId: "employee-2", status: "ENVIADO" },
+        { employeeId: "employee-1", status: "CERRADO" },
+        { employeeId: "employee-2", status: "ABIERTO" },
       ]);
 
       await expect(

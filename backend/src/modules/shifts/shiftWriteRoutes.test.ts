@@ -51,6 +51,8 @@ const OPEN_TO_N2_N3 = new Set([
   "POST /shift-templates/:id/replace-schedule",
   // Alcance por legajo (employeeAccessWhere), nunca por grupo de turnos.
   "PUT /holiday-work/assignments",
+  // Incidencias operativas: N1/N2/N3 las resuelven sobre su alcance por legajo.
+  "POST /alerts/:id/resolve",
 ]);
 
 const RRHH_ONLY = ["POST /groups", "PATCH /groups/:id", "DELETE /groups/:id"];
@@ -71,7 +73,7 @@ describe("R8.3 — inventario de rutas de escritura de turnos", () => {
     expect(all.filter(isOpen).map(key).sort()).toEqual([...OPEN_TO_N2_N3].sort());
   });
 
-  it("toda otra ruta de escritura sigue siendo sólo de RRHH (grupos, alertas)", () => {
+  it("toda otra ruta de escritura sigue siendo sólo de RRHH (grupos)", () => {
     for (const route of all.filter((candidate) => !isOpen(candidate))) {
       expect(route.guard, key(route)).toMatch(/^requireAnyRole\(\[roles\.rrhh(,roles\.supervision)?\]\)$/);
     }

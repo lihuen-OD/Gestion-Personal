@@ -5,18 +5,17 @@ import { isMonthlyClosureLocked } from "./closureLock";
 
 /**
  * D-5 (docs/decisions/ORG_LOCATION_REORGANIZATION.md §18.1): los períodos
- * enviados y aprobados (`ENVIADO`, `APROBADO` y `CORRECCION_PENDIENTE`, ver
- * closureLock.ts) quedan protegidos: ninguna operación automática puede
- * reabrirlos, reconstruirlos ni modificar sus horas, desgloses, tramos o
- * snapshot. Sólo un procedimiento explícito y auditado (corrección de RRHH con
- * motivo, aprobación de una solicitud de corrección) puede tocarlos.
+ * `CERRADO` (ver closureLock.ts) quedan protegidos: ninguna operación,
+ * automática o manual, puede reconstruirlos ni modificar sus horas,
+ * desgloses, tramos o snapshot. Para cambiarlos hay que reabrirlos con motivo
+ * auditado (`POST /closures/:id/reopen`).
  *
  * Protocolo de concurrencia, siempre DENTRO de la transacción de escritura:
  * - quien escribe datos de un empleado + período toma un advisory lock
  *   COMPARTIDO por par y recién entonces lee el estado del cierre;
- * - quien cambia el estado de un cierre (enviar, aprobar, devolver, pedir o
- *   aprobar una corrección) toma el lock EXCLUSIVO del par.
- * Así un envío nunca se intercala con una escritura: el que llega segundo
+ * - quien cambia el estado de un cierre (cerrar o reabrir) toma el lock
+ *   EXCLUSIVO del par.
+ * Así un cierre nunca se intercala con una escritura: el que llega segundo
  * espera al commit del primero y ve su resultado. Los locks se toman en orden
  * estable para no producir deadlocks entre estos caminos; se liberan solos al
  * terminar la transacción.
@@ -65,7 +64,7 @@ export async function findProtectedClosurePeriods(db: Db, pairs: Iterable<Employ
 export class ProtectedClosurePeriodError extends AppError {
   constructor(public readonly periods: Array<EmployeePeriod & { status: MonthlyClosureStatus }>, message?: string) {
     super(
-      message ?? "El período ya fue enviado o aprobado y está protegido: no se modifica automáticamente. Para corregirlo hace falta el procedimiento explícito de RRHH.",
+      message ?? "El período está cerrado. Reabrilo antes de modificarlo.",
       409,
       "PERIOD_CLOSED",
       { periods },

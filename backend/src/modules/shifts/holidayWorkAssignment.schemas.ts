@@ -49,7 +49,6 @@ export const saveHolidayWorkAssignmentsSchema = z.object({
   date: z.coerce.date(),
   assignments: z.array(holidayWorkAssignmentItemSchema).min(1).max(500),
   // Período enviado/aprobado: sólo RRHH y con motivo (mismo criterio que francos).
-  correctionReason: z.string().trim().max(500).nullable().optional(),
 });
 
 export type HolidayDatesQuery = z.infer<typeof holidayDatesQuerySchema>;

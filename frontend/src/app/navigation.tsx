@@ -56,7 +56,6 @@ const hourlyManagement = (level: number) =>
     link("Alertas de turnos", "/asistencia/alertas", AlertTriangle),
     link("Carga de horas", "/horas", Clock3),
     link("Cierres mensuales", "/cierres", CalendarDays),
-    ...(level === 3 ? [] : [link("Bandeja de revisión", "/pendientes", CalendarDays)]),
     link(level === 3 ? "Novedades horarias" : "Novedades", "/novedades", ClipboardList),
     link("Notificaciones", "/notificaciones", Bell),
     // R8: Nivel 2/3 administran los turnos de sus grupos (Nivel 1 entra desde Configuración).

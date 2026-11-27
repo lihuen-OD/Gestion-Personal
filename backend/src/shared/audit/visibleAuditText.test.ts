@@ -100,8 +100,10 @@ describe("textos visibles de auditoría/notificaciones — nunca un id técnico"
     // llamados reales (alrededor de cien en el backend; un escáner roto
     // vería ~0). El piso deja margen para retirar código muerto sin romper
     // esta guarda — F0 del fichador standalone eliminó notifyOpenShiftAttempt
-    // junto con los caminos de fichada sin foto y el total quedó en 100.
-    expect(sinks).toBeGreaterThanOrEqual(90);
+    // junto con los caminos de fichada sin foto y el total quedó en 100; la
+    // simplificación operativa retiró los circuitos de aprobación y
+    // correcciones administrativas y quedó en 86.
+    expect(sinks).toBeGreaterThanOrEqual(80);
     expect(findings.map((finding) => `${finding.file}:${finding.line} ${finding.key} <- \${${finding.expression}}`)).toEqual([]);
   });
 

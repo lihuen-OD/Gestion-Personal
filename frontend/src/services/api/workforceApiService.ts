@@ -11,26 +11,37 @@ export type MonthlyClosure = {
   id: string;
   employeeId: string;
   period: string;
-  status: "ABIERTO" | "ENVIADO" | "APROBADO" | "DEVUELTO" | "CORRECCION_PENDIENTE";
-  submittedAt?: string | null;
-  reviewNote?: string | null;
+  status: "ABIERTO" | "CERRADO";
+  closedAt?: string | null;
+  reopenedAt?: string | null;
+  reopenReason?: string | null;
   employee: { id: string; legajo: string; firstName: string; lastName: string };
-  submittedBy?: { name: string } | null;
-  reviewedBy?: { name: string } | null;
+  closedBy?: { name: string } | null;
+  reopenedBy?: { name: string } | null;
+  exportHistory?: { count: number; latestVersion: number; latestExportedAt: string } | null;
 };
 
-export type TimeCorrection = {
+export type ClosureBlockerType = "OPEN_SHIFT" | "INCOMPLETE_SHIFT" | "MANUAL_CLOCK_CONFLICT" | "NOVELTY_REVIEW";
+
+export type ClosureBlocker = {
   id: string;
-  status: "PENDIENTE" | "APROBADA" | "RECHAZADA";
-  previousHours: number | string;
-  proposedHours: number | string;
+  type: ClosureBlockerType;
+  employee: MonthlyClosure["employee"];
+  /** Fecha operativa `YYYY-MM-DD`. */
+  date: string;
+  title: string;
   reason: string;
-  reviewNote?: string | null;
-  createdAt: string;
-  employee: { legajo: string; firstName: string; lastName: string };
-  timeEntry: { date: string; hourConcept: { name: string } };
-  createdBy: { name: string };
+  action: string;
+  resolution: { module: "ATTENDANCE" | "HOURS" | "EMPLOYEE_HOURS"; label: string; path: string };
 };
+
+export type ClosureBlockerGroup = { employee: MonthlyClosure["employee"]; blockers: ClosureBlocker[] };
+
+export type ClosureBlockersPreview = { period: string; employees: ClosureBlockerGroup[]; totals: { employees: number; blockers: number } };
+
+function isClosureBlockersPreview(value: ClosureBlockersPreview) {
+  return Boolean(value && Array.isArray(value.employees) && value.employees.every((group) => typeof group.employee?.id === "string" && Array.isArray(group.blockers)));
+}
 
 export type SystemNotification = {
   id: string;
@@ -190,56 +201,24 @@ export const workforceApiService = {
       validate: (value: MonthlyClosure[]) => Array.isArray(value),
     });
   },
-  async submitClosures(period: string, employeeIds: string[]) {
-    const result = await apiRequest<{ data: MonthlyClosure[] }>("/workforce/closures/submit", { method: "POST", body: { period, employeeIds } }).then((response) => response.data);
-    await invalidateCacheFamily("monthly-closures", "closures submitted");
+  /**
+   * Bloqueantes del período (mismo criterio que el cierre definitivo). Sin
+   * cache: tiene que reflejar cada incidencia resuelta en cuanto se vuelve.
+   */
+  async closureBlockers(period: string): Promise<ClosureBlockersPreview> {
+    const data = await apiRequest<{ data: ClosureBlockersPreview }>(`/workforce/closures/blockers?period=${encodeURIComponent(period)}`, { apiCache: false }).then((response) => response.data);
+    if (!isClosureBlockersPreview(data)) throw new Error("Respuesta inválida de bloqueantes del cierre.");
+    return data;
+  },
+
+  async closeClosures(period: string, employeeIds: string[]) {
+    const result = await apiRequest<{ data: MonthlyClosure[] }>("/workforce/closures/close", { method: "POST", body: { period, employeeIds } }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "closures closed");
     return result;
   },
-  async approveClosures(ids: string[], note?: string) {
-    const result = await apiRequest<{ data: { count: number } }>("/workforce/closures/approve", { method: "POST", body: { ids, note } }).then((response) => response.data);
-    await invalidateCacheFamily("monthly-closures", "closures approved");
-    return result;
-  },
-  async returnClosure(id: string, reason: string) {
-    const result = await apiRequest<{ data: MonthlyClosure }>(`/workforce/closures/${id}/return`, { method: "POST", body: { reason } }).then((response) => response.data);
-    await invalidateCacheFamily("monthly-closures", "closure returned");
-    return result;
-  },
-  // Etapa 14G.8: envuelto con `cachedData` -- misma familia "monthly-closures"
-  // que `closures`. Período y estado se filtran en el backend (antes: las
-  // últimas 500 de todos los períodos + filtro local, que perdía en silencio
-  // correcciones del período fuera de esas 500).
-  corrections(period: string, status?: TimeCorrection["status"]) {
-    const params = new URLSearchParams({ period });
-    if (status) params.set("status", status);
-    const path = `/workforce/corrections?${params.toString()}`;
-    return cachedData({
-      requestKey: `GET:${path}`,
-      policy: cachePolicies.timeCorrectionsList,
-      fetcher: () => apiRequest<{ data: TimeCorrection[] }>(path, { apiCache: false }).then((response) => response.data),
-      validate: (value: TimeCorrection[]) => Array.isArray(value),
-    });
-  },
-  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }) {
-    const result = await apiRequest<{ data: TimeCorrection }>("/workforce/corrections", { method: "POST", body: input }).then((response) => response.data);
-    await invalidateCacheFamily("monthly-closures", "correction created");
-    return result;
-  },
-  // Etapa 9G: aprobar una corrección post-cierre reescribe TimeEntry.hours
-  // (workforce.service.ts:approveCorrection) — afecta directo la métrica
-  // "Horas cargadas" del dashboard. El backend ya invalida su propio cache
-  // (auditService.register limpia dashboardMetricsCache siempre), pero el
-  // cache del lado del frontend (dashboardMetricsApiService, TTL propio de
-  // 30s) es una capa aparte que nada invalidaba — quedaba sirviendo el valor
-  // viejo hasta que ese TTL expirara solo. rejectCorrection no toca
-  // TimeEntry, así que no hace falta invalidar el dashboard en ese caso.
-  // Etapa 14G.8: ambas ramas invalidan "monthly-closures" -- aprobar además
-  // puede cambiar MonthlyTimeClosure.status (workforce.service.ts,
-  // approveCorrection), no sólo TimeCorrectionRequest.
-  async reviewCorrection(id: string, decision: "approve" | "reject", note?: string) {
-    const result = await apiRequest<{ data: TimeCorrection }>(`/workforce/corrections/${id}/${decision}`, { method: "POST", body: { note } }).then((response) => response.data);
-    if (decision === "approve") await invalidateCacheFamily("dashboard", "time correction approved");
-    await invalidateCacheFamily("monthly-closures", decision === "approve" ? "time correction approved" : "time correction rejected");
+  async reopenClosure(id: string, reason: string, acknowledgeExportedHistory = false) {
+    const result = await apiRequest<{ data: MonthlyClosure }>(`/workforce/closures/${id}/reopen`, { method: "POST", body: { reason, acknowledgeExportedHistory } }).then((response) => response.data);
+    await invalidateCacheFamily("monthly-closures", "closure reopened");
     return result;
   },
   // Etapa 9I: antes pedía las 200 últimas notificaciones de una sola vez.

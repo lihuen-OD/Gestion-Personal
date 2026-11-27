@@ -6,15 +6,15 @@ import { AppError } from "../../shared/errors/AppError";
 import { lockClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
-import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { argentinaDateKey, humanizePeriodEs, nextCalendarDateKey, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
+import { argentinaDateKey, argentinaDayRange, calendarDateKey, humanizePeriodEs, nextCalendarDateKey, periodCalendarBounds, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { resolveEmployeeNotificationRecipients, type RecipientsReader } from "./employeeNotificationRecipients";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
-import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 import { buildClosureSnapshots, confirmedClosureResult, pendingNoveltyReviewOf } from "./closureSnapshot";
+import { findOperationalClosureBlockers, groupClosureBlockers, noveltyReviewBlockers, type ClosureBlocker } from "./closureBlockers";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
@@ -381,14 +381,58 @@ async function assertRuleDestinationsNotArchived(
   }
 }
 
+const CLOSURE_BLOCKERS_LISTED = 10;
+
+/**
+ * Texto del 409 de cierre (respaldo legible: el errorHandler oculta `details`
+ * en producción). La pantalla no lo interpreta: consulta la vista previa
+ * estructurada `GET /closures/blockers`.
+ */
+export function closureBlockersMessage(blockers: ClosureBlocker[]) {
+  const listed = blockers.slice(0, CLOSURE_BLOCKERS_LISTED).map((item) => `${formatEmployeeReference(item.employee)}: ${item.title} (${formatArgentinaDate(item.date)})`);
+  const rest = blockers.length - listed.length;
+  return `No se puede cerrar: hay ${blockers.length} ${blockers.length === 1 ? "pendiente que puede" : "pendientes que pueden"} cambiar las horas del período. ${listed.join("; ")}${rest > 0 ? `; y ${rest} más` : ""}. Resolvelos desde Asistencia o Carga de horas y volvé a cerrar.`;
+}
+
 export const workforceService = {
   async closures(period: string, user: Express.AuthUser) {
-    return prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, submittedBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
+    const rows = await prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, closedBy: { select: { name: true } }, reopenedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
+    const employeeIds = rows.map((row) => row.employeeId);
+    const batches = employeeIds.length ? await prisma.finnegansExportBatch.findMany({ where: { period, items: { some: { employeeId: { in: employeeIds } } } }, select: { version: true, createdAt: true, items: { where: { employeeId: { in: employeeIds } }, select: { employeeId: true } } }, orderBy: { version: "desc" } }) : [];
+    const exportsByEmployee = new Map<string, { count: number; latestVersion: number; latestExportedAt: Date }>();
+    for (const batch of batches) for (const employeeId of new Set(batch.items.map((item) => item.employeeId))) {
+      const current = exportsByEmployee.get(employeeId);
+      exportsByEmployee.set(employeeId, { count: (current?.count ?? 0) + 1, latestVersion: Math.max(current?.latestVersion ?? 0, batch.version), latestExportedAt: current && current.latestExportedAt > batch.createdAt ? current.latestExportedAt : batch.createdAt });
+    }
+    return rows.map((row) => ({ ...row, exportHistory: exportsByEmployee.get(row.employeeId) ?? null }));
+  },
+  /**
+   * Vista previa de bloqueantes del período, agrupada por legajo, con el mismo
+   * criterio que la validación definitiva de `closeClosures`. Sólo legajos del
+   * alcance del usuario (employeeAccessWhere) y todavía no CERRADO. Los días
+   * de novedades en revisión salen del mismo snapshot del cierre, calculado
+   * sólo para quienes tienen cobertura de novedades en el período.
+   */
+  async closureBlockers(period: string, user: Express.AuthUser) {
+    const employees = await prisma.employee.findMany({
+      where: { ...employeeAccessWhere(user), monthlyClosures: { none: { period, status: "CERRADO" } } },
+      select: { id: true, legajo: true, firstName: true, lastName: true },
+    });
+    const employeeIds = employees.map((employee) => employee.id);
+    const byId = new Map(employees.map((employee) => [employee.id, employee]));
+    const [operational, withCoverage] = await Promise.all([
+      findOperationalClosureBlockers(prisma, employeeIds, period),
+      employeeIds.length ? prisma.noveltyDayCoverage.findMany({ where: { period, employeeId: { in: employeeIds } }, select: { employeeId: true }, distinct: ["employeeId"] }) : Promise.resolve([]),
+    ]);
+    const reviewIds = withCoverage.map((row) => row.employeeId);
+    const snapshots = reviewIds.length ? await buildClosureSnapshots(prisma, reviewIds, period) : new Map();
+    const novelty = reviewIds.flatMap((employeeId) => noveltyReviewBlockers(byId.get(employeeId)!, period, pendingNoveltyReviewOf(snapshots.get(employeeId)).reviewDates));
+    const groups = groupClosureBlockers([...operational, ...novelty]);
+    return { period, employees: groups, totals: { employees: groups.length, blockers: operational.length + novelty.length } };
   },
   // `settleClockPunchPostProcess` (PERF-5D): lo pasa el controller (el worker
   // del post-proceso de fichadas depende de este módulo; así no hay ciclo).
-  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { employeeIds: string[] }) => Promise<unknown> } = {}) {
-    if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
+  async closeClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { employeeIds: string[] }) => Promise<unknown> } = {}) {
     await ensureVisible(employeeIds, user);
     // PERF-5D (docs/decisions/F12_PERF_5.md): Motor B de una salida corre en
     // el post-proceso durable de la fichada. Antes del snapshot se procesa en
@@ -405,6 +449,13 @@ export const workforceService = {
     const result = await execute(() => prisma.$transaction(async (tx) => {
       await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
       await assertClockPunchPostProcessSettled(tx, employeeIds, period);
+      const alreadyClosed = await tx.monthlyTimeClosure.findMany({ where: { employeeId: { in: employeeIds }, period, status: "CERRADO" }, select: { employeeId: true } });
+      if (alreadyClosed.length) throw new AppError("Uno o más períodos ya están cerrados.", 409, "MONTHLY_CLOSURE_ALREADY_CLOSED", { employeeIds: alreadyClosed.map((row) => row.employeeId) });
+      // Criterio único con la vista previa de Cierres mensuales (closureBlockers.ts).
+      const blockers = await findOperationalClosureBlockers(tx, employeeIds, period);
+      if (blockers.length) {
+        throw new AppError(closureBlockersMessage(blockers), 409, "CLOSURE_HAS_OPERATIONAL_BLOCKERS", { employees: groupClosureBlockers(blockers) });
+      }
       const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
       // NOVELTY_COVERAGE_ENGINE.md §12: un período con cobertura de novedades
       // en revisión no se consolida en silencio — se rechaza el envío completo.
@@ -415,7 +466,7 @@ export const workforceService = {
         const reference = await loadEmployeeReferences(tx, pendingReview.map((item) => item.employeeId));
         const detail = pendingReview.map((item) => `${reference(item.employeeId)}: ${item.reviewDays} día(s) (${item.reviewDates.map((date) => (date.length === 10 ? formatArgentinaDate(date) : date)).join(", ")})`).join("; ");
         throw new AppError(
-          `No se puede enviar el cierre: hay novedades con días para revisar. ${detail}.`,
+          `No se puede cerrar: hay novedades con días para revisar. ${detail}.`,
           409,
           "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
           { employees: pendingReview.map((item) => ({ employeeId: item.employeeId, reviewDays: item.reviewDays, reviewDates: item.reviewDates })) },
@@ -424,74 +475,31 @@ export const workforceService = {
       const saved = [];
       for (const employeeId of employeeIds) {
         const snapshot = snapshots.get(employeeId)!;
-        saved.push(await tx.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } }));
+        saved.push(await tx.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "CERRADO", snapshot, closedByUserId: user.id, closedAt: new Date() }, update: { status: "CERRADO", snapshot, closedByUserId: user.id, closedAt: new Date(), reopenedAt: null, reopenedByUserId: null, reopenReason: null } }));
       }
       return saved;
     }, CLOSURE_TRANSACTION_OPTIONS));
     // Una sola consulta de identidades para todo el lote (no una por legajo).
     const employeeReference = await loadEmployeeReferences(prisma, employeeIds);
-    await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${humanizePeriodEs(period)} de ${employeeReference(item.employeeId)}.`, after: item as Prisma.InputJsonValue })));
-    await notifyRrhh({ type: "CIERRE_MENSUAL", title: "Cierres mensuales recibidos", message: `${result.length} legajos de ${humanizePeriodEs(period)} esperan aprobación.`, link: `/cierres?period=${period}`, priority: "ALTA" });
+    await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se cerró definitivamente ${humanizePeriodEs(period)} de ${employeeReference(item.employeeId)}.`, after: item as Prisma.InputJsonValue })));
     return result;
   },
-  async approveClosures(ids: string[], note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
-    const { before, result } = await execute(() => prisma.$transaction(async (tx) => {
-      const targets = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids } }, select: { employeeId: true, period: true } });
-      await lockClosurePeriods(tx, targets, "EXCLUSIVE");
-      const pending = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids }, status: "ENVIADO" }, include: employeeReferenceInclude });
-      const updated = await tx.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } });
-      return { before: pending, result: updated };
-    }, CLOSURE_TRANSACTION_OPTIONS));
-    await Promise.all(before.map((item) => auditService.register({ ...audit, action: "APPROVE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se aprobó el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(item.employee)}.`, before: item as Prisma.InputJsonValue })));
-    return result;
-  },
-  async returnClosure(id: string, reason: string, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await prisma.monthlyTimeClosure.findUnique({ where: { id }, include: employeeReferenceInclude });
+  async reopenClosure(id: string, input: { reason: string; acknowledgeExportedHistory: boolean }, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await prisma.monthlyTimeClosure.findFirst({ where: { id, employee: employeeAccessWhere(user) }, include: employeeReferenceInclude });
     if (!before) throw new AppError("No encontramos el cierre solicitado", 404, "MONTHLY_CLOSURE_NOT_FOUND");
-    const item = await execute(() => prisma.$transaction(async (tx) => {
+    if (before.status !== "CERRADO") throw new AppError("El período ya está abierto.", 409, "MONTHLY_CLOSURE_ALREADY_OPEN");
+    const { item, exportedBatches } = await execute(() => prisma.$transaction(async (tx) => {
       await lockClosurePeriods(tx, [before], "EXCLUSIVE");
-      return tx.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } });
+      const current = await tx.monthlyTimeClosure.findUnique({ where: { id }, select: { status: true } });
+      if (current?.status !== "CERRADO") throw new AppError("El período ya está abierto.", 409, "MONTHLY_CLOSURE_ALREADY_OPEN");
+      const exportedBatches = await tx.finnegansExportBatch.findMany({ where: { period: before.period, items: { some: { employeeId: before.employeeId } } }, select: { id: true, version: true, createdAt: true }, orderBy: { version: "desc" } });
+      if (exportedBatches.length && !input.acknowledgeExportedHistory) {
+        throw new AppError("Este período ya fue exportado. Confirmá que comprendés que la reapertura no modifica las versiones históricas.", 409, "CLOSURE_REOPEN_EXPORTED_CONFIRMATION_REQUIRED", { exports: exportedBatches });
+      }
+      const item = await tx.monthlyTimeClosure.update({ where: { id }, data: { status: "ABIERTO", reopenedByUserId: user.id, reopenedAt: new Date(), reopenReason: input.reason } });
+      return { item, exportedBatches };
     }, CLOSURE_TRANSACTION_OPTIONS));
-    await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se devolvió el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(before.employee)} — motivo: ${reason}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
-    return item;
-  },
-  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }, user: Express.AuthUser, audit?: AuditContext) {
-    const entry = await prisma.timeEntry.findFirst({ where: { id: input.timeEntryId, employee: employeeAccessWhere(user) }, include: employeeReferenceInclude });
-    if (!entry) throw new AppError("Carga horaria no encontrada", 404, "TIME_ENTRY_NOT_FOUND");
-    const closure = await prisma.monthlyTimeClosure.findUnique({ where: { employeeId_period: { employeeId: entry.employeeId, period: entry.period } } });
-    if (!closure || !isMonthlyClosureLocked(closure)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
-    const result = await execute(() => prisma.$transaction(async (tx) => {
-      await lockClosurePeriods(tx, [closure], "EXCLUSIVE");
-      const request = await tx.timeCorrectionRequest.create({ data: { employeeId: entry.employeeId, timeEntryId: entry.id, closureId: closure.id, previousHours: entry.hours, proposedHours: input.proposedHours, reason: input.reason, createdByUserId: user.id } });
-      await tx.monthlyTimeClosure.update({ where: { id: closure.id }, data: { status: "CORRECCION_PENDIENTE" } });
-      return request;
-    }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "TimeCorrectionRequest", entityId: result.id, description: `Se solicitó una corrección de carga horaria de ${humanizePeriodEs(entry.period)} para ${formatEmployeeReference(entry.employee)} (de ${entry.hours}h a ${input.proposedHours}h).`, after: result as Prisma.InputJsonValue });
-    await notifyRrhh({ type: "CORRECCION_HORARIA", title: "Corrección posterior al cierre", message: `Se solicitó modificar una carga de ${humanizePeriodEs(entry.period)}.`, entityType: "TimeCorrectionRequest", entityId: result.id, link: "/cierres", priority: "ALTA" });
-    return result;
-  },
-  // Sin `take`: acotado por período (a lo sumo una corrección por carga del mes) — ver correctionsQuerySchema.
-  corrections(user: Express.AuthUser, query: CorrectionsQuery) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user), timeEntry: { period: query.period }, ...(query.status ? { status: query.status } : {}) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }] }); },
-  async approveCorrection(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    const { before, after } = await execute(() => prisma.$transaction(async (tx) => {
-      const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id }, include: { ...employeeReferenceInclude, timeEntry: { select: { period: true } } } });
-      if (request.status !== "PENDIENTE") throw new AppError("La corrección ya fue revisada", 400, "CORRECTION_ALREADY_REVIEWED");
-      // Procedimiento explícito y auditado de corrección de un período cerrado (D-5).
-      await lockClosurePeriods(tx, [{ employeeId: request.employeeId, period: request.timeEntry.period }], "EXCLUSIVE");
-      const hours = Number(request.proposedHours);
-      await tx.timeEntry.update({ where: { id: request.timeEntryId }, data: { hours, totalMinutes: Math.round(hours * 60), approvedByUserId: user.id, approvedAt: new Date() } });
-      const updated = await tx.timeCorrectionRequest.update({ where: { id }, data: { status: "APROBADA", reviewedByUserId: user.id, reviewedAt: new Date() } });
-      if (request.closureId) await tx.monthlyTimeClosure.update({ where: { id: request.closureId }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date() } });
-      return { before: request, after: updated };
-    }));
-    await auditService.register({ ...audit, action: "APPROVE", entity: "TimeCorrectionRequest", entityId: id, description: `Se aprobó la corrección de carga horaria de ${formatEmployeeReference(before.employee)} (de ${before.previousHours}h a ${before.proposedHours}h).`, before: before as Prisma.InputJsonValue, after: after as Prisma.InputJsonValue });
-    return after;
-  },
-  async rejectCorrection(id: string, note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await prisma.timeCorrectionRequest.findUnique({ where: { id }, include: employeeReferenceInclude });
-    if (!before) throw new AppError("No encontramos la corrección solicitada", 404, "TIME_CORRECTION_NOT_FOUND");
-    const item = await execute(() => prisma.timeCorrectionRequest.update({ where: { id }, data: { status: "RECHAZADA", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }));
-    await auditService.register({ ...audit, action: "REJECT", entity: "TimeCorrectionRequest", entityId: id, description: `Se rechazó la corrección de carga horaria de ${formatEmployeeReference(before.employee)}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se reabrió ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(before.employee)} — motivo: ${input.reason}.`, before: before as Prisma.InputJsonValue, after: { item, exportedHistoryPreserved: exportedBatches } as unknown as Prisma.InputJsonValue });
     return item;
   },
   // Etapa 9I: antes hacía fetch-all con take:200 fijo, sin paginación real.

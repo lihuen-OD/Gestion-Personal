@@ -597,13 +597,6 @@ const timeGridTimeEntryInclude = {
   },
 } satisfies Prisma.TimeEntryInclude;
 
-// Resolución RRHH de un desglose manual: el empleado trae su identidad humana
-// para la auditoría (nunca el employeeId en el texto).
-const manualBreakdownResolutionInclude = {
-  employee: { select: { id: true, ...employeeReferenceSelect } },
-  hourConcept: { select: { id: true, name: true } },
-} satisfies Prisma.HourConceptBreakdownInclude;
-
 const timeGridNoveltyInclude = {
   employee: { select: { id: true, legajo: true, firstName: true, lastName: true } },
   noveltyType: {
@@ -618,7 +611,6 @@ const timeGridNoveltyInclude = {
       finnegansRequiresValidity: true,
       finnegansCode: true,
       finnegansName: true,
-      approvalRoles: true,
     },
   },
   targetHourConcept: { select: { id: true, name: true } },
@@ -1397,20 +1389,17 @@ export const employeesRepository = {
     approvedByUserId?: string | null;
   }) {
     return prisma.$transaction(async (tx) => {
-      // D-5: dentro de la transacción. En un período protegido sólo pasa la
-      // corrección explícita de RRHH con motivo (observación obligatoria, ver
-      // validateManualBreakdownContext).
       await assertClosurePeriodsWritable(tx, [{ employeeId: input.employeeId, period: input.period }], {
-        explicitCorrection: Boolean(input.approvedByUserId && input.observation?.trim()),
-        message: "The period is closed for direct editing",
+        explicitCorrection: false,
+        message: "El período está cerrado. Reabrilo antes de modificar conceptos horarios.",
       });
       const where = { employeeId: input.employeeId, hourConceptId: input.hourConceptId, date: input.date, source: "MANUAL" as const };
       if (input.minutes === 0) {
         const deleted = await tx.hourConceptBreakdown.deleteMany({ where });
         return { item: null, deleted: deleted.count, operation: "DELETE" as const };
       }
-      const status = input.approvedByUserId ? "APROBADO" : "EN_REVISION";
-      const approvedAt = input.approvedByUserId ? new Date() : null;
+      const status = "APROBADO";
+      const approvedAt = new Date();
       const existing = await tx.hourConceptBreakdown.findFirst({ where, orderBy: { createdAt: "asc" } });
       if (existing) {
         const item = await tx.hourConceptBreakdown.update({
@@ -1447,39 +1436,6 @@ export const employeesRepository = {
       });
       return { item, deleted: 0, operation: "CREATE" as const };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  },
-
-  // Etapa 6L.3 (ajuste): resolución RRHH de un desglose manual EN_REVISION
-  // cargado por Nivel 2/3 — mismo criterio de scope que el resto del módulo.
-  findManualBreakdownById(id: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.hourConceptBreakdown.findFirst({
-      where: { id, source: "MANUAL", employee: accessWhere },
-      include: manualBreakdownResolutionInclude,
-    });
-  },
-
-  approveManualHourConceptBreakdown(id: string, approvedByUserId: string) {
-    return prisma.hourConceptBreakdown.update({
-      where: { id },
-      data: { status: "APROBADO", approvedByUserId, approvedAt: new Date() },
-      include: manualBreakdownResolutionInclude,
-    });
-  },
-
-  rejectManualHourConceptBreakdown(id: string) {
-    return prisma.hourConceptBreakdown.update({
-      where: { id },
-      data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null },
-      include: manualBreakdownResolutionInclude,
-    });
-  },
-
-  returnManualHourConceptBreakdown(id: string) {
-    return prisma.hourConceptBreakdown.update({
-      where: { id },
-      data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null },
-      include: manualBreakdownResolutionInclude,
-    });
   },
 
   findLaborAuditSnapshot(id: string) {

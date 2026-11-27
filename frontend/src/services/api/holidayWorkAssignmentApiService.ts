@@ -112,8 +112,8 @@ export const holidayWorkAssignmentApiService = {
   // WORKED_TIME_ACCOUNTING_MODEL.md §20): no reinterpreta horas, pero cambia la
   // cobertura de novedades de los convocados (obligación del día), así que se
   // invalidan las pantallas derivadas de esa cobertura.
-  async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[], correctionReason?: string | null) {
-    const body = { date, assignments, ...(correctionReason ? { correctionReason } : {}) };
+  async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[]) {
+    const body = { date, assignments };
     const result = await apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body }).then((response) => response.data);
     await invalidateNoveltyCoverageDerivedCaches("holiday work assignments saved");
     return result;

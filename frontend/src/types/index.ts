@@ -119,7 +119,6 @@ export interface Novelty {
   exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string;
   // Etapa 15L.2C: fuente de verdad del comportamiento en carga horaria.
   timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
-  approvalRoles?: Role[];
 }
 
 export interface AuditEntry {

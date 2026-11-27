@@ -6,9 +6,9 @@ import { mapNoveltyTypeFromApi, mapNoveltyTypeToApi, type ApiNoveltyType } from 
 // requiresObservation, que antes el frontend no leía ni enviaba).
 const base: ApiNoveltyType = {
   id: "nt", code: "NOV-001", name: "Tipo", uiColor: "blue", kind: "AUSENCIA", status: "ACTIVO", description: "Descripción", notes: null,
-  exportsToFinnegans: false, requiresApproval: true, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA",
+  exportsToFinnegans: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA",
   allowsDateRange: true, finnegansValueUnit: null, finnegansRequiresValidity: false, finnegansCode: null, finnegansName: null,
-  allowedLoadRoles: ["Nivel 1 - RRHH"], approvalRoles: ["Nivel 1 - RRHH"],
+  allowedLoadRoles: ["Nivel 1 - RRHH"],
   coverageMode: "NONE", coverageFixedMinutes: null, coverageDayRule: "EVERY_DAY", coverageWeekdays: [], coverageOnDayOff: null, coverageOnHoliday: null,
   coverageAppliesSpecialHours: false, coverageCountsTowardTotal: false, realWorkCompatibility: "COMPATIBLE", requiresObservation: false,
   createdAt: "", updatedAt: "",

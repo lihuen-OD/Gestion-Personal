@@ -466,9 +466,9 @@ describe("holidayWorkAssignmentService.save — alcance por legajo (N1/N2/N3)", 
     expect(mockedAudit).not.toHaveBeenCalled();
   });
 
-  it("período enviado a cierre: Nivel 2/3 no cambian la convocatoria (409 PERIOD_CLOSED, sin escribir)", async () => {
+  it("período CERRADO: Nivel 2/3 no cambian la convocatoria (409 PERIOD_CLOSED, sin escribir)", async () => {
     inScopeIds = new Set(["employee-1"]);
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "CERRADO"]]) as never);
 
     await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, supervisor))
       .rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
@@ -476,30 +476,19 @@ describe("holidayWorkAssignmentService.save — alcance por legajo (N1/N2/N3)", 
     expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 
-  it("período enviado a cierre: RRHH sin motivo → 400 y no escribe", async () => {
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+  it("período CERRADO: RRHH tampoco cambia la convocatoria (409 PERIOD_CLOSED, sin escribir ni auditar)", async () => {
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "CERRADO"]]) as never);
 
     await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, rrhh))
-      .rejects.toMatchObject({ statusCode: 400, code: "HOLIDAY_WORK_CORRECTION_REASON_REQUIRED" });
+      .rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     expect(repo.createMany).not.toHaveBeenCalled();
-  });
-
-  it("período enviado a cierre: RRHH con motivo corrige y el motivo queda en la auditoría sólo de los legajos protegidos", async () => {
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
-
-    await holidayWorkAssignmentService.save({ date, correctionReason: "  Pedido de planta  ", assignments: [{ employeeId: "employee-1", status: "ACTIVA" }, { employeeId: "employee-2", status: "ACTIVA" }] }, rrhh);
-
-    expect(stored.get("employee-1")).toMatchObject({ status: "ACTIVA" });
-    const audits = Object.fromEntries(mockedAudit.mock.calls.map(([input]) => [input.entityId, input]));
-    expect(audits["employee-1"]).toMatchObject({ description: "Se convocó a 1 a trabajar el feriado del 27/08/2026. Motivo: Pedido de planta", after: expect.objectContaining({ correctionReason: "Pedido de planta" }) });
-    expect(audits["employee-2"].description).toBe("Se convocó a 2 a trabajar el feriado del 27/08/2026.");
-    expect(audits["employee-2"].after).not.toHaveProperty("correctionReason");
+    expect(mockedAudit).not.toHaveBeenCalled();
   });
 
   it("período protegido con guardado sin cambios efectivos: no bloquea (no hay nada que proteger)", async () => {
     inScopeIds = new Set(["employee-1"]);
     seed("employee-1");
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "CERRADO"]]) as never);
 
     await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, supervisor);
 
@@ -557,7 +546,7 @@ describe("holidayWorkAssignmentService.save — horario resoluble (§20)", () =>
 
 describe("holidayWorkAssignmentService.candidates — turno real del feriado (§20)", () => {
   it("con fecha agrega expectedSchedule, franco y período cerrado; sin fecha, expectedSchedule null", async () => {
-    repo.findCandidates.mockResolvedValue([[{ id: "employee-1", legajo: "1", dayOffs: [{ id: "d" }], monthlyClosures: [{ status: "ENVIADO" }] }], 1]);
+    repo.findCandidates.mockResolvedValue([[{ id: "employee-1", legajo: "1", dayOffs: [{ id: "d" }], monthlyClosures: [{ status: "CERRADO" }] }], 1]);
     vi.mocked(resolveConvocationSchedules).mockResolvedValue(new Map([["employee-1", { kind: "ROTATION_REST", blocks: [], planReason: null }]]));
     const date = new Date("2026-12-08T00:00:00.000Z");
 

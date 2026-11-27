@@ -661,17 +661,14 @@ async function invalidateEmployeeDependentCaches(reason: string) {
 // invalidaban ningún cache de frontend — el backend ya limpiaba su propio
 // cache de time-entries acá desde la Etapa 7A (clearTimeEntriesReadCaches en
 // employees.controller.ts), pero esa es una capa independiente. Sin esto, la
-// columna "Especiales" de la grilla de período (family "time-entries") y la
-// Bandeja de revisión (family "pending", para los 4 mutadores que cambian
-// status EN_REVISION) podían quedar hasta 30s desactualizadas tras guardar,
-// aprobar, rechazar o devolver un desglose manual.
+// columna "Especiales" de la grilla de período (family "time-entries") podía
+// quedar hasta 30s desactualizada tras guardar un desglose.
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: un concepto de horas
 // adicionales cambia el total trabajado, así que también el KPI "Horas
 // cargadas" del dashboard.
 async function invalidateHourConceptBreakdownDependentCaches(reason: string) {
   await Promise.all([
     invalidateCacheFamily("time-entries", reason),
-    invalidateCacheFamily("pending", reason),
     invalidateCacheFamily("dashboard", reason),
   ]);
 }
@@ -851,31 +848,6 @@ export const employeeApiService = {
       body: input,
     });
     await invalidateHourConceptBreakdownDependentCaches("manual hour concept breakdown saved");
-    return response.data;
-  },
-  // Etapa 6L.5: resolución RRHH de un desglose manual EN_REVISION desde la
-  // bandeja — mismos endpoints agregados en 6L.3, sin UI hasta ahora.
-  async approveManualHourConceptBreakdown(employeeId: string, breakdownId: string) {
-    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/approve`, {
-      method: "POST",
-    });
-    await invalidateHourConceptBreakdownDependentCaches("manual hour concept breakdown approved");
-    return response.data;
-  },
-  async rejectManualHourConceptBreakdown(employeeId: string, breakdownId: string, reason: string) {
-    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/reject`, {
-      method: "POST",
-      body: { reason },
-    });
-    await invalidateHourConceptBreakdownDependentCaches("manual hour concept breakdown rejected");
-    return response.data;
-  },
-  async returnManualHourConceptBreakdown(employeeId: string, breakdownId: string, reason: string) {
-    const response = await apiRequest<{ data: unknown }>(`/employees/${employeeId}/hour-concept-breakdowns/manual/${breakdownId}/return`, {
-      method: "POST",
-      body: { reason },
-    });
-    await invalidateHourConceptBreakdownDependentCaches("manual hour concept breakdown returned");
     return response.data;
   },
   async recalculateAutomaticHourConceptBreakdowns(employeeId: string, period: string) {

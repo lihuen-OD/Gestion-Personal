@@ -285,7 +285,11 @@ function ObservationRows({ items, onViewPhoto, onResolve, onViewSegments, onCrea
 
 export function AttendancePage() {
   const [searchParams] = useSearchParams();
-  const [date, setDate] = useState(todayKey());
+  // `?date=YYYY-MM-DD`: llegada desde Cierres mensuales (jornada abierta de ese día).
+  const [date, setDate] = useState(() => {
+    const requested = searchParams.get("date");
+    return requested && /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : todayKey();
+  });
   const [observationDate, setObservationDate] = useState(() => searchParams.get("observationDate") || "");
   const [observedQuery, setObservedQuery] = useState("");
   const debouncedObservedQuery = useDebouncedValue(observedQuery, 300);

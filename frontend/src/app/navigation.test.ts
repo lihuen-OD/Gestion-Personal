@@ -65,7 +65,7 @@ describe("navigation — accesos por nivel (2026-11-17)", () => {
     ]);
     expect(hourlyItemsFor("Nivel 1 - RRHH")).toEqual([
       "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
-      "Bandeja de revisión /pendientes", "Novedades /novedades", "Notificaciones /notificaciones", "Exportación /configuracion/liquidacion",
+      "Novedades /novedades", "Notificaciones /notificaciones", "Exportación /configuracion/liquidacion",
     ]);
   });
 
@@ -75,7 +75,7 @@ describe("navigation — accesos por nivel (2026-11-17)", () => {
     for (const removed of ["Dashboard", "Puestos", "Organigramas", "Reportes de Gestión"]) expect(labels).not.toContain(removed);
     expect(hourlyItemsFor("Nivel 2 - Supervisión / Gestión")).toEqual([
       "Asistencia /asistencia", "Alertas de turnos /asistencia/alertas", "Carga de horas /horas", "Cierres mensuales /cierres",
-      "Bandeja de revisión /pendientes", "Novedades /novedades", "Notificaciones /notificaciones",
+      "Novedades /novedades", "Notificaciones /notificaciones",
       // R8: Turnos de sus grupos (sin grupos, la pantalla muestra un estado vacío).
       "Turnos /configuracion/turnos",
     ]);

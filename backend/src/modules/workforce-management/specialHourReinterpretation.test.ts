@@ -283,17 +283,17 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(hours(dayAccounting(JUAN, OCT_3).totalWorkedMinutes)).toBe(9);
   });
 
-  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): un período enviado o aprobado
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): un período CERRADO
   // queda protegido — ni sus filas ni su snapshot se modifican; se informa
   // cuánto diferiría. Un cierre DEVUELTO (reabierto por RRHH) sí se recalcula.
-  it("CASO G — período ENVIADO/APROBADO protegido: filas y snapshot intactos, diferencia informada; DEVUELTO se recalcula", async () => {
+  it("CASO G — período CERRADO protegido: filas y snapshot intactos, diferencia informada; ABIERTO (reabierto) se recalcula", async () => {
     loadHours(JUAN, OCT_3, 8);
     loadHours(ANA, OCT_3, 8);
     loadHours(PEDRO, OCT_3, 8);
     world.closures.push(
-      { id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 480 } } } },
-      { id: "closure-ana", employeeId: ANA, period: "2026-10", status: "ENVIADO", snapshot: { accounting: {} } },
-      { id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "DEVUELTO", snapshot: { accounting: {} } },
+      { id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: { settlement: { totalMinutes: 480 } } } },
+      { id: "closure-ana", employeeId: ANA, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } },
+      { id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "ABIERTO", snapshot: { accounting: {} } },
     );
 
     world.rules.push(feriado());
@@ -306,10 +306,10 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-pedro"]);
     expect(recalculation).toEqual({ reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Feriado 3 de octubre" });
     expect(result.protectedPeriods).toEqual([
-      { employeeId: ANA, period: "2026-10", status: "ENVIADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
-      { employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
+      { employeeId: ANA, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
+      { employeeId: JUAN, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
     ].sort((a, b) => `${a.employeeId}:${a.period}`.localeCompare(`${b.employeeId}:${b.period}`)));
-    expect(world.closures.map((closure) => closure.status)).toEqual(["APROBADO", "ENVIADO", "DEVUELTO"]);
+    expect(world.closures.map((closure) => closure.status)).toEqual(["CERRADO", "CERRADO", "ABIERTO"]);
     expect(db.$executeRaw).toHaveBeenCalled();
   });
 
@@ -486,17 +486,17 @@ describe("FERIADO §20: el multiplicador sale del alcance de la regla, nunca de 
     expect(minutes(L31).settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
   });
 
-  it("historia previa a §20 (no convocado guardado x1 en un feriado global) se corrige al reinterpretar, salvo período APROBADO", async () => {
+  it("historia previa a §20 (no convocado guardado x1 en un feriado global) se corrige al reinterpretar, salvo período CERRADO", async () => {
     world.rules.push(feriado5());
     world.entries.push({ id: "entry-30", employeeId: L30, date: OCT_5, day: 5, period: "2026-10", hours: 8, totalMinutes: 480, actualMinutes: 480, status: "APROBADO", appliedMultiplier: 1 });
     world.entries.push({ id: "entry-31", employeeId: L31, date: OCT_5, day: 5, period: "2026-10", hours: 8, totalMinutes: 480, actualMinutes: 480, status: "APROBADO", appliedMultiplier: 1 });
-    world.closures.push({ id: "closure-31", employeeId: L31, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.closures.push({ id: "closure-31", employeeId: L31, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
 
     const result = await reinterpretDate();
 
     expect(result.changes.timeEntries).toEqual([{ id: "entry-30", employeeId: L30, date: "2026-10-05", from: 1, to: 2 }]);
     expect(world.entries.find((row) => row.id === "entry-31")!.appliedMultiplier).toBe(1);
-    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
   });
 });
 
@@ -569,18 +569,18 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     expect(world.segments[0]).toMatchObject({ isSpecial: false, minutes: 480 });
   });
 
-  it("feriado ya finalizado con cierre APROBADO: eliminar la regla no toca ese período (D-5)", async () => {
+  it("feriado ya finalizado con cierre CERRADO: eliminar la regla no toca ese período (D-5)", async () => {
     world.rules.push(feriados());
     loadHours(JUAN, OCT_5, 8);
     world.entries[0]!.appliedMultiplier = 2;
-    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
 
     const result = await deleteRule(feriados());
 
     expect(result.rebuiltClosures).toHaveLength(0);
     expect(world.entries[0]!.appliedMultiplier).toBe(2);
-    expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "APROBADO", timeEntries: 1 });
-    expect(world.closures[0]!.status).toBe("APROBADO");
+    expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "CERRADO", timeEntries: 1 });
+    expect(world.closures[0]!.status).toBe("CERRADO");
   });
 
   // Preview de eliminación de “Feriados” en development (2026-10-13): 17 legajos
@@ -593,14 +593,14 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
       loadHours(employeeId, OCT_5, 8);
       world.entries.at(-1)!.appliedMultiplier = 2;
     }
-    world.closures.push({ id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.closures.push({ id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
 
     const result = await deleteRule(feriados());
 
     expect(evaluateSpecialHourRulesForEmployees).toHaveBeenCalledTimes(1);
     expect([...(evaluateSpecialHourRulesForEmployees as unknown as Mock).mock.calls[0]![0].keys()].sort()).toEqual([ANA, JUAN, PEDRO].sort());
     expect(result).toMatchObject({ timeEntries: 2, employees: 2 });
-    expect(result.protectedPeriods).toEqual([{ employeeId: PEDRO, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: PEDRO, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
     expect(world.entries.map((row) => [row.employeeId, row.appliedMultiplier])).toEqual([[JUAN, 1], [ANA, 1], [PEDRO, 2]]);
   });
 
@@ -643,15 +643,15 @@ describe("D-5 — historia laboral insuficiente (ORG_LOCATION_REORGANIZATION.md 
 
   it("en un período protegido no rechaza ni escribe: informa cuántas filas no se pudieron evaluar", async () => {
     loadHours(JUAN, OCT_3, 8);
-    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
     world.missingHistory.add(`${JUAN}|2026-10-03`);
     world.rules.push(feriado());
 
     const result = await reinterpret(null, feriado());
 
-    expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "CERRADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
     expect(world.entries[0]!.appliedMultiplier).toBe(1);
-    expect(world.closures[0]!.status).toBe("APROBADO");
+    expect(world.closures[0]!.status).toBe("CERRADO");
   });
 });
 

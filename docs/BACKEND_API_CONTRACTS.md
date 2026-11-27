@@ -397,7 +397,7 @@ Body de alta/actualización:
 
 PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el módulo `/employees` protege por contrato la ausencia de rutas de borrado HTTP. La API fija `source = MANUAL`; no acepta `source`, `status`, `priority` ni `countsAsWorked` desde el cliente.
 
-Estado inicial (o resultante de sobrescribir un registro existente) según el rol de quien carga (Etapa 6L.3): **RRHH** deja el desglose `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios. **Nivel 2/3** dejan el desglose `EN_REVISION` — a diferencia de `TimeEntry`, el desglose manual no tiene una acción separada de "enviar a revisión"; el único `PUT` ya es la carga completa, así que queda pendiente de una. RRHH ve esos desgloses `EN_REVISION` de Nivel 2/3 en `GET /pending` (ver más abajo) y los resuelve con los endpoints de abajo.
+Todo N1/N2/N3 autorizado guarda el desglose directamente como efectivo (`APROBADO`). Un mes `CERRADO` rechaza la operación para todos los roles hasta su reapertura.
 
 Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
 
@@ -411,15 +411,9 @@ Período cerrado (`MonthlyTimeClosure` en `ENVIADO`/`APROBADO`/`CORRECCION_PENDI
 
 La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
-#### Aprobar / rechazar / devolver un desglose manual (Etapa 6L.3, ajuste)
+#### Aprobación de desgloses manuales (retirada)
 
-```txt
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/reject
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/return
-```
-
-Exclusivos de RRHH (`403 FORBIDDEN` para cualquier otro rol). `reject`/`return` requieren body `{ "reason": "..." }` (2-600 caracteres). Los tres exigen que el desglose esté `EN_REVISION` (`400 HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE` si no) y respetan el scope operativo del usuario y el `:id` del legajo (`404 HOUR_CONCEPT_BREAKDOWN_NOT_FOUND` si no matchea). `approve` deja `status = APROBADO` con `approvedByUserId`/`approvedAt`; `reject` deja `status = RECHAZADO`; `return` deja `status = DEVUELTO` — ambos limpian `approvedByUserId`/`approvedAt`. Mismo patrón que `/time-entries/:id/approve|reject|return`. No hay todavía una UI que dispare estos endpoints (ver Etapa 6L.3 en `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`) — quedan disponibles para conectar en una subetapa inmediata.
+Los endpoints `POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve|reject|return` fueron retirados con la simplificación operativa: el desglose manual queda efectivo (`APROBADO`, con `approvedByUserId` = autor) al guardarlo.
 
 #### Recálculo de desgloses automáticos
 
@@ -1348,26 +1342,15 @@ Mismos roles, body y reglas que `POST /api/novelties`, más `document`, con los 
 - Si una subida falla, borra las anteriores y responde `502 NOVELTY_DOCUMENT_UPLOAD_FAILED` (un archivo inválido responde su `4xx` de validación). Si la transacción falla, borra los archivos subidos y responde el error del alta. Nunca queda una novedad sin su documento; si el borrado compensatorio falla, el archivo queda huérfano en el storage, sin filas, y se registra como error crítico.
 - Respuesta: igual que `POST /api/novelties`.
 
-### Aprobar / rechazar
+### Corregir
 
 ```txt
-POST /api/novelties/:id/approve
-POST /api/novelties/:id/reject
+PATCH /api/novelties/:id
 ```
 
-Rechazo:
+Roles operativos (RRHH, Supervisión, Carga horaria) dentro del alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y de los roles de carga del tipo. Body parcial: `noveltyTypeId`, `fromDate`, `toDate`, `quantityHours`, `quantityDays`, `observation`, `targetHourConceptId` (al menos uno). Aplica las mismas validaciones que el alta (tipo activo, cantidades, solapamiento excluyendo la propia fila), recalcula la cobertura diaria en la misma transacción y deja la novedad efectiva (`APROBADO`). Un período `CERRADO` (el anterior o el nuevo) responde `409 PERIOD_CLOSED` para todos los roles.
 
-```json
-{
-  "reason": "Motivo"
-}
-```
-
-**Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
-
-**Etapa 3:** `approve` y `reject` respetan el alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y el guard de cierres de un tipo que registra tiempo. `approve` acepta un body opcional `{ "correctionReason": "..." }` para la corrección de RRHH; en `reject`, el motivo del rechazo vale como motivo de corrección. Rechazar elimina la cobertura diaria derivada.
-
-Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). **Etapa 3:** es atómica (una transacción): si una novedad del lote no se puede aprobar, no se aprueba ninguna. Un período protegido rechaza el lote, porque no lleva motivo de corrección.
+Los endpoints `POST /api/novelties/:id/approve|reject` y `POST /api/novelties/bulk-approve` fueron retirados: toda novedad nace efectiva (`APROBADO`) al guardarse y no se notifica a RRHH.
 
 ### Eliminar
 
@@ -1375,7 +1358,7 @@ Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids"
 DELETE /api/novelties/:id
 ```
 
-Sólo RRHH. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
+Roles operativos dentro del alcance del legajo. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
 
 ### Cobertura diaria (etapa 3, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §6)
 
@@ -1609,69 +1592,11 @@ PATCH /api/time-entries/:id
 
 Desde 2026-11-03, editar `hours` fija `source = ADMIN` en la fila: las horas pasan a ser "reconocidas por una persona" aunque la fila haya nacido de una fichada (`workShiftId`/`timeSegmentId` no cambian). Es la señal que usan los francos para computar horas reconocidas (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7.1).
 
-No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa. Con el período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, Nivel 2/3 reciben `409 PERIOD_CLOSED_REQUIRES_CORRECTION` (deben usar `POST /workforce/corrections` en su lugar); no existe endpoint de borrado para `TimeEntry`.
+Toda carga de N1/N2/N3 queda efectiva (`APROBADO`) al crearla o editarla, con `approvedByUserId` = autor. Con el período `CERRADO` responde `409 PERIOD_CLOSED` (crear: `409 MONTHLY_CLOSURE_LOCKED`) para todos los roles hasta reabrirlo; ya no existe la corrección directa de RRHH con `correctionReason`.
 
-### Enviar / aprobar / rechazar / devolver
+### Envío y aprobación (retirados)
 
-```txt
-POST /api/time-entries/:id/submit
-POST /api/time-entries/:id/approve
-POST /api/time-entries/:id/reject
-POST /api/time-entries/:id/return
-```
-
-`submit` sigue disponible para RRHH/Supervisión/Nivel 3 (`operationalRoles`). `approve`/`reject`/`return` son **exclusivos de RRHH** (Etapa 6L.3, ajuste posterior): el guard de ruta acepta sólo `NIVEL_1_RRHH` y el servicio responde `403 FORBIDDEN` para cualquier otro rol, sea o no el creador de la carga — Supervisión (Nivel 2) ya no puede aprobar/rechazar/devolver ninguna carga horaria, ni propia ni ajena. RRHH nunca necesita resolver una carga propia por esta vía porque `create`/`update` ya la dejan `APROBADO` directo.
-
-## Mis Pendientes
-
-```txt
-GET /api/pending
-```
-
-Roles: sólo Nivel 1 y Nivel 2 (desde 2026-11-17 su único consumidor es la Bandeja de revisión, `/pendientes`, que no existe para Nivel 3; Nivel 3 → `403 FORBIDDEN`). Carga de horas usa `/api/time-entries`, que no cambia.
-
-Query:
-
-```txt
-kind=all|novelties|timeEntries|hourConceptBreakdowns
-period=YYYY-MM
-page=1
-take=100
-```
-
-`novelties` y `hourConceptBreakdowns` son de una sola fuente y paginan de verdad (`page` + `meta`). `all`/`timeEntries` combinan fuentes y devuelven siempre la primera página de cada una (`meta.page = 1`, `meta.hasMore` si hay más). `summary` informa **totales reales** (`count`), no la cantidad de filas traídas.
-
-Devuelve:
-
-```json
-{
-  "data": {
-    "summary": {
-      "total": 1,
-      "novelties": 1,
-      "timeEntries": 0,
-      "hourConceptBreakdowns": 0
-    },
-    "data": [
-      {
-        "kind": "novelty",
-        "sourceId": "uuid",
-        "status": "PENDIENTE",
-        "employeeId": "uuid-del-legajo",
-        "employeeLabel": "000001 - Apellido, Nombre",
-        "title": "Vacaciones",
-        "subtitle": "NOV-VAC",
-        "quantity": "1"
-      }
-    ],
-    "meta": { "total": 1, "page": 1, "pageSize": 100, "hasMore": false }
-  }
-}
-```
-
-Desde la Etapa 6L.3, `kind` también puede ser `"hourConceptBreakdown"` (desgloses manuales `EN_REVISION` de Nivel 2/3, filtrados por `kind=all|timeEntries` igual que `timeEntry` — `kind=novelties` los excluye) y `summary` suma el campo `hourConceptBreakdowns` con su conteo. Es un campo aditivo: un consumidor que ya leía `summary.total`/`summary.novelties`/`summary.timeEntries` sigue funcionando sin cambios.
-
-**Etapa 6L.5 (aclaración de contrato):** todo ítem expone `employeeId` (antes iba embebido sin tipar en un objeto `employee` que ningún consumidor leía) — es el `:id` que pide `POST /employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve|reject|return` para resolver un ítem `kind: "hourConceptBreakdown"` desde la bandeja de revisión. `sourceId` es el `:breakdownId` en ese caso (o el `:id` de `POST /time-entries/:id/approve|reject|return` cuando `kind: "timeEntry"`).
+`POST /api/time-entries/:id/submit|approve|reject|return` y la bandeja `GET /api/pending` (módulo `pending`) fueron retirados con la simplificación operativa. Las revisiones reales que siguen vigentes (fichadas observadas, jornadas, conflicto carga manual vs. fichada, cobertura de novedades) se resuelven desde Carga de horas y Asistencia, por N1/N2/N3 dentro de su alcance.
 
 ## Documentos
 
@@ -1750,7 +1675,6 @@ Response:
     "activeEmployees": 110,
     "employeesWithEntries": 82,
     "pendingEmployees": 28,
-    "reviewEmployees": 12,
     "countableHours": 1540,
     "coveredHours": 96,
     "computableHours": 1636,
@@ -1763,6 +1687,7 @@ Reglas:
 
 - Respeta el alcance del rol autenticado.
 - Debe usarse para KPI cards del modulo Horas.
+- `pendingEmployees` = personas activas sin horas computables en el período ("Sin horas cargadas"). `reviewEmployees` fue retirado junto con el circuito de aprobación.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
 - `countableHours` ("Total trabajado" en la UI) = Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + horas de conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO). Nunca suma conceptos `WITHIN_BASE` (ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`).
 - Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo: `coveredHours` = cobertura de novedades que cuenta (APROBADA, suma, sin revisión) y `computableHours` = `countableHours` + `coveredHours`. `countableHours` no cambia: sigue siendo trabajo real.
@@ -2076,7 +2001,7 @@ Todas las rutas requieren `requireAuth`.
 | PATCH | `/assignments/:id` | RRHH | Editar una asignación, con las mismas protecciones contra rotaciones cuando queda `HABILITADO` |
 | DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
 | GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
-| POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
+| POST | `/alerts/:id/resolve` | RRHH/Supervisión/Carga horaria (alcance por legajo) | Resolver una alerta |
 | GET | `/holiday-work/dates?from&to` | RRHH/Supervisión/Carga Horaria | Fechas de feriado disponibles para convocar (Etapa 12D) |
 | GET | `/holiday-work/candidates?shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
 | GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias activas para una fecha |
@@ -2207,10 +2132,9 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. Etapa 9 de cobertura (§16.2): el snapshot agrega `finnegans = { model: "FINNEGANS_CONFIG_V1", types[] }` con la configuración de Finnegans de los tipos con novedades del legajo en el período (`noveltyTypeId`, `name`, `status`, `exportsToFinnegans`, `finnegansCode`, `finnegansValueUnit`, `finnegansRequiresValidity`, `coverageMode`); una reconstrucción del snapshot la conserva y nunca la agrega a un snapshot anterior. |
-| POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
-| POST | `/closures/:id/return` | RRHH | Devolver un cierre |
-| GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
+| GET | `/closures/blockers` | todos los operativos, según alcance | Vista previa `?period=YYYY-MM` de lo que impide cerrar, con el mismo criterio que `/closures/close`. Responde `{ period, employees: [{ employee: { id, legajo, firstName, lastName }, blockers: [{ id, type: OPEN_SHIFT\|INCOMPLETE_SHIFT\|MANUAL_CLOCK_CONFLICT\|NOVELTY_REVIEW, date, title, reason, action, resolution: { module, label, path } }] }], totals }`, sólo de legajos del alcance aún no `CERRADO`. Una jornada sin fin que empezó el último día del mes anterior también figura si su máximo permitido cruza al período. Sin cache. El 409 `CLOSURE_HAS_OPERATIONAL_BLOCKERS` de `/closures/close` trae el mismo detalle en `details.employees` (oculto en producción): la UI vuelve a consultar este endpoint. |
+| POST | `/closures/close` | todos los operativos, según alcance | Cierra definitivamente `{ period, employeeIds }`. Procesa y verifica postprocesos. Bloquea (`409 CLOSURE_HAS_OPERATIONAL_BLOCKERS`, mensaje con persona, fecha y causa) sólo lo que puede cambiar horas: jornada `ABIERTO`, jornada `FALTA_SALIDA`/`FALTA_INGRESO`/`INVALIDO` sin revisar que empezó en el período, y fichada sobre horas manuales sin decidir; además `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW`. Observaciones de jornadas completas o fichadas, faltas sin registro (inactividad) y demás alertas de turno son informativas y no bloquean. |
+| POST | `/closures/:id/reopen` | todos los operativos, según alcance | Reabre con `{ reason, acknowledgeExportedHistory }`. El motivo y actor quedan auditados. Si hubo exportación, exige confirmación explícita y preserva todas las versiones históricas. |
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
 | GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno. Cada item del `GET` incluye grupo e `inUseFromTomorrow`. R4.6 protege historia y ofrece reemplazo fechado; ver abajo. |
 | POST | `/shift-templates/:id/replace-schedule/preview` | RRHH | Vista previa determinística de reemplazo fechado, sin escrituras |

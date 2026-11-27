@@ -60,7 +60,7 @@ function sameAssignmentFields(left: EmployeeDetails, right: EmployeeDetails) {
 
 const personLabel = (candidate: HolidayWorkAssignmentCandidate) => `${candidate.lastName}, ${candidate.firstName}`;
 const DAY_OFF_BLOCKED = "Tiene franco asignado ese día: cancelá el franco primero (Gestionar francos).";
-const PERIOD_BLOCKED = "El período ya fue enviado a cierre: sólo RRHH puede corregirlo.";
+const PERIOD_BLOCKED = "El período está cerrado: reabrilo desde Cierres mensuales para modificarlo.";
 
 /**
  * "Gestionar feriados" (Gestión Horaria, junto a "Gestionar francos"):
@@ -72,13 +72,10 @@ const PERIOD_BLOCKED = "El período ya fue enviado a cierre: sólo RRHH puede co
  */
 export function HolidayWorkAssignmentDialog({
   initialMonth,
-  canCorrectClosedPeriods,
   close,
   onSaved,
 }: {
   initialMonth: string;
-  // Sólo RRHH corrige un período enviado/aprobado, con motivo (como francos).
-  canCorrectClosedPeriods: boolean;
   close: () => void;
   onSaved: () => void;
 }) {
@@ -112,7 +109,6 @@ export function HolidayWorkAssignmentDialog({
   // Plantillas de las convocatorias ya guardadas de la fecha (para mostrarlas aunque no estén entre las visibles).
   const [savedTemplates, setSavedTemplates] = useState<Map<string, string>>(new Map());
 
-  const [correctionReason, setCorrectionReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [formError, setFormError] = useState("");
@@ -225,7 +221,8 @@ export function HolidayWorkAssignmentDialog({
   // estaba convocado se puede cancelar igual.
   const blockedByDayOff = (candidate: HolidayWorkAssignmentCandidate) => Boolean(candidate.dayOff) && !checkedIds.has(candidate.id);
   // Período enviado/aprobado: Nivel 2/3 no lo cambian (el backend lo rechaza).
-  const blockedByPeriod = (candidate: HolidayWorkAssignmentCandidate) => Boolean(candidate.periodLocked) && !canCorrectClosedPeriods;
+  // Un período CERRADO no se modifica hasta reabrirlo (ningún rol).
+  const blockedByPeriod = (candidate: HolidayWorkAssignmentCandidate) => Boolean(candidate.periodLocked);
   const blockReason = (candidate: HolidayWorkAssignmentCandidate) => (blockedByPeriod(candidate) ? PERIOD_BLOCKED : blockedByDayOff(candidate) ? DAY_OFF_BLOCKED : undefined);
 
   // Nunca se propone un turno: sin plantilla rige el turno real del día
@@ -298,17 +295,12 @@ export function HolidayWorkAssignmentDialog({
   };
   const hasChanges = () => changedEmployeeIds().size > 0;
   const changed = changedEmployeeIds();
-  const reasonRequired = canCorrectClosedPeriods && (candidates || []).some((candidate) => candidate.periodLocked && changed.has(candidate.id));
 
   const handleSave = async () => {
     setFormError("");
     setNotice("");
     if (!hasChanges()) {
       setNotice("No hay cambios para guardar.");
-      return;
-    }
-    if (reasonRequired && !correctionReason.trim()) {
-      setFormError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.");
       return;
     }
     // Misma regla que el backend (§20): ninguna convocatoria sin horario resoluble.
@@ -326,11 +318,10 @@ export function HolidayWorkAssignmentDialog({
       for (const employeeId of originalAssignedIds) {
         if (!checkedIds.has(employeeId)) payload.push({ employeeId, status: "CANCELADA" });
       }
-      const saved = await holidayWorkAssignmentApiService.saveAssignments(selectedDate, payload, reasonRequired ? correctionReason.trim() : null);
+      const saved = await holidayWorkAssignmentApiService.saveAssignments(selectedDate, payload);
       const warnings = saved.flatMap((row) => (row.scheduleWarning ? [`${row.employee.lastName}, ${row.employee.firstName}: ${row.scheduleWarning}`] : []));
       setOriginalAssignedIds(new Set(checkedIds));
       setOriginalDetails(new Map([...checkedIds].map((employeeId) => [employeeId, details.get(employeeId) || emptyDetails])));
-      setCorrectionReason("");
       setNotice(["Convocatoria guardada correctamente.", ...warnings].join(" "));
       onSaved();
     } catch (reason) {
@@ -514,13 +505,6 @@ export function HolidayWorkAssignmentDialog({
                 </table>
               </TableShell>
             )}
-
-            {reasonRequired ? (
-              <label className="field holiday-work-correction">
-                <span>Motivo de la corrección *</span>
-                <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} maxLength={500} rows={2} placeholder="Queda registrado en auditoría: el período ya fue enviado a cierre." />
-              </label>
-            ) : null}
 
             {formError ? (
               <div className="rule-form-alert-error" role="alert"><AlertTriangle size={16} /><span>{formError}</span></div>

@@ -1,4 +1,4 @@
-import { ApprovalStatus, DocumentStatus, EmployeeStatus, LaborMovementType, NoveltyTypeKind } from "@prisma/client";
+import { ApprovalStatus, DocumentStatus, EmployeeStatus, LaborMovementType, NoveltyTypeKind, ShiftAlertStatus } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { countedBreakdownStatusWhere } from "../time-entries/workedTimeAccounting";
@@ -132,7 +132,7 @@ export const dashboardRepository = {
 
   /**
    * Count of distinct active employees who have at least one countable
-   * (APROBADO | EN_REVISION) time entry in the period.
+   * (APROBADO; EN_REVISION sólo como dato histórico) time entry in the period.
    *
    * Etapa 14E.2: existía una `countEmployeesWithoutEntries` hermana (mismo
    * `activeWhere`, mismo filtro de período/status, pero `timeEntries: {none}`
@@ -159,17 +159,13 @@ export const dashboardRepository = {
   },
 
   /**
-   * Count of distinct employees (any status) with at least one EN_REVISION
-   * time entry in the period.
+   * Incidencias operativas reales: alertas de turnos pendientes (llegadas
+   * tarde, salidas anticipadas, trabajo no programado, fichada sobre horas
+   * manuales…) dentro del alcance. Mismo filtro que el listado de Alertas.
    */
-  countEmployeesInReview(period: string, accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.employee.count({
-      where: {
-        ...accessWhere,
-        timeEntries: {
-          some: { period, status: ApprovalStatus.EN_REVISION },
-        },
-      },
+  countPendingShiftAlerts(accessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.shiftAlert.count({
+      where: { employee: accessWhere, status: ShiftAlertStatus.PENDIENTE },
     });
   },
 
@@ -193,9 +189,14 @@ export const dashboardRepository = {
     });
   },
 
-  countPendingNovelties(accessWhere: Prisma.EmployeeWhereInput) {
-    return prisma.novelty.count({
-      where: { employee: accessWhere, status: ApprovalStatus.PENDIENTE },
+  /**
+   * Días de cobertura de novedades del período que esperan una decisión
+   * (`reviewStatus = PENDING`, NOVELTY_COVERAGE_ENGINE.md §12): los mismos que
+   * bloquean el cierre mensual. Usa el índice (period, reviewStatus).
+   */
+  countNoveltyCoverageDaysInReview(period: string, accessWhere: Prisma.EmployeeWhereInput) {
+    return prisma.noveltyDayCoverage.count({
+      where: { period, reviewStatus: "PENDING", employee: accessWhere },
     });
   },
 

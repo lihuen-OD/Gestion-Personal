@@ -63,7 +63,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     if (options.template) await holder.shiftAssignment.create({ data: { employeeId: created.id, shiftTemplateId: options.template, effectiveFrom: day("2027-01-01"), weekdays: options.weekdays ?? [] } });
     return created.id;
   };
-  const closure = (employeeId: string, period: string, status: "DEVUELTO" | "ENVIADO") => holder.monthlyTimeClosure.create({ data: { employeeId, period, status, snapshot: { marker: "previo" } } });
+  const closure = (employeeId: string, period: string, status: "ABIERTO" | "CERRADO") => holder.monthlyTimeClosure.create({ data: { employeeId, period, status, snapshot: { marker: "previo" } } });
   const snapshotOf = async (employeeId: string, period: string) => (await holder.monthlyTimeClosure.findFirstOrThrow({ where: { employeeId, period } })).snapshot as { marker?: string; accounting?: { noveltyCoveredMinutes: number }; recalculation?: { reason: string; source?: string } };
 
   beforeAll(async () => {
@@ -117,7 +117,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
   it("francos: asignar → 0 (DAY_OFF) sólo ese día, sin reescribir los demás; cancelar → restaura; el snapshot abierto se reconstruye", async () => {
     const emp = await employee({ template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
     const novelty = await createNovelty(emp, types.vacaciones, "2027-03-01", "2027-03-05");
-    await closure(emp, "2027-03", "DEVUELTO");
+    await closure(emp, "2027-03", "ABIERTO");
     const before = await rows(novelty);
     expect([...before.values()].every((row) => row.outcome === "COVERED" && row.baseMinutes === 480)).toBe(true);
 
@@ -295,8 +295,8 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     const emp = await employee({ template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
     const february = await createNovelty(emp, tramite, "2027-02-10");
     const march = await createNovelty(emp, tramite, "2027-03-02");
-    await closure(emp, "2027-02", "ENVIADO");
-    await closure(emp, "2027-03", "DEVUELTO");
+    await closure(emp, "2027-02", "CERRADO");
+    await closure(emp, "2027-03", "ABIERTO");
     // Una novedad NONE puede cargarse en un cierre porque no altera minutos,
     // pero un recálculo automático posterior tampoco debe reinterpretar su
     // snapshot diario dentro del período ya protegido.

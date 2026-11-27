@@ -436,7 +436,7 @@ describe("deletePermanently — eliminación definitiva transaccional", () => {
     const tx = arrange();
     tx.hourConceptBreakdown.groupBy.mockResolvedValue([]);
     tx.timeSegment.findMany.mockResolvedValue([{ id: "seg-1", employeeId: "emp-9", date: new Date("2026-08-14T00:00:00.000Z") }]);
-    tx.monthlyTimeClosure.findMany.mockResolvedValue([{ employeeId: "emp-9", period: "2026-08", status: "APROBADO" }]);
+    tx.monthlyTimeClosure.findMany.mockResolvedValue([{ employeeId: "emp-9", period: "2026-08", status: "CERRADO" }]);
 
     await expect(hourConceptsRepository.deletePermanently("prueba", recalculation)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     for (const write of [tx.hourConceptBreakdown.deleteMany, tx.timeSegment.updateMany, tx.workShift.updateMany, tx.novelty.updateMany, tx.hourConceptRule.deleteMany, tx.employeeHourConcept.deleteMany, tx.hourConcept.delete]) {

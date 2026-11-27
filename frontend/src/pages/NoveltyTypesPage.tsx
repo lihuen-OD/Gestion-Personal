@@ -26,7 +26,6 @@ function matchesFilters(item: NoveltyType, filters: NoveltyTypeFiltersModel) {
   if (filters.kind && item.kind !== filters.kind) return false;
   if (filters.status && item.status !== filters.status) return false;
   if (filters.exportsToFinnegans && String(item.rules.exportsToFinnegans) !== filters.exportsToFinnegans) return false;
-  if (filters.requiresApproval && String(item.rules.requiresApproval) !== filters.requiresApproval) return false;
   return true;
 }
 
@@ -41,7 +40,7 @@ export function NoveltyTypesPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
   const canEdit = level === 1;
-  const [filters, setFilters] = useState<NoveltyTypeFiltersModel>({ search: "", kind: "", exportsToFinnegans: "", requiresApproval: "", status: "" });
+  const [filters, setFilters] = useState<NoveltyTypeFiltersModel>({ search: "", kind: "", exportsToFinnegans: "", status: "" });
   const [refresh, setRefresh] = useState(0);
   const [apiItems, setApiItems] = useState<NoveltyType[] | null>(null);
   const [isLoadingApi, setIsLoadingApi] = useState(true);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCheck, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { noveltyApiService, type NoveltyListSortKey } from "../services/api/noveltyApiService";
 import type { Employee, Novelty } from "../types";
@@ -13,7 +13,6 @@ import { FilterPanel } from "../components/ui/FilterPanel";
 import { LoadingState } from "../components/ui/LoadingState";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { useSortState } from "../utils/sort";
-import { roleLevel } from "../utils/roles";
 import { currentMonthPeriod, formatPeriodLabel } from "../utils/period";
 
 const pageSize = 25;
@@ -42,8 +41,6 @@ export function NoveltiesPage() {
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [bulkApproving, setBulkApproving] = useState(false);
-  const pendingVisible = novelties.filter((item) => item.status === "Pendiente");
   const periodLabel = formatPeriodLabel(period);
 
   useEffect(() => {
@@ -100,7 +97,6 @@ export function NoveltiesPage() {
         title="Novedades registradas"
         subtitle={`${countLabel(meta.total, "novedad", "novedades")} en ${periodLabel} según tu perfil`}
       >
-        {roleLevel(user!.role) === 1 && pendingVisible.length ? <div className="bulk-toolbar"><span>{pendingVisible.length} novedades pendientes en esta vista</span><Button variant="primary" icon={CheckCheck} loading={bulkApproving} onClick={async () => { setBulkApproving(true); setLoadError(""); try { const updated = await noveltyApiService.approveMany(pendingVisible.map((item) => item.id)); const byId = new Map(updated.map((item) => [item.id, item])); setNovelties((current) => current.map((item) => byId.get(item.id) || item)); } catch { setLoadError("No se pudieron aprobar las novedades en lote."); } finally { setBulkApproving(false); } }}>Aprobar pendientes visibles</Button></div> : null}
         <FilterPanel
           search={{
             placeholder: "Buscar por legajo, DNI, empleado o tipo de novedad",

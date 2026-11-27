@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ClipboardList, RefreshCcw } from "lucide-react";
+import { AlertTriangle, Bell, CalendarDays, CheckCircle2, ClipboardList } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { employeeApiService } from "../services/api/employeeApiService";
 import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
@@ -60,17 +60,9 @@ function timeEntrySaveErrorMessage(error: unknown) {
     if (error.code === "HOUR_CONCEPT_NOT_ENABLED") {
       return "Ese tipo de hora no esta habilitado para este legajo.";
     }
-    if (error.code === "TIME_ENTRY_CORRECTION_REASON_REQUIRED") {
-      return "Indica el motivo de la corrección para poder guardar.";
-    }
-    if (error.code === "PERIOD_CLOSED_REQUIRES_CORRECTION") {
-      return "El período ya fue enviado a cierre. Solicitá la corrección para que RRHH la revise.";
-    }
-    if (error.code === "MONTHLY_CLOSURE_LOCKED") {
-      // Etapa 15E: create() ahora bloquea horas nuevas sobre un período
-      // cerrado para cualquier rol, RRHH incluido — no hay vía de
-      // corrección para una fila que todavía no existe.
-      return "El período está cerrado. Solicitá una corrección o pedí intervención de RRHH.";
+    if (error.code === "MONTHLY_CLOSURE_LOCKED" || error.code === "PERIOD_CLOSED") {
+      // Un período CERRADO bloquea horas nuevas para cualquier rol.
+      return "El período está cerrado. Reabrilo desde Cierres mensuales para modificarlo.";
     }
     if (error.code === "RELATION_CONSTRAINT") {
       return "El legajo o el tipo de hora seleccionado ya no está disponible. Actualizá la página e intentá nuevamente.";
@@ -82,7 +74,7 @@ function timeEntrySaveErrorMessage(error: unknown) {
 function manualBreakdownSaveErrorMessage(error: unknown) {
   if (error instanceof ApiError) {
     if (error.code === "PERIOD_CLOSED") {
-      return "El período está cerrado y no admite edición directa.";
+      return "El período está cerrado. Reabrilo desde Cierres mensuales para modificarlo.";
     }
     if (error.code === "MANUAL_BREAKDOWN_CONCURRENT_CONFLICT") {
       return "Alguien más modificó esta carga al mismo tiempo. Volvé a intentar.";
@@ -127,7 +119,6 @@ export function EmployeeHoursPage() {
   // (openCell sin carga persistida) y el usuario no la haya editado.
   const [hoursFromSuggestion, setHoursFromSuggestion] = useState(false);
   const [notes, setNotes] = useState("");
-  const [correctionReason, setCorrectionReason] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [noveltyTypes, setNoveltyTypes] = useState<NoveltyType[]>([]);
   const [rows, setRows] = useState<EmployeeTimeGridRow[]>([]);
@@ -303,7 +294,6 @@ export function EmployeeHoursPage() {
     );
     setHoursFromSuggestion(entry?.hours == null);
     setNotes(formatTimeEntryObservation(entry?.notes));
-    setCorrectionReason("");
     setNoveltyTypeId("");
     setNoveltyValues(initialNoveltyLoadValues(undefined, { fromDate: date }));
     setShowNoveltyIssues(false);
@@ -313,16 +303,12 @@ export function EmployeeHoursPage() {
   const selectedConceptName = selectedRow?.concept.name ?? "Hora normal";
   const selectedEntry = selectedRow && selected ? entryFor(selected.day, selectedRow.concept.id, selectedRow.concept.name) : undefined;
   const selectedConceptNovelties = selected ? coverageForDay(selected.day) : [];
-  const canCorrectApproved = Boolean(selectedEntry?.status === "Aprobado" && user && timeEntryApiService.canReview(user));
-  const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) && !canCorrectApproved : false;
+  const selectedLocked = selectedEntry ? !timeEntryApiService.canEdit(selectedEntry) : false;
   // Etapa 11B: multiplicador de Hora Especial del día que se está editando —
   // aplica igual sea la fila de Hora normal o un concepto adicional (11A.1).
   const selectedDaySpecialHour = selected ? specialHoursByDay[String(selected.day)] : undefined;
   const selectedDayAccounting = selected ? accounting.days[String(selected.day)] : undefined;
   const selectedDayOff = selected && selectedRow?.role === "NORMAL_BASE" ? dayOffsByDay[String(selected.day)] : undefined;
-  // Etapa 6L.3: RRHH ya es quien aprueba, así que su carga manual se aplica
-  // directo — no tiene sentido mostrarle "Enviar a revisión" a sí mismo.
-  const isRrhh = Boolean(user && roleLevel(user.role) === 1);
   const manualRow = manualSelected ? rows.find((row) => row.concept.id === manualSelected.conceptId) : undefined;
   const manualDaySpecialHour = manualSelected ? specialHoursByDay[String(manualSelected.day)] : undefined;
   // Lo que se liquida de ESE concepto ese día (backend), para la nota de Hora Especial del modal.
@@ -366,9 +352,6 @@ export function EmployeeHoursPage() {
         "La carga ya fue aprobada. Para modificarla primero hay que reabrirla.",
       );
     }
-    if (canCorrectApproved && correctionReason.trim().length < 2) {
-      return setError("Indicá el motivo de la corrección. Quedará registrado en auditoría.");
-    }
     if (noveltyIssues.length) {
       setShowNoveltyIssues(true);
       return setError("Faltan datos de la novedad. Revisá los campos marcados.");
@@ -391,9 +374,7 @@ export function EmployeeHoursPage() {
     setSavingStatus(status);
     try {
       try {
-        savedEntry = canCorrectApproved && selectedEntry
-          ? await timeEntryApiService.update(selectedEntry.id, { ...payload, correctionReason })
-          : await timeEntryApiService.save(payload, { knownExistingId: selectedEntry?.id ?? null });
+        savedEntry = await timeEntryApiService.save(payload, { knownExistingId: selectedEntry?.id ?? null });
       } catch (saveError) {
         return setError(timeEntrySaveErrorMessage(saveError));
       }
@@ -446,18 +427,14 @@ export function EmployeeHoursPage() {
       novelty.status !== "Rechazado" &&
       (novelty.exportsToFinnegans || novelty.finnegansCode),
   ).length;
-  const approvedEntries = entries.filter((entry) => ["Aprobado", "Cerrado", "Exportado"].includes(entry.status)).length;
-  const reviewEntries = entries.filter((entry) => entry.status === "En revisión").length;
-  const correctionEntries = entries.filter((entry) => entry.status === "Devuelto" || entry.status === "Rechazado").length;
-  const draftEntries = entries.filter((entry) => entry.status === "Borrador" || entry.status === "Pendiente").length;
   const entriesWithNovelties = entries.filter((entry) => coverageForDay(entry.day).length > 0).length;
   const coverageReviewDays = accounting.novelty?.reviewDays ?? 0;
-  const actionableCount = reviewEntries + entries.filter((entry) => entry.status === "Devuelto").length + attendanceIssues + coverageReviewDays;
+  // Sólo incidencias operativas reales: fichadas con problemas y días de
+  // cobertura de novedades por revisar (ya no hay estados de aprobación).
+  const actionableCount = attendanceIssues + coverageReviewDays;
   const periodState = actionableCount > 0
     ? { label: "Con pendientes", tone: "warning" as const }
-    : draftEntries > 0
-      ? { label: "En preparación", tone: "neutral" as const }
-      : entries.length
+    : entries.length
         ? { label: "Sin pendientes", tone: "success" as const }
         : { label: "Sin cargas", tone: "neutral" as const };
 
@@ -508,17 +485,12 @@ export function EmployeeHoursPage() {
       <Section
         title="Estado del período"
         subtitle="Resumen de cargas que requieren seguimiento para este legajo."
-        action={actionableCount > 0 ? <Badge tone="warning">{actionableCount} pendientes</Badge> : <Badge tone="success">Al día</Badge>}
+        action={actionableCount > 0 ? <Badge tone="warning">{actionableCount} {actionableCount === 1 ? "incidencia" : "incidencias"}</Badge> : <Badge tone="success">Al día</Badge>}
         className="employee-hours-status"
       >
         <div className="employee-hours-status-grid">
-          <div className="employee-hours-status-item success"><CheckCircle2 size={18} /><b>{approvedEntries}</b><span>Cargas aprobadas</span></div>
-          {user && timeEntryApiService.canReview(user) ? (
-            <Link className="employee-hours-status-item warning" to={`/pendientes?period=${period}`}><ClipboardList size={18} /><b>{reviewEntries}</b><span>En revisión</span></Link>
-          ) : (
-            <div className="employee-hours-status-item warning"><ClipboardList size={18} /><b>{reviewEntries}</b><span>En revisión</span></div>
-          )}
-          <div className="employee-hours-status-item danger"><RefreshCcw size={18} /><b>{correctionEntries}</b><span>Devueltas o rechazadas</span></div>
+          <div className="employee-hours-status-item success"><CheckCircle2 size={18} /><b>{entries.length}</b><span>Cargas registradas</span></div>
+          <div className="employee-hours-status-item warning"><ClipboardList size={18} /><b>{coverageReviewDays}</b><span>Días de novedad por revisar</span></div>
           <div className="employee-hours-status-item purple"><Bell size={18} /><b>{entriesWithNovelties}</b><span>Cargas con novedades</span></div>
           <Link className="employee-hours-status-item orange" to="/asistencia"><AlertTriangle size={18} /><b>{attendanceIssues}</b><span>Problemas de fichada</span></Link>
         </div>
@@ -740,14 +712,8 @@ export function EmployeeHoursPage() {
             ) : null}
             {selectedLocked ? (
               <div className="info-note compact">
-                <b>Registro aprobado</b>
-                <p>Esta carga ya fue aprobada y quedo bloqueada para edicion directa.</p>
-              </div>
-            ) : null}
-            {canCorrectApproved ? (
-              <div className="info-note compact administrative-correction-callout">
-                <b>Corrección administrativa</b>
-                <p>La hora seguirá registrada. El cambio y su motivo quedarán auditados.</p>
+                <b>Período cerrado</b>
+                <p>Esta carga pertenece a un período cerrado. Reabrilo desde Cierres mensuales para modificarla.</p>
               </div>
             ) : null}
 
@@ -787,12 +753,6 @@ export function EmployeeHoursPage() {
                   onChange={(event) => setNotes(event.target.value)}
                 />
               </label>
-              {canCorrectApproved ? (
-                <label className="form-wide">
-                  Motivo obligatorio de la corrección
-                  <textarea spellCheck lang="es-AR" value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej.: el encargado confirmó el horario correcto con el empleado" />
-                </label>
-              ) : null}
             </div>
 
             <div className="context-novelty-card">
@@ -841,7 +801,7 @@ export function EmployeeHoursPage() {
 
               {selectedType ? <>
                 <NoveltyTypeLoadSummary type={selectedType} />
-                <NoveltyLoadFields type={selectedType} values={noveltyValues} onChange={setNoveltyValues} issues={showNoveltyIssues ? noveltyIssues : undefined} isRrhh={isRrhh} disabled={selectedLocked} />
+                <NoveltyLoadFields type={selectedType} values={noveltyValues} onChange={setNoveltyValues} issues={showNoveltyIssues ? noveltyIssues : undefined} disabled={selectedLocked} />
                 <NoveltyCoveragePreviewPanel state={noveltyPreview.state} layout={noveltyLoadLayout(selectedType)} employeeCount={1} missingHint="Completá los datos de la novedad para ver cómo quedará." onRetry={noveltyPreview.retry} />
               </> : null}
 
@@ -875,26 +835,7 @@ export function EmployeeHoursPage() {
               <Button variant="subtle" onClick={() => setSelected(undefined)}>
                 Cancelar
               </Button>
-              {canCorrectApproved ? (
-                <Button variant="primary" onClick={() => save("Aprobado")} disabled={isSaving}>
-                  {isSaving ? "Guardando corrección..." : "Guardar corrección"}
-                </Button>
-              ) : !selectedLocked ? (
-                isRrhh ? (
-                  <Button variant="primary" onClick={() => save("Aprobado")} disabled={isSaving}>
-                    {isSaving ? "Guardando..." : "Guardar"}
-                  </Button>
-                ) : (
-                  <>
-                    <Button variant="subtle" onClick={() => save("Borrador")} disabled={isSaving}>
-                      {isSaving && savingStatus === "Borrador" ? "Guardando..." : "Guardar borrador"}
-                    </Button>
-                    <Button variant="primary" onClick={() => save("En revisión")} disabled={isSaving}>
-                      {isSaving && savingStatus === "En revisión" ? "Enviando..." : "Enviar a revisión"}
-                    </Button>
-                  </>
-                )
-              ) : null}
+              {!selectedLocked ? <Button variant="primary" onClick={() => save("Aprobado")} disabled={isSaving}>{isSaving ? "Guardando..." : "Guardar"}</Button> : null}
             </div>
           </div>
         </Modal>

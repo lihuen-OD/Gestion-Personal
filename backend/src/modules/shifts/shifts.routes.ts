@@ -55,7 +55,7 @@ shiftsRouter.patch("/assignments/:id", shiftWriters, validateBody(updateShiftAss
 shiftsRouter.delete("/assignments/:id", shiftWriters, asyncHandler(c.remove));
 
 shiftsRouter.get("/alerts", requireAnyRole(all), validateQuery(listShiftAlertsQuerySchema), asyncHandler(shiftAlertController.list));
-shiftsRouter.post("/alerts/:id/resolve", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(resolveShiftAlertSchema), asyncHandler(shiftAlertController.resolve));
+shiftsRouter.post("/alerts/:id/resolve", requireAnyRole(all), validateBody(resolveShiftAlertSchema), asyncHandler(shiftAlertController.resolve));
 
 // Etapa 12D: asignaciones de trabajo en feriados (convocatorias). Lectura y
 // escritura para los 3 roles operativos, siempre sobre los legajos de su

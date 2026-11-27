@@ -2,8 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { formatArgentinaDate, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
-import { employeePeriodKey } from "../../shared/monthlyClosure/closurePeriodGuard";
-import { assertProtectedPeriodCorrection } from "../../shared/monthlyClosure/protectedPeriodCorrection";
+import { assertPeriodsNotClosed } from "../../shared/monthlyClosure/protectedPeriodCorrection";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext, RegisterAuditInput } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
@@ -120,7 +119,6 @@ export const holidayWorkAssignmentService = {
     }
 
     const dateLabel = formatArgentinaDate(input.date);
-    const correctionReason = input.correctionReason?.trim() || null;
     const { results, audits, coverage } = await execute(() => prisma.$transaction(async (tx) => {
       // docs/decisions/EMPLOYEE_DAY_OFF.md §5: convocatoria + franco el mismo
       // día es contradictorio y se bloquea en la escritura. Mismo lock por
@@ -144,20 +142,14 @@ export const holidayWorkAssignmentService = {
       const existingRows = await holidayWorkAssignmentRepository.findExistingForEmployees(input.date, employeeIds, tx);
       const changes = planHolidayWorkAssignmentChanges(input.assignments, existingRows);
       const changedIds = changes.filter((change) => change.kind === "CREATE" || change.kind === "UPDATE").map((change) => change.employeeId);
-      // Período enviado/aprobado: la convocatoria cambia la obligación (y la
-      // cobertura del cierre) — sólo RRHH y con motivo, igual que francos
-      // (EMPLOYEE_DAY_OFF.md §12). Sin cambios efectivos no hay nada que proteger.
+      // La convocatoria cambia la obligación (y la cobertura del cierre): un
+      // período CERRADO no se modifica, igual que francos (EMPLOYEE_DAY_OFF.md
+      // §12). Sin cambios efectivos no hay nada que proteger.
       const period = periodFromCalendarDate(input.date);
-      const protectedPeriods = await assertProtectedPeriodCorrection(tx, changedIds.map((employeeId) => ({ employeeId, period })), {
-        role: user.role,
-        correctionReason,
-        forbiddenMessage: "El período ya fue enviado a cierre. Pedile a RRHH que corrija la convocatoria si hace falta.",
-        reasonRequiredCode: "HOLIDAY_WORK_CORRECTION_REASON_REQUIRED",
-      });
-      const correctionSuffix = (employeeId: string) => (protectedPeriods.has(employeePeriodKey({ employeeId, period })) ? ` Motivo: ${correctionReason}` : "");
+      await assertPeriodsNotClosed(tx, changedIds.map((employeeId) => ({ employeeId, period })), "El período está cerrado. Reabrilo antes de modificar convocatorias.");
       // §20 (D9): ninguna convocatoria ACTIVA sin horario resoluble.
       const scheduleWarnings = await validateConvocationSchedules(tx, dateKey(input.date), activatedHolidayWorkAssignmentChanges(changes));
-      const auditSuffix = (employeeId: string) => `${correctionSuffix(employeeId)}${scheduleWarnings.has(employeeId) ? ` ${scheduleWarnings.get(employeeId)}` : ""}`;
+      const auditSuffix = (employeeId: string) => (scheduleWarnings.has(employeeId) ? ` ${scheduleWarnings.get(employeeId)}` : "");
       // Orden de locks (NOVELTY_COVERAGE_ENGINE.md §13.6): día → cobertura.
       await lockNoveltyCoverageForEmployees(tx, changedIds);
       const creates = changes.flatMap((change) => (change.kind === "CREATE" ? [change] : []));
@@ -177,7 +169,6 @@ export const holidayWorkAssignmentService = {
         const scheduleWarning = scheduleWarnings.get(employeeId);
         return scheduleWarning ? { ...row, scheduleWarning } : row;
       });
-      const withCorrection = (row: object, employeeId: string) => ({ ...row, ...(correctionSuffix(employeeId) ? { correctionReason } : {}) }) as unknown as Prisma.InputJsonValue;
       const pendingAudits: RegisterAuditInput[] = [];
       for (const change of changes) {
         if (change.kind === "SKIP" || change.kind === "UNCHANGED") continue;
@@ -188,7 +179,7 @@ export const holidayWorkAssignmentService = {
             entity: "HolidayWorkAssignment",
             entityId: change.employeeId,
             description: `Se convocó a ${row.employee.legajo} a trabajar el feriado del ${dateLabel}.${auditSuffix(change.employeeId)}`,
-            after: withCorrection(row, change.employeeId),
+            after: row as unknown as Prisma.InputJsonValue,
           });
           continue;
         }
@@ -202,7 +193,7 @@ export const holidayWorkAssignmentService = {
             ? `Se ${status === "CANCELADA" ? "canceló" : "reactivó"} la convocatoria de ${row.employee.legajo} para el feriado del ${dateLabel}.`
             : `Se actualizó la convocatoria de ${row.employee.legajo} para el feriado del ${dateLabel}.`) + auditSuffix(change.employeeId),
           before: change.existing as unknown as Prisma.InputJsonValue,
-          after: withCorrection(row, change.employeeId),
+          after: row as unknown as Prisma.InputJsonValue,
         });
       }
       // Sin ningún cambio efectivo la cobertura es idéntica a la de antes:

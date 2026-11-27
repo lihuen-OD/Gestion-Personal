@@ -54,7 +54,6 @@ const ZONE = {
   alertas: "C. Alertas de turnos",
   cargaHoras: "D. Carga de horas",
   cierres: "E. Cierres mensuales",
-  bandeja: "F. Bandeja de revisión",
   novedades: "G. Novedades",
   notificaciones: "H. Notificaciones",
   fichador: "I. Fichador",
@@ -283,9 +282,8 @@ test("workforce management performance journey — recorrido macro de Gestión h
   const previousPeriod = shiftPeriod(currentPeriod, -1);
 
   // ---------------------------------------------------------------------
-  // Login — Nivel 1 (RRHH), el único nivel con acceso a los 9 submódulos
-  // (Exportación es exclusivo de Nivel 1; Bandeja de revisión no existe para
-  // Nivel 3). Mismo mecanismo que 14D.1/14F.1.
+  // Login — Nivel 1 (RRHH), el único nivel con acceso a los 8 submódulos
+  // (Exportación es exclusivo de Nivel 1). Mismo mecanismo que 14D.1/14F.1.
   // ---------------------------------------------------------------------
   await measure("Login (acceso rápido RRHH)", ZONE.login, false, async () => {
     await page.goto("/");
@@ -510,69 +508,7 @@ test("workforce management performance journey — recorrido macro de Gestión h
     return { visibleLocator: page.locator("table tbody tr, .empty").first() };
   });
 
-  skip("Aprobar seleccionados / Enviar cierre a RH / Devolver cierre", ZONE.cierres, "Prohibido por defecto — cierra/reabre un período real de liquidación.", true);
-  skip("Aprobar/Rechazar corrección", ZONE.cierres, "Prohibido por defecto.", true);
-
-  // ---------------------------------------------------------------------
-  // F. Bandeja de revisión — mismo componente que Carga de horas
-  // (HoursPage pendingOnly). Los botones Aprobar/Rechazar/Devolver
-  // comparten aria-label genérico entre registro/novedad/desglose — NUNCA
-  // se usa un locator de rol sin scope exacto en esta zona.
-  // ---------------------------------------------------------------------
-  await measure("Entrar a Bandeja de revisión (Por registro)", ZONE.bandeja, false, async () => {
-    await page.goto("/pendientes");
-    return { visibleLocator: page.locator("h1").first(), emptyLocator: page.locator(".empty") };
-  });
-
-  const porPersonaTab = page.getByRole("tab", { name: "Por persona" });
-  if (await porPersonaTab.count()) {
-    await measure('Cambiar a pestaña "Por persona"', ZONE.bandeja, false, async () => {
-      await porPersonaTab.click();
-      return { visibleLocator: page.locator("table tbody tr, .empty").first() };
-    });
-  } else {
-    skip('Cambiar a pestaña "Por persona"', ZONE.bandeja, "no se encontraron las pestañas Por registro/Por persona en el entorno actual");
-  }
-
-  const firstPendingName = await page.locator("table tbody tr td b").first().textContent().catch(() => null);
-  if (firstPendingName?.trim()) {
-    await measure("Buscar en Bandeja de revisión", ZONE.bandeja, false, async () => {
-      await page.getByPlaceholder("Buscar por legajo, DNI, CUIL, apellido o nombre").fill(firstPendingName.trim());
-      return { visibleLocator: page.locator("table tbody tr, .empty").first(), notes: ["término tomado de una fila real — no se registra el valor buscado en este reporte"], preNetworkIdleWaitMs: 400 };
-    });
-  } else {
-    skip("Buscar en Bandeja de revisión", ZONE.bandeja, "no hay ninguna fila en Bandeja de revisión en el entorno actual para tomar un término real de búsqueda");
-  }
-
-  await measure("Cambiar período (Bandeja de revisión)", ZONE.bandeja, false, async () => {
-    await page.getByLabel("Período").fill(previousPeriod);
-    return { visibleLocator: page.locator("table tbody tr, .empty").first() };
-  });
-  await resetPeriodQuietly();
-
-  const pendingDetailLink = page.getByRole("link", { name: "Ver detalle" }).first();
-  const pendingDetailHref = (await pendingDetailLink.count()) ? await pendingDetailLink.getAttribute("href") : null;
-  if (pendingDetailHref) {
-    await measure("Abrir detalle (Ver detalle, Por persona)", ZONE.bandeja, false, async () => {
-      await page.goto(pendingDetailHref);
-      return { visibleLocator: page.locator("h1").first() };
-    });
-    if (actions.at(-1)!.covered) {
-      await measure("Volver a Bandeja de revisión", ZONE.bandeja, false, async () => {
-        await page.locator(".back-link").first().click();
-        return { visibleLocator: page.locator("h1").first() };
-      });
-    } else {
-      skip("Volver a Bandeja de revisión", ZONE.bandeja, "depende de la acción anterior, que falló");
-    }
-  } else {
-    skip("Abrir detalle (Ver detalle, Por persona)", ZONE.bandeja, "no hay ninguna fila en la vista Por persona en el entorno actual, o la pestaña no está disponible");
-    skip("Volver a Bandeja de revisión", ZONE.bandeja, "depende de la acción anterior, salteada");
-  }
-
-  skip("Aprobar/Rechazar/Devolver registro", ZONE.bandeja, "Prohibido por defecto.", true);
-  skip("Aprobar/Rechazar novedad (desde Bandeja)", ZONE.bandeja, "Prohibido por defecto.", true);
-  skip("Aprobar/Rechazar/Devolver desglose manual", ZONE.bandeja, "Prohibido por defecto.", true);
+  skip("Cerrar período / Reabrir período", ZONE.cierres, "Prohibido por defecto — cierra/reabre un período real de liquidación.", true);
 
   // ---------------------------------------------------------------------
   // G. Novedades
@@ -595,8 +531,7 @@ test("workforce management performance journey — recorrido macro de Gestión h
   await measureModalOpenAndCancel('Abrir modal "Nueva novedad" sin guardar', 'Cancelar "Nueva novedad"', ZONE.novedades, page.getByRole("button", { name: "Nueva novedad" }));
 
   skip("Guardar nueva novedad", ZONE.novedades, "Prohibido por defecto — crearía una novedad real (licencia/ausencia) para un empleado real.", true);
-  skip("Aprobar/Rechazar/Eliminar novedad", ZONE.novedades, "Prohibido por defecto.", true);
-  skip("Aprobar pendientes visibles (bulk)", ZONE.novedades, "Prohibido por defecto.", true);
+  skip("Corregir/Eliminar novedad", ZONE.novedades, "Prohibido por defecto.", true);
 
   // ---------------------------------------------------------------------
   // H. Notificaciones — NUNCA se hace click en una fila (link "Ver detalle"

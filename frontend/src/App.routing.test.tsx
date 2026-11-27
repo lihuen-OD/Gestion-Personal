@@ -22,7 +22,7 @@ vi.mock("./pages/OrganigramasPage", () => ({ OrganigramasPage: stub("Organigrama
 vi.mock("./pages/ReportsPage", () => ({ ReportsPage: stub("Reportes") }));
 vi.mock("./pages/AttendancePage", () => ({ AttendancePage: stub("Asistencia") }));
 vi.mock("./pages/ShiftAlertsPage", () => ({ ShiftAlertsPage: stub("Alertas de turnos") }));
-vi.mock("./pages/HoursPage", () => ({ HoursPage: ({ pendingOnly }: { pendingOnly?: boolean }) => <h1>{pendingOnly ? "Bandeja de revisión" : "Carga de horas"}</h1> }));
+vi.mock("./pages/HoursPage", () => ({ HoursPage: () => <h1>Carga de horas</h1> }));
 vi.mock("./pages/MonthlyClosuresPage", () => ({ MonthlyClosuresPage: stub("Cierres mensuales") }));
 vi.mock("./pages/NoveltiesPage", () => ({ NoveltiesPage: stub("Novedades") }));
 vi.mock("./pages/NotificationsPage", () => ({ NotificationsPage: stub("Notificaciones") }));
@@ -56,7 +56,6 @@ describe("App — Nivel 1 conserva Dashboard, Puestos, Organigramas y Reportes",
     ["/organigramas", "Organigramas"],
     ["/reportes", "Reportes"],
     ["/asistencia", "Asistencia"],
-    ["/pendientes", "Bandeja de revisión"],
   ])("%s abre %s", async (url, heading) => {
     expect(await open(LEVEL_1, url)).toHaveTextContent(heading);
     expect(screen.getByTestId("path")).toHaveTextContent(url);
@@ -78,7 +77,6 @@ describe("App — Nivel 2 no entra a Dashboard, Puestos, Organigramas ni Reporte
     ["/legajos", "Legajos"],
     ["/legajos/emp-1", "Detalle de legajo"],
     ["/horas", "Carga de horas"],
-    ["/pendientes", "Bandeja de revisión"],
     ["/novedades", "Novedades"],
   ])("conserva %s", async (url, heading) => {
     expect(await open(LEVEL_2, url)).toHaveTextContent(heading);
@@ -87,7 +85,7 @@ describe("App — Nivel 2 no entra a Dashboard, Puestos, Organigramas ni Reporte
 });
 
 describe("App — Nivel 3 mantiene sus rutas horarias y pierde sólo Inicio", () => {
-  it.each(["/", "/gestion-horaria", "/legajos", "/puestos", "/puestos/pos-1", "/organigramas", "/reportes", "/pendientes"])("%s redirige a /asistencia", async (url) => {
+  it.each(["/", "/gestion-horaria", "/legajos", "/puestos", "/puestos/pos-1", "/organigramas", "/reportes"])("%s redirige a /asistencia", async (url) => {
     expect(await open(LEVEL_3, url)).toHaveTextContent("Asistencia");
     expect(screen.getByTestId("path")).toHaveTextContent("/asistencia");
   });
@@ -102,5 +100,14 @@ describe("App — Nivel 3 mantiene sus rutas horarias y pierde sólo Inicio", ()
   ])("conserva %s", async (url, heading) => {
     expect(await open(LEVEL_3, url)).toHaveTextContent(heading);
     expect(screen.getByTestId("path")).toHaveTextContent(url);
+  });
+});
+
+// La Bandeja de revisión fue retirada (sin aprobaciones administrativas): la
+// dirección anterior redirige a Carga de horas para todos los niveles.
+describe("App — /pendientes redirige a Carga de horas", () => {
+  it.each([LEVEL_1, LEVEL_2, LEVEL_3])("%s", async (role) => {
+    expect(await open(role, "/pendientes")).toHaveTextContent("Carga de horas");
+    expect(screen.getByTestId("path")).toHaveTextContent("/horas");
   });
 });

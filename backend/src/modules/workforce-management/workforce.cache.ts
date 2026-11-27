@@ -58,12 +58,9 @@ export function clearNotificationsListCache() {
 // usuario+rol vía `userScopedCacheKey`
 // (workforce.controller.ts) -- el querystring de `closures` (`period`) ya
 // forma parte de `originalUrl`, así que cada período de cada usuario es una
-// entrada distinta; `corrections` no tiene query params, así que su key es
-// estable por usuario+rol.
+// entrada distinta.
 export const closuresCache = createTtlCache<Awaited<ReturnType<typeof workforceService.closures>>>(15_000);
-export const correctionsCache = createTtlCache<Awaited<ReturnType<typeof workforceService.corrections>>>(15_000);
 
 export function clearMonthlyClosuresReadCaches() {
   closuresCache.clear();
-  correctionsCache.clear();
 }

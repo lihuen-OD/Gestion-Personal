@@ -5,13 +5,8 @@ export const periodQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{
 // Correcciones de Cierre mensual: período y estado se resuelven en el where
 // (antes: fetch de las últimas 500 de todos los períodos + filtro en el
 // cliente, que perdía en silencio correcciones del período fuera de esas 500).
-export const correctionsQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), status: z.enum(["PENDIENTE", "APROBADA", "RECHAZADA"]).optional() });
-export type CorrectionsQuery = z.infer<typeof correctionsQuerySchema>;
 export const closureSubmitSchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), employeeIds: z.array(z.string().uuid()).min(1).max(500) });
-export const closureBulkSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), note: z.string().trim().max(600).optional() });
-export const returnClosureSchema = z.object({ reason: z.string().trim().min(2).max(600) });
-export const correctionCreateSchema = z.object({ timeEntryId: z.string().uuid(), proposedHours: z.coerce.number().min(0).max(24), reason: z.string().trim().min(2).max(600) });
-export const correctionReviewSchema = z.object({ note: z.string().trim().max(600).optional() });
+export const reopenClosureSchema = z.object({ reason: z.string().trim().min(5).max(600), acknowledgeExportedHistory: z.boolean().default(false) });
 // Etapa 9I: page/take real (antes take:200 fijo, sin paginación) — mismo
 // tope máximo de take que shiftAlerts/otras listas chicas de la app (no hace
 // falta un take grande acá, la campanita sólo necesita las últimas 10-20).

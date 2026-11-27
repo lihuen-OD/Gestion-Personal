@@ -58,8 +58,8 @@ describe.skipIf(!url)("Guardado en lote de convocatorias a feriado contra Postgr
   const n2 = () => ({ id: supervisor, email: "n2@example.com", name: "n2", role: "NIVEL_2_SUPERVISION" }) as Express.AuthUser;
   const n3 = () => ({ id: loader, email: "n3@example.com", name: "n3", role: "NIVEL_3_CARGA_HORARIA" }) as Express.AuthUser;
   const audit = () => ({ userId: rrhh });
-  const save = (assignments: Array<Record<string, unknown>>, date = HOLIDAY, actor = user(), correctionReason?: string) =>
-    m.holidays.save(m.schemas.saveHolidayWorkAssignmentsSchema.parse({ date, assignments, correctionReason }), actor, { userId: actor.id });
+  const save = (assignments: Array<Record<string, unknown>>, date = HOLIDAY, actor = user()) =>
+    m.holidays.save(m.schemas.saveHolidayWorkAssignmentsSchema.parse({ date, assignments }), actor, { userId: actor.id });
   const active = (employeeId: string, extra: Record<string, unknown> = {}) => ({ employeeId, status: "ACTIVA", ...extra });
   // Auditoría por convocatoria (la del recálculo de horas usa la misma entidad sin entityId).
   const assignmentAudits = () => holder.auditLog.count({ where: { entity: "HolidayWorkAssignment", entityId: { not: null } } });
@@ -146,7 +146,7 @@ describe.skipIf(!url)("Guardado en lote de convocatorias a feriado contra Postgr
     vacaciones = (await m.types.create(m.typeSchemas.createNoveltyTypeSchema.parse({ name: "Vacaciones", kind: "VACACIONES", coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 480, coverageDayRule: "WORK_OBLIGATION", coverageAppliesSpecialHours: true, coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" }))).id;
 
     // 12 legajos: los pares con vacaciones el feriado, los impares con horas
-    // cargadas ese día; todos con cierre abierto (DEVUELTO) del período.
+    // cargadas ese día; todos con cierre ABIERTO del período.
     for (let index = 0; index < 12; index += 1) {
       const id = await createEmployee();
       employees.push(id);
@@ -156,7 +156,7 @@ describe.skipIf(!url)("Guardado en lote de convocatorias a feriado contra Postgr
         // Cargadas como lo haría el motor (§20): feriado global x2 para todos.
         await holder.timeEntry.create({ data: { employeeId: id, hourConceptId: normalConcept, date: day(HOLIDAY), period: PERIOD, day: 24, hours: 8, totalMinutes: 480, status: "APROBADO", appliedMultiplier: 2 } });
       }
-      await holder.monthlyTimeClosure.create({ data: { employeeId: id, period: PERIOD, status: "DEVUELTO", snapshot: { marker: "previo" } } });
+      await holder.monthlyTimeClosure.create({ data: { employeeId: id, period: PERIOD, status: "ABIERTO", snapshot: { marker: "previo" } } });
     }
     // Alcance: el Nivel 2 es responsable horario de los legajos 0–5; el
     // Nivel 3 lo hereda mientras el Nivel 2 esté ACTIVO.
@@ -393,26 +393,21 @@ describe.skipIf(!url)("Guardado en lote de convocatorias a feriado contra Postgr
     await expectEngineFixedPoint();
   });
 
-  it("período enviado a cierre: Nivel 2 no puede cambiar la convocatoria; RRHH sí, con motivo", async () => {
+  it("período CERRADO: ningún nivel cambia la convocatoria hasta reabrirlo", async () => {
     const own = employees[2]!;
     await save([active(own, { notes: "Antes del cierre" })]);
-    await holder.monthlyTimeClosure.updateMany({ where: { employeeId: own, period: PERIOD }, data: { status: "ENVIADO" } });
+    await holder.monthlyTimeClosure.updateMany({ where: { employeeId: own, period: PERIOD }, data: { status: "CERRADO" } });
     try {
       const before = await state();
       await expect(save([{ employeeId: own, status: "CANCELADA" }], HOLIDAY, n2())).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+      await expect(save([{ employeeId: own, status: "CANCELADA" }], HOLIDAY, user())).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
       expect(await state()).toEqual(before);
       // Un guardado sin cambios efectivos no choca con el cierre.
       await save([active(own, { notes: "Antes del cierre" })], HOLIDAY, n2());
-      await expect(save([{ employeeId: own, status: "CANCELADA" }])).rejects.toMatchObject({ statusCode: 400, code: "HOLIDAY_WORK_CORRECTION_REASON_REQUIRED" });
-      const closureBefore = await holder.monthlyTimeClosure.findFirstOrThrow({ where: { employeeId: own, period: PERIOD } });
-      await save([{ employeeId: own, status: "CANCELADA" }], HOLIDAY, user(), "Planta pidió el cambio");
-      expect(await holder.holidayWorkAssignment.findFirstOrThrow({ where: { employeeId: own } })).toMatchObject({ status: "CANCELADA", updatedByUserId: rrhh });
-      const correction = await holder.auditLog.findFirstOrThrow({ where: { entity: "HolidayWorkAssignment", entityId: own, action: "DEACTIVATE" }, orderBy: { createdAt: "desc" } });
-      expect(correction.description).toContain("Motivo: Planta pidió el cambio");
-      // El snapshot de un período protegido nunca se reconstruye solo.
-      expect((await holder.monthlyTimeClosure.findFirstOrThrow({ where: { employeeId: own, period: PERIOD } })).snapshot).toEqual(closureBefore.snapshot);
     } finally {
-      await holder.monthlyTimeClosure.updateMany({ where: { employeeId: own, period: PERIOD }, data: { status: "DEVUELTO" } });
+      await holder.monthlyTimeClosure.updateMany({ where: { employeeId: own, period: PERIOD }, data: { status: "ABIERTO" } });
     }
+    await save([{ employeeId: own, status: "CANCELADA" }], HOLIDAY, n2());
+    expect(await holder.holidayWorkAssignment.findFirstOrThrow({ where: { employeeId: own } })).toMatchObject({ status: "CANCELADA" });
   });
 });

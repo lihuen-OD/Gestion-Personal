@@ -8,14 +8,12 @@ import { validateBody } from "../../shared/validation/validateRequest";
 import { validateQuery } from "../../shared/validation/validateQuery";
 import { noveltiesController } from "./novelties.controller";
 import {
-  bulkApproveNoveltiesSchema,
-  correctionNoveltySchema,
   createNoveltySchema,
   createNoveltyWithDocumentSchema,
   listNoveltiesQuerySchema,
   noveltyCoveragePreviewSchema,
   noveltyCoverageResolutionSchema,
-  rejectNoveltySchema,
+  updateNoveltySchema,
 } from "./novelties.schemas";
 
 export const noveltiesRouter = Router();
@@ -32,9 +30,7 @@ noveltiesRouter.post("/", requireAnyRole(operationalRoles), validateBody(createN
 noveltiesRouter.post("/with-document", requireAnyRole(operationalRoles), jsonBody(EMPLOYEE_DOCUMENT_BODY_LIMIT_BYTES), validateBody(createNoveltyWithDocumentSchema), asyncHandler(noveltiesController.createWithDocument));
 // Etapa 3: antes de "/:id" para que no se lea "coverage-preview" como un id.
 noveltiesRouter.post("/coverage-preview", requireAnyRole(operationalRoles), validateBody(noveltyCoveragePreviewSchema), asyncHandler(noveltiesController.previewCoverage));
-noveltiesRouter.post("/bulk-approve", requireAnyRole([roles.rrhh]), validateBody(bulkApproveNoveltiesSchema), asyncHandler(noveltiesController.approveMany));
-noveltiesRouter.post("/:id/approve", requireAnyRole(operationalRoles), validateBody(correctionNoveltySchema), asyncHandler(noveltiesController.approve));
-noveltiesRouter.post("/:id/reject", requireAnyRole(operationalRoles), validateBody(rejectNoveltySchema), asyncHandler(noveltiesController.reject));
-noveltiesRouter.delete("/:id", requireAnyRole([roles.rrhh]), validateBody(correctionNoveltySchema), asyncHandler(noveltiesController.remove));
+noveltiesRouter.patch("/:id", requireAnyRole(operationalRoles), validateBody(updateNoveltySchema), asyncHandler(noveltiesController.update));
+noveltiesRouter.delete("/:id", requireAnyRole(operationalRoles), asyncHandler(noveltiesController.remove));
 noveltiesRouter.get("/:id/coverage", requireAnyRole(operationalRoles), asyncHandler(noveltiesController.getCoverage));
 noveltiesRouter.post("/:id/coverage-days/:date/resolution", requireAnyRole(operationalRoles), validateBody(noveltyCoverageResolutionSchema), asyncHandler(noveltiesController.resolveCoverageDay));

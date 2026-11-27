@@ -110,7 +110,7 @@ export function App() {
           <Route path="/auditoria" element={<AuditPage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/reportes" element={<RoleRoute allowedLevels={[1]}><ReportsPage /></RoleRoute>} />
-          <Route path="/pendientes" element={<RoleRoute allowedLevels={[1, 2]}><HoursPage pendingOnly /></RoleRoute>} />
+          <Route path="/pendientes" element={<Navigate to="/horas" replace />} />
           <Route path="/cierres" element={<MonthlyClosuresPage />} />
           <Route path="/notificaciones" element={<NotificationsPage />} />
           <Route path="*" element={<Navigate to="/" />} />

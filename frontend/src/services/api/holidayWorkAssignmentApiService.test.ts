@@ -102,19 +102,19 @@ describe("holidayWorkAssignmentApiService.getHolidayDates — dedupe/cache front
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20: la convocatoria sólo
 // define la obligación de asistir; no reinterpreta horas, pero cambia la
 // cobertura de novedades de los convocados (obligación del día), que alimenta
-// grilla, Bandeja, dashboard y cierres. Las fechas de feriado
+// grilla, dashboard y cierres. Las fechas de feriado
 // ("workforce-config") no cambian por guardar una convocatoria.
 describe("holidayWorkAssignmentApiService.saveAssignments — invalida las pantallas de horas", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("invalida legajo, Carga de horas, Bandeja, dashboard y cierres", async () => {
+  it("invalida legajo, Carga de horas, dashboard y cierres", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ data: [] });
 
     await holidayWorkAssignmentApiService.saveAssignments("2026-10-05", []);
 
     const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
     // Etapa 5: también Novedades (la convocatoria cambia su cobertura).
-    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "pending", "time-entries"]);
+    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "time-entries"]);
   });
 });
 
@@ -130,16 +130,14 @@ describe("holidayWorkAssignmentApiService.getCandidates — franco del feriado",
   });
 });
 
-describe("holidayWorkAssignmentApiService.saveAssignments — motivo de corrección", () => {
+describe("holidayWorkAssignmentApiService.saveAssignments — cuerpo del pedido", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("sólo envía correctionReason cuando hay motivo", async () => {
+  it("envía sólo fecha y convocatorias (sin motivo de corrección: un período cerrado se reabre)", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ data: [] });
     await holidayWorkAssignmentApiService.saveAssignments("2026-10-12", []);
-    await holidayWorkAssignmentApiService.saveAssignments("2026-10-12", [], "Pedido de planta");
     expect(vi.mocked(apiRequest).mock.calls.map(([, options]) => (options as { body: unknown }).body)).toEqual([
       { date: "2026-10-12", assignments: [] },
-      { date: "2026-10-12", assignments: [], correctionReason: "Pedido de planta" },
     ]);
   });
 });
