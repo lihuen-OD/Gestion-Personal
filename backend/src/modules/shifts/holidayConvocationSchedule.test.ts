@@ -84,6 +84,6 @@ describe("resolveConvocationSchedules — §20", () => {
   });
 
   it("qué casos exigen plantilla", () => {
-    expect(["FIXED", "ROTATION_SHIFTS", "ROTATION_REST", "ROTATION_MISSING", "ROTATION_CONFLICT", "NONE"].filter((kind) => scheduleRequiresTemplate(kind as never))).toEqual(["ROTATION_REST", "ROTATION_MISSING", "ROTATION_CONFLICT", "NONE"]);
+    expect(["FIXED", "ROTATION_SHIFTS", "ROTATION_REST", "ROTATION_MISSING", "ROTATION_CONFLICT", "NONE"].filter((kind) => scheduleRequiresTemplate(kind as never))).toEqual(["ROTATION_CONFLICT"]);
   });
 });

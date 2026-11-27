@@ -25,6 +25,14 @@ export interface WorkObligationCandidate {
 export interface WorkObligationResolution {
   isHoliday: boolean;
   candidates: WorkObligationCandidate[];
+  /**
+   * Convocados al feriado SIN turno resoluble ese día (sin turno fijo, régimen
+   * SIN_TURNO, rotación sin bloques, sin plantilla) y sin franco: obligación de
+   * DÍA, sin horario. No generan falta de ingreso ni controles de puntualidad;
+   * sólo el chequeo diario de inactividad (una incidencia al terminar el día si
+   * no registran actividad ni novedad). Vacío fuera de un feriado.
+   */
+  convokedWithoutSchedule?: string[];
 }
 
 /**
@@ -80,7 +88,7 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     });
     for (const item of assignments) convocationTemplates.set(item.employeeId, item.shiftTemplate);
     convokedEmployeeIds = assignments.map((item) => item.employeeId);
-    if (!convokedEmployeeIds.length) return { isHoliday, candidates: [] };
+    if (!convokedEmployeeIds.length) return { isHoliday, candidates: [], convokedWithoutSchedule: [] };
   }
 
   // R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): miembros
@@ -126,7 +134,7 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
   // La rotación reemplaza a los turnos fijos: quien tiene plan de rotación ese
   // día no aporta candidatos fijos (defensa de la Opción C, §24.11).
   for (const employeeId of rotation.keys()) applicableByEmployee.delete(employeeId);
-  if (!applicableByEmployee.size) return { isHoliday, candidates: rotationCandidates };
+  if (!applicableByEmployee.size) return { isHoliday, candidates: rotationCandidates, convokedWithoutSchedule: await convokedWithoutScheduleIds(referenceDate, convokedEmployeeIds, rotationCandidates) };
 
   const [regimes, dayOffs] = await Promise.all([
     resolveActiveWorkRegimesForDate(referenceDate),
@@ -162,7 +170,19 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     if (earliest) candidates.push({ employeeId, template: earliest.template, scheduledStartAt: earliest.scheduledStartAt });
   }
 
-  return { isHoliday, candidates: [...candidates, ...rotationCandidates] };
+  const all = [...candidates, ...rotationCandidates];
+  return { isHoliday, candidates: all, convokedWithoutSchedule: await convokedWithoutScheduleIds(referenceDate, convokedEmployeeIds, all) };
+}
+
+/** Convocados sin ningún candidato con horario y sin franco ACTIVO ese día (una consulta, sólo en feriados con convocados). */
+async function convokedWithoutScheduleIds(referenceDate: Date, convokedEmployeeIds: string[] | null, candidates: WorkObligationCandidate[]): Promise<string[]> {
+  if (!convokedEmployeeIds?.length) return [];
+  const withSchedule = new Set(candidates.map((candidate) => candidate.employeeId));
+  const leftover = convokedEmployeeIds.filter((employeeId) => !withSchedule.has(employeeId));
+  if (!leftover.length) return [];
+  const dayOffs = await prisma.employeeDayOff.findMany({ where: { date: referenceDate, status: "ACTIVO", employeeId: { in: leftover } }, select: { employeeId: true } });
+  const withDayOff = new Set(dayOffs.map((row) => row.employeeId));
+  return leftover.filter((employeeId) => !withDayOff.has(employeeId));
 }
 
 /**

@@ -431,8 +431,8 @@ settlement.totalMinutes = normal + dentro de la jornada + adicionales + noveltyM
 | Turno real del día | Sin plantilla | Con plantilla válida |
 |---|---|---|
 | Turno fijo / rotación con turno | OK (usa ese turno) | OK (la plantilla lo reemplaza) |
-| Descanso o día sin configurar en la rotación | `422 HOLIDAY_WORK_SCHEDULE_REQUIRED` | OK |
-| Sin turno aplicable / SIN_TURNO | `422 HOLIDAY_WORK_SCHEDULE_REQUIRED` | OK |
+| Descanso o día sin configurar en la rotación | OK: obligación de día sin horario (una alerta de ausencia al terminar el día) | OK |
+| Sin turno aplicable / SIN_TURNO | OK: obligación de día sin horario (una alerta de ausencia al terminar el día) | OK |
 | Rotación con conflicto | `422 HOLIDAY_WORK_ROTATION_CONFLICT` (motivo legible) | OK + aviso (`scheduleWarning` en la respuesta y en la auditoría) |
 | Plantilla inactiva o sin horario válido | — | `422 HOLIDAY_WORK_TEMPLATE_INVALID` |
 

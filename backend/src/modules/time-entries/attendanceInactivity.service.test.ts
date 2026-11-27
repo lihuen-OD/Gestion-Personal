@@ -304,3 +304,39 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     expect(captured).toMatchObject({ entityType: "AttendanceInactivityIncident", eventAt: new Date("2026-08-27T03:00:00.000Z") });
   });
 });
+
+// §20: convocados al feriado SIN turno (sin plantilla, sin turno fijo, SIN_TURNO):
+// obligación de día sin horario — sólo esta alerta, una vez, al terminar el día.
+describe("detectAttendanceInactivity — convocados al feriado sin turno", () => {
+  it("sin actividad ni novedad: UNA incidencia de día (sin horario) con el texto de convocatoria", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [], convokedWithoutSchedule: ["employee-1"] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow() }]);
+
+    const result = await detectAttendanceInactivity(dateKey);
+
+    expect(result.detected).toBe(1);
+    const data = mockedPrisma.attendanceInactivityIncident.createMany.mock.calls[0]![0].data;
+    expect(data).toEqual([expect.objectContaining({ employeeId: "employee-1", operationalDate, observation: expect.stringContaining("convocada a trabajar el feriado") })]);
+    expect(data[0]).not.toHaveProperty("scheduledStartAt");
+    expect(mockedPrisma.attendanceInactivityIncident.createMany.mock.calls[0]![0].skipDuplicates).toBe(true);
+  });
+
+  it("con fichada o con novedad que lo justifica: no genera nada", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [], convokedWithoutSchedule: ["employee-1", "employee-2"] });
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+    mockedPrisma.novelty.findMany.mockResolvedValue([{ employeeId: "employee-2" }]);
+
+    expect(await detectAttendanceInactivity(dateKey)).toEqual({ date: dateKey, detected: 0, notified: 0 });
+    expect(mockedPrisma.attendanceInactivityIncident.createMany).not.toHaveBeenCalled();
+  });
+
+  it("un mismo legajo como candidato y sin turno no se duplica", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [obligationCandidate("employee-1")], convokedWithoutSchedule: ["employee-1"] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+
+    await detectAttendanceInactivity(dateKey);
+
+    expect(mockedPrisma.employee.findMany.mock.calls[0]![0].where.id.in).toEqual(["employee-1"]);
+  });
+});

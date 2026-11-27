@@ -2,8 +2,8 @@
  * Diagnóstico de SÓLO LECTURA de convocatorias a feriado ACTIVAS
  * (WORKED_TIME_ACCOUNTING_MODEL.md §20, F2.4). Detecta convocatorias que, con
  * las reglas vigentes, no producen el horario esperado que se pretendía:
- *   - SIN_HORARIO: sin plantilla y sin turno ese día (descanso de rotación, día
- *     sin configurar, conflicto o sin turno): no hay falta ni alertas.
+ *   - SIN_HORARIO: sin plantilla y con un conflicto en su rotación: no hay
+ *     horario esperado ni falta por bloque.
  *   - PLANTILLA_INVALIDA: plantilla inactiva o sin horario válido.
  *   - HORARIO_LIBRE: tiene inicio/fin propios y ninguna plantilla; el horario
  *     libre ya no define la jornada (rige el turno del día o "Revisar").
@@ -35,12 +35,6 @@ export type HolidayConvocationDiagnosticReport = {
 
 export type HolidayConvocationDiagnosticReader = ConvocationScheduleReader & Pick<PrismaTransactionClient, "holidayWorkAssignment" | "doubleHourRule">;
 
-const SCHEDULE_TEXT: Record<string, string> = {
-  ROTATION_REST: "descanso de su rotación",
-  ROTATION_MISSING: "día sin configurar en su rotación",
-  ROTATION_CONFLICT: "conflicto en su rotación",
-  NONE: "sin turno aplicable",
-};
 
 export async function runHolidayConvocationDiagnostic(reader: HolidayConvocationDiagnosticReader, range: { from: string; to: string }): Promise<HolidayConvocationDiagnosticReport> {
   const from = argentinaCalendarDate(range.from);
@@ -82,7 +76,7 @@ export async function runHolidayConvocationDiagnostic(reader: HolidayConvocation
       const schedule = schedules.get(row.employeeId)!;
       const template = row.shiftTemplate;
       if (template && !isTemplateUsable(template)) add("PLANTILLA_INVALIDA", `El turno ${template.code} está inactivo o no tiene un horario válido.`);
-      if (!template && scheduleRequiresTemplate(schedule.kind)) add("SIN_HORARIO", `Sin turno de convocatoria y ${SCHEDULE_TEXT[schedule.kind]}: no hay falta de ingreso ni alertas.`);
+      if (!template && scheduleRequiresTemplate(schedule.kind)) add("SIN_HORARIO", "Sin turno de convocatoria y con un conflicto en su rotación: no hay horario esperado ni falta de ingreso.");
       if (!template && (row.expectedStartTime || row.expectedEndTime)) {
         add("HORARIO_LIBRE", `Horario libre ${row.expectedStartTime ?? "?"}–${row.expectedEndTime ?? "?"} sin turno: ya no define la jornada.`);
       }

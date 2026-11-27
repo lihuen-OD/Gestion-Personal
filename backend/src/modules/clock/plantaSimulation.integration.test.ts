@@ -753,7 +753,7 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
   // turno REAL del día (bloques de la rotación, nunca un fijo cerrado al entrar a la rotación); sin turno
   // resoluble se rechaza; con plantilla reemplaza al habitual (también en fijos); sin convocatorias, nadie.
 
-  it("§20 Planta: candidatos con el turno real; convocatoria sin plantilla en día de turno → falta por bloque con aviso; en descanso → 422; fijo con plantilla → obligación y fichada contra ella", async () => {
+  it("§20 Planta: candidatos con el turno real; convocatoria sin plantilla en día de turno → falta por bloque con aviso; en descanso → sólo ausencia diaria; fijo con plantilla → obligación y fichada contra ella", async () => {
     // Día hábil del ciclo con gente de turno y gente de descanso (el ajeno trabaja L–V).
     const HOLIDAY = [MON_B, TUE_B, WED_B, THU_A, FRI_A, FRI_B, TUE_A, WED_A].find((key) => ROTATING.some((person) => planned(person, key).length === 0) && ROTATING.some((person) => planned(person, key).length === 1 && person !== PLANTA_EMPLOYEES.ROBERTO))!;
     expect(HOLIDAY).toBeDefined();
@@ -775,14 +775,10 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     expect(scheduleOf(resting[0]!)).toMatchObject({ kind: "ROTATION_REST", blocks: [] });
     expect(scheduleOf(AJENO)).toMatchObject({ kind: "FIXED", blocks: [{ code: "OF-08-16" }] });
 
-    // Descanso de rotación sin plantilla → 422 y nada guardado.
-    const rejected = await call("PUT", "/shifts/holiday-work/assignments", { date: HOLIDAY, assignments: [{ employeeId: id(resting[0]!), status: "ACTIVA" }] });
-    expect(rejected.status).toBe(422);
-    expect(rejected.error).toMatchObject({ code: "HOLIDAY_WORK_SCHEDULE_REQUIRED" });
-    expect(await holder.holidayWorkAssignment.count({ where: { employeeId: id(resting[0]!) } })).toBe(0);
-
     // Sin plantilla en un día de turno: obliga con el bloque de la rotación. El ajeno, con plantilla 17–03 (P8).
-    const saved = await call("PUT", "/shifts/holiday-work/assignments", { date: HOLIDAY, assignments: [{ employeeId: id(absent), status: "ACTIVA" }, { employeeId: id(AJENO), status: "ACTIVA", shiftTemplateId: templateId[PLANTA_TEMPLATES.T1703.id] }] });
+    // Descanso de rotación sin plantilla: se convoca igual — obligación de día, sólo ausencia diaria.
+    const restingConvoked = resting[0]!;
+    const saved = await call("PUT", "/shifts/holiday-work/assignments", { date: HOLIDAY, assignments: [{ employeeId: id(absent), status: "ACTIVA" }, { employeeId: id(AJENO), status: "ACTIVA", shiftTemplateId: templateId[PLANTA_TEMPLATES.T1703.id] }, { employeeId: id(restingConvoked), status: "ACTIVA" }] });
     expect(saved.status, JSON.stringify(saved.error)).toBe(200);
 
     // El ajeno llega a las 17:00 (su convocatoria), no a las 08:00 (su fijo): sin falta ni alertas.
@@ -800,17 +796,25 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     const entries = await holder.timeEntry.findMany({ where: { workShiftId: ajeno!.id }, orderBy: { date: "asc" } });
     expect(entries.map((entry) => [entry.date.toISOString().slice(0, 10), Number(entry.appliedMultiplier)])).toEqual([[HOLIDAY, 2], [NEXT, 1]]);
 
-    // El convocado de rotación ausente: una falta por su bloque con un aviso; el que descansa, nada.
+    // El convocado de rotación ausente: una falta por su bloque con un aviso. El convocado en descanso sin
+    // plantilla: UNA ausencia de día (sin horario, sin falta de ingreso) al terminar el día, aun repitiendo el
+    // chequeo; los que descansan sin convocatoria, nada.
     expect((await incidentsOf(absent, HOLIDAY)).map((row) => row.scheduledStartAt?.toISOString())).toEqual([absentBlock.start.toISOString()]);
     expect(await titlesAbout(absent)).toEqual(["Falta de ingreso"]);
-    for (const person of resting) expect(await incidentsOf(person, HOLIDAY)).toEqual([]);
+    await m.inactivity.detectAttendanceInactivity(HOLIDAY);
+    await m.inactivity.detectAttendanceInactivity(HOLIDAY);
+    expect((await incidentsOf(restingConvoked, HOLIDAY)).map((row) => row.scheduledStartAt)).toEqual([null]);
+    // Un aviso por destinatario (RRHH y, si lo tiene, su encargado) sobre la misma incidencia.
+    expect(await titlesAbout(restingConvoked, users.rrhh.id)).toEqual(["Sin actividad registrada"]);
+    expect(new Set((await noticesAbout(restingConvoked)).map((notice) => notice.entityId)).size).toBe(1);
+    for (const person of resting.slice(1)) expect(await incidentsOf(person, HOLIDAY)).toEqual([]);
     expect(await titlesAbout(AJENO)).toEqual([]);
 
-    // Novedades según jornada: los convocados tienen la jornada de su turno real; los demás, 0 confirmado.
-    const workdays = await m.workday.resolveExpectedWorkdays([id(absent), id(AJENO), id(resting[0]!)], day(HOLIDAY), day(HOLIDAY), m.prisma);
+    // Novedades según jornada: los convocados tienen la jornada de su turno real; sin turno, sin minutos inventados.
+    const workdays = await m.workday.resolveExpectedWorkdays([id(absent), id(AJENO), id(restingConvoked)], day(HOLIDAY), day(HOLIDAY), m.prisma);
     expect(workdays.get(id(absent))!.get(HOLIDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: durationOf(absentBlock), source: "HOLIDAY_CONVOCATION" });
     expect(workdays.get(id(AJENO))!.get(HOLIDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 600, minutesSource: "CONVOCATION_SHIFT_TEMPLATE" });
-    expect(workdays.get(id(resting[0]!))!.get(HOLIDAY)).toMatchObject({ obligation: "HOLIDAY_NOT_CONVOKED", expectedMinutes: 0 });
+    expect(workdays.get(id(restingConvoked))!.get(HOLIDAY)).toMatchObject({ obligation: "UNRESOLVED", expectedMinutes: null, unresolvedReason: "EXPECTED_MINUTES_UNKNOWN" });
   });
 
   it("§20 feriado sin ninguna convocatoria: nadie tiene obligación ni falta ni aviso (rotación, fijos y ajeno); quien trabaja cobra ×2 por la regla", async () => {

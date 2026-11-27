@@ -34,9 +34,14 @@ export type ConvocationSchedule = {
   planReason: ExpectedDayPlanMissingReason | ExpectedDayPlanConflictReason | null;
 };
 
-/** Sin plantilla explícita, estos casos dejarían al convocado sin horario esperado. */
+/**
+ * Sólo una rotación con conflicto exige plantilla (no se elige un turno en
+ * silencio). Sin turno ese día (NONE/SIN_TURNO, descanso o día sin configurar
+ * de la rotación) se convoca sin plantilla: obligación de día, con una única
+ * alerta de ausencia al terminar el día si no registra actividad.
+ */
 export function scheduleRequiresTemplate(kind: ConvocationScheduleKind): boolean {
-  return kind === "ROTATION_REST" || kind === "ROTATION_MISSING" || kind === "ROTATION_CONFLICT" || kind === "NONE";
+  return kind === "ROTATION_CONFLICT";
 }
 
 const CONFLICT_TEXT: Record<ExpectedDayPlanConflictReason, string> = {

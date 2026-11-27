@@ -359,7 +359,7 @@ describe("A2 — feriado sin convocatoria", () => {
 
   it("obligación: ninguna, y corta antes de leer asignaciones", async () => {
     givenAssignments(rows);
-    expect(await resolveWorkObligationCandidates(MONDAY)).toEqual({ isHoliday: true, candidates: [] });
+    expect(await resolveWorkObligationCandidates(MONDAY)).toEqual({ isHoliday: true, candidates: [], convokedWithoutSchedule: [] });
     expect(db.shiftAssignment.findMany).not.toHaveBeenCalled();
   });
 

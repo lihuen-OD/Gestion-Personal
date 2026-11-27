@@ -41,13 +41,9 @@ describe("validateConvocationSchedules — §20 D9", () => {
     expect(await validate([{ employeeId: "emp-1", shiftTemplateId: null }])).toEqual(new Map());
   });
 
-  it.each([["ROTATION_REST"], ["ROTATION_MISSING"], ["NONE"]] as const)("%s sin plantilla → 422 HOLIDAY_WORK_SCHEDULE_REQUIRED con el legajo", async (kind) => {
+  it.each([["ROTATION_REST"], ["ROTATION_MISSING"], ["NONE"]] as const)("%s sin plantilla → OK: obligación de día sin horario (sólo ausencia diaria)", async (kind) => {
     given({ "emp-1": schedule(kind) });
-    await expect(validate([{ employeeId: "emp-1", shiftTemplateId: null }])).rejects.toMatchObject({
-      statusCode: 422,
-      code: "HOLIDAY_WORK_SCHEDULE_REQUIRED",
-      message: expect.stringContaining("Apellido emp-1, Ana · Legajo 1 no tiene un turno para el 08/12/2026"),
-    });
+    expect(await validate([{ employeeId: "emp-1", shiftTemplateId: null }])).toEqual(new Map());
   });
 
   it.each([["FIXED"], ["ROTATION_SHIFTS"], ["ROTATION_REST"], ["ROTATION_MISSING"], ["NONE"]] as const)("%s con plantilla válida → OK, sin aviso", async (kind) => {
@@ -73,9 +69,10 @@ describe("validateConvocationSchedules — §20 D9", () => {
   });
 
   it("valida todo el lote con consultas fijas y nombra a todos los afectados", async () => {
-    given({ "emp-1": schedule("NONE"), "emp-2": schedule("ROTATION_REST"), "emp-3": schedule("FIXED") });
+    given({ "emp-1": schedule("ROTATION_CONFLICT", "OVERLAPPING_BLOCKS"), "emp-2": schedule("ROTATION_CONFLICT", "MULTIPLE_VERSIONS"), "emp-3": schedule("ROTATION_REST") });
     await expect(validate([{ employeeId: "emp-1", shiftTemplateId: null }, { employeeId: "emp-2", shiftTemplateId: null }, { employeeId: "emp-3", shiftTemplateId: null }])).rejects.toMatchObject({
-      message: expect.stringMatching(/Legajo 1; .*Legajo 2 no tiene/),
+      code: "HOLIDAY_WORK_ROTATION_CONFLICT",
+      message: expect.stringMatching(/Legajo 1 \(.*\); .*Legajo 2 \(/),
     });
     expect(resolveConvocationSchedules).toHaveBeenCalledTimes(1);
     expect(db.employee.findMany).toHaveBeenCalledTimes(1);

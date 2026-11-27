@@ -429,7 +429,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     const user = userEvent.setup();
     await openFirstDate(user);
     await screen.findByText("Rotación: PLANTA-17-03 17:00–03:00");
-    expect(screen.getByText("Descanso de su rotación")).toBeInTheDocument();
+    expect(screen.getByText("Descanso de su rotación (sin plantilla, se controla sólo la ausencia del día)")).toBeInTheDocument();
     expect(screen.getByText("Conflicto en su rotación: Los bloques del día se superponen")).toBeInTheDocument();
 
     await user.click(screen.getByLabelText(/Trabaja este feriado — Pérez, Juan/i));
@@ -440,9 +440,9 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "employee-1", shiftTemplateId: null })], null));
   });
 
-  it("24 — descanso o conflicto sin plantilla: no guarda y pide el turno; al elegirlo, guarda con la plantilla", async () => {
+  it("24 — conflicto de rotación sin plantilla: no guarda y pide el turno; al elegirlo, guarda con la plantilla", async () => {
     vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({
-      items: [candidate({ id: "e-rest", legajo: "202", firstName: "Eva", lastName: "Descanso", expectedSchedule: { kind: "ROTATION_REST", blocks: [], planReason: null } })],
+      items: [candidate({ id: "e-rest", legajo: "202", firstName: "Eva", lastName: "Descanso", expectedSchedule: { kind: "ROTATION_CONFLICT", blocks: [], planReason: "OVERLAPPING_BLOCKS" } })],
       meta: { total: 1, page: 1, pageSize: 300, hasMore: false },
     });
     const user = userEvent.setup();
@@ -459,6 +459,21 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     await user.selectOptions(select, "template-manana");
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "template-manana" })], null));
+  });
+
+  it("24b — descanso de rotación sin plantilla: se convoca sin turno (sólo ausencia diaria)", async () => {
+    vi.mocked(holidayWorkAssignmentApiService.getCandidates).mockResolvedValue({
+      items: [candidate({ id: "e-rest", legajo: "202", firstName: "Eva", lastName: "Descanso", expectedSchedule: { kind: "ROTATION_REST", blocks: [], planReason: null } })],
+      meta: { total: 1, page: 1, pageSize: 300, hasMore: false },
+    });
+    const user = userEvent.setup();
+    await openFirstDate(user);
+    await user.click(await screen.findByLabelText(/Trabaja este feriado — Descanso, Eva/i));
+    const select = screen.getByLabelText(/Turno de la convocatoria — Descanso, Eva/i);
+    expect(select).toHaveAttribute("aria-invalid", "false");
+    expect(within(select).getByRole("option", { name: "Sin turno" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", [expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: null })], null));
   });
 
   it("25 — el aviso de conflicto de rotación devuelto por el servidor se muestra al guardar", async () => {
@@ -491,7 +506,7 @@ describe("Gestionar feriados (HolidayWorkAssignmentDialog) — Etapa 12D + §20"
     expect((screen.getByLabelText(/Turno de la convocatoria — Rotación, Juan/i) as HTMLSelectElement).selectedOptions[0]!.textContent).toBe("GUARDIA · Guardia de feriado");
     await user.click(screen.getByLabelText(/Trabaja este feriado — Descanso, Eva/i));
     const select = screen.getByLabelText(/Turno de la convocatoria — Descanso, Eva/i);
-    expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["Elegí un turno", "GUARDIA · Guardia de feriado", "PL-07-17 07:00–17:00"]);
+    expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["Sin turno", "GUARDIA · Guardia de feriado", "PL-07-17 07:00–17:00"]);
     await user.selectOptions(select, "pl-m");
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
     await waitFor(() => expect(holidayWorkAssignmentApiService.saveAssignments).toHaveBeenCalledWith("2026-08-27", expect.arrayContaining([expect.objectContaining({ employeeId: "e-rest", shiftTemplateId: "pl-m" })]), null));

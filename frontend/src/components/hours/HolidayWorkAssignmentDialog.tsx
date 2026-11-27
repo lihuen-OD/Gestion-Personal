@@ -478,7 +478,7 @@ export function HolidayWorkAssignmentDialog({
                                 aria-label={`Turno de la convocatoria — ${personLabel(candidate)}`}
                                 aria-invalid={!employeeDetails.shiftTemplateId && scheduleRequiresTemplate(candidate.expectedSchedule)}
                               >
-                                <option value="">{scheduleRequiresTemplate(candidate.expectedSchedule) ? "Elegí un turno" : "El turno del día"}</option>
+                                <option value="">{scheduleRequiresTemplate(candidate.expectedSchedule) ? "Elegí un turno" : candidate.expectedSchedule?.blocks.length ? "El turno del día" : "Sin turno"}</option>
                                 {templateChoices.map((choice) => (
                                   <option key={choice.id} value={choice.id}>{choice.label}</option>
                                 ))}

@@ -374,16 +374,18 @@ export async function persistAndNotifyInactivityIncidents(
 // novedad vigente que lo exima.
 export async function detectAttendanceInactivity(dateKey: string): Promise<{ date: string } & PersistInactivityResult> {
   const ranges = operationalDateRanges(dateKey);
-  const { isHoliday, candidates: allCandidates } = await resolveWorkObligationCandidates(dateKey);
+  const { isHoliday, candidates: allCandidates, convokedWithoutSchedule = [] } = await resolveWorkObligationCandidates(dateKey);
   // R4.3b (§25.5): una obligación por BLOQUES de rotación registra sus
   // ausencias sólo por bloque (falta de ingreso por bloque) — nunca
   // SIN_ACTIVIDAD_REGISTRADA. Se excluye desde el principio, así el resultado
   // no depende del orden en que corran este proceso y el de falta de ingreso.
   const blockObligated = new Set(allCandidates.filter((candidate) => candidate.block).map((candidate) => candidate.employeeId));
   const obligationCandidates = blockObligated.size ? allCandidates.filter((candidate) => !blockObligated.has(candidate.employeeId)) : allCandidates;
-  if (!obligationCandidates.length) return { date: dateKey, detected: 0, notified: 0 };
+  // Convocados al feriado sin turno (§20): obligación de día sin horario; la
+  // única alerta posible es ésta, al terminar el día.
+  const obligationEmployeeIds = [...new Set([...obligationCandidates.map((candidate) => candidate.employeeId), ...convokedWithoutSchedule])];
+  if (!obligationEmployeeIds.length) return { date: dateKey, detected: 0, notified: 0 };
 
-  const obligationEmployeeIds = obligationCandidates.map((candidate) => candidate.employeeId);
   const [hasEvidence, excludedByNovelty] = await Promise.all([
     findEmployeeIdsWithActivityEvidence(obligationEmployeeIds, ranges),
     findEmployeeIdsExcludedByNovelty(obligationEmployeeIds, ranges.operationalDate),

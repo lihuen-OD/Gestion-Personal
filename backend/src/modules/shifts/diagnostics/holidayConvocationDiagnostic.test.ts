@@ -31,7 +31,7 @@ describe("runHolidayConvocationDiagnostic", () => {
       },
     };
     vi.mocked(resolveConvocationSchedules).mockResolvedValue(new Map([
-      ["emp-1", schedule("ROTATION_REST")],
+      ["emp-1", schedule("ROTATION_CONFLICT")],
       ["emp-2", schedule("FIXED", ["OF"])],
       ["emp-3", schedule("FIXED", ["OF"])],
       ["emp-4", schedule("ROTATION_SHIFTS", ["T1703"])],
