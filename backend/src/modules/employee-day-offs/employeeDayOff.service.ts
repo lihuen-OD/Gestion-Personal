@@ -3,9 +3,9 @@ import { formatEmployeeReference, loadEmployeeReferences } from "../../shared/au
 import { argentinaCalendarDate, formatArgentinaDate, periodCalendarBounds, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import { AppError } from "../../shared/errors/AppError";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { employeePeriodKey, findProtectedClosurePeriods, ProtectedClosurePeriodError } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { employeePeriodKey } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { assertProtectedPeriodCorrection } from "../../shared/monthlyClosure/protectedPeriodCorrection";
 import { prisma } from "../../shared/prisma/client";
-import { roles } from "../../shared/security/roles";
 import type { AuditContext, RegisterAuditInput } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -124,16 +124,12 @@ export const employeeDayOffService = {
 
       // Un franco reinterpreta horas: en un período enviado/aprobado sólo RRHH,
       // con motivo (mismo criterio que la corrección de una hora, §12).
-      const protectedPeriods = await findProtectedClosurePeriods(tx, changes.map((change) => ({ employeeId: change.employeeId, period })));
-      if (protectedPeriods.size) {
-        if (user.role !== roles.rrhh) {
-          throw new ProtectedClosurePeriodError(
-            [...protectedPeriods.entries()].map(([key, status]) => ({ employeeId: key.split(":")[0]!, period, status })),
-            "El período ya fue enviado a cierre. Pedile a RRHH que corrija el franco si hace falta.",
-          );
-        }
-        if (!correctionReason) throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "DAY_OFF_CORRECTION_REASON_REQUIRED");
-      }
+      const protectedPeriods = await assertProtectedPeriodCorrection(tx, changes.map((change) => ({ employeeId: change.employeeId, period })), {
+        role: user.role,
+        correctionReason,
+        forbiddenMessage: "El período ya fue enviado a cierre. Pedile a RRHH que corrija el franco si hace falta.",
+        reasonRequiredCode: "DAY_OFF_CORRECTION_REASON_REQUIRED",
+      });
 
       const activated = changes.filter((change) => change.kind === "CREATE" || change.kind === "ACTIVATE").map((change) => change.employeeId);
       const deactivated = changes.filter((change) => change.kind === "DEACTIVATE").map((change) => change.employeeId);

@@ -2161,7 +2161,27 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .holiday-work-muted{color:var(--color-text-secondary,#64778a)}
 .holiday-work-save-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--color-border-light,#e2e8f0)}
 .holiday-work-save-bar .rule-scope-help{flex:1;min-width:220px;margin:0}
-.holiday-work-section table tr.is-selected td{background:#f4fbfb}
+/* "Gestionar feriados" (Gestión horaria): diálogo ancho con fechas y convocatoria. */
+.holiday-work-manager{display:grid;gap:18px;min-width:0}
+.holiday-work-block{display:grid;gap:12px;min-width:0}
+.holiday-work-block-title{margin:0;font-size:15px;color:#1f3a4d}
+.holiday-work-manager .holiday-work-month-nav{margin-bottom:0}
+.holiday-work-manager .holiday-work-filters{margin:0}
+.holiday-work-manager .holiday-work-quick-actions{margin-bottom:0}
+.holiday-work-manager .holiday-work-save-bar{margin-top:0}
+.modal-body .holiday-work-manager .info-note,.modal-body .holiday-work-manager .rule-form-alert-error{margin:0}
+.holiday-work-table-shell{max-height:min(48vh,460px);overflow:auto}
+.table-shell>table.holiday-work-table thead th,.table-shell>table.holiday-work-table tbody td{vertical-align:middle!important;padding:10px 14px!important}
+.holiday-work-table thead th{position:sticky;top:0;z-index:1;background:var(--ds-slate-50)}
+.holiday-work-table tr.is-selected td{background:#f4fbfb}
+/* En columna (móvil), .search-field{flex:1} estiraría la búsqueda a lo alto. */
+@media(max-width:640px){.holiday-work-manager .holiday-work-filters .search-field{flex:none}}
+.holiday-work-person{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.holiday-work-hint{margin:0;font-size:13px}
+.holiday-work-correction{display:grid;gap:6px}
+.holiday-work-legacy-hours{display:block;margin-bottom:4px;font-size:11px}
+/* La capa base fija el borde de input/select con !important. */
+.holiday-work-table select[aria-invalid="true"]{border-color:var(--ds-amber-500,#d97706)!important}
 @media(max-width:640px){.holiday-work-filters{flex-direction:column;align-items:stretch}.holiday-work-filters .field,.holiday-work-filters .search-field{min-width:0}.holiday-work-save-bar{flex-direction:column;align-items:stretch}}
 /* Etapa 13J.3: .people-search-toolbar es display:grid (ver línea 34), no
    flex — flex-direction:column acá nunca tuvo ningún efecto (bug latente,

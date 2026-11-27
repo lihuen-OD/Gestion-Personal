@@ -90,9 +90,11 @@ Todos bajo `/api/shifts`, `requireAuth` + `requireAnyRole`:
 | GET | `/holiday-work/dates?from&to` | RRHH/Supervisión/Carga Horaria | Fechas `kind=FERIADO` en el rango (máx. 400 días) |
 | GET | `/holiday-work/candidates?sectorId&shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos, paginados |
 | GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias `ACTIVA` para esa fecha |
-| PUT | `/holiday-work/assignments` | **RRHH** | Guarda convocatorias (ver §6) |
+| PUT | `/holiday-work/assignments` | RRHH/Supervisión/Carga Horaria, **sólo legajos de su alcance** | Guarda convocatorias (ver §6) |
 
 Lectura para los mismos 3 roles operativos que ya leen Turnos/Horas Especiales; escritura sólo RRHH — **mismo criterio ya usado por `POST/PATCH/DELETE /shifts/assignments`**, sin abrir ningún permiso nuevo sin justificar.
+
+> **Actualización 2026-11-27 (`WORKED_TIME_ACCOUNTING_MODEL.md` §20):** la escritura se abre a Nivel 1, 2 y 3 sobre los legajos de su alcance (`employeeAccessWhere`, todo o nada, `403 EMPLOYEE_SCOPE_FORBIDDEN`), igual que francos, nunca por grupo de turnos. Es seguro porque la convocatoria pasó a definir sólo la obligación de asistir: ya no cambia el multiplicador ni las horas de otros legajos. Período enviado/aprobado: Nivel 2/3 → `409 PERIOD_CLOSED`; RRHH, sólo con `correctionReason`. Cada convocatoria ACTIVA debe tener un horario resoluble (§20.1: turno real del día o plantilla explícita). La pantalla se movió a Gestión horaria («Gestionar feriados»); `/configuracion/turnos-asignaciones-feriados` redirige. `GET /holiday-work/candidates` acepta `date` y devuelve `dayOff` (franco ACTIVO ese día, no convocable), `periodLocked` y `expectedSchedule` (turno real del día).
 
 ## 6. Por qué el `PUT` es un upsert por empleado, no "reemplazar toda la fecha"
 
@@ -162,7 +164,7 @@ Ningún archivo de `doubleHourRuleMatching.ts` ni de `calendarPreview` se modifi
 - **No se crean fichadas**: `HolidayWorkAssignment` no tiene ninguna relación con `AttendancePunch`/`WorkShift`/`TimeSegment`, y ningún código de esta etapa los crea.
 - **No se disparan notificaciones**: `holidayWorkAssignment.service.ts` no importa `notifyUsers`/`notifyRrhh`/`systemNotification` en ningún punto — confirmado por lectura del archivo y por test (`auditService.register` es el único efecto secundario, llamado exactamente una vez por operación).
 - **No se tocó Turnos existente**: `ShiftTemplate`/`ShiftAssignment`/`shiftAssignment.*` sin cambios de código (sólo se leen, vía `shiftTemplateId` opcional en el nuevo modelo).
-- **No se cambiaron permisos globales**: mismo RBAC ya usado por `/shifts/assignments` (lectura 3 roles, escritura sólo RRHH) — ninguna ruta nueva, de ningún módulo, cambia su alcance.
+- **No se cambiaron permisos globales**: mismo RBAC ya usado por `/shifts/assignments` (lectura 3 roles, escritura sólo RRHH) — ninguna ruta nueva, de ningún módulo, cambia su alcance. *(2026-11-27: la escritura se abrió a Nivel 2/3 por legajo; ver la actualización de §5.)*
 - **No se duplicó el calendario de feriados**: confirmado en §7 — `HolidayWorkAssignment.date` es un valor, no una fuente de verdad; las fechas disponibles siempre se resuelven en vivo contra `DoubleHourRule.kind=FERIADO`.
 
 ## 12. Tests

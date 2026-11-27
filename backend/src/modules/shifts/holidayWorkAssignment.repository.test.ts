@@ -39,7 +39,27 @@ describe("findCandidates — Etapa 12D", () => {
     await holidayWorkAssignmentRepository.findCandidates({ shiftTemplateId: "template-1", page: 1, take: 100 }, {});
 
     const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
-    expect(where.AND[0].shiftAssignments).toEqual({ some: { shiftTemplateId: "template-1", status: "HABILITADO" } });
+    expect(where.AND[0].AND).toEqual([{ shiftAssignments: { some: { shiftTemplateId: "template-1", status: "HABILITADO" } } }]);
+  });
+
+  // §20: con la fecha del feriado, el turno sale de la asignación VIGENTE ese
+  // día y aplicable a su día de semana (un fijo cerrado al entrar a una
+  // rotación sigue HABILITADO y no debe contar).
+  it("con fecha: el filtro por turno exige vigencia y día de semana del feriado", async () => {
+    mockedPrisma.employee.findMany.mockResolvedValue([]);
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    const date = new Date("2026-12-08T00:00:00.000Z"); // martes
+
+    await holidayWorkAssignmentRepository.findCandidates({ date, shiftTemplateId: "template-1", page: 1, take: 100 }, {});
+
+    const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
+    expect(where.AND[0].AND[0].shiftAssignments.some).toEqual({
+      shiftTemplateId: "template-1",
+      status: "HABILITADO",
+      shiftTemplate: { status: "ACTIVO" },
+      effectiveFrom: { lte: date },
+      AND: [{ OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }] }, { OR: [{ weekdays: { isEmpty: true } }, { weekdays: { has: 2 } }] }],
+    });
   });
 
   it("filtra empleados sin turno con withoutShift", async () => {
@@ -49,7 +69,18 @@ describe("findCandidates — Etapa 12D", () => {
     await holidayWorkAssignmentRepository.findCandidates({ withoutShift: true, page: 1, take: 100 }, {});
 
     const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
-    expect(where.AND[0].shiftAssignments).toEqual({ none: { status: "HABILITADO" } });
+    expect(where.AND[0].AND).toEqual([{ shiftAssignments: { none: { status: "HABILITADO" } } }]);
+  });
+
+  it("con fecha: 'sin turno' excluye también a los miembros de una rotación ACTIVA ese día", async () => {
+    mockedPrisma.employee.findMany.mockResolvedValue([]);
+    mockedPrisma.employee.count.mockResolvedValue(0);
+    const date = new Date("2026-12-08T00:00:00.000Z");
+
+    await holidayWorkAssignmentRepository.findCandidates({ date, withoutShift: true, page: 1, take: 100 }, {});
+
+    const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
+    expect(where.AND[0].AND[1]).toEqual({ shiftRotationMemberships: { none: { effectiveFrom: { lte: date }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }], crew: { rotation: { status: "ACTIVO" } } } } });
   });
 
   it("busca por nombre/legajo con search", async () => {

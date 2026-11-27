@@ -57,14 +57,17 @@ shiftsRouter.delete("/assignments/:id", shiftWriters, asyncHandler(c.remove));
 shiftsRouter.get("/alerts", requireAnyRole(all), validateQuery(listShiftAlertsQuerySchema), asyncHandler(shiftAlertController.list));
 shiftsRouter.post("/alerts/:id/resolve", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(resolveShiftAlertSchema), asyncHandler(shiftAlertController.resolve));
 
-// Etapa 12D: asignaciones de trabajo en feriados. Lectura para los mismos 3
-// roles operativos de siempre; escritura sólo RRHH — mismo criterio ya
-// usado para /assignments (ShiftAssignment) arriba, sin abrir permisos
-// nuevos sin justificar.
+// Etapa 12D: asignaciones de trabajo en feriados (convocatorias). Lectura y
+// escritura para los 3 roles operativos, siempre sobre los legajos de su
+// alcance (employeeAccessWhere, validado en el servicio todo o nada, igual
+// que francos): la convocatoria sólo define la obligación de asistir y nunca
+// cambia horas de otros legajos (WORKED_TIME_ACCOUNTING_MODEL.md §20). El
+// calendario, alcances y multiplicadores siguen siendo sólo de RRHH
+// (/workforce-management/double-hour-rules).
 shiftsRouter.get("/holiday-work/dates", requireAnyRole(all), validateQuery(holidayDatesQuerySchema), asyncHandler(holidayWorkAssignmentController.dates));
 shiftsRouter.get("/holiday-work/candidates", requireAnyRole(all), validateQuery(holidayWorkCandidatesQuerySchema), asyncHandler(holidayWorkAssignmentController.candidates));
 shiftsRouter.get("/holiday-work/assignments", requireAnyRole(all), validateQuery(holidayWorkAssignmentsByDateQuerySchema), asyncHandler(holidayWorkAssignmentController.listByDate));
-shiftsRouter.put("/holiday-work/assignments", requireAnyRole([roles.rrhh]), validateBody(saveHolidayWorkAssignmentsSchema), asyncHandler(holidayWorkAssignmentController.save));
+shiftsRouter.put("/holiday-work/assignments", requireAnyRole(all), validateBody(saveHolidayWorkAssignmentsSchema), asyncHandler(holidayWorkAssignmentController.save));
 
 // R3.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23): grupos de turnos
 // (lugar / ámbito operativo). Lectura para los 3 roles operativos, escritura

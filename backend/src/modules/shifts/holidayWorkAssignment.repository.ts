@@ -1,13 +1,14 @@
 import type { Prisma } from "@prisma/client";
 import { employeeStructureWhere } from "../../shared/prisma/employeeStructureWhere";
+import { periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import type { HolidayWorkCandidatesQuery } from "./holidayWorkAssignment.schemas";
 import type { HolidayWorkAssignmentFields } from "./holidayWorkAssignmentChanges";
 
 const employeeSelect = { id: true, legajo: true, firstName: true, lastName: true, status: true } as const;
 
-// Escrituras de convocatoria: aceptan la transacción que además reinterpreta
-// las horas del feriado (holidayWorkAssignment.service.ts, §16).
+// Escrituras de convocatoria: aceptan la transacción que además recalcula la
+// cobertura de los legajos cambiados (holidayWorkAssignment.service.ts, §20).
 type AssignmentWriter = Pick<PrismaTransactionClient, "holidayWorkAssignment">;
 const shiftTemplateSelect = { id: true, code: true, name: true } as const;
 
@@ -17,10 +18,26 @@ const shiftTemplateSelect = { id: true, code: true, name: true } as const;
 // compartido para esto hoy en el repo.
 function candidatesWhere(query: HolidayWorkCandidatesQuery): Prisma.EmployeeWhereInput {
   const search = query.search?.trim();
+  // Turno fijo REAL del feriado (§20): HABILITADO, vigente ese día y aplicable
+  // a su día de semana (weekdays vacío = todos). Sin fecha, el criterio previo.
+  const fixedOnDate: Prisma.ShiftAssignmentWhereInput = query.date
+    ? {
+        status: "HABILITADO",
+        shiftTemplate: { status: "ACTIVO" },
+        effectiveFrom: { lte: query.date },
+        AND: [{ OR: [{ effectiveTo: null }, { effectiveTo: { gte: query.date } }] }, { OR: [{ weekdays: { isEmpty: true } }, { weekdays: { has: query.date.getUTCDay() } }] }],
+      }
+    : { status: "HABILITADO" };
+  // Miembro de una rotación ACTIVA ese día: su turno sale de la rotación.
+  const rotationOnDate: Prisma.ShiftRotationCrewMemberWhereInput | null = query.date
+    ? { effectiveFrom: { lte: query.date }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: query.date } }], crew: { rotation: { status: "ACTIVO" } } }
+    : null;
   return {
     status: "ACTIVO",
-    ...(query.shiftTemplateId ? { shiftAssignments: { some: { shiftTemplateId: query.shiftTemplateId, status: "HABILITADO" } } } : {}),
-    ...(query.withoutShift ? { shiftAssignments: { none: { status: "HABILITADO" } } } : {}),
+    AND: [
+      ...(query.shiftTemplateId ? [{ shiftAssignments: { some: { ...fixedOnDate, shiftTemplateId: query.shiftTemplateId } } }] : []),
+      ...(query.withoutShift ? [{ shiftAssignments: { none: fixedOnDate } }, ...(rotationOnDate ? [{ shiftRotationMemberships: { none: rotationOnDate } }] : [])] : []),
+    ],
     ...(search
       ? {
           OR: [
@@ -51,7 +68,9 @@ export const holidayWorkAssignmentRepository = {
         where,
         select: {
           ...employeeSelect,
-          shiftAssignments: { where: { status: "HABILITADO" }, select: { shiftTemplate: { select: shiftTemplateSelect } } },
+          // Sin fecha no hay franco ni período que marcar: filtro imposible, sin filas.
+          dayOffs: { where: query.date ? { date: query.date, status: "ACTIVO" } : { id: { in: [] } }, select: { id: true }, take: 1 },
+          monthlyClosures: { where: query.date ? { period: periodFromCalendarDate(query.date) } : { id: { in: [] } }, select: { status: true } },
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
         skip,

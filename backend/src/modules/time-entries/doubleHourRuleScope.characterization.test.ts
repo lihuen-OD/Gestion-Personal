@@ -66,12 +66,16 @@ describe("motor de horas especiales con historia temporal (D-5)", () => {
     expect(await outcome({ rules: [domingos, feriados] }, [SAT, HOLIDAY])).toEqual({ "2026-09-26": 1, "2026-10-12": 2 });
   });
 
-  it("FERIADO con convocatoria: decide la convocatoria, no el alcance ni la historia", async () => {
+  // CAMBIO §20 (WORKED_TIME_ACCOUNTING_MODEL.md, reemplaza §16): antes la
+  // convocatoria decidía el FERIADO por encima del alcance y la historia.
+  it("§20 — FERIADO con convocatoria: decide el alcance con la historia de ese día, nunca la convocatoria", async () => {
     const scopedFeriado = { ...feriados, companyId: "tropa" };
-    const convoked: World = { rules: [scopedFeriado], convocations: [{ date: HOLIDAY, employeeId: "emp-1" }] };
-    expect(await outcome(convoked, [HOLIDAY])).toEqual({ "2026-10-12": 2 });
-    const others: World = { rules: [scopedFeriado], convocations: [{ date: HOLIDAY, employeeId: "emp-2" }] };
-    expect(await outcome(others, [HOLIDAY])).toEqual({ "2026-10-12": 1 });
+    const atLosod = [{ ...period("2026-01-01"), companies: [{ companyId: "losod" }] }];
+    const atTropa = [{ ...period("2026-01-01"), companies: [{ companyId: "tropa" }] }];
+    expect(await outcome({ rules: [scopedFeriado], employer: atLosod, convocations: [{ date: HOLIDAY, employeeId: "emp-1" }] }, [HOLIDAY])).toEqual({ "2026-10-12": 1 });
+    expect(await outcome({ rules: [scopedFeriado], employer: atTropa, convocations: [{ date: HOLIDAY, employeeId: "emp-2" }] }, [HOLIDAY])).toEqual({ "2026-10-12": 2 });
+    // Sin historia del empleador, una convocatoria ya no "resuelve" la fecha.
+    expect(await outcome({ rules: [scopedFeriado], convocations: [{ date: HOLIDAY, employeeId: "emp-1" }] }, [HOLIDAY])).toEqual({ "2026-10-12": "MISSING:EMPLOYER" });
   });
 
   it("sector nuevo: “Ubicado dentro de” con el alcance del puesto vigente ese día (cambio de alcance del puesto compartido)", async () => {
@@ -160,8 +164,10 @@ describe("motor de horas especiales en lote (varios legajos)", () => {
 
   it("da el mismo resultado que el motor por legajo (historia faltante, convocatoria y lista explícita incluidas)", async () => {
     const batch = await evaluateSpecialHourRulesForEmployees(datesByEmployee, multiDb(world).client);
+    // CAMBIO §20: emp-1 no convocado en el feriado global cobra x2 (con §16
+    // quedaba en x1 porque emp-3 estaba convocado).
     const expected = {
-      "emp-1": { "2026-09-27": 2, "2026-10-12": 1, "2026-09-26": 1 },
+      "emp-1": { "2026-09-27": 2, "2026-10-12": 2, "2026-09-26": 1 },
       "emp-2": { "2026-09-27": "MISSING:EMPLOYER", "2026-10-04": 1 },
       "emp-3": { "2026-10-12": 2, "2026-09-26": 1.5 },
     };

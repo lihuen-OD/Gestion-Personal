@@ -99,10 +99,11 @@ describe("holidayWorkAssignmentApiService.getHolidayDates — dedupe/cache front
   });
 });
 
-// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16: la convocatoria define
-// quién cobra el FERIADO, así que guardarla reinterpreta horas ya cargadas y
-// ninguna pantalla de horas puede quedar con la equivalencia vieja. Las fechas
-// de feriado ("workforce-config") no cambian por guardar una convocatoria.
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20: la convocatoria sólo
+// define la obligación de asistir; no reinterpreta horas, pero cambia la
+// cobertura de novedades de los convocados (obligación del día), que alimenta
+// grilla, Bandeja, dashboard y cierres. Las fechas de feriado
+// ("workforce-config") no cambian por guardar una convocatoria.
 describe("holidayWorkAssignmentApiService.saveAssignments — invalida las pantallas de horas", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -112,7 +113,33 @@ describe("holidayWorkAssignmentApiService.saveAssignments — invalida las panta
     await holidayWorkAssignmentApiService.saveAssignments("2026-10-05", []);
 
     const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
-    // Etapa 5: también Novedades (la convocatoria reinterpreta su cobertura).
+    // Etapa 5: también Novedades (la convocatoria cambia su cobertura).
     expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "pending", "time-entries"]);
+  });
+});
+
+describe("holidayWorkAssignmentApiService.getCandidates — franco del feriado", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("envía la fecha del feriado para que el servidor marque a quien tiene franco ese día", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [], meta: { total: 0, page: 1, pageSize: 300, hasMore: false } });
+
+    await holidayWorkAssignmentApiService.getCandidates({ date: "2026-10-12", locationDate: "2026-10-12" });
+
+    expect(vi.mocked(apiRequest).mock.calls[0]![0]).toContain("date=2026-10-12");
+  });
+});
+
+describe("holidayWorkAssignmentApiService.saveAssignments — motivo de corrección", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("sólo envía correctionReason cuando hay motivo", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: [] });
+    await holidayWorkAssignmentApiService.saveAssignments("2026-10-12", []);
+    await holidayWorkAssignmentApiService.saveAssignments("2026-10-12", [], "Pedido de planta");
+    expect(vi.mocked(apiRequest).mock.calls.map(([, options]) => (options as { body: unknown }).body)).toEqual([
+      { date: "2026-10-12", assignments: [] },
+      { date: "2026-10-12", assignments: [], correctionReason: "Pedido de planta" },
+    ]);
   });
 });

@@ -23,7 +23,7 @@ import {
   needsOperationalDate,
   operationalDateKeyForShift,
 } from "./manualHoursConflict";
-import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import { laborHistoryService } from "../labor-history/laborHistory.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
 import { markClockPunchQueryPhase } from "../../shared/observability/clockPunchQueryBudget";
@@ -397,7 +397,7 @@ async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, dat
 
 export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForEngine>;
 
-type SpecialHourRuleReader = Pick<PrismaTransactionClient, "doubleHourRule" | "holidayWorkAssignment"> & HistoryReader;
+type SpecialHourRuleReader = Pick<PrismaTransactionClient, "doubleHourRule"> & HistoryReader;
 
 /** Fecha que el motor no puede resolver sin inventar: falta la vigencia de alguna dimensión que la regla restringe. */
 export type MissingScopeHistory = {
@@ -428,8 +428,6 @@ const specialHourRuleInclude = { dates: true, sector: { select: { isLegacy: true
 type SpecialHourEngineInputs = {
   history: EngineScopeHistory;
   rulesForEmployee: DoubleHourRuleWithSector[];
-  feriadoRules: DoubleHourRuleWithSector[];
-  convocations: Array<{ date: Date; employeeId: string }>;
 };
 
 function specialHourDateRange(dates: Date[]) {
@@ -440,38 +438,33 @@ function specialHourDateRange(dates: Date[]) {
 }
 
 // Motor ÚNICO de Hora Especial por empleado + fecha (docs/decisions/
-// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16; ORG_LOCATION_REORGANIZATION.md
+// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §20; ORG_LOCATION_REORGANIZATION.md
 // §18-§19). Lo usan la carga manual, los desgloses, el fichador
 // (createFromWorkShift/closeOpenWorkShift) y la reinterpretación de la historia:
 // - reglas ACTIVAS vigentes en la fecha cuyo alcance (empresa empleadora,
 //   sector, centro de costo, puesto) se cumple con la HISTORIA del legajo
 //   vigente ESE día, y lista explícita de legajos;
-// - FERIADO + convocatoria: si la fecha tiene convocados (HolidayWorkAssignment
-//   ACTIVA), las reglas FERIADO aplican sólo a ellos
-//   (specialHourRulesForEmployeeOnDate);
+// - FERIADO igual que cualquier otra regla: según su alcance, sin mirar la
+//   convocatoria (§20; la convocatoria sólo define la obligación de asistir);
 // - ganadoras por prioridad (resolveWinningRules).
 // Una fecha cuya resolución depende de una dimensión sin vigencia registrada
 // queda como `missingHistory`: nunca se completa con el valor actual. Consultas
-// fijas por llamada (historia del rango, reglas, FERIADO y convocatorias), sin
-// importar cuántas fechas. `db` permite correrlo dentro de la transacción que
-// cambia una regla o una convocatoria, para ver su estado nuevo.
+// fijas por llamada (historia del rango y reglas), sin importar cuántas fechas.
+// `db` permite correrlo dentro de la transacción que cambia una regla, para ver
+// su estado nuevo.
 export async function evaluateSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourEvaluation>> {
   if (!dates.length) return new Map();
   const { from, to, vigencyWhere } = specialHourDateRange(dates);
-  const [history, rulesForEmployee, feriadoRules, convocations] = await Promise.all([
+  const [history, rulesForEmployee] = await Promise.all([
     laborHistoryService.loadEngineScopeHistory(db, employeeId, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
     db.doubleHourRule.findMany({ where: { ...vigencyWhere, AND: [ruleEmployeeListWhere(employeeId)] }, include: specialHourRuleInclude }),
-    // Sin filtro de alcance: con convocatoria, el convocado queda alcanzado
-    // aunque la regla FERIADO tenga otro alcance.
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: specialHourRuleInclude }),
-    db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
-  return evaluateSpecialHourDates(employeeId, dates, { history, rulesForEmployee, feriadoRules, convocations });
+  return evaluateSpecialHourDates(employeeId, dates, { history, rulesForEmployee });
 }
 
 /**
- * El mismo motor para varios legajos con consultas fijas (historia, reglas,
- * FERIADO y convocatorias una vez para todos), no 7 por legajo: la
+ * El mismo motor para varios legajos con consultas fijas (historia y reglas
+ * una vez para todos), no 7 por legajo: la
  * reinterpretación de una regla alcanza a muchos legajos dentro de una
  * transacción con tiempo límite. Se carga la ventana que cubre todas las
  * fechas; la evaluación por fecha descarta lo que no está vigente ese día, así
@@ -483,7 +476,7 @@ export async function evaluateSpecialHourRulesForEmployees(datesByEmployee: Map<
   if (!employees.length) return result;
   const employeeIds = employees.map(([employeeId]) => employeeId);
   const { from, to, vigencyWhere } = specialHourDateRange(employees.flatMap(([, dates]) => dates));
-  const [histories, listedRules, feriadoRules, convocations] = await Promise.all([
+  const [histories, listedRules] = await Promise.all([
     laborHistoryService.loadEngineScopeHistoryByEmployee(db, employeeIds, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
     // Mismo filtro que ruleEmployeeListWhere, para todos los legajos: la lista
     // explícita de la regla se resuelve por legajo en memoria.
@@ -491,38 +484,29 @@ export async function evaluateSpecialHourRulesForEmployees(datesByEmployee: Map<
       where: { ...vigencyWhere, AND: [{ OR: [{ employees: { none: {} } }, { employees: { some: { employeeId: { in: employeeIds } } } }] }] },
       include: { ...specialHourRuleInclude, employees: { select: { employeeId: true } } },
     }),
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: specialHourRuleInclude }),
-    db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
   for (const [employeeId, dates] of employees) {
     const rulesForEmployee = listedRules
       .filter((rule) => !rule.employees.length || rule.employees.some((item) => item.employeeId === employeeId))
       .map(({ employees: _employees, ...rule }) => rule);
-    result.set(employeeId, evaluateSpecialHourDates(employeeId, dates, { history: histories.get(employeeId)!, rulesForEmployee, feriadoRules, convocations }));
+    result.set(employeeId, evaluateSpecialHourDates(employeeId, dates, { history: histories.get(employeeId)!, rulesForEmployee }));
   }
   return result;
 }
 
-function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, rulesForEmployee, feriadoRules, convocations }: SpecialHourEngineInputs): Map<string, SpecialHourEvaluation> {
+function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, rulesForEmployee }: SpecialHourEngineInputs): Map<string, SpecialHourEvaluation> {
   const result = new Map<string, SpecialHourEvaluation>();
-  const convokedByDate = new Map<string, Set<string>>();
-  for (const convocation of convocations) {
-    const key = calendarDateKey(convocation.date);
-    convokedByDate.set(key, (convokedByDate.get(key) ?? new Set<string>()).add(convocation.employeeId));
-  }
   const activeDates = buildActiveDatesByRule(rulesForEmployee);
   const isVigent = (rule: DoubleHourRuleForEngine, date: Date) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date);
   for (const date of dates) {
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
-    const convoked = convokedByDate.get(key) ?? new Set<string>();
     // Sólo importa el alcance de reglas vigentes que caen en la fecha por
-    // calendario; con convocatoria, el FERIADO lo decide la convocatoria.
+    // calendario (FERIADO incluido: §20).
     const inScope: DoubleHourRuleWithSector[] = [];
     let missingHistory: MissingScopeHistory | null = null;
     for (const rule of rulesForEmployee) {
       if (!isVigent(rule, date) || !ruleMatchesDate(rule, date, activeDates)) continue;
-      if (convoked.size && rule.kind === "FERIADO") continue;
       const evaluation = evaluateRuleScope(ruleScopeOf(rule), history, key);
       if (evaluation.kind === "MATCH") inScope.push(rule);
       else if (evaluation.kind === "MISSING" && !missingHistory) {
@@ -533,13 +517,7 @@ function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, 
       result.set(key, { missingHistory });
       continue;
     }
-    const candidates = specialHourRulesForEmployeeOnDate({
-      employeeId,
-      rulesInEmployeeScope: inScope,
-      feriadoRules: feriadoRules.filter((rule) => isVigent(rule, date)),
-      convokedEmployeeIds: convoked,
-    });
-    const matchedRules = matchingDoubleHourRules(candidates, date);
+    const matchedRules = matchingDoubleHourRules(inScope, date);
     const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
     result.set(key, { resolution: { multiplier, matchedRules, winners, conflicting } });
   }

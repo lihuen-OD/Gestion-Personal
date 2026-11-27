@@ -37,7 +37,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   const users = { rrhh: "", sup: "", carga: "" };
   const employees = { a: "", b: "", minimal: "", late: "" };
   let normalConceptId = "";
-  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", vacacionesJornada: "", vacacionesFijas: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "" };
+  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", vacacionesJornada: "", vacacionesFijas: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "", conCertificadoFeriado: "" };
 
   const as = (role: "rrhh" | "sup" | "carga") =>
     ({ id: users[role], email: `${role}@example.com`, name: role, role: { rrhh: "NIVEL_1_RRHH", sup: "NIVEL_2_SUPERVISION", carga: "NIVEL_3_CARGA_HORARIA" }[role] }) as Express.AuthUser;
@@ -125,6 +125,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     types.licenciaAbierta = await createType({ name: "Licencia abierta", kind: "LICENCIA" });
     // Etapa 8: documentación obligatoria (misma cobertura que Maternidad sin feriados).
     types.conCertificado = await createType({ name: "Licencia con certificado", kind: "LICENCIA", requiresDocumentation: true, ...maternidad, coverageOnHoliday: "NO_COVERAGE" });
+    // §20: cubre feriados y aplica el multiplicador (que sí depende del alcance de la regla y su historia).
+    types.conCertificadoFeriado = await createType({ name: "Licencia con certificado (feriado ×)", kind: "LICENCIA", requiresDocumentation: true, ...maternidad, coverageOnHoliday: "COVER", coverageAppliesSpecialHours: true });
     await holder.documentCategory.create({ data: { code: "DOC-NOV-IT", name: "Respaldo de novedad", kind: "NOVEDAD", scopes: ["NOVEDAD"], uploadRoles: ["Nivel 1 - RRHH"] } });
   });
 
@@ -290,9 +292,18 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     expect(await coverageRows(excluded!.id)).toEqual([expect.objectContaining({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 })]);
   });
 
-  it("feriado con alcance sin historia laboral → 409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING y no se crea nada", async () => {
+  // CAMBIO §20 (P7, WORKED_TIME_ACCOUNTING_MODEL.md): para la obligación, un
+  // feriado del calendario es feriado para todos (antes: 409 por no poder
+  // evaluar el alcance). El alcance sólo decide el multiplicador, que sí sigue
+  // exigiendo la historia del día.
+  it("§20 P7: feriado con alcance sin historia — la obligación no necesita historia (sin cobertura ese día); el multiplicador sí (409)", async () => {
+    const [created] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-25", toDate: "2026-11-25" });
+    expect(await coverageRows(created!.id)).toEqual([expect.objectContaining({ date: day("2026-11-25"), outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 })]);
+    await holder.novelty.delete({ where: { id: created!.id } });
+
     const before = await holder.novelty.count();
-    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-25", toDate: "2026-11-25" })).rejects.toMatchObject({
+    const document = { fileName: "certificado.pdf", fileMimeType: "application/pdf", fileSizeBytes: 23, fileBase64: Buffer.from("%PDF-1.4\n%%EOF\n trailer").toString("base64") };
+    await expect(m.novelties.createWithDocument(m.noveltySchemas.createNoveltyWithDocumentSchema.parse({ employeeIds: [employees.a], noveltyTypeId: types.conCertificadoFeriado, fromDate: "2026-11-25", document }), as("rrhh"), { userId: users.rrhh } as never)).rejects.toMatchObject({
       statusCode: 409,
       code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
     });
@@ -309,8 +320,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-16" })).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_DOCUMENTATION_REQUIRED" });
     expect(await counts()).toEqual(before);
 
-    // El alta falla dentro de la transacción (feriado con alcance sin historia): el archivo ya subido se borra.
-    await expect(withDocument({ employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-25" })).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
+    // El alta falla dentro de la transacción (multiplicador de un feriado con alcance sin historia): el archivo ya subido se borra.
+    await expect(withDocument({ employeeIds: [employees.a], noveltyTypeId: types.conCertificadoFeriado, fromDate: "2026-11-25" })).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
     expect(await counts()).toEqual(before);
 
     const created = await withDocument({ employeeIds: [employees.a, employees.b], noveltyTypeId: types.conCertificado, fromDate: "2026-12-01" });

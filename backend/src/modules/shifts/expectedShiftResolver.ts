@@ -110,8 +110,12 @@ export function activeRegimeKindOn(regimes: RegimePeriod[], date: Date): WorkReg
  *   IN_SCOPE: alguna regla FERIADO lo alcanza.
  *   OUT_OF_SCOPE: es feriado por calendario pero ninguna regla lo alcanza.
  *   SCOPE_HISTORY_MISSING: no se puede decidir por falta de historia laboral.
- * La obligación de alertas no evalúa alcance (deuda P7): pasa IN_SCOPE para
- * todo feriado por calendario.
+ * P7 resuelto (WORKED_TIME_ACCOUNTING_MODEL.md §20, 2026-11-27): para la
+ * OBLIGACIÓN un feriado del calendario es feriado para todos. Asistencia,
+ * fichador y Novedades pasan IN_SCOPE para todo feriado por calendario; el
+ * alcance de la regla sólo decide el multiplicador (motor de Horas
+ * Especiales). OUT_OF_SCOPE y SCOPE_HISTORY_MISSING quedan para llamadores
+ * que modelen el alcance explícitamente (caracterización R1).
  */
 export type HolidayScopeStatus = "IN_SCOPE" | "OUT_OF_SCOPE" | "SCOPE_HISTORY_MISSING";
 
@@ -147,6 +151,12 @@ export type ExpectedShiftReason =
 
 export type ExpectedShiftInput<T extends object, C> = {
   dateKey: string;
+  /**
+   * Legajo: identidad de los bloques (`obligationKey`). Obligatorio para que
+   * una convocatoria con plantilla obligue en el camino de turnos fijos (P8);
+   * en rotación se toma del plan.
+   */
+  employeeId?: string;
   /** Todas las asignaciones conocidas del empleado (el resolver filtra vigencia, día y estado). */
   assignments: FixedAssignment<T>[];
   dayOff: boolean;
@@ -162,10 +172,12 @@ export type ExpectedShiftInput<T extends object, C> = {
    */
   rotationPlan?: ExpectedDayPlan | null;
   /**
-   * R4.2: plantilla de la convocatoria ACTIVA del día, si la tiene. Sólo se usa
-   * en el camino de rotación: una convocatoria con turno explícito prevalece
-   * sobre el plan (REST, MISSING, CONFLICT o SHIFTS). Los turnos fijos
-   * conservan su comportamiento legacy (P8) hasta que se aborde explícitamente.
+   * Plantilla de la convocatoria ACTIVA del día, si la tiene. Una convocatoria
+   * con turno explícito (plantilla ACTIVA con horario válido) reemplaza ese
+   * día al turno habitual: en rotación, al plan (REST, MISSING, CONFLICT o
+   * SHIFTS, R4.2); en turnos fijos, a las asignaciones aplicables (P8,
+   * WORKED_TIME_ACCOUNTING_MODEL.md §20). Sólo el franco la anula. También
+   * precede al régimen SIN_TURNO: es una obligación explícita con horario.
    */
   convocationTemplate?: RotationTemplateRef | null;
 };
@@ -205,16 +217,19 @@ export type ExpectedShiftResolution<T, C> = {
  *
  * WORK_OBLIGATION (workObligation.service.ts):
  *   1. feriado sin convocatoria → sin obligación
- *   2. sin asignación aplicable → sin obligación
- *   3. régimen SIN_TURNO → sin obligación (TURNO_FLEXIBLE con asignación sí obliga)
- *   4. franco → sin obligación
- *   5. asignaciones aplicables → obligación (en feriado convocado, con el turno
- *      habitual: el turno de la convocatoria no se usa — P8)
+ *   2. convocado con plantilla utilizable y sin franco → obligación con UN
+ *      bloque de esa plantilla (P8, §20: reemplaza al turno habitual)
+ *   3. sin asignación aplicable → sin obligación
+ *   4. régimen SIN_TURNO → sin obligación (TURNO_FLEXIBLE con asignación sí obliga)
+ *   5. franco → sin obligación
+ *   6. asignaciones aplicables → obligación (convocado sin plantilla: con su
+ *      turno habitual)
  *   (El empleado ACTIVO y la plantilla ACTIVO los filtra la consulta.)
  *
  * EXPECTED_WORKDAY (expectedWorkday.ts):
  *   1. franco → DAY_OFF (gana incluso sobre la convocatoria)
- *   2. feriado (cualquier estado de alcance) + convocatoria → obligación de la convocatoria
+ *   2. feriado (cualquier estado de alcance) + convocatoria → obligación de la
+ *      convocatoria (con el bloque de su plantilla, si la tiene)
  *   3. feriado IN_SCOPE → sin obligación; SCOPE_HISTORY_MISSING → no resuelto
  *   4. régimen SIN_TURNO → no resuelto
  *   5. asignaciones aplicables → obligación
@@ -225,13 +240,21 @@ export type ExpectedShiftResolution<T, C> = {
  * Los resultados finales de los pasos "sin obligación" no dependen de su orden
  * en WORK_OBLIGATION; sí el `reason`, que se conserva tal cual el código.
  */
+/** Bloque único de la convocatoria con plantilla utilizable (null sin convocatoria, sin plantilla o sin legajo). */
+function convocationBlocksOf(input: ExpectedShiftInput<object, unknown>, convoked: boolean, employeeId: string | undefined): ExpectedBlock[] | null {
+  if (!convoked || !employeeId || !input.convocationTemplate || !isTemplateUsable(input.convocationTemplate)) return null;
+  return [buildExpectedBlock({ employeeId, dateKey: input.dateKey, blockIndex: 0, template: input.convocationTemplate, source: "HOLIDAY_CONVOCATION", origin: null })!];
+}
+
 export function resolveExpectedShift<T extends object, C>(input: ExpectedShiftInput<T, C>, policy: ExpectedShiftPolicy): ExpectedShiftResolution<T, C> {
   if (input.rotationPlan) return resolveRotationShift(input, input.rotationPlan, policy);
   const date = argentinaCalendarDate(input.dateKey);
   const applicable = applicableFixedAssignments(input.assignments, date).map((assignment) => assignment.template);
   const convoked = Boolean(input.holiday && input.convocation);
   const isHoliday = policy === "WORK_OBLIGATION" ? input.holiday !== null : input.holiday === "IN_SCOPE" || convoked;
-  const resolution = (obligation: ExpectedShiftObligation, source: ExpectedShiftSource, reason: ExpectedShiftReason | null): ExpectedShiftResolution<T, C> => ({
+  // P8 (§20): la convocatoria con plantilla reemplaza al turno habitual.
+  const convocationBlocks = convocationBlocksOf(input, convoked, input.employeeId);
+  const resolution = (obligation: ExpectedShiftObligation, source: ExpectedShiftSource, reason: ExpectedShiftReason | null, blocks: ExpectedBlock[] = []): ExpectedShiftResolution<T, C> => ({
     dateKey: input.dateKey,
     policy,
     obligation,
@@ -242,11 +265,12 @@ export function resolveExpectedShift<T extends object, C>(input: ExpectedShiftIn
     convocation: convoked ? input.convocation : null,
     fixedCandidates: applicable,
     dayPlan: null,
-    blocks: [],
+    blocks,
   });
 
   if (policy === "WORK_OBLIGATION") {
     if (input.holiday && !convoked) return resolution("NO_OBLIGATION", "HOLIDAY_NOT_CONVOKED", "HOLIDAY_NOT_CONVOKED");
+    if (convocationBlocks && !input.dayOff) return resolution("SHIFT", "HOLIDAY_CONVOCATION", null, convocationBlocks);
     if (!applicable.length) return resolution("NO_OBLIGATION", "NONE", "NO_APPLICABLE_ASSIGNMENT");
     if (input.regimeKind === "SIN_TURNO") return resolution("NO_OBLIGATION", "REGIME", "REGIME_SIN_TURNO");
     if (input.dayOff) return resolution("NO_OBLIGATION", "DAY_OFF", "DAY_OFF");
@@ -254,7 +278,7 @@ export function resolveExpectedShift<T extends object, C>(input: ExpectedShiftIn
   }
 
   if (input.dayOff) return resolution("NO_OBLIGATION", "DAY_OFF", "DAY_OFF");
-  if (convoked) return resolution("SHIFT", "HOLIDAY_CONVOCATION", null);
+  if (convoked) return resolution("SHIFT", "HOLIDAY_CONVOCATION", null, convocationBlocks ?? []);
   if (input.holiday === "IN_SCOPE") return resolution("NO_OBLIGATION", "HOLIDAY_NOT_CONVOKED", "HOLIDAY_NOT_CONVOKED");
   if (input.holiday === "SCOPE_HISTORY_MISSING") return resolution("UNRESOLVED", "HOLIDAY_SCOPE", "HOLIDAY_SCOPE_HISTORY_MISSING");
   if (input.regimeKind === "SIN_TURNO") return resolution("UNRESOLVED", "REGIME", "REGIME_SIN_TURNO");
@@ -270,10 +294,11 @@ export function resolveExpectedShift<T extends object, C>(input: ExpectedShiftIn
  *
  * WORK_OBLIGATION:
  *   1. feriado sin convocatoria → sin obligación
- *   2. régimen SIN_TURNO → sin obligación
- *   3. franco → sin obligación (gana incluso sobre la convocatoria)
- *   4. feriado convocado con plantilla ACTIVA → obligación con UN bloque de esa
- *      plantilla (prevalece sobre REST, MISSING, CONFLICT o SHIFTS)
+ *   2. feriado convocado con plantilla ACTIVA y sin franco → obligación con UN
+ *      bloque de esa plantilla (prevalece sobre REST, MISSING, CONFLICT,
+ *      SHIFTS y el régimen SIN_TURNO, §20)
+ *   3. régimen SIN_TURNO → sin obligación
+ *   4. franco → sin obligación (gana incluso sobre la convocatoria)
  *   5. plan CONFLICT → sin obligación (ROTATION_CONFIG_CONFLICT)
  *   6. convocado sin plantilla y plan REST/MISSING → sin obligación
  *      (HOLIDAY_CONVOCATION_WITHOUT_SCHEDULE)
@@ -293,9 +318,7 @@ export function resolveExpectedShift<T extends object, C>(input: ExpectedShiftIn
 function resolveRotationShift<T extends object, C>(input: ExpectedShiftInput<T, C>, plan: ExpectedDayPlan, policy: ExpectedShiftPolicy): ExpectedShiftResolution<T, C> {
   const convoked = Boolean(input.holiday && input.convocation);
   const isHoliday = policy === "WORK_OBLIGATION" ? input.holiday !== null : input.holiday === "IN_SCOPE" || convoked;
-  const convocationBlocks = convoked && input.convocationTemplate && isTemplateUsable(input.convocationTemplate)
-    ? [buildExpectedBlock({ employeeId: plan.employeeId, dateKey: input.dateKey, blockIndex: 0, template: input.convocationTemplate, source: "HOLIDAY_CONVOCATION", origin: null })!]
-    : null;
+  const convocationBlocks = convocationBlocksOf(input, convoked, plan.employeeId);
   const planBlocks = plan.kind === "SHIFTS" ? plan.blocks : [];
   const resolution = (obligation: ExpectedShiftObligation, source: ExpectedShiftSource, reason: ExpectedShiftReason | null, blocks: ExpectedBlock[] = []): ExpectedShiftResolution<T, C> => ({
     dateKey: input.dateKey,
@@ -319,9 +342,9 @@ function resolveRotationShift<T extends object, C>(input: ExpectedShiftInput<T, 
 
   if (policy === "WORK_OBLIGATION") {
     if (input.holiday && !convoked) return resolution("NO_OBLIGATION", "HOLIDAY_NOT_CONVOKED", "HOLIDAY_NOT_CONVOKED");
+    if (convocationBlocks && !input.dayOff) return resolution("SHIFT", "HOLIDAY_CONVOCATION", null, convocationBlocks);
     if (input.regimeKind === "SIN_TURNO") return resolution("NO_OBLIGATION", "REGIME", "REGIME_SIN_TURNO");
     if (input.dayOff) return resolution("NO_OBLIGATION", "DAY_OFF", "DAY_OFF");
-    if (convocationBlocks) return resolution("SHIFT", "HOLIDAY_CONVOCATION", null, convocationBlocks);
     if (plan.kind === "CONFLICT") return planWithoutObligation()!;
     if (convoked && plan.kind !== "SHIFTS") return resolution("NO_OBLIGATION", "HOLIDAY_CONVOCATION", "HOLIDAY_CONVOCATION_WITHOUT_SCHEDULE");
     return planWithoutObligation() ?? resolution("SHIFT", convoked ? "HOLIDAY_CONVOCATION" : "ROTATION", null, planBlocks);

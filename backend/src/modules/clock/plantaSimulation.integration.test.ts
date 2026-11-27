@@ -735,6 +735,9 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     const [carlos] = await newShiftsOf(PLANTA_EMPLOYEES.CARLOS);
     expect(carlos).toMatchObject({ status: "PROCESADO", shiftTemplateId: null, totalMinutes: 600 });
     expect(await minutesOf(carlos!.id)).toBe(600);
+    // §20: el no convocado que trabaja cobra el FERIADO según el alcance de la regla (global → ×2),
+    // aunque la fecha tenga convocados (con §16 quedaba ×1).
+    expect((await holder.timeEntry.findMany({ where: { workShiftId: carlos!.id } })).map((entry) => Number(entry.appliedMultiplier))).toEqual([2]);
     expect((await alertsOf(carlos!.id)).map((alert) => [alert.type, alert.status, alert.severity])).toEqual([["TRABAJO_NO_PROGRAMADO", "RESUELTA", "INFO"]]);
     expect(await incidentsOf(PLANTA_EMPLOYEES.JOHANNA, WED_B)).toEqual([]);
     expect((await incidentsOf(PLANTA_EMPLOYEES.ROBERTO, WED_B)).map((row) => row.scheduledStartAt?.toISOString())).toEqual([at(WED_B, "17:00").toISOString()]);
@@ -743,6 +746,87 @@ describe.skipIf(!url)("R4.9C.2 — simulación integral de Planta contra Postgre
     const workdays = await m.workday.resolveExpectedWorkdays([id(PLANTA_EMPLOYEES.JOHANNA), id(PLANTA_EMPLOYEES.JOSE)], day(WED_B), day(WED_B), m.prisma);
     expect(workdays.get(id(PLANTA_EMPLOYEES.JOHANNA))!.get(WED_B)).toMatchObject({ expectedMinutes: 0 });
     expect(workdays.get(id(PLANTA_EMPLOYEES.JOSE))!.get(WED_B)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 480 });
+  });
+
+  // ── 11b — §20: defecto detectado en la simulación de Planta (convocatorias y rotaciones) ──────
+  // WORKED_TIME_ACCOUNTING_MODEL.md §20 (D9, P7, P8): la convocatoria sólo obliga; sin plantilla usa el
+  // turno REAL del día (bloques de la rotación, nunca un fijo cerrado al entrar a la rotación); sin turno
+  // resoluble se rechaza; con plantilla reemplaza al habitual (también en fijos); sin convocatorias, nadie.
+
+  it("§20 Planta: candidatos con el turno real; convocatoria sin plantilla en día de turno → falta por bloque con aviso; en descanso → 422; fijo con plantilla → obligación y fichada contra ella", async () => {
+    // Día hábil del ciclo con gente de turno y gente de descanso (el ajeno trabaja L–V).
+    const HOLIDAY = [MON_B, TUE_B, WED_B, THU_A, FRI_A, FRI_B, TUE_A, WED_A].find((key) => ROTATING.some((person) => planned(person, key).length === 0) && ROTATING.some((person) => planned(person, key).length === 1 && person !== PLANTA_EMPLOYEES.ROBERTO))!;
+    expect(HOLIDAY).toBeDefined();
+    const NEXT = addDays(HOLIDAY, 1);
+    await holiday(HOLIDAY);
+    const working = ROTATING.filter((person) => planned(person, HOLIDAY).length === 1 && person !== PLANTA_EMPLOYEES.ROBERTO);
+    const resting = ROTATING.filter((person) => planned(person, HOLIDAY).length === 0);
+    const absent = working[0]!;
+    const absentBlock = planned(absent, HOLIDAY)[0]!;
+
+    // Candidatos: Roberto conserva su fijo 07–17 HABILITADO (cerrado al entrar a la rotación) y no se
+    // propone; el turno sale de la rotación. El ajeno (Oficina L–V) muestra su fijo vigente.
+    const candidates = await call("GET", `/shifts/holiday-work/candidates?date=${HOLIDAY}&take=100`);
+    expect(candidates.status, JSON.stringify(candidates.error)).toBe(200);
+    const scheduleOf = (person: string) => (candidates.data as Array<{ id: string; expectedSchedule: { kind: string; blocks: Array<{ code: string }> } }>).find((row) => row.id === id(person))!.expectedSchedule;
+    expect(scheduleOf(PLANTA_EMPLOYEES.ROBERTO).kind).toMatch(/^ROTATION_/);
+    expect(scheduleOf(PLANTA_EMPLOYEES.ROBERTO).blocks.map((block) => block.code)).not.toContain(PLANTA_TEMPLATES.T0717.code);
+    expect(scheduleOf(absent)).toMatchObject({ kind: "ROTATION_SHIFTS", blocks: [{ code: absentBlock.code }] });
+    expect(scheduleOf(resting[0]!)).toMatchObject({ kind: "ROTATION_REST", blocks: [] });
+    expect(scheduleOf(AJENO)).toMatchObject({ kind: "FIXED", blocks: [{ code: "OF-08-16" }] });
+
+    // Descanso de rotación sin plantilla → 422 y nada guardado.
+    const rejected = await call("PUT", "/shifts/holiday-work/assignments", { date: HOLIDAY, assignments: [{ employeeId: id(resting[0]!), status: "ACTIVA" }] });
+    expect(rejected.status).toBe(422);
+    expect(rejected.error).toMatchObject({ code: "HOLIDAY_WORK_SCHEDULE_REQUIRED" });
+    expect(await holder.holidayWorkAssignment.count({ where: { employeeId: id(resting[0]!) } })).toBe(0);
+
+    // Sin plantilla en un día de turno: obliga con el bloque de la rotación. El ajeno, con plantilla 17–03 (P8).
+    const saved = await call("PUT", "/shifts/holiday-work/assignments", { date: HOLIDAY, assignments: [{ employeeId: id(absent), status: "ACTIVA" }, { employeeId: id(AJENO), status: "ACTIVA", shiftTemplateId: templateId[PLANTA_TEMPLATES.T1703.id] }] });
+    expect(saved.status, JSON.stringify(saved.error)).toBe(200);
+
+    // El ajeno llega a las 17:00 (su convocatoria), no a las 08:00 (su fijo): sin falta ni alertas.
+    await ticks(at(HOLIDAY, "06:30"), at(HOLIDAY, "16:30"), 30);
+    await punch(AJENO, "IN", at(HOLIDAY, "17:00"));
+    await ticks(at(HOLIDAY, "17:00"), at(NEXT, "02:30"), 30);
+    await punch(AJENO, "OUT", at(NEXT, "02:58"));
+
+    const [ajeno] = (await shiftsOf(AJENO)).filter((shift) => shift.startAt >= day(HOLIDAY));
+    expect(ajeno).toMatchObject({ status: "PROCESADO", shiftTemplateId: templateId[PLANTA_TEMPLATES.T1703.id] });
+    expect(await alertTypes(ajeno!.id)).toEqual([]);
+    expect(await incidentsOf(AJENO, HOLIDAY)).toEqual([]);
+    // Horas del convocado: ×2 por la regla global (alcance) sólo en la fecha del feriado; el tramo
+    // nocturno del día siguiente, ×1 (la convocatoria nunca decide el multiplicador).
+    const entries = await holder.timeEntry.findMany({ where: { workShiftId: ajeno!.id }, orderBy: { date: "asc" } });
+    expect(entries.map((entry) => [entry.date.toISOString().slice(0, 10), Number(entry.appliedMultiplier)])).toEqual([[HOLIDAY, 2], [NEXT, 1]]);
+
+    // El convocado de rotación ausente: una falta por su bloque con un aviso; el que descansa, nada.
+    expect((await incidentsOf(absent, HOLIDAY)).map((row) => row.scheduledStartAt?.toISOString())).toEqual([absentBlock.start.toISOString()]);
+    expect(await titlesAbout(absent)).toEqual(["Falta de ingreso"]);
+    for (const person of resting) expect(await incidentsOf(person, HOLIDAY)).toEqual([]);
+    expect(await titlesAbout(AJENO)).toEqual([]);
+
+    // Novedades según jornada: los convocados tienen la jornada de su turno real; los demás, 0 confirmado.
+    const workdays = await m.workday.resolveExpectedWorkdays([id(absent), id(AJENO), id(resting[0]!)], day(HOLIDAY), day(HOLIDAY), m.prisma);
+    expect(workdays.get(id(absent))!.get(HOLIDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: durationOf(absentBlock), source: "HOLIDAY_CONVOCATION" });
+    expect(workdays.get(id(AJENO))!.get(HOLIDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 600, minutesSource: "CONVOCATION_SHIFT_TEMPLATE" });
+    expect(workdays.get(id(resting[0]!))!.get(HOLIDAY)).toMatchObject({ obligation: "HOLIDAY_NOT_CONVOKED", expectedMinutes: 0 });
+  });
+
+  it("§20 feriado sin ninguna convocatoria: nadie tiene obligación ni falta ni aviso (rotación, fijos y ajeno); quien trabaja cobra ×2 por la regla", async () => {
+    await holiday(WED_A);
+    // El reloj avanza siempre hacia adelante; hasta antes del primer bloque del jueves (03:00).
+    await ticks(at(WED_A, "06:00"), at(WED_A, "06:30"), 30);
+    await punch(PLANTA_EMPLOYEES.JUANJO, "IN", at(WED_A, "07:00"));
+    await ticks(at(WED_A, "07:30"), at(WED_A, "14:30"), 30);
+    await punch(PLANTA_EMPLOYEES.JUANJO, "OUT", at(WED_A, "15:00"));
+    await ticks(at(WED_A, "15:30"), at("2026-11-05", "02:30"), 30);
+
+    for (const person of [...ROTATING, PLANTA_EMPLOYEES.JUANJO, AJENO]) expect(await incidentsOf(person, WED_A)).toEqual([]);
+    expect(await holder.systemNotification.count()).toBe(0);
+    const [juanjo] = (await newShiftsOf(PLANTA_EMPLOYEES.JUANJO)).filter((shift) => shift.startAt >= day(WED_A));
+    expect((await alertsOf(juanjo!.id)).map((alert) => [alert.type, alert.status])).toEqual([["TRABAJO_NO_PROGRAMADO", "RESUELTA"]]);
+    expect((await holder.timeEntry.findMany({ where: { workShiftId: juanjo!.id } })).map((entry) => Number(entry.appliedMultiplier))).toEqual([2]);
   });
 
   // ── 12 — franco y trabajo no programado ─────────────────────────────────────────────────────

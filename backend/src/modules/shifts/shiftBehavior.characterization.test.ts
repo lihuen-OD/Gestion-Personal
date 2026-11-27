@@ -419,12 +419,23 @@ describe("A3 — feriado con convocatoria ACTIVA", () => {
     expect(db.shiftAssignment.findMany.mock.calls[0]![0].where.employeeId).toEqual({ in: [EMPLOYEE] });
   });
 
-  it("COMPORTAMIENTO ACTUAL (P8): convocado sin asignación aplicable → alertas no ven obligación", async () => {
+  // CAMBIO §20 (P8, WORKED_TIME_ACCOUNTING_MODEL.md): antes la plantilla de la
+  // convocatoria se ignoraba en turnos fijos y un convocado sin asignación
+  // aplicable no tenía obligación. Ahora la plantilla reemplaza al turno
+  // habitual (y obliga aunque no haya asignación); sin plantilla ni turno, nada.
+  it("§20 P8: la plantilla de la convocatoria obliga (GUARDIA 08:00), con o sin turno habitual; sin plantilla ni turno, sin obligación", async () => {
     givenAssignments([]);
     expect((await resolveWorkObligationCandidates(MONDAY)).candidates).toEqual([]);
+
+    db.holidayWorkAssignment.findMany.mockResolvedValue([{ employeeId: EMPLOYEE, shiftTemplate: GUARDIA }]);
+    for (const assignments of [[], rows]) {
+      givenAssignments(assignments);
+      const { candidates } = await resolveWorkObligationCandidates(MONDAY);
+      expect(candidates.map((candidate) => [candidate.employeeId, candidate.template.code, candidate.scheduledStartAt])).toEqual([[EMPLOYEE, "GUARDIA-FERIADO", art(MONDAY, "08:00")]]);
+    }
   });
 
-  it("Novedades: el turno de la convocatoria gana (GUARDIA 240 min); sin turno, el habitual (510); sin ninguno, el horario de la convocatoria", () => {
+  it("Novedades: el turno de la convocatoria gana (GUARDIA 240 min); sin turno, el habitual (510); sin ninguno, sin resolver (§20)", () => {
     const holidays = { [MONDAY]: "IN_SCOPE" as const };
     const withTemplate = evaluateEmployeeWorkday(
       workdayContext({ assignments: rows, holidays, convocations: { [MONDAY]: { template: GUARDIA, expectedStartTime: null, expectedEndTime: null } } }),
@@ -435,15 +446,26 @@ describe("A3 — feriado con convocatoria ACTIVA", () => {
     const habitual = evaluateEmployeeWorkday(workdayContext({ assignments: rows, holidays, convocations: { [MONDAY]: { template: null, expectedStartTime: null, expectedEndTime: null } } }), MONDAY);
     expect(habitual).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 510, shiftTemplateIds: ["oficina"], source: "HOLIDAY_CONVOCATION", minutesSource: "SHIFT_ASSIGNMENT" });
 
+    // CAMBIO §20 (D9): el horario libre ya no define la jornada (antes WORKDAY 240 con CONVOCATION_TIMES).
     const times = evaluateEmployeeWorkday(workdayContext({ holidays, convocations: { [MONDAY]: { template: null, expectedStartTime: "09:00", expectedEndTime: "13:00" } } }), MONDAY);
-    expect(times).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 240, shiftTemplateIds: [], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_TIMES" });
+    expect(times).toMatchObject({ obligation: "UNRESOLVED", unresolvedReason: "EXPECTED_MINUTES_UNKNOWN", expectedMinutes: null, source: "HOLIDAY_CONVOCATION" });
   });
 
-  it("entrada (turno usado por el matching): el habitual. Fichar 08:00 para la guardia 08:00 da INGRESO_TARDE +90 contra OF-01", async () => {
+  // CAMBIO §20 (P8): con plantilla en la convocatoria, la entrada se evalúa
+  // contra ella (antes: contra el habitual, INGRESO_TARDE +90 contra OF-01).
+  it("entrada §20 P8: sin plantilla, el habitual (INGRESO_TARDE +90 contra OF-01); con plantilla GUARDIA, puntual contra GUARDIA", async () => {
     givenAssignments(rows);
     await evaluateShiftEntry(EMPLOYEE, "shift-1", art(MONDAY, "08:00"));
     expect(adoptedTemplate()?.shiftTemplateId).toBe("oficina");
     expect(upserted()).toEqual([expect.objectContaining({ type: "INGRESO_TARDE", differenceMinutes: 90 })]);
+
+    vi.clearAllMocks();
+    holidayDates.mockResolvedValue([{ date: MONDAY, rules: [{ id: "feriado", name: "Feriado" }] }]);
+    db.holidayWorkAssignment.findMany.mockResolvedValue([{ employeeId: EMPLOYEE, shiftTemplateId: GUARDIA.id, shiftTemplate: { status: "ACTIVO" } }]);
+    givenAssignments(rows, [OFICINA, GUARDIA]);
+    await evaluateShiftEntry(EMPLOYEE, "shift-1", art(MONDAY, "08:00"));
+    expect(adoptedTemplate()?.shiftTemplateId).toBe("guardia");
+    expect(upserted()).toEqual([]);
   });
 
   it("Novedades: una convocatoria sin regla FERIADO ese día no aporta nada (día normal)", () => {

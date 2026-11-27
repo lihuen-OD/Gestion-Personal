@@ -8,7 +8,7 @@ import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
 import { buildTemplateRulesSnapshot, effectiveShiftTemplate } from "./templateRulesSnapshot";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
-import { classifyFixedEntry, hasNoEnforceableShift, hasVigentEnabledAssignment, loadEntryDayFacts, unscheduledWorkNote, type UnscheduledWorkReason } from "./unscheduledWork";
+import { classifyFixedEntry, hasNoEnforceableShift, hasVigentEnabledAssignment, loadConvocationTemplateId, loadEntryDayFacts, unscheduledWorkNote, type UnscheduledWorkReason } from "./unscheduledWork";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
@@ -447,7 +447,12 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   if (options.rotationEntry) return evaluateRotationEntry(employeeId, workShiftId, actualAt, options.rotationEntry, options);
   const db = options.db ?? prisma;
   const { employeeAssignments, activeTemplates } = await loadMatchingContext(employeeId);
-  const match = matchShiftForEmployee({ actualAt, employeeAssignments, activeTemplates });
+  // P8 (§20): en un feriado convocado con plantilla, la entrada se evalúa
+  // contra ESA plantilla (adopción, puntualidad y salida), no contra el turno
+  // habitual. Mismo día calendario que el matching (P9).
+  const convocationTemplateId = await loadConvocationTemplateId(employeeId, argentinaDateKey(actualAt));
+  const matchingAssignments: EmployeeShiftAssignmentRef[] = convocationTemplateId ? [{ shiftTemplateId: convocationTemplateId, status: "HABILITADO" }] : employeeAssignments;
+  const match = matchShiftForEmployee({ actualAt, employeeAssignments: matchingAssignments, activeTemplates });
 
   // Etapa 13E: un turno GENERAL_UNASSIGNED (ajeno -- coincide por horario
   // pero no está asignado a este empleado) nunca se adopta como el turno real
