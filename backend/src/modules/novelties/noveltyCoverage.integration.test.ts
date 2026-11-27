@@ -489,7 +489,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     beforeAll(async () => {
       // A (turno L–V): lunes 8 trabajó 8 h + Trámite (conflicto); martes 9
       // trabajó 7 h + Llegada tarde 1 h; miércoles 10 Trámite sin trabajo +
-      // Llegada tarde 1 h; jueves 11 Trámite PENDIENTE; viernes 12 Falta sin
+      // Llegada tarde 1 h; jueves 11 Trámite cargado por Nivel 2 (efectivo al
+      // guardar, sin aprobación posterior); viernes 12 Falta sin
       // aviso sin trabajo. B (turno todos los días): Vacaciones 1–7 (domingo ×2).
       await worked(employees.a, "2027-02-08", 8);
       await worked(employees.a, "2027-02-09", 7);
@@ -506,9 +507,11 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
 
     it("grilla por legajo: trabajado real, cobertura que cuenta, computable, estados y filas por tipo", async () => {
       const grid = await gridOf(employees.a, true);
-      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
-      expect(grid).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
-      expect(grid.accounting.novelty).toMatchObject({ heldMinutes: 240, pendingApprovalMinutes: 240, informativeMinutes: 120, reviewDays: 1, reviewDates: ["2027-02-08"] });
+      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380 });
+      expect(grid).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380 });
+      // Sin aprobación administrativa no hay minutos "pendientes de aprobación";
+      // los 240 retenidos son del día 8, en revisión por trabajo real.
+      expect(grid.accounting.novelty).toMatchObject({ heldMinutes: 240, pendingApprovalMinutes: 0, informativeMinutes: 120, reviewDays: 1, reviewDates: ["2027-02-08"] });
       expect(grid.accounting.days["8"]).toMatchObject({ totalWorkedMinutes: 480, computableMinutes: 480 });
       expect(grid.noveltiesByDay["8"]).toEqual([expect.objectContaining({ label: "Trámite bancario", state: "REVIEW_REQUIRED", minutes: 240 })]);
       // Dos tipos el mismo día: Trámite cuenta y Llegada tarde informa.
@@ -517,7 +520,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       );
       const tramiteRow = grid.noveltyCoverageRows.find((row) => row.noveltyType.name === "Trámite bancario")!;
       expect(tramiteRow.minutesByDay).toEqual({ "8": 240, "10": 240, "11": 240 });
-      expect(tramiteRow.stateByDay).toEqual({ "8": "REVIEW_REQUIRED", "10": "COUNTED", "11": "PENDING_APPROVAL" });
+      expect(tramiteRow.stateByDay).toEqual({ "8": "REVIEW_REQUIRED", "10": "COUNTED", "11": "COUNTED" });
       expect(grid.noveltyCoverageRows.map((row) => row.noveltyType.name)).toEqual(["Falta sin aviso", "Llegada tarde", "Trámite bancario"]);
       // toDate nulo es un día: la novedad del 20/01 no aparece en febrero.
       expect(grid.novelties.map((novelty) => novelty.id)).not.toContain((await holder.novelty.findFirstOrThrow({ where: { employeeId: employees.a, fromDate: day("2027-01-20") } })).id);
@@ -537,14 +540,14 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect(dayOf(10)).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 240, computableMinutes: 240 });
       expect(dayOf(8)).toMatchObject({ totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480, novelties: [expect.objectContaining({ reviewRequired: true })] });
       expect(dayOf(12)!.novelties).toEqual([expect.objectContaining({ label: "Falta sin aviso", minutes: 0, state: "INFORMATIVE" })]);
-      expect(rowA.summary.accounting).toMatchObject({ computableMinutes: 1140 });
+      expect(rowA.summary.accounting).toMatchObject({ computableMinutes: 1380 });
       // La novedad de enero sin fecha hasta no marca ningún día de febrero.
       expect(rowA.summary.dailyBreakdown.some((item) => item.novelty?.label === "Licencia abierta")).toBe(false);
     });
 
     it("resumen: \"Total trabajado\" sigue siendo trabajo real; cubierto y computable van aparte", async () => {
       const summary = await m.timeEntriesRepository.summary("2027-02", {});
-      expect(summary).toMatchObject({ countableHours: 15, coveredHours: 60, computableHours: 75 });
+      expect(summary).toMatchObject({ countableHours: 15, coveredHours: 64, computableHours: 79 });
     });
 
     it("export de horas: columnas de cobertura y quien sólo tiene vacaciones también se exporta", async () => {
@@ -605,7 +608,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       const [closure] = await m.workforce.closeClosures("2027-02", [employees.a], as("sup"));
       const snapshot = closure!.snapshot as { accounting: { model: string; totalWorkedMinutes: number; noveltyCoveredMinutes: number; computableMinutes: number; novelty: { reviewDays: number; types: Array<{ name: string }> } } };
       expect(closure).toMatchObject({ status: "CERRADO" });
-      expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140, novelty: expect.objectContaining({ reviewDays: 0 }) });
+      expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380, novelty: expect.objectContaining({ reviewDays: 0 }) });
       expect(snapshot.accounting.novelty.types.map((type) => type.name)).toEqual(expect.arrayContaining(["Trámite bancario", "Llegada tarde"]));
     });
 

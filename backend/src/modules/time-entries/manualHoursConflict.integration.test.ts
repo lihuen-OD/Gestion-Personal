@@ -243,7 +243,7 @@ describe.skipIf(!url)("Horas manuales + fichada contra PostgreSQL local", () => 
     expect((await punch("during", "OUT")).status).toBe(201);
     await drain("during");
 
-    expect(await normalRows("during")).toEqual([expect.objectContaining({ source: null, status: "BORRADOR", totalMinutes: 480 })]);
+    expect(await normalRows("during")).toEqual([expect.objectContaining({ source: null, status: "APROBADO", totalMinutes: 480 })]);
     expect(await conflictAlerts(workShiftId)).toHaveLength(1);
   });
 

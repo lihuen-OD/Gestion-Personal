@@ -58,7 +58,7 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     const employee = await db.employee.create({ data: { id: `it-rule-employee-${suffix}`, legajo: `IT-R-${suffix}`, cuil: `20-0000000${suffix}-1`, dni: `0000000${suffix}`, firstName: "Regla", lastName: "Integración" } });
     const concept = await db.hourConcept.create({ data: { id: `it-rule-normal-${suffix}`, code: `IT-RN-${suffix}`, name: "Horas normales", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
     const rule = await db.doubleHourRule.create({ data: { id: `it-rule-open-${suffix}`, name: "Regla con cierre abierto", recurrenceType: "RANGO", fromDate: new Date("2026-02-01"), toDate: new Date("2026-02-28"), weekdays: [1], multiplier: 2, priority: 1, reason: "IT" } });
-    const entry = await db.timeEntry.create({ data: { id: `it-rule-entry-${suffix}`, employeeId: employee.id, hourConceptId: concept.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hours: 8, totalMinutes: 480, appliedMultiplier: 2, status: "EN_REVISION" } });
+    const entry = await db.timeEntry.create({ data: { id: `it-rule-entry-${suffix}`, employeeId: employee.id, hourConceptId: concept.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hours: 8, totalMinutes: 480, appliedMultiplier: 2, status: "APROBADO" } });
     const closure = await db.monthlyTimeClosure.create({ data: { id: `it-rule-closure-${suffix}`, employeeId: employee.id, period: "2026-02", status: "ABIERTO", snapshot: { marker: "confirmed-before", accounting: { totalWorkedMinutes: 480 } } } });
     return { rule, entry, closure };
   }
@@ -135,7 +135,7 @@ describe.skipIf(!url)("eliminación controlada — PostgreSQL local real", () =>
     const employee = await db.employee.create({ data: { id: "it-hour-employee", legajo: "IT-H01", cuil: "20-00000002-2", dni: "00000002", firstName: "Hora", lastName: "Integración" } });
     await db.hourConcept.create({ data: { id: "it-normal", code: "IT-NORMAL", name: "Horas normales", kind: "NORMAL", systemRole: "NORMAL_BASE" } });
     const concept = await db.hourConcept.create({ data: { id: "it-delete-hour", code: "IT-DEL", name: "Concepto a eliminar", kind: "OTRO", loadMode: "MANUAL", workTreatment: "ADDITIVE_TO_WORKED_TOTAL" } });
-    await db.hourConceptBreakdown.create({ data: { id: "it-breakdown", employeeId: employee.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hourConceptId: concept.id, minutes: 60, source: "MANUAL", status: "EN_REVISION" } });
+    await db.hourConceptBreakdown.create({ data: { id: "it-breakdown", employeeId: employee.id, date: new Date("2026-02-02"), period: "2026-02", day: 2, hourConceptId: concept.id, minutes: 60, source: "MANUAL", status: "APROBADO" } });
     const closure = await db.monthlyTimeClosure.create({ data: { id: "it-open-closure", employeeId: employee.id, period: "2026-02", status: "ABIERTO", snapshot: { marker: "preview" } } });
 
     const first = await hourConceptDeletion.previewDeletion(concept.id);
