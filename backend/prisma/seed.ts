@@ -205,7 +205,6 @@ async function main() {
     where: { code: "NOV-LLEGADA-TARDE" },
     update: {
       allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
-      approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
     },
     create: {
       code: "NOV-LLEGADA-TARDE",
@@ -217,9 +216,7 @@ async function main() {
       // Mismo criterio que el backfill de 20261113180000_add_novelty_coverage_engine:
       // cantidad manual de un día, visible y sin sumar al total.
       coverageMode: "MANUAL_MINUTES",
-      requiresApproval: false,
       allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
-      approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
     },
   });
 

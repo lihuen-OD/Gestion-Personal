@@ -9,11 +9,11 @@ import { StatCard } from "../ui/StatCard";
 export function NoveltyTypeSummaryCards({ items }: { items: NoveltyType[] }) {
   const active = items.filter((item) => item.status === "ACTIVO").length;
   const withFinnegans = items.filter((item) => item.rules.exportsToFinnegans).length;
-  const requiresApproval = items.filter((item) => item.rules.requiresApproval).length;
+  const requiresDocumentation = items.filter((item) => item.rules.requiresDocumentation).length;
   return <div className="stat-grid novelty-type-summary">
     <StatCard label="Total de tipos" value={items.length} detail="Catálogo completo" />
     <StatCard label="Activos" value={active} detail="Disponibles para cargar" />
     <StatCard label="Exportables a Finnegans" value={withFinnegans} detail="Con exportación habilitada" />
-    <StatCard label="Requieren aprobación" value={requiresApproval} detail="Quedan pendientes hasta aprobarse" />
+    <StatCard label="Requieren documentación" value={requiresDocumentation} detail="Solicitan respaldo al cargar" />
   </div>;
 }

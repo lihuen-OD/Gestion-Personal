@@ -39,7 +39,7 @@ export type ApiTimeEntry = {
   observation?: string | null;
   createdByUserId?: string | null;
   updatedByUserId?: string | null;
-  // Etapa 11B: Horas Especiales en la Bandeja de revisión — appliedMultiplier
+  // Etapa 11B: Horas Especiales en los listados de horas — appliedMultiplier
   // ya viajaba en la respuesta cruda del backend (escalar de TimeEntry, sin
   // select restrictivo en el listado plano) pero se perdía en el mapeo al
   // tipo TimeEntry del frontend. timeSegment sólo existe para entradas del
@@ -153,7 +153,6 @@ type ApiSummaryResponse = {
     activeEmployees: number;
     employeesWithEntries: number;
     pendingEmployees: number;
-    reviewEmployees: number;
     countableHours: number;
     coveredHours: number;
     computableHours: number;
@@ -173,7 +172,7 @@ type ApiExportResponse = {
 
 const countableStatuses = new Set<TimeStatus>(["Aprobado", "En revisión"]);
 const exportableStatuses = new Set<TimeStatus>(["Aprobado"]);
-const lockedStatuses = new Set<TimeStatus>(["Aprobado", "Cerrado", "Exportado"]);
+const lockedStatuses = new Set<TimeStatus>(["Cerrado", "Exportado"]);
 
 const statusFromApi: Record<ApiApprovalStatus, TimeStatus> = {
   BORRADOR: "Borrador",
@@ -211,26 +210,20 @@ export function timeEntryStatusFromApi(status: string): TimeStatus {
 async function invalidateTimeEntryDependentCaches(reason: string) {
   await Promise.all([
     invalidateCacheFamily("dashboard", reason),
-    invalidateCacheFamily("pending", reason),
     invalidateCacheFamily("time-entries", reason),
   ]);
 }
 
 function isTimeEntriesSummary(value: ApiSummaryResponse["data"]) {
-  return Boolean(value && typeof value.activeEmployees === "number" && typeof value.pendingEmployees === "number" && typeof value.reviewEmployees === "number");
+  return Boolean(value && typeof value.activeEmployees === "number" && typeof value.pendingEmployees === "number");
 }
 
 function isEmployeePeriodRowsResponse(value: { items: Array<{ employee: Employee; summary: unknown }>; meta?: unknown }) {
   return Boolean(value && Array.isArray(value.items) && value.items.every((row) => typeof row.employee?.id === "string"));
 }
 
-// Etapa 14G.4: `list`/`listByEmployee` (Bandeja de revisión, HoursPage.tsx
-// pendingOnly) no pasaban por `cachedData` — sin dedupe in-flight, el
-// doble-montaje de React StrictMode en dev disparaba 2 llamadas de red reales
-// (mismo síntoma ya resuelto en `getSummary`/`getPeriodEmployees` acá mismo y
-// en otras pantallas, ver 14D.5/14F.2). Misma validación mínima que
-// `isEmployeePeriodRowsResponse` pero para la vista plana (`items` de
-// TimeEntry, no de `{employee, summary}`).
+// Etapa 14G.4: `list` pasa por `cachedData` (dedupe in-flight) con una
+// validación mínima de la vista plana (`items` de TimeEntry).
 function isTimeEntryListResponse(value: { items: Array<{ id: string }>; meta?: unknown }) {
   return Boolean(value && Array.isArray(value.items) && value.items.every((item) => typeof item.id === "string"));
 }
@@ -322,36 +315,6 @@ export const timeEntryApiService = {
     });
   },
 
-  async listByEmployee(filters: { period?: string; status?: TimeStatus; search?: string; costCenterId?: string; page?: number; take?: number; sort?: SortState<EmployeeRowSortKey> } = {}) {
-    const params = new URLSearchParams();
-    params.set("view", "byEmployee");
-    params.set("page", String(filters.page || 1));
-    params.set("take", String(filters.take || 25));
-    if (filters.period) params.set("period", filters.period);
-    if (filters.status && statusToApi[filters.status]) params.set("status", statusToApi[filters.status]!);
-    if (filters.search?.trim()) params.set("search", filters.search.trim());
-    if (filters.costCenterId) params.set("costCenterId", filters.costCenterId);
-    appendSortParams(params, filters.sort);
-    const key = `/time-entries?${params.toString()}`;
-    return cachedData({
-      requestKey: `GET:${key}`,
-      policy: cachePolicies.timeEntriesAggregates,
-      fetcher: () => apiRequest<ApiEmployeePeriodRowsResponse>(key, { apiCache: false }).then((response) => ({
-        items: response.data.map((row) => ({
-          employee: mapEmployeeFromApi(row.employee),
-          summary: {
-            status: statusFromApi[row.summary.status] || "Pendiente",
-            accounting: row.summary.accounting,
-            specialHourRuleNames: row.summary.specialHourRuleNames || [],
-            specialHourConflict: row.summary.specialHourConflict || false,
-          },
-        })),
-        meta: response.meta,
-      })),
-      validate: isEmployeePeriodRowsResponse,
-    });
-  },
-
   async getAll(filters: { period?: string; employeeId?: string; status?: TimeStatus; take?: number } = {}) {
     const response = await this.list({ ...filters, take: filters.take || 500 });
     return response.items;
@@ -440,13 +403,12 @@ export const timeEntryApiService = {
     return mapTimeEntryFromApi(response.data);
   },
 
-  async update(id: string, entry: Partial<TimeEntry> & { correctionReason?: string }) {
+  async update(id: string, entry: Partial<TimeEntry>) {
     const body: Record<string, unknown> = {};
     if (entry.conceptId || entry.type) body.hourConceptId = await resolveHourConceptId({ conceptId: entry.conceptId, type: entry.type || "Hora normal" });
     if (entry.period && entry.day) body.date = dateFromEntry(entry as Pick<TimeEntry, "period" | "day" | "date">);
     if (entry.hours !== undefined) body.hours = entry.hours;
     if (entry.notes !== undefined) body.observation = entry.notes || null;
-    if (entry.correctionReason) body.correctionReason = entry.correctionReason;
     const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}`, { method: "PATCH", body });
     await invalidateTimeEntryDependentCaches("time entry updated");
     return mapTimeEntryFromApi(response.data);
@@ -463,40 +425,7 @@ export const timeEntryApiService = {
             (item) => item.day === entry.day && (item.conceptId === entry.conceptId || item.type === entry.type),
           )?.id;
     const saved = existingId ? await this.update(existingId, entry) : await this.create(entry);
-    if (entry.status === "En revisión" && saved.status !== "En revisión") {
-      return this.submit(saved.id);
-    }
     return saved;
-  },
-
-  async submit(id: string) {
-    const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/submit`, { method: "POST" });
-    await invalidateTimeEntryDependentCaches("time entry submitted");
-    return mapTimeEntryFromApi(response.data);
-  },
-
-  async approve(id: string) {
-    const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/approve`, { method: "POST" });
-    await invalidateTimeEntryDependentCaches("time entry approved");
-    return mapTimeEntryFromApi(response.data);
-  },
-
-  async reject(id: string, reason: string) {
-    const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/reject`, {
-      method: "POST",
-      body: { reason },
-    });
-    await invalidateTimeEntryDependentCaches("time entry rejected");
-    return mapTimeEntryFromApi(response.data);
-  },
-
-  async returnForCorrection(id: string, reason: string) {
-    const response = await apiRequest<ApiItemResponse>(`/time-entries/${id}/return`, {
-      method: "POST",
-      body: { reason },
-    });
-    await invalidateTimeEntryDependentCaches("time entry returned");
-    return mapTimeEntryFromApi(response.data);
   },
 
   async getPeriodExport(period: string, includeInReview = false) {
@@ -507,10 +436,6 @@ export const timeEntryApiService = {
 
   canEdit: (entry?: TimeEntry) => !entry || !lockedStatuses.has(entry.status),
   canReview: (user: User) => user.role === "Nivel 1 - RRHH" || user.role.startsWith("Nivel 2"),
-  // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver una carga horaria es
-  // exclusivo de RRHH — a diferencia de canReview (que también habilita la
-  // corrección administrativa de una carga ya aprobada, sin cambios acá).
-  canApprove: (user: User) => user.role === "Nivel 1 - RRHH",
   isCountableStatus: (status: TimeStatus) => countableStatuses.has(status),
   isExportableStatus: (status: TimeStatus) => exportableStatuses.has(status),
 };

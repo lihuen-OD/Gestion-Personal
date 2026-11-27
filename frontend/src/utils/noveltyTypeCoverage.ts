@@ -260,9 +260,6 @@ export function describeNoveltyTypeConfig(item: NoveltyType): string[] {
     ? "No puede coexistir con horas trabajadas: si hay trabajo real ese día, queda para revisión."
     : "Puede coexistir con horas trabajadas el mismo día.");
   lines.push(rules.allowsDateRange ? "Puede cargarse por rango de fechas." : "Se carga para un solo día.");
-  if (rules.requiresApproval) {
-    lines.push(coverageRegistersTime(coverage) && coverage.countsTowardTotal ? "Requiere aprobación antes de sumar horas." : "Requiere aprobación.");
-  }
   if (rules.requiresObservation) lines.push("La observación es obligatoria.");
   if (rules.requiresDocumentation) lines.push("Debe adjuntarse documentación.");
   if (rules.timeEntryBehavior === "BLOQUEA_NUEVA_CARGA") lines.push("Aprobada, bloquea nuevas cargas horarias ese día.");

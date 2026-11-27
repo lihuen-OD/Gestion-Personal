@@ -1,9 +1,16 @@
 import { ARGENTINA_OFFSET_MINUTES, argentinaCalendarDate, argentinaDateKey, scheduledInstantForShiftTime } from "../../shared/datetime/argentinaTime";
+import { entryReferenceCandidates, isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnDate, isShiftAssignmentApplicableOnWeekday, type ShiftAssignmentStatusValue } from "./expectedShiftResolver";
+import { computeExpectedMinutes } from "./shiftTemplateTime";
+
+// Etapa R2: la vigencia y el día de semana de una asignación los define el
+// resolver central (expectedShiftResolver.ts); se re-exportan para no
+// cambiar a los importadores existentes.
+export { isShiftAssignmentActiveOnDate, isShiftAssignmentApplicableOnWeekday };
 
 export const DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES = 1200;
 export const DEFAULT_MAXIMUM_INFORMATIVE_MINUTES = 600;
 
-export type ShiftAssignmentStatusRef = "HABILITADO" | "DESHABILITADO";
+export type ShiftAssignmentStatusRef = ShiftAssignmentStatusValue;
 
 export interface ShiftTemplateRef {
   id: string;
@@ -35,33 +42,13 @@ export interface EmployeeShiftAssignmentRef {
   weekdays?: number[];
 }
 
-// Vigencia: aplica si effectiveFrom <= fecha y (effectiveTo es null o
-// effectiveTo >= fecha) — mismo criterio que EmployeeWorkRegime
-// (workRegimes.repository.ts). `referenceDate` debe ser una fecha calendario
-// ya resuelta (medianoche UTC), no un instante real — ver
-// argentinaCalendarDate/argentinaDateKey.
-export function isShiftAssignmentActiveOnDate(assignment: Pick<EmployeeShiftAssignmentRef, "effectiveFrom" | "effectiveTo">, referenceDate: Date): boolean {
-  if (assignment.effectiveFrom && assignment.effectiveFrom > referenceDate) return false;
-  if (assignment.effectiveTo && assignment.effectiveTo < referenceDate) return false;
-  return true;
-}
-
-// weekdays sigue el criterio ya usado en el proyecto (DoubleHourRule.weekdays,
-// TimeSegment.date.getDay()): 0=domingo..6=sábado. Vacío o ausente = todos
-// los días. `referenceDate` ya resuelta a medianoche UTC: getUTCDay() da el
-// día de semana correcto sin volver a aplicar ningún corrimiento de huso.
-export function isShiftAssignmentApplicableOnWeekday(assignment: Pick<EmployeeShiftAssignmentRef, "weekdays">, referenceDate: Date): boolean {
-  if (!assignment.weekdays?.length) return true;
-  return assignment.weekdays.includes(referenceDate.getUTCDay());
-}
-
 // Combina status + vigencia + weekday contra un INSTANTE real (ej. la
 // fichada), resolviendo la fecha calendario Argentina internamente — para
 // que ningún llamador tenga que reimplementar esa conversión.
 export function isShiftAssignmentApplicableForInstant(assignment: EmployeeShiftAssignmentRef, instant: Date): boolean {
   if (assignment.status !== "HABILITADO") return false;
   const referenceDate = argentinaCalendarDate(argentinaDateKey(instant));
-  return isShiftAssignmentActiveOnDate(assignment, referenceDate) && isShiftAssignmentApplicableOnWeekday(assignment, referenceDate);
+  return isShiftAssignmentApplicableOnDate(assignment, referenceDate);
 }
 
 export type ShiftMatchCase = "ENABLED" | "DISABLED_FOR_EMPLOYEE" | "GENERAL_UNASSIGNED" | "NO_MATCH";
@@ -106,12 +93,14 @@ export function evaluateOutOfShiftWorkday(input: {
   match: ShiftMatchResult;
   actualStartAt: Date;
   actualEndAt: Date;
+  /** R4.4: inicio programado CONGELADO del bloque de rotación (si no, la ocurrencia más cercana, como siempre). */
+  scheduledStartAt?: Date | null;
 }): OutOfShiftWorkdayResult {
   if (input.match.case !== "ENABLED" || !input.match.template) {
     return { evaluated: false, outsideShift: false, overlapMinutes: null, scheduledStartAt: null, scheduledEndAt: null };
   }
 
-  const scheduledStartAt = closestOccurrence(input.actualStartAt, input.match.template.startTime).scheduledAt;
+  const scheduledStartAt = input.scheduledStartAt ?? closestOccurrence(input.actualStartAt, input.match.template.startTime).scheduledAt;
   const scheduledEndAt = scheduledInstantForShiftTime(scheduledStartAt, input.match.template.endTime, input.match.template.crossesMidnight);
   const overlapMilliseconds = Math.max(
     0,
@@ -172,16 +161,15 @@ export function matchShiftForEmployee(input: {
   employeeAssignments: EmployeeShiftAssignmentRef[];
   activeTemplates: ShiftTemplateRef[];
 }): ShiftMatchResult {
+  // Etapa R2: candidatos desde el resolver central — asignaciones propias
+  // aplicables el día CALENDARIO de la fichada (P9), habilitadas primero y
+  // deshabilitadas después, contra plantillas ACTIVO. La elección por cercanía
+  // (y su desempate por orden) sigue siendo la de siempre.
   const referenceDate = argentinaCalendarDate(argentinaDateKey(input.actualAt));
-  const appliesToday = (assignment: EmployeeShiftAssignmentRef) =>
-    isShiftAssignmentActiveOnDate(assignment, referenceDate) && isShiftAssignmentApplicableOnWeekday(assignment, referenceDate);
+  const candidates = entryReferenceCandidates({ referenceDate, assignments: input.employeeAssignments, activeTemplates: input.activeTemplates });
+  const enabledIds = new Set(candidates.filter((candidate) => candidate.enabled).map((candidate) => candidate.template.id));
 
-  const templatesById = new Map(input.activeTemplates.map((template) => [template.id, template]));
-  const enabledIds = new Set(input.employeeAssignments.filter((a) => a.status === "HABILITADO" && appliesToday(a)).map((a) => a.shiftTemplateId));
-  const disabledIds = new Set(input.employeeAssignments.filter((a) => a.status === "DESHABILITADO" && appliesToday(a)).map((a) => a.shiftTemplateId));
-  const ownTemplates = [...enabledIds, ...disabledIds].map((id) => templatesById.get(id)).filter((t): t is ShiftTemplateRef => Boolean(t));
-
-  const ownMatch = closestOwnMatch(input.actualAt, ownTemplates);
+  const ownMatch = closestOwnMatch(input.actualAt, candidates.map((candidate) => candidate.template));
   if (ownMatch) {
     return { case: enabledIds.has(ownMatch.template.id) ? "ENABLED" : "DISABLED_FOR_EMPLOYEE", template: ownMatch.template, differenceMinutes: ownMatch.differenceMinutes };
   }
@@ -221,6 +209,18 @@ export function evaluateEntryPunctuality(match: ShiftMatchResult): EntryPunctual
   };
 }
 
+/**
+ * R4.9C.2 O2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.19): primer instante, en ms
+ * desde el inicio programado, en que un ingreso es TARDÍO con la puntualidad
+ * vigente. `differenceInMinutes` redondea (Math.round, mitad hacia arriba),
+ * así que `lateArrival` (redondeado > tolerancia) equivale a
+ * Δ ≥ tolerancia + 0,5 min. La falta de ingreso vence en este mismo instante:
+ * nunca antes de que la entrada deje de ser puntual.
+ */
+export function lateEntryThresholdMs(entryToleranceAfterMinutes: number): number {
+  return (entryToleranceAfterMinutes * 60 + 30) * 1000;
+}
+
 // Etapa 13A, caso H del pedido ("entrada muy anticipada", ej. turno 08:30
 // con entrada 04:00): un ingreso anticipado sigue siendo INGRESO_ANTICIPADO
 // sin importar la magnitud (nunca se reclasifica como turno ajeno ni como
@@ -251,7 +251,10 @@ export function isEarlyArrivalReviewRequired(differenceMinutes: number): boolean
  * ventana (p. ej. trabajo extra a las 21:00 de alguien con turno 08:00) o sin
  * turno, es la fecha argentina del ingreso.
  */
-export function workShiftOperationalDateKey(startAt: Date, template: Pick<ShiftTemplateRef, "startTime" | "endTime" | "crossesMidnight"> | null): string {
+export function workShiftOperationalDateKey(startAt: Date, template: Pick<ShiftTemplateRef, "startTime" | "endTime" | "crossesMidnight"> | null, scheduledStartAt?: Date | null): string {
+  // R4.4: el bloque de rotación congelado define la fecha operativa (la del
+  // inicio programado), sin depender de la ocurrencia más cercana.
+  if (scheduledStartAt) return argentinaDateKey(scheduledStartAt);
   if (template) {
     const { scheduledAt } = closestOccurrence(startAt, template.startTime);
     const scheduledEndAt = scheduledInstantForShiftTime(scheduledAt, template.endTime, template.crossesMidnight);
@@ -270,12 +273,15 @@ export interface ExitPunctualityResult {
 }
 
 /** Solo se afirma puntualidad de salida cuando el turno coincidente está HABILITADO para el empleado (Caso A). */
-export function evaluateExitPunctuality(input: { match: ShiftMatchResult; startAt: Date; actualExitAt: Date }): ExitPunctualityResult {
+export function evaluateExitPunctuality(input: { match: ShiftMatchResult; startAt: Date; actualExitAt: Date; scheduledStartAt?: Date | null }): ExitPunctualityResult {
   if (input.match.case !== "ENABLED" || !input.match.template) {
     return { evaluated: false, earlyLeave: false, lateLeave: false, differenceMinutes: null, scheduledExitAt: null };
   }
   const template = input.match.template;
-  const scheduledExitAt = scheduledInstantForShiftTime(input.startAt, template.endTime, template.crossesMidnight);
+  // R4.4: con bloque congelado, la salida programada es la del bloque (su
+  // inicio programado + la plantilla): un ingreso tardío pasada la medianoche
+  // no corre la salida un día.
+  const scheduledExitAt = scheduledInstantForShiftTime(input.scheduledStartAt ?? input.startAt, template.endTime, template.crossesMidnight);
   const differenceMinutes = differenceInMinutes(input.actualExitAt, scheduledExitAt);
   return {
     evaluated: true,
@@ -348,18 +354,29 @@ export interface OpenShiftRiskResult {
  * Etapa 15M.7C: este control es universal. La obligación de cumplir un turno
  * no altera el riesgo de que una jornada haya quedado abierta.
  */
-export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null }): OpenShiftRiskResult {
+export function evaluateOpenShiftRisk(input: { startAt: Date; now: Date; template: ShiftTemplateRef | null; scheduledStartAt?: Date | null }): OpenShiftRiskResult {
   const minutesOpen = differenceInMinutes(input.now, input.startAt);
   const absoluteLimitMinutes = input.template?.absoluteOpenShiftLimitMinutes ?? DEFAULT_ABSOLUTE_OPEN_SHIFT_LIMIT_MINUTES;
 
-  const expectedExitAt = input.template ? scheduledInstantForShiftTime(input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
+  const expectedExitAt = input.template ? scheduledInstantForShiftTime(input.scheduledStartAt ?? input.startAt, input.template.endTime, input.template.crossesMidnight) : null;
 
   let missingOutThresholdMinutes: number | null = null;
   if (input.template && input.template.missingOutAlertAfterMinutes !== null && expectedExitAt) {
     const expectedMinutesToExit = differenceInMinutes(expectedExitAt, input.startAt);
     missingOutThresholdMinutes = expectedMinutesToExit + input.template.exitToleranceAfterMinutes + input.template.missingOutAlertAfterMinutes;
   } else {
-    missingOutThresholdMinutes = DEFAULT_MAXIMUM_INFORMATIVE_MINUTES;
+    // R4.9C.2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.18): con turno pero sin aviso
+    // de olvido configurado, el default nunca vence antes de que termine una
+    // jornada CUMPLIDA (duración programada + anticipación permitida +
+    // tolerancia de salida). Sin esto, los turnos de 12 h (o de 10 h con
+    // ingreso anticipado permitido) avisaban "posible olvido" antes de su
+    // salida programada. Se usa la duración de la plantilla, no la salida
+    // esperada: ésta depende del ingreso y, en jornadas legacy nocturnas
+    // ingresadas pasada la medianoche, cae un día después.
+    const compliantMaximum = input.template
+      ? computeExpectedMinutes(input.template.startTime, input.template.endTime, input.template.crossesMidnight) + input.template.entryToleranceBeforeMinutes + input.template.exitToleranceAfterMinutes
+      : 0;
+    missingOutThresholdMinutes = Math.max(DEFAULT_MAXIMUM_INFORMATIVE_MINUTES, compliantMaximum);
   }
 
   const level: OpenShiftRiskLevel =

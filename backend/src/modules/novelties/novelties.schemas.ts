@@ -38,15 +38,21 @@ const createNoveltyFields = {
   quantityDays: z.coerce.number().positive().max(366).optional().nullable(),
   observation: z.string().trim().max(800).optional().nullable(),
   targetHourConceptId: z.string().uuid().optional().nullable(),
-  // Etapa 3: corrección explícita de RRHH sobre un período ya enviado a
-  // cierre (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §8).
-  correctionReason: z.string().trim().min(5).max(600).optional().nullable(),
 };
 
 const toDateNotBeforeFrom = (value: { fromDate: Date; toDate?: Date | null }) => !value.toDate || value.toDate >= value.fromDate;
 const toDateNotBeforeFromIssue = { message: "toDate must be greater than or equal to fromDate", path: ["toDate"] };
 
 export const createNoveltySchema = z.object(createNoveltyFields).refine(toDateNotBeforeFrom, toDateNotBeforeFromIssue);
+export const updateNoveltySchema = z.object({
+  noveltyTypeId: z.string().uuid().optional(),
+  fromDate: z.coerce.date().optional(),
+  toDate: z.coerce.date().optional().nullable(),
+  quantityHours: z.coerce.number().positive().max(744).optional().nullable(),
+  quantityDays: z.coerce.number().positive().max(366).optional().nullable(),
+  observation: z.string().trim().max(800).optional().nullable(),
+  targetHourConceptId: z.string().uuid().optional().nullable(),
+}).refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" });
 
 // Etapa 8 (NOVELTY_COVERAGE_ENGINE.md §15.1): el documento obligatorio viaja
 // con el alta (POST /novelties/with-document), mismos límites que un
@@ -54,11 +60,6 @@ export const createNoveltySchema = z.object(createNoveltyFields).refine(toDateNo
 export const noveltyDocumentSchema = createEmployeeDocumentSchema.pick({ fileName: true, fileMimeType: true, fileSizeBytes: true, fileBase64: true, notes: true });
 
 export const createNoveltyWithDocumentSchema = z.object({ ...createNoveltyFields, document: noveltyDocumentSchema }).refine(toDateNotBeforeFrom, toDateNotBeforeFromIssue);
-
-// Etapa 3: body opcional de aprobar/eliminar — sólo RRHH, con motivo, sobre
-// un período ya enviado a cierre.
-const correctionReasonSchema = z.string().trim().min(5).max(600);
-export const correctionNoveltySchema = z.object({ correctionReason: correctionReasonSchema.optional().nullable() }).default({});
 
 const dateKeySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Usá el formato AAAA-MM-DD");
 
@@ -85,7 +86,6 @@ export const noveltyCoverageResolutionSchema = z
     resolution: z.enum(["CONFIRMED_ZERO", "SET_BASE_MINUTES", "RESTORE_AUTOMATIC"]),
     baseMinutes: z.number().int().min(1).max(1440).optional().nullable(),
     note: z.string().trim().min(5).max(600),
-    correctionReason: correctionReasonSchema.optional().nullable(),
   })
   .refine((value) => (value.resolution === "SET_BASE_MINUTES" ? value.baseMinutes != null : value.baseMinutes == null), {
     message: "Indicá las horas base sólo al resolver con horas",
@@ -99,6 +99,7 @@ export const bulkApproveNoveltiesSchema = z.object({ ids: z.array(z.string().uui
 
 export type ListNoveltiesQuery = z.infer<typeof listNoveltiesQuerySchema>;
 export type CreateNoveltyInput = z.infer<typeof createNoveltySchema>;
+export type UpdateNoveltyInput = z.infer<typeof updateNoveltySchema>;
 export type NoveltyDocumentInput = z.infer<typeof noveltyDocumentSchema>;
 export type CreateNoveltyWithDocumentInput = z.infer<typeof createNoveltyWithDocumentSchema>;
 // Lo que el servicio persiste: el input validado más las cantidades que
@@ -106,6 +107,5 @@ export type CreateNoveltyWithDocumentInput = z.infer<typeof createNoveltyWithDoc
 // quantityMinutes no es un campo del body: el cliente nunca lo manda.
 export type CreateNoveltyCommand = CreateNoveltyInput & { quantityMinutes?: number | null };
 export type RejectNoveltyInput = z.infer<typeof rejectNoveltySchema>;
-export type CorrectionNoveltyInput = z.infer<typeof correctionNoveltySchema>;
 export type NoveltyCoveragePreviewInput = z.infer<typeof noveltyCoveragePreviewSchema>;
 export type NoveltyCoverageResolutionInput = z.infer<typeof noveltyCoverageResolutionSchema>;

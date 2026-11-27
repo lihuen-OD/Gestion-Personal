@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma } from "../../shared/prisma/client";
 import { auditService } from "../audit/audit.service";
-import { workforceService } from "./workforce.service";
+import { closureBlockersMessage, workforceService } from "./workforce.service";
 import { reinterpretSpecialHours } from "./specialHourReinterpretation";
 import { roles } from "../../shared/security/roles";
 import { NOTIFICATION_ORDER_BY, parseNotificationCursor } from "./notificationListing";
@@ -14,6 +14,8 @@ import type { ListNotificationsQuery } from "./workforce.schemas";
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
 import { recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
+import { globalShiftActor } from "../shifts/shiftWriteAccess";
+const RRHH_ACTOR = globalShiftActor({ id: "user-1", role: "NIVEL_1_RRHH" } as never);
 vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
   lockEmployeeCoverage: vi.fn(),
@@ -47,12 +49,16 @@ vi.mock("../../shared/prisma/client", () => ({
     employeeDayOff: { findMany: vi.fn().mockResolvedValue([]) },
     noveltyDayCoverage: { findMany: vi.fn().mockResolvedValue([]) },
     novelty: { findMany: vi.fn().mockResolvedValue([]) },
-    monthlyTimeClosure: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
-    timeCorrectionRequest: { findMany: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), update: vi.fn(), create: vi.fn() },
+    monthlyTimeClosure: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
+    // Bloqueantes operativos del cierre y su historial de exportación.
+    attendancePunch: { findMany: vi.fn() },
+    finnegansExportBatch: { findMany: vi.fn() },
     shiftTemplate: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() },
     // Etapa 5: quién usa la plantilla (recálculo de cobertura al inactivarla).
-    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]) },
-    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+    shiftAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findFirst: vi.fn().mockResolvedValue(null) },
     doubleHourRule: { create: vi.fn(), findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     sector: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     company: { findMany: vi.fn().mockResolvedValue([]) },
@@ -60,7 +66,8 @@ vi.mock("../../shared/prisma/client", () => ({
     specialHourRuleApplication: { deleteMany: vi.fn() },
     systemNotification: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn() },
     shiftAlert: { findMany: vi.fn() },
-    workShift: { findMany: vi.fn() },
+    workShift: { findMany: vi.fn(), findFirst: vi.fn().mockResolvedValue(null) },
+    shiftRotationBlock: { findFirst: vi.fn().mockResolvedValue(null) },
     // Etapa 15G.2 (docs/decisions/ALERT_TO_NOVELTY_FLOW_15G2.md): enriquecimiento
     // de notificaciones "no asistió" (entityType AttendanceInactivityIncident)
     // con el mismo patrón ya usado para ShiftAlert/WorkShift/Employee.
@@ -70,6 +77,7 @@ vi.mock("../../shared/prisma/client", () => ({
     user: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue({ role: "NIVEL_1_RRHH", status: "ACTIVO" }) },
     // D-5: advisory locks del closurePeriodGuard dentro de las transacciones.
     $executeRaw: vi.fn().mockResolvedValue(0),
+    $queryRaw: vi.fn().mockResolvedValue([]),
     // A8 §12.4: bloqueo FOR SHARE de destinos de reglas dentro de la transacción.
     $queryRawUnsafe: vi.fn().mockResolvedValue([]),
     $transaction: vi.fn(),
@@ -100,8 +108,10 @@ const mockedPrisma = prisma as unknown as {
   employee: { count: Mock; findMany: Mock };
   timeEntry: { groupBy: Mock; findFirst: Mock; findMany: Mock; update: Mock };
   hourConceptBreakdown: { findMany: Mock };
-  monthlyTimeClosure: { findMany: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
-  timeCorrectionRequest: { findMany: Mock; findUnique: Mock; findUniqueOrThrow: Mock; update: Mock; create: Mock };
+  monthlyTimeClosure: { findMany: Mock; findFirst: Mock; findUnique: Mock; update: Mock; updateMany: Mock; upsert: Mock };
+  attendancePunch: { findMany: Mock };
+  noveltyDayCoverage: { findMany: Mock };
+  finnegansExportBatch: { findMany: Mock };
   shiftTemplate: { create: Mock; findUnique: Mock; update: Mock; delete: Mock };
   doubleHourRule: { create: Mock; findUnique: Mock; findMany: Mock; update: Mock; delete: Mock };
   sector: { findUnique: Mock; findMany: Mock };
@@ -110,10 +120,12 @@ const mockedPrisma = prisma as unknown as {
   specialHourRuleApplication: { deleteMany: Mock };
   systemNotification: { findMany: Mock; count: Mock; findFirst: Mock };
   shiftAlert: { findMany: Mock };
-  workShift: { findMany: Mock };
+  workShift: { findMany: Mock; findFirst: Mock };
+  holidayWorkAssignment: { findMany: Mock; findFirst: Mock };
   attendanceInactivityIncident: { findMany: Mock };
   clockPunchPostProcessJob: { count: Mock };
   $executeRaw: Mock;
+  $queryRaw: Mock;
   $queryRawUnsafe: Mock;
   $transaction: Mock;
 };
@@ -129,17 +141,24 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedPrisma.employee.findMany.mockResolvedValue([]);
   mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValue(0);
+  // Sin bloqueantes operativos, cierres previos ni exportaciones por default.
+  mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([]);
+  mockedPrisma.workShift.findMany.mockResolvedValue([]);
+  mockedPrisma.attendancePunch.findMany.mockResolvedValue([]);
+  mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
+  mockedPrisma.shiftAlert.findMany.mockResolvedValue([]);
+  mockedPrisma.finnegansExportBatch.findMany.mockResolvedValue([]);
   // Forma interactiva (callback con tx) o array, como Prisma.
   mockedPrisma.$transaction.mockImplementation((arg: unknown) => (typeof arg === "function" ? (arg as (tx: unknown) => unknown)(mockedPrisma) : Promise.all(arg as unknown[])));
 });
 
-describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)", () => {
-  it("submitClosures registra un AuditLog por cada cierre enviado", async () => {
+describe("workforceService — cierre directo y reapertura auditados", () => {
+  it("closeClosures deja CERRADO y registra un AuditLog por cada cierre", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
-    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor);
 
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
   });
@@ -148,7 +167,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
   // composición real (base, Horas normales residuales, dentro de la
   // jornada, adicionales, total trabajado y equivalencia) con el mismo
   // modelo y criterio de estado que la grilla por legajo.
-  it("submitClosures congela la contabilidad del período: base 8 + Sereno 3 + Colectivo 1 en domingo x2 → real 9, equivalencia 18", async () => {
+  it("closeClosures congela la contabilidad del período: base 8 + Sereno 3 + Colectivo 1 en domingo x2 → real 9, equivalencia 18", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "emp-1", status: "APROBADO", _sum: { hours: 8 }, _count: 1 }]);
     mockedPrisma.timeEntry.findMany.mockResolvedValue([{ employeeId: "emp-1", day: 2, hours: 8, appliedMultiplier: 2 }]);
@@ -158,7 +177,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     ]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
-    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor);
 
     expect(mockedPrisma.timeEntry.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: { in: ["APROBADO", "EN_REVISION"] }, hourConcept: { systemRole: "NORMAL_BASE" } }),
@@ -182,12 +201,12 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     ]));
   });
 
-  it("submitClosures snapshotea las Horas base por estado (systemRole NORMAL_BASE) sin inflarlas", async () => {
+  it("closeClosures snapshotea las Horas base por estado (systemRole NORMAL_BASE) sin inflarlas", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
-    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor);
 
     expect(mockedPrisma.timeEntry.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -201,7 +220,7 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "emp-1", status: "APROBADO", _sum: { hours: 8 }, _count: 3 }]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
 
-    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor);
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor);
 
     expect(mockedPrisma.monthlyTimeClosure.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -215,13 +234,13 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
   // PERF-5D (docs/decisions/F12_PERF_5.md): Motor B de una salida corre en el
   // post-proceso durable de la fichada; el cierre nunca congela desgloses
   // incompletos.
-  it("PERF-5D — submitClosures procesa antes el post-proceso pendiente de esos legajos (tras validar alcance)", async () => {
+  it("PERF-5D — closeClosures procesa antes el post-proceso pendiente de esos legajos (tras validar alcance)", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
     mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1" });
     const settle = vi.fn().mockResolvedValue({ attempted: 1 });
 
-    await workforceService.submitClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle });
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle });
 
     expect(settle).toHaveBeenCalledWith({ employeeIds: ["emp-1"] });
     expect(settle.mock.invocationCallOrder[0]).toBeGreaterThan(mockedPrisma.employee.count.mock.invocationCallOrder[0]!);
@@ -229,11 +248,11 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     expect(mockedPrisma.clockPunchPostProcessJob.count).toHaveBeenCalledWith({ where: { employeeId: { in: ["emp-1"] }, status: { not: "COMPLETED" }, periods: { has: "2026-08" } } });
   });
 
-  it("PERF-5D — submitClosures se bloquea con 409 CLOCK_POSTPROCESS_PENDING si queda post-proceso sin terminar del período, sin escribir el cierre", async () => {
+  it("PERF-5D — closeClosures se bloquea con 409 CLOCK_POSTPROCESS_PENDING si queda post-proceso sin terminar del período, sin escribir el cierre", async () => {
     mockedPrisma.employee.count.mockResolvedValue(1);
     mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValue(2);
 
-    await expect(workforceService.submitClosures("2026-08", ["emp-1"], supervisor)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_POSTPROCESS_PENDING" });
+    await expect(workforceService.closeClosures("2026-08", ["emp-1"], supervisor)).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_POSTPROCESS_PENDING" });
 
     expect(mockedPrisma.monthlyTimeClosure.upsert).not.toHaveBeenCalled();
     expect(auditService.register).not.toHaveBeenCalled();
@@ -243,74 +262,141 @@ describe("workforceService — auditoria en correcciones/cierres (hueco cerrado)
     mockedPrisma.employee.count.mockResolvedValue(0);
     const settle = vi.fn();
 
-    await expect(workforceService.submitClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle })).rejects.toMatchObject({ code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+    await expect(workforceService.closeClosures("2026-08", ["emp-1"], supervisor, undefined, { settleClockPunchPostProcess: settle })).rejects.toMatchObject({ code: "EMPLOYEE_SCOPE_FORBIDDEN" });
     expect(settle).not.toHaveBeenCalled();
   });
 
-  it("approveClosures registra un AuditLog por cada cierre aprobado", async () => {
-    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([{ id: "closure-1", employeeId: "emp-1", period: "2026-08" }]);
-    mockedPrisma.monthlyTimeClosure.updateMany.mockResolvedValue({ count: 1 });
+  it("closeClosures cierra directo en CERRADO, sin aprobación posterior ni notificación a RRHH", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", status: "CERRADO" });
 
-    await workforceService.approveClosures(["closure-1"], "ok", user);
+    await workforceService.closeClosures("2026-08", ["emp-1"], supervisor);
 
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "APPROVE", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
-  });
-
-  it("returnClosure registra un AuditLog", async () => {
-    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08" });
-    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "DEVUELTO" });
-
-    await workforceService.returnClosure("closure-1", "falta revisar horas extra", user);
-
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "RETURN", entity: "MonthlyTimeClosure", entityId: "closure-1" }));
-  });
-
-  it("createCorrection registra un AuditLog", async () => {
-    mockedPrisma.timeEntry.findFirst.mockResolvedValue({ id: "entry-1", employeeId: "emp-1", period: "2026-08", hours: 8 });
-    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
-    mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      timeCorrectionRequest: { create: vi.fn().mockResolvedValue({ id: "correction-1" }) },
-      monthlyTimeClosure: { update: vi.fn().mockResolvedValue({}) },
+    expect(mockedPrisma.monthlyTimeClosure.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ status: "CERRADO", closedByUserId: "user-2" }),
+      update: expect.objectContaining({ status: "CERRADO", closedByUserId: "user-2" }),
     }));
-
-    await workforceService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido de fichada" }, user);
-
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "TimeCorrectionRequest", entityId: "correction-1" }));
   });
 
-  it("approveCorrection registra un AuditLog y sigue escribiendo TimeEntry.approvedByUserId", async () => {
-    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: "emp-1", previousHours: 8, proposedHours: 9, timeEntry: { period: "2026-08" } };
-    const txTimeEntryUpdate = vi.fn().mockResolvedValue({});
-    mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      timeCorrectionRequest: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue(request),
-        update: vi.fn().mockResolvedValue({ ...request, status: "APROBADA" }),
-      },
-      timeEntry: { update: txTimeEntryUpdate },
-      monthlyTimeClosure: { update: vi.fn() },
-    }));
+  it("closeClosures rechaza con 409 un período ya CERRADO, sin reescribir su snapshot", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([{ employeeId: "emp-1" }]);
 
-    await workforceService.approveCorrection("correction-1", user);
-
-    expect(txTimeEntryUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ approvedByUserId: "user-1" }) }));
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "APPROVE", entity: "TimeCorrectionRequest", entityId: "correction-1" }));
+    await expect(workforceService.closeClosures("2026-08", ["emp-1"], supervisor)).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_ALREADY_CLOSED" });
+    expect(mockedPrisma.monthlyTimeClosure.upsert).not.toHaveBeenCalled();
   });
 
-  it("rejectCorrection registra un AuditLog", async () => {
-    mockedPrisma.timeCorrectionRequest.findUnique.mockResolvedValue({ id: "correction-1", employeeId: "emp-1" });
-    mockedPrisma.timeCorrectionRequest.update.mockResolvedValue({ id: "correction-1", status: "RECHAZADA" });
+  it("closeClosures bloquea con 409 sólo lo que puede cambiar horas, con el detalle agrupado por legajo", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    const ana = { id: "emp-1", legajo: "29", firstName: "Ana", lastName: "Prueba" };
+    mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-1", status: "FALTA_SALIDA", startAt: new Date("2026-08-07T10:55:00.000Z"), endAt: null, maxAllowedMinutes: 720, employee: ana }]);
+    mockedPrisma.shiftAlert.findMany.mockResolvedValue([{ id: "alert-1", actualAt: new Date("2026-08-12T15:00:00.000Z"), employee: ana }]);
 
-    await workforceService.rejectCorrection("correction-1", "no corresponde", user);
+    const error = await workforceService.closeClosures("2026-08", ["emp-1"], supervisor).catch((caught: unknown) => caught) as { message: string; details: { employees: Array<{ employee: { id: string }; blockers: Array<Record<string, unknown>> }> } };
 
-    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "REJECT", entity: "TimeCorrectionRequest", entityId: "correction-1" }));
+    expect(error).toMatchObject({ statusCode: 409, code: "CLOSURE_HAS_OPERATIONAL_BLOCKERS" });
+    expect(error.details.employees).toHaveLength(1);
+    expect(error.details.employees[0]!.employee).toEqual(ana);
+    expect(error.details.employees[0]!.blockers).toEqual([
+      expect.objectContaining({ type: "INCOMPLETE_SHIFT", date: "2026-08-07", title: "Jornada sin salida registrada", resolution: expect.objectContaining({ module: "ATTENDANCE", path: "/asistencia?observationDate=2026-08-07" }) }),
+      expect.objectContaining({ type: "MANUAL_CLOCK_CONFLICT", date: "2026-08-12", resolution: expect.objectContaining({ module: "HOURS", path: "/horas?period=2026-08" }) }),
+    ]);
+    expect(error.message).toContain("Prueba, Ana · Legajo 29: Jornada sin salida registrada (07/08/2026)");
+    expect(error.message).not.toContain("emp-1");
+    expect(mockedPrisma.monthlyTimeClosure.upsert).not.toHaveBeenCalled();
+  });
+
+  it("closeClosures: las observaciones informativas (inactividad, fichadas observadas) no bloquean", async () => {
+    mockedPrisma.employee.count.mockResolvedValue(1);
+    mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
+    mockedPrisma.monthlyTimeClosure.upsert.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", status: "CERRADO" });
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ employeeId: "emp-1", id: "inactivity-1" }]);
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "emp-1", id: "punch-1" }]);
+
+    await workforceService.closeClosures("2026-10", ["emp-1"], supervisor);
+
+    expect(mockedPrisma.attendanceInactivityIncident.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.attendancePunch.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.monthlyTimeClosure.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ status: "CERRADO" }) }));
+  });
+
+  it("closureBlockersMessage resume los bloqueantes que exceden el listado", () => {
+    const employee = { id: "e", legajo: "1", firstName: "Uno", lastName: "Persona" };
+    const blockers = Array.from({ length: 12 }, (_, index) => ({ id: `b${index}`, type: "INCOMPLETE_SHIFT" as const, employee: { ...employee, lastName: `Persona ${index}` }, date: "2026-10-27", title: "Jornada sin salida registrada", reason: "", action: "", resolution: { module: "ATTENDANCE" as const, label: "", path: "" } }));
+    const message = closureBlockersMessage(blockers);
+    expect(message).toContain("hay 12 pendientes que pueden cambiar las horas del período");
+    expect(message).toContain("Persona 9, Uno · Legajo 1: Jornada sin salida registrada (27/10/2026)");
+    expect(message).not.toContain("Persona 10,");
+    expect(message).toContain("; y 2 más.");
+  });
+
+  it("closureBlockers: vista previa acotada al alcance y a legajos no cerrados, con novedades en revisión desde el snapshot", async () => {
+    const ana = { id: "emp-1", legajo: "29", firstName: "Ana", lastName: "Prueba" };
+    const beto = { id: "emp-2", legajo: "30", firstName: "Beto", lastName: "Alvarez" };
+    mockedPrisma.employee.findMany.mockResolvedValueOnce([ana, beto]);
+    mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-1", status: "ABIERTO", startAt: new Date("2026-10-27T13:39:00.000Z"), endAt: null, maxAllowedMinutes: 720, employee: ana }]);
+    mockedPrisma.noveltyDayCoverage.findMany.mockResolvedValueOnce([{ employeeId: "emp-2" }]);
+    const snapshots = await import("./closureSnapshot");
+    const snapshotSpy = vi.spyOn(snapshots, "buildClosureSnapshots").mockResolvedValueOnce(new Map([["emp-2", { accounting: { novelty: { reviewDays: 1, reviewDates: ["2026-10-08"] } } }]]) as never);
+
+    const result = await workforceService.closureBlockers("2026-10", supervisor);
+
+    const where = mockedPrisma.employee.findMany.mock.calls[0]![0].where;
+    expect(where).toMatchObject({ monthlyClosures: { none: { period: "2026-10", status: "CERRADO" } } });
+    expect(where).toHaveProperty("assignments");
+    expect(snapshotSpy).toHaveBeenCalledWith(expect.anything(), ["emp-2"], "2026-10");
+    expect(result.totals).toEqual({ employees: 2, blockers: 2 });
+    expect(result.employees.map((group) => group.employee.legajo)).toEqual(["30", "29"]);
+    expect(result.employees[0]!.blockers[0]).toMatchObject({ type: "NOVELTY_REVIEW", date: "2026-10-08", resolution: { module: "EMPLOYEE_HOURS", path: "/horas/emp-2?period=2026-10" } });
+    expect(result.employees[1]!.blockers[0]).toMatchObject({ type: "OPEN_SHIFT", date: "2026-10-27", resolution: { module: "ATTENDANCE", path: "/asistencia?date=2026-10-27" } });
+    snapshotSpy.mockRestore();
+  });
+
+  it("reopenClosure reabre a ABIERTO con motivo, actor y AuditLog", async () => {
+    mockedPrisma.monthlyTimeClosure.findFirst.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "CERRADO" });
+    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ status: "CERRADO" });
+    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ABIERTO" });
+
+    await workforceService.reopenClosure("closure-1", { reason: "falta revisar horas extra", acknowledgeExportedHistory: false }, supervisor);
+
+    expect(mockedPrisma.monthlyTimeClosure.update).toHaveBeenCalledWith({ where: { id: "closure-1" }, data: expect.objectContaining({ status: "ABIERTO", reopenedByUserId: "user-2", reopenReason: "falta revisar horas extra" }) });
+    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ entity: "MonthlyTimeClosure", entityId: "closure-1" }));
+  });
+
+  it("reopenClosure respeta el alcance del usuario: un cierre fuera de alcance → 404", async () => {
+    mockedPrisma.monthlyTimeClosure.findFirst.mockResolvedValue(null);
+
+    await expect(workforceService.reopenClosure("closure-1", { reason: "motivo válido", acknowledgeExportedHistory: false }, supervisor)).rejects.toMatchObject({ statusCode: 404, code: "MONTHLY_CLOSURE_NOT_FOUND" });
+    expect(mockedPrisma.monthlyTimeClosure.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "closure-1", employee: expect.anything() }) }));
+    expect(mockedPrisma.monthlyTimeClosure.update).not.toHaveBeenCalled();
+  });
+
+  it("reopenClosure de un período ABIERTO → 409", async () => {
+    mockedPrisma.monthlyTimeClosure.findFirst.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ABIERTO" });
+
+    await expect(workforceService.reopenClosure("closure-1", { reason: "motivo válido", acknowledgeExportedHistory: false }, user)).rejects.toMatchObject({ statusCode: 409, code: "MONTHLY_CLOSURE_ALREADY_OPEN" });
+    expect(mockedPrisma.monthlyTimeClosure.update).not.toHaveBeenCalled();
+  });
+
+  it("reopenClosure de un período exportado exige confirmación explícita y nunca toca los lotes exportados", async () => {
+    mockedPrisma.monthlyTimeClosure.findFirst.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "CERRADO" });
+    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ status: "CERRADO" });
+    mockedPrisma.finnegansExportBatch.findMany.mockResolvedValue([{ id: "batch-1", version: 2, createdAt: new Date("2026-09-02T12:00:00.000Z") }]);
+    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ABIERTO" });
+
+    await expect(workforceService.reopenClosure("closure-1", { reason: "corrección de novedad", acknowledgeExportedHistory: false }, user)).rejects.toMatchObject({ statusCode: 409, code: "CLOSURE_REOPEN_EXPORTED_CONFIRMATION_REQUIRED" });
+    expect(mockedPrisma.monthlyTimeClosure.update).not.toHaveBeenCalled();
+
+    await workforceService.reopenClosure("closure-1", { reason: "corrección de novedad", acknowledgeExportedHistory: true }, user);
+    expect(mockedPrisma.monthlyTimeClosure.update).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.finnegansExportBatch).not.toHaveProperty("update");
   });
 });
 
 // Lenguaje de negocio en auditoría: "(legajo <employeeId>)" mostraba el UUID
 // interno en Dashboard/Auditoría. Ahora: "Apellido, Nombre · Legajo N".
-describe("workforceService — cierres y correcciones auditan identidad humana, nunca el employeeId", () => {
+describe("workforceService — cierres y reaperturas auditan identidad humana, nunca el employeeId", () => {
   const juanId = "016dc01c-655d-4474-8319-67f1b8108c93";
   const anaId = "5b0e6f0a-1c2d-4e3f-8a9b-0c1d2e3f4a5b";
   const juan = { legajo: "30", firstName: "Juan", lastName: "Pérez" };
@@ -323,7 +409,7 @@ describe("workforceService — cierres y correcciones auditan identidad humana, 
     }
   };
 
-  it("submitClosures de varios legajos resuelve todas las identidades en UNA consulta (sin N+1)", async () => {
+  it("closeClosures de varios legajos resuelve todas las identidades en UNA consulta (sin N+1)", async () => {
     mockedPrisma.employee.count.mockResolvedValue(2);
     mockedPrisma.timeEntry.groupBy.mockResolvedValue([]);
     mockedPrisma.employee.findMany.mockResolvedValue([{ id: juanId, ...juan }, { id: anaId, ...ana }]);
@@ -332,7 +418,7 @@ describe("workforceService — cierres y correcciones auditan identidad humana, 
       { id: "closure-2", employeeId: anaId },
     ]);
 
-    await workforceService.submitClosures("2026-09", [juanId, anaId], supervisor);
+    await workforceService.closeClosures("2026-09", [juanId, anaId], supervisor);
 
     expect(mockedPrisma.employee.findMany).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.employee.findMany).toHaveBeenCalledWith({
@@ -340,76 +426,28 @@ describe("workforceService — cierres y correcciones auditan identidad humana, 
       select: { id: true, legajo: true, firstName: true, lastName: true },
     });
     expect(auditDescriptions()).toEqual([
-      "Se envió a revisión el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30.",
-      "Se envió a revisión el cierre de septiembre de 2026 de Gómez, Ana · Legajo 31.",
+      "Se cerró definitivamente septiembre de 2026 de Pérez, Juan · Legajo 30.",
+      "Se cerró definitivamente septiembre de 2026 de Gómez, Ana · Legajo 31.",
     ]);
   });
 
-  it("approveClosures toma la identidad del mismo findMany que ya lee los cierres (sin consultas extra)", async () => {
-    mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([
-      { id: "closure-1", employeeId: juanId, period: "2026-09", employee: juan },
-      { id: "closure-2", employeeId: anaId, period: "2026-09", employee: ana },
-    ]);
-    mockedPrisma.monthlyTimeClosure.updateMany.mockResolvedValue({ count: 2 });
+  it("reopenClosure describe período, persona y motivo", async () => {
+    mockedPrisma.monthlyTimeClosure.findFirst.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", status: "CERRADO", employee: juan });
+    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ status: "CERRADO" });
+    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", status: "ABIERTO" });
 
-    await workforceService.approveClosures(["closure-1", "closure-2"], undefined, user);
+    await workforceService.reopenClosure("closure-1", { reason: "faltan horas", acknowledgeExportedHistory: false }, user);
 
-    expect(mockedPrisma.monthlyTimeClosure.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      include: { employee: { select: { legajo: true, firstName: true, lastName: true } } },
-    }));
-    expect(mockedPrisma.employee.findMany).not.toHaveBeenCalled();
-    expect(auditDescriptions()).toEqual([
-      "Se aprobó el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30.",
-      "Se aprobó el cierre de septiembre de 2026 de Gómez, Ana · Legajo 31.",
-    ]);
-  });
-
-  it("returnClosure describe período, persona y motivo", async () => {
-    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", employee: juan });
-    mockedPrisma.monthlyTimeClosure.update.mockResolvedValue({ id: "closure-1", employeeId: juanId, period: "2026-09", status: "DEVUELTO" });
-
-    await workforceService.returnClosure("closure-1", "faltan horas", user);
-
-    expect(auditDescriptions()).toEqual(["Se devolvió el cierre de septiembre de 2026 de Pérez, Juan · Legajo 30 — motivo: faltan horas."]);
-  });
-
-  it("createCorrection / approveCorrection / rejectCorrection describen a la persona, no su UUID", async () => {
-    mockedPrisma.timeEntry.findFirst.mockResolvedValue({ id: "entry-1", employeeId: juanId, period: "2026-09", hours: 8, employee: juan });
-    mockedPrisma.monthlyTimeClosure.findUnique.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
-    mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      timeCorrectionRequest: { create: vi.fn().mockResolvedValue({ id: "correction-1" }) },
-      monthlyTimeClosure: { update: vi.fn().mockResolvedValue({}) },
-    }));
-    await workforceService.createCorrection({ timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" }, user);
-
-    const request = { id: "correction-1", status: "PENDIENTE", timeEntryId: "entry-1", closureId: null, employeeId: juanId, previousHours: 8, proposedHours: 9, employee: juan, timeEntry: { period: "2026-09" } };
-    mockedPrisma.$transaction.mockImplementationOnce((callback: (tx: unknown) => unknown) => callback({
-      $executeRaw: vi.fn().mockResolvedValue(0),
-      timeCorrectionRequest: { findUniqueOrThrow: vi.fn().mockResolvedValue(request), update: vi.fn().mockResolvedValue({ ...request, status: "APROBADA" }) },
-      timeEntry: { update: vi.fn().mockResolvedValue({}) },
-      monthlyTimeClosure: { update: vi.fn() },
-    }));
-    await workforceService.approveCorrection("correction-1", user);
-
-    mockedPrisma.timeCorrectionRequest.findUnique.mockResolvedValue({ id: "correction-2", employeeId: anaId, employee: ana });
-    mockedPrisma.timeCorrectionRequest.update.mockResolvedValue({ id: "correction-2", status: "RECHAZADA" });
-    await workforceService.rejectCorrection("correction-2", "no corresponde", user);
-
-    expect(auditDescriptions()).toEqual([
-      "Se solicitó una corrección de carga horaria de septiembre de 2026 para Pérez, Juan · Legajo 30 (de 8h a 9h).",
-      "Se aprobó la corrección de carga horaria de Pérez, Juan · Legajo 30 (de 8h a 9h).",
-      "Se rechazó la corrección de carga horaria de Gómez, Ana · Legajo 31.",
-    ]);
+    expect(auditDescriptions()).toEqual(["Se reabrió septiembre de 2026 de Pérez, Juan · Legajo 30 — motivo: faltan horas."]);
     expectNoEmployeeUuid();
   });
 });
 
-// Etapa 14G.8: `closures`/`corrections` ya eran una sola query cada una (sin
+// Etapa 14G.8: `closures` ya era una sola query cada una (sin
 // `$transaction`, sin antipatrón que corregir) -- estos tests fijan el
 // contrato (scope, filtros, orden) que la cache backend nueva (§ workforce.
 // controller.test.ts) debe preservar exactamente.
-describe("workforceService.closures/corrections — contrato preservado (Etapa 14G.8)", () => {
+describe("workforceService.closures — contrato preservado (Etapa 14G.8)", () => {
   it("closures filtra por período y por el scope del usuario (employeeAccessWhere)", async () => {
     mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue([]);
 
@@ -430,42 +468,47 @@ describe("workforceService.closures/corrections — contrato preservado (Etapa 1
     );
   });
 
-  it("closures devuelve exactamente lo que resuelve la query (sin transformar el shape)", async () => {
-    const rows = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ENVIADO" }];
+  it("closures devuelve las filas de la query más su historial de exportaciones Finnegans", async () => {
+    const rows = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "CERRADO" }, { id: "closure-2", employeeId: "emp-2", period: "2026-08", status: "ABIERTO" }];
     mockedPrisma.monthlyTimeClosure.findMany.mockResolvedValue(rows);
+    const exportedAt = new Date("2026-09-02T12:00:00.000Z");
+    mockedPrisma.finnegansExportBatch.findMany.mockResolvedValue([{ version: 1, createdAt: exportedAt, items: [{ employeeId: "emp-1" }, { employeeId: "emp-1" }] }]);
 
     const result = await workforceService.closures("2026-08", user);
 
-    expect(result).toEqual(rows);
-  });
-
-  it("corrections filtra por scope del usuario, período y estado en el where (antes el período lo filtraba el frontend sobre las últimas 500)", async () => {
-    mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
-
-    await workforceService.corrections(supervisor, { period: "2026-08", status: "PENDIENTE" });
-
-    expect(mockedPrisma.timeCorrectionRequest.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { employee: expect.anything(), timeEntry: { period: "2026-08" }, status: "PENDIENTE" } }),
-    );
-  });
-
-  it("corrections no tiene tope fijo (acotado por período) y ordena por creación desc con desempate estable", async () => {
-    mockedPrisma.timeCorrectionRequest.findMany.mockResolvedValue([]);
-
-    await workforceService.corrections(user, { period: "2026-08" });
-
-    const args = mockedPrisma.timeCorrectionRequest.findMany.mock.calls[0]![0];
-    expect(args).not.toHaveProperty("take");
-    expect(args.orderBy).toEqual([{ createdAt: "desc" }, { id: "asc" }]);
-    expect(args.where).not.toHaveProperty("status");
+    expect(result).toEqual([
+      { ...rows[0], exportHistory: { count: 1, latestVersion: 1, latestExportedAt: exportedAt } },
+      { ...rows[1], exportHistory: null },
+    ]);
   });
 });
 
 describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", () => {
+  const shiftTemplateRow = {
+    id: "template-1",
+    code: "T-1",
+    name: "Turno",
+    startTime: "08:00",
+    endTime: "16:00",
+    crossesMidnight: false,
+    expectedMinutes: 480,
+    shiftGroupId: null,
+    shiftGroup: null,
+    status: "ACTIVO",
+    entryToleranceBeforeMinutes: 10,
+    entryToleranceAfterMinutes: 10,
+    exitToleranceBeforeMinutes: 10,
+    exitToleranceAfterMinutes: 10,
+    minimumMinutesForCompliance: 420,
+    maximumInformativeMinutes: 600,
+    missingOutAlertAfterMinutes: 60,
+    absoluteOpenShiftLimitMinutes: 1_200,
+  };
+
   it("createShiftTemplate mapea un userId inexistente (P2003) a un 400 prolijo", async () => {
     mockedPrisma.shiftTemplate.create.mockRejectedValue(prismaKnownError("P2003"));
 
-    await expect(workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" })).rejects.toMatchObject({
+    await expect(workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 400,
       code: "RELATION_CONSTRAINT",
     });
@@ -474,10 +517,47 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
   it("createShiftTemplate funciona igual que antes con un userId real", async () => {
     mockedPrisma.shiftTemplate.create.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno" });
 
-    const item = await workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, { userId: "user-1" });
+    const item = await workforceService.createShiftTemplate({ code: "T-1", name: "Turno", startTime: "08:00", endTime: "16:00" }, RRHH_ACTOR, { userId: "user-1" });
 
     expect(item.id).toBe("template-1");
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "CREATE", entity: "ShiftTemplate" }));
+  });
+
+  it("no reescribe el horario de una plantilla que ya rigió", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
+
+    await expect(workforceService.updateShiftTemplate("template-1", { startTime: "09:00" }, RRHH_ACTOR)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SHIFT_TEMPLATE_SCHEDULE_LOCKED",
+      details: { workShift: true },
+    });
+
+    expect(lockNoveltyCoverageGlobally).toHaveBeenCalledWith(mockedPrisma);
+    expect(mockedPrisma.shiftTemplate.update).not.toHaveBeenCalled();
+  });
+
+  it("no cambia tolerancias mientras haya una entrada fija sin snapshot", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.clockPunchPostProcessJob.count.mockResolvedValueOnce(2);
+
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 }, RRHH_ACTOR)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "SHIFT_TEMPLATE_RULES_PENDING_PUNCHES",
+      details: { pending: 2 },
+    });
+
+    expect(mockedPrisma.shiftTemplate.update).not.toHaveBeenCalled();
+  });
+
+  it("permite cambiar tolerancias cuando no quedan entradas pendientes y no recalcula la jornada", async () => {
+    mockedPrisma.shiftTemplate.findUnique.mockResolvedValue(shiftTemplateRow);
+    mockedPrisma.shiftTemplate.update.mockResolvedValue({ ...shiftTemplateRow, entryToleranceAfterMinutes: 15 });
+
+    await expect(workforceService.updateShiftTemplate("template-1", { entryToleranceAfterMinutes: 15 }, RRHH_ACTOR)).resolves.toMatchObject({ entryToleranceAfterMinutes: 15 });
+
+    expect(mockedPrisma.shiftTemplate.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ entryToleranceAfterMinutes: 15 }) }));
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 
   it("no permite borrar un turno con asignaciones aunque no tenga jornadas", async () => {
@@ -488,7 +568,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
       _count: { workShifts: 0, assignments: 1, holidayWorkAssignments: 0 },
     });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).rejects.toMatchObject({
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({
       statusCode: 409,
       code: "SHIFT_TEMPLATE_HAS_ASSIGNMENTS",
       message: "No se puede eliminar el turno porque tiene asignaciones de empleados asociadas",
@@ -496,30 +576,28 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
   });
 
-  it("inactiva un turno con jornadas históricas y no lo borra", async () => {
+  it("protege un turno con jornadas históricas: no lo inactiva ni lo borra", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({
       id: "template-1",
       code: "T-1",
       name: "Turno",
       _count: { workShifts: 2, assignments: 0, holidayWorkAssignments: 0 },
     });
-    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+    mockedPrisma.workShift.findFirst.mockResolvedValueOnce({ id: "shift-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED", relatedWorkShifts: 2 });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
-    // Etapa 5: inactivar deja de definir jornada → lock global + recálculo de quienes la usan (acá nadie).
-    expect(lockNoveltyCoverageGlobally).toHaveBeenCalled();
-    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(expect.anything(), { employeeIds: [] }, expect.objectContaining({ source: "SHIFT_TEMPLATE_CHANGED" }));
+    expect(lockNoveltyCoverageGlobally).not.toHaveBeenCalled();
   });
 
-  it("una convocatoria de feriado también es historia: inactiva en vez de dejar su referencia en NULL, y audita dentro de la transacción", async () => {
+  it("una convocatoria de feriado histórica también protege el turno", async () => {
     mockedPrisma.shiftTemplate.findUnique.mockResolvedValue({ id: "template-1", code: "T-1", name: "Turno", _count: { workShifts: 0, assignments: 0, holidayWorkAssignments: 1 } });
-    mockedPrisma.shiftTemplate.update.mockResolvedValue({ id: "template-1", code: "T-1", status: "INACTIVO" });
+    mockedPrisma.holidayWorkAssignment.findFirst.mockResolvedValueOnce({ id: "holiday-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toMatchObject({ mode: "INACTIVATED" });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).rejects.toMatchObject({ statusCode: 409, code: "SHIFT_TEMPLATE_HISTORY_LOCKED" });
     expect(mockedPrisma.shiftTemplate.delete).not.toHaveBeenCalled();
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
-    expect(auditService.registerWithin).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "DEACTIVATE", entity: "ShiftTemplate" }));
+    expect(auditService.registerWithin).not.toHaveBeenCalled();
   });
 
   it("borra un turno sin asignaciones ni jornadas", async () => {
@@ -531,7 +609,7 @@ describe("workforceService — FK reales sobre ShiftTemplate/DoubleHourRule", ()
     });
     mockedPrisma.shiftTemplate.delete.mockResolvedValue({ id: "template-1" });
 
-    await expect(workforceService.removeShiftTemplate("template-1")).resolves.toEqual({ mode: "DELETED", id: "template-1", relatedWorkShifts: 0 });
+    await expect(workforceService.removeShiftTemplate("template-1", RRHH_ACTOR)).resolves.toEqual({ mode: "DELETED", id: "template-1", relatedWorkShifts: 0 });
     expect(mockedPrisma.shiftTemplate.delete).toHaveBeenCalledWith({ where: { id: "template-1" } });
   });
 

@@ -147,20 +147,17 @@ describe("manualHoursConflictService.resolve", () => {
     expect(repository.createEntry).toHaveBeenCalledWith(tx, expect.objectContaining({ employeeId: "employee-1", totalMinutes: 402, source: "KIOSK", status: "APROBADO" }));
   });
 
-  it("período enviado/aprobado: Nivel 2/3 → 409; RRHH sin motivo → 400; RRHH con motivo usa las horas fichadas y la jornada sigue observada", async () => {
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-10", "APROBADO"]]) as never);
+  it("período CERRADO: USAR FICHADA → 409 para todos los niveles, también RRHH", async () => {
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-10", "CERRADO"]]) as never);
 
     await expect(manualHoursConflictService.resolve("alert-1", { decision: "USE_CLOCK" }, supervisor)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
-    await expect(manualHoursConflictService.resolve("alert-1", { decision: "USE_CLOCK" }, rrhh)).rejects.toMatchObject({ statusCode: 400, code: "MANUAL_HOURS_CORRECTION_REASON_REQUIRED" });
+    await expect(manualHoursConflictService.resolve("alert-1", { decision: "USE_CLOCK" }, rrhh)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     expect(repository.updateEntry).not.toHaveBeenCalled();
-
-    await manualHoursConflictService.resolve("alert-1", { decision: "USE_CLOCK", correctionReason: "Se verificó con el encargado" }, rrhh, { userId: rrhh.id });
-    expect(repository.updateShift).toHaveBeenCalledWith(tx, "shift-1", expect.objectContaining({ status: "OBSERVADO" }));
-    expect(auditService.registerWithin).toHaveBeenCalledWith(tx, expect.objectContaining({ description: expect.stringContaining("Motivo: Se verificó con el encargado") }));
+    expect(repository.createEntry).not.toHaveBeenCalled();
   });
 
   it("MANTENER también se permite en un período protegido (no cambia horas)", async () => {
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-10", "ENVIADO"]]) as never);
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-10", "CERRADO"]]) as never);
 
     await expect(manualHoursConflictService.resolve("alert-1", { decision: "KEEP_MANUAL" }, supervisor)).resolves.toBeDefined();
     expect(findProtectedClosurePeriods).not.toHaveBeenCalled();

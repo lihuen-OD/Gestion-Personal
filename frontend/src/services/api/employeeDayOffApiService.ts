@@ -29,7 +29,6 @@ export type DayOffCandidate = {
 
 export type SaveDayOffsInput = {
   date: string;
-  correctionReason?: string | null;
   employees: Array<{ employeeId: string; status: EmployeeDayOffStatus; notes?: string | null }>;
 };
 

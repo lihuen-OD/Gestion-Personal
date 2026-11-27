@@ -13,6 +13,34 @@ export interface User {
   supervisedUsers?: UserSupervisionPerson[];
   /** Nivel 3: los Nivel 2 que lo supervisan. */
   supervisorUsers?: UserSupervisionPerson[];
+  /**
+   * R8: grupos de turnos a enviar (sólo Nivel 2). `undefined` = no se tocaron
+   * y el backend los conserva; `[]` los quita todos. Nunca viene del backend.
+   */
+  shiftGroupIds?: string[];
+  /** R8: grupos de turnos asignados (Nivel 2). */
+  shiftGroups?: UserShiftGroup[];
+  /** R8: grupos heredados (Nivel 3), con los Nivel 2 activos de los que provienen. */
+  inheritedShiftGroups?: UserInheritedShiftGroup[];
+  /**
+   * R8: alcance por grupo de turnos de la sesión (login y `/auth/me`). Sólo
+   * sirve para mostrar u ocultar acciones: el backend decide siempre.
+   */
+  shiftGroupAccess?: ShiftGroupAccess;
+}
+
+export interface ShiftGroupAccess {
+  all: boolean;
+  groupIds: string[];
+}
+
+export interface UserShiftGroup {
+  id: string; code: string; name: string; status: "Activo" | "Inactivo";
+}
+
+export interface UserInheritedShiftGroup {
+  group: UserShiftGroup;
+  viaSupervisors: Array<{ id: string; name: string; email: string }>;
 }
 
 export interface UserSupervisionPerson {
@@ -24,7 +52,7 @@ export interface Employee {
   gender: string; civilStatus: string; nationality: string; phone: string; mobile: string; email: string;
   address: string; addressStreet: string; addressNumber: string; city: string; department: string; province: string; zip: string; domicilio: EmployeeAddress; emergencyContact: string; emergencyRelation: string; emergencyPhone: string;
   company: string; companies?: string[]; businessUnit: string; establishment: string; costCenter: string; sector: string; position: string; positionId?: string; puestoId?: string; puestoNombre?: string;
-  receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[];
+  receiptCategory: string; internalCategory: string; agreement: string; healthInsurance: string; directManager: string; directManagers?: string[]; timeResponsible: string; timeResponsibles?: string[]; timeResponsibleUserIds?: string[];
   startDate: string; endDate?: string; exitReason?: string; transport: boolean; transportLocality?: string; transportRoute: string; transportNotes: string; enabledHours: string[];
   enabledHourConcepts?: Array<HourConcept & { enabled: true }>;
   status: EmployeeStatus;
@@ -91,7 +119,6 @@ export interface Novelty {
   exportsToFinnegans?: boolean; finnegansCode?: string; finnegansName?: string; valor1?: string; fechaAplicacion?: string;
   // Etapa 15L.2C: fuente de verdad del comportamiento en carga horaria.
   timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
-  approvalRoles?: Role[];
 }
 
 export interface AuditEntry {

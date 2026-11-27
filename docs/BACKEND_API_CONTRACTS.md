@@ -192,10 +192,13 @@ Response:
     "name": "Administrador RRHH",
     "email": "usuario@example.com",
     "role": "NIVEL_1_RRHH",
-    "status": "ACTIVO"
+    "status": "ACTIVO",
+    "shiftGroupAccess": { "all": true, "groupIds": [] }
   }
 }
 ```
+
+`shiftGroupAccess` (R8.4) también viene en `user` de `POST /api/auth/login` y `/refresh`. Es el alcance por grupo de turnos resuelto en esa request (`all: true` para RRHH) y sólo sirve para que la UI muestre u oculte acciones: el backend lo vuelve a resolver en cada request y nunca lo toma del cliente.
 
 ## Roles
 
@@ -210,8 +213,8 @@ NIVEL_3_CARGA_HORARIA
 Regla general:
 
 - `NIVEL_1_RRHH`: alcance global.
-- `NIVEL_2_SUPERVISION` (desde 2026-11-17): unión de (A) los legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado al propio usuario (compatibilidad con datos anteriores) y (B) los legajos con `TIME_RESPONSIBLE` vigente de cada usuario Nivel 3 que supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). Es dinámico: no copia asignaciones; un legajo agregado o quitado a ese Nivel 3 entra o sale del alcance del Nivel 2 sin editarlo. Una sola query (`some` anidados), sin duplicados; el supervisado debe seguir siendo Nivel 3 y estar `ACTIVO` (inactivarlo no borra la relación: el Nivel 2 deja de heredar sus legajos y los recupera si se lo reactiva; `PATCH /api/users/:id` invalida las cachés de alcance en el acto). Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
-- `NIVEL_3_CARGA_HORARIA`: alcance por legajos asignados como responsable de carga horaria.
+- `NIVEL_2_SUPERVISION` (regla corregida el 2026-11-26): legajos con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente asignado directamente al propio usuario. Sólo un usuario Nivel 2 `ACTIVO` puede ser responsable directo.
+- `NIVEL_3_CARGA_HORARIA`: hereda dinámicamente la unión de los legajos de cada Nivel 2 `ACTIVO` que lo supervisa (`UserSupervisionAssignment`, configurado en `/api/users`). No copia asignaciones y una fila directa a nombre del Nivel 3 no abre alcance. Con varios Nivel 2 recibe la unión sin duplicados; al inactivar o cambiar el rol de un Nivel 2 deja de heredar sus legajos mientras esa condición no se cumpla. Fuente única: `backend/src/modules/employees/employeeAccess.ts`. **No** se limita por sector ni por otro nodo de la estructura, y `User.companyId/sectorId` no filtran datos. La reorganización de estructura (`docs/decisions/ORG_LOCATION_REORGANIZATION.md`) no cambia esta regla.
 
 ## Legajos
 
@@ -394,7 +397,7 @@ Body de alta/actualización:
 
 PUT con `minutes = 0` elimina el registro manual. No se expone DELETE porque el módulo `/employees` protege por contrato la ausencia de rutas de borrado HTTP. La API fija `source = MANUAL`; no acepta `source`, `status`, `priority` ni `countsAsWorked` desde el cliente.
 
-Estado inicial (o resultante de sobrescribir un registro existente) según el rol de quien carga (Etapa 6L.3): **RRHH** deja el desglose `APROBADO` directo, con `approvedByUserId`/`approvedAt` propios. **Nivel 2/3** dejan el desglose `EN_REVISION` — a diferencia de `TimeEntry`, el desglose manual no tiene una acción separada de "enviar a revisión"; el único `PUT` ya es la carga completa, así que queda pendiente de una. RRHH ve esos desgloses `EN_REVISION` de Nivel 2/3 en `GET /pending` (ver más abajo) y los resuelve con los endpoints de abajo.
+Todo N1/N2/N3 autorizado guarda el desglose directamente como efectivo (`APROBADO`). Un mes `CERRADO` rechaza la operación para todos los roles hasta su reapertura.
 
 Sólo admite conceptos adicionales habilitados, activos, no eliminados y con modo `MANUAL` o `BOTH`. Rechaza Normal, `AUTOMATIC`, conceptos fuera del legajo. Nivel 2/Nivel 3 conservan el alcance operativo por responsable de horas.
 
@@ -408,15 +411,9 @@ Período cerrado (`MonthlyTimeClosure` en `ENVIADO`/`APROBADO`/`CORRECCION_PENDI
 
 La base garantiza la idempotencia manual mediante el índice único parcial `HourConceptBreakdown_manual_unique` sobre empleado, fecha y concepto con `source = 'MANUAL'`. El índice no aplica a `AUTOMATIC`. Una carrera concurrente se reintenta una vez y, si persiste, responde `409` con código `MANUAL_BREAKDOWN_CONCURRENT_CONFLICT`.
 
-#### Aprobar / rechazar / devolver un desglose manual (Etapa 6L.3, ajuste)
+#### Aprobación de desgloses manuales (retirada)
 
-```txt
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/reject
-POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/return
-```
-
-Exclusivos de RRHH (`403 FORBIDDEN` para cualquier otro rol). `reject`/`return` requieren body `{ "reason": "..." }` (2-600 caracteres). Los tres exigen que el desglose esté `EN_REVISION` (`400 HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE` si no) y respetan el scope operativo del usuario y el `:id` del legajo (`404 HOUR_CONCEPT_BREAKDOWN_NOT_FOUND` si no matchea). `approve` deja `status = APROBADO` con `approvedByUserId`/`approvedAt`; `reject` deja `status = RECHAZADO`; `return` deja `status = DEVUELTO` — ambos limpian `approvedByUserId`/`approvedAt`. Mismo patrón que `/time-entries/:id/approve|reject|return`. No hay todavía una UI que dispare estos endpoints (ver Etapa 6L.3 en `docs/decisions/CONCEPTOS_HORARIOS_ADITIVOS.md`) — quedan disponibles para conectar en una subetapa inmediata.
+Los endpoints `POST /api/employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve|reject|return` fueron retirados con la simplificación operativa: el desglose manual queda efectivo (`APROBADO`, con `approvedByUserId` = autor) al guardarlo.
 
 #### Recálculo de desgloses automáticos
 
@@ -922,13 +919,23 @@ Uso: `NIVEL_1_RRHH`. Cuerpo de `POST`/`PATCH` (además de `name`, `email`, `role
 
 ```txt
 supervisedUserIds?: uuid[]   // sólo Nivel 2; lista completa, sin repetidos (máx. 200)
+shiftGroupIds?: uuid[]       // R8.4: sólo Nivel 2; lista completa, sin repetidos (máx. 200)
 ```
+
+- `shiftGroupIds` (R8.4, ADR §26.5): grupos de turnos que administra un Nivel 2. Mismo contrato que `supervisedUserIds`: reemplaza la lista y, si se omite, la conserva.
+  - Otro rol con lista no vacía → `400 USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE`. Un Nivel 3 no tiene grupos propios: los hereda.
+  - Grupo inexistente → `400 USER_SHIFT_GROUP_INVALID`. Grupo INACTIVO que se agrega → `409 SHIFT_GROUP_INACTIVE` (uno ya asignado se puede conservar). Repetidos → `400 VALIDATION_ERROR`. Carrera → `409 USER_SHIFT_GROUP_CONCURRENT_UPDATE`.
+  - Quien deja de ser Nivel 2 pierde sus grupos en la misma transacción. Inactivarlo los conserva sin efecto, y vuelven a regir al reactivarlo.
+  - Auditoría: `entity: "UserShiftGroupScope"`, `entityId` = Nivel 2, `before`/`after` = `{ shiftGroups: [{ id, code, name }] }` y descripción con códigos y nombres.
+  - Rige desde la request siguiente: el alcance se resuelve por request, sin caché.
 
 - `supervisedUserIds` reemplaza la lista de Nivel 3 supervisados; omitirlo la conserva. Sólo la acepta un usuario cuyo rol final sea `NIVEL_2_SUPERVISION` (otro rol con lista no vacía → `400 USER_SUPERVISION_REQUIRES_SUPERVISOR_ROLE`). Cada id debe ser un usuario existente con rol `NIVEL_3_CARGA_HORARIA` y distinto del propio (si no → `400 USER_SUPERVISION_INVALID_TARGET`). Repetidos → `400 VALIDATION_ERROR`.
 - Cambio de rol: quien deja de ser Nivel 2 deja de supervisar a todos; quien deja de ser Nivel 3 deja de estar supervisado. Ocurre en la misma transacción que la edición y se audita.
 - Usuario, relaciones y auditoría se escriben en una sola transacción (`entity: "UserSupervisionAssignment"`, `entityId` = Nivel 2, descripción con nombres y emails de los agregados/quitados).
 - `employeeId` ("Empleado vinculado") identifica a la persona de la cuenta; **no** define alcance. Es único: si ya pertenece a otro usuario → `409 EMPLOYEE_ALREADY_LINKED_TO_USER` ("Este empleado ya está vinculado a otro usuario."), validado antes de escribir; el P2002 de una carrera se mapea al mismo error. Empleado inexistente → `400 USER_EMPLOYEE_NOT_FOUND`. Email repetido → `409 EMAIL_ALREADY_EXISTS`.
-- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`.
+- Respuesta: el usuario incluye `supervisedUsers` y `supervisorUsers` (`{ id, name, email, role, status }[]`). Nunca `passwordHash`. R8.4 agrega:
+  - `shiftGroups` (`{ id, code, name, status, sortOrder }[]`): los grupos asignados, sólo para un Nivel 2.
+  - `inheritedShiftGroups` (`{ group, viaSupervisors: { id, name, email }[] }[]`): sólo para un Nivel 3. Es la unión de los grupos de sus supervisores que sigan siendo Nivel 2 y estén ACTIVOS. Es informativo: la autorización la decide `shifts/shiftGroupAccess.ts` en cada request.
 - Alta y edición llaman `invalidateEmployeeScopeCaches()` (el mismo helper que `PUT /api/employees/:id/assignments`), porque rol y supervisión cambian el alcance de otros usuarios: visible en la siguiente consulta, sin esperar TTL. `reset-password` no cambia alcance y no lo llama.
 
 ### Parametros de auditoria
@@ -1335,26 +1342,15 @@ Mismos roles, body y reglas que `POST /api/novelties`, más `document`, con los 
 - Si una subida falla, borra las anteriores y responde `502 NOVELTY_DOCUMENT_UPLOAD_FAILED` (un archivo inválido responde su `4xx` de validación). Si la transacción falla, borra los archivos subidos y responde el error del alta. Nunca queda una novedad sin su documento; si el borrado compensatorio falla, el archivo queda huérfano en el storage, sin filas, y se registra como error crítico.
 - Respuesta: igual que `POST /api/novelties`.
 
-### Aprobar / rechazar
+### Corregir
 
 ```txt
-POST /api/novelties/:id/approve
-POST /api/novelties/:id/reject
+PATCH /api/novelties/:id
 ```
 
-Rechazo:
+Roles operativos (RRHH, Supervisión, Carga horaria) dentro del alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y de los roles de carga del tipo. Body parcial: `noveltyTypeId`, `fromDate`, `toDate`, `quantityHours`, `quantityDays`, `observation`, `targetHourConceptId` (al menos uno). Aplica las mismas validaciones que el alta (tipo activo, cantidades, solapamiento excluyendo la propia fila), recalcula la cobertura diaria en la misma transacción y deja la novedad efectiva (`APROBADO`). Un período `CERRADO` (el anterior o el nuevo) responde `409 PERIOD_CLOSED` para todos los roles.
 
-```json
-{
-  "reason": "Motivo"
-}
-```
-
-**Etapa 15G.1:** `approve` sólo cambia `status`/`approvedByUserId`/`approvedAt` y registra auditoría — nunca crea ni modifica `TimeEntry`, sea cual sea `timeEntryBehavior` del tipo. `reject` tampoco toca `TimeEntry` (nunca hubo nada que revertir).
-
-**Etapa 3:** `approve` y `reject` respetan el alcance del legajo (fuera de alcance → `404 NOVELTY_NOT_FOUND`) y el guard de cierres de un tipo que registra tiempo. `approve` acepta un body opcional `{ "correctionReason": "..." }` para la corrección de RRHH; en `reject`, el motivo del rechazo vale como motivo de corrección. Rechazar elimina la cobertura diaria derivada.
-
-Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids": ["uuid", ...] }` (1 a 250). **Etapa 3:** es atómica (una transacción): si una novedad del lote no se puede aprobar, no se aprueba ninguna. Un período protegido rechaza el lote, porque no lleva motivo de corrección.
+Los endpoints `POST /api/novelties/:id/approve|reject` y `POST /api/novelties/bulk-approve` fueron retirados: toda novedad nace efectiva (`APROBADO`) al guardarse y no se notifica a RRHH.
 
 ### Eliminar
 
@@ -1362,7 +1358,7 @@ Aprobación masiva (sólo RRHH): `POST /api/novelties/bulk-approve` con `{ "ids"
 DELETE /api/novelties/:id
 ```
 
-Sólo RRHH. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
+Roles operativos dentro del alcance del legajo. Borrado físico con auditoría; la cobertura diaria cae por `Cascade`. `409 NOVELTY_DELETE_HAS_DOCUMENTS` si tiene documentos asociados; `409 NOVELTY_DELETE_EXPORTABLE_APPROVED` si está `APROBADO` y su tipo exporta a Finnegans. **Etapa 3:** en un período ya enviado a cierre exige el body opcional `{ "correctionReason": "..." }` (`400 NOVELTY_CORRECTION_REASON_REQUIRED`).
 
 ### Cobertura diaria (etapa 3, `docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §6)
 
@@ -1434,7 +1430,8 @@ Sin endpoints nuevos ni cambios de forma en las respuestas. Estos endpoints reca
 - `POST /api/employees/:id/labor-movements` (ALTA/BAJA) y `PATCH /api/employees/:id` con cambio de datos laborales;
 - `PATCH /api/positions/:id` con cambio de alcance y las eliminaciones controladas que retiran datos laborales;
 - `POST/PATCH/DELETE /api/shifts/assignments` (asignaciones de turno; ahora transaccionales);
-- `PATCH /api/workforce/shift-templates/:id` (horario, minutos o estado) y `DELETE` cuando la plantilla se inactiva;
+- `PATCH /api/workforce/shift-templates/:id` cuando cambia la jornada y `POST /api/workforce/shift-templates/:id/replace-schedule` desde la fecha efectiva;
+- escrituras de rotaciones que alteran versión, membresía, activación o finalización (`source: SHIFT_ROTATION_CHANGED`);
 - `POST/PATCH /api/employees/:employeeId/work-regimes` (asignación, edición y cierre de vigencia) y `PATCH /api/work-regimes/:id` cuando cambia el tipo (ahora transaccionales);
 - `PUT /api/employee-day-offs` (francos) y `PUT /api/shifts/holiday-work/assignments` (convocatorias a feriado);
 - alta, edición, inactivación y eliminación de reglas de Horas Especiales (`/api/workforce/double-hour-rules`);
@@ -1471,6 +1468,10 @@ Errores de dispositivo y de fichada:
 | 404 | `CLOCK_ATTEMPT_NOT_FOUND` | `attempts/:requestId` inexistente, de otro dispositivo, histórico sin dispositivo o de otro empleado |
 | 409 | `CLOCK_PUNCH_COOLDOWN` | (F7) Fichada **distinta** (otro `requestId`) del mismo empleado dentro de `CLOCK_PUNCH_COOLDOWN_SECONDS` de su última fichada, o mientras otra fichada suya se está confirmando. Trae `error.retryAfterSeconds` |
 | 409 | `CLOCK_IDEMPOTENCY_KEY_REUSED` | `requestId` ya usado con otro payload o por otro dispositivo |
+| 409 | `CLOCK_EXIT_CONFIRMATION_REQUIRED` | (R4.4, sólo miembros de rotación) SALIDA de una jornada con bloque que cae en el tramo de entrada de un turno posterior con el anterior ya terminado (posible olvido de salida). **No se registró nada.** Trae `error.clockGuidance` |
+| 409 | `CLOCK_SHIFT_LIMIT_EXCEEDED` | (R4.4) SALIDA de una jornada con bloque que superó su límite absoluto (`maxAllowedMinutes`), con o sin confirmación. **No se registró nada** (queda un AuditLog `REJECT` del intento); el mantenimiento la deja en `FALTA_SALIDA` 0 h. Trae `error.clockGuidance` |
+| 409 | `CLOCK_SHIFT_OVERLAP` | (R4.4) La salida de una jornada con bloque se superpondría con otra jornada con horas del empleado (regla `WORK_SHIFT_OVERLAP`). No se registró nada |
+| 409 | `CLOCK_SHIFT_CHANGED` | La jornada cambió mientras se confirmaba: rollover en carrera, o (R4.4) un `exitConfirmation.openShiftId` que ya no es la jornada abierta |
 | 429 | (rate limiter) | Cupo por IP o por dispositivo agotado |
 | 503 | `CLOCK_TEMPORARY_FAILURE` | La fichada no se confirmó (por ejemplo, falló la escritura de la jornada o de su auditoría, F11): no quedó nada registrado y el intento queda `FAILED` |
 
@@ -1491,6 +1492,13 @@ Errores de dispositivo y de fichada:
 Atribución (F6/F7): la fichada y el intento guardan `deviceId = req.clockDevice.id` (`AttendancePunch.deviceId`, `ClockPunchAttempt.deviceId`); cualquier `deviceId` del body se descarta. IP y user-agent persistidos salen de la request, nunca del body (`device.*` es sólo contexto informativo de la cámara). `requestId` sigue siendo único global: reutilizarlo desde otro dispositivo responde `409 CLOCK_IDEMPOTENCY_KEY_REUSED` sin exponer el resultado guardado. Auditoría de la fichada (`AuditLog` `CREATE WorkShift`, una por fichada confirmada, escrita en la misma transacción que la jornada desde F11): el dispositivo es el **actor técnico** —`userId` nulo, descripción con su nombre (`Ingreso con foto registrado desde el dispositivo de fichada "<nombre>" para legajo N.`) y `after = { workShiftId, employeeId, source, actorClockDeviceId }`—; nunca hay hash, secreto ni UUID en el texto visible. Búsqueda, estado y polling de intentos no auditan. En A7 el dispositivo se administra con `establishmentId`; la UI muestra `Provincia › Zona · Establecimiento` cuando hay provincia y `Zona · Establecimiento` cuando no la hay. Es metadata física del aparato: no infiere ni restringe la ubicación laboral de las personas que puede buscar o fichar un dispositivo `ACTIVE`.
 
 Contrato de empleado en las cuatro respuestas (plan §32, vigente): `{ id, dni, firstName, lastName, name }` — `dni` es el DNI completo tal como está guardado; el legajo no se devuelve (sigue siendo interno: auditoría, storage, Drive). `dni` sólo es `null` al leer un intento guardado con el contrato anterior. Reemplaza el contrato F0 `{ id, legajo, dniSuffix, firstName, lastName, name }` (`dniSuffix` = últimos 3 dígitos), retirado en §32.
+
+**Rotaciones en el fichador (R4.4, `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.6).** Sólo cambia para miembros de una rotación (o jornadas con bloque); turnos fijos y no miembros responden exactamente igual. Un miembro **sin rotación efectiva en la fecha de la fichada** (membresía vencida o futura, rotación INACTIVA) se trata como no miembro salvo que la fichada se asigne a un bloque de D−1/D+1 (R4.5.1, §25.8). Contrato aditivo:
+- Request: `exitConfirmation?: { openShiftId: uuid, nextBlockKey: string }`, sólo con `punchType: "OUT"` (con `IN` → `VALIDATION_ERROR`). Entra en el hash de idempotencia sólo si viene.
+- La entrada se asigna al bloque programado (`assignInstantToBlock`) y la jornada nace con `shiftTemplateId`, `shiftTemplateSource` (`ROTATION`/`HOLIDAY_CONVOCATION`), `scheduledStartAt` y `maxAllowedMinutes` congelados. Una ENTRADA asignada a un bloque **posterior** al de la jornada abierta se acepta siempre (aun `ALERT_ONLY` y < 1200 min): la anterior pasa a `FALTA_SALIDA` sin `endAt`, `endPunchId` ni horas (`TimeEntry` 0 h) y la respuesta trae `previousOpenShift` como en el rollover.
+- (R4.5, §25.7) Lo mismo con una jornada abierta **sin bloque** (abierta antes de la ventana de un bloque, no programada, en franco o sin configuración) cuando la nueva ENTRADA se asigna a un bloque válido que empieza después de esa jornada y el ingreso de la jornada abierta no pertenecía a ese mismo bloque. Nunca adopta el bloque sobre la jornada anterior ni suma sus horas. Una ENTRADA que no se asigna a ningún bloque, un doble toque de la misma llegada y los turnos fijos siguen con `CLOCK_ALREADY_OPEN`. La respuesta y el contrato no cambian; el payload interno del job (`blockChange.previousBlock`) pasa a opcional.
+- `error.clockGuidance` (público, también en production, como `retryAfterSeconds`; se guarda en el intento FAILED y `GET …/attempts/:requestId` lo devuelve en `error.clockGuidance`): `{ kind: "EXIT_CONFIRMATION_REQUIRED" | "SHIFT_LIMIT_EXCEEDED", openShiftId, openShiftStartAt, previousBlock: { startAt, endAt }, nextBlock: { key, startAt } | null, exitAt, exitDurationMinutes }`. El kiosco muestra horas, nunca ids.
+- Confirmar: SALIDA con **otro** `requestId` y `exitConfirmation` de la guía. El servidor revalida: otra jornada abierta → `CLOCK_SHIFT_CHANGED`; otro turno siguiente → vuelve a preguntar; límite, superposición, horas manuales y períodos protegidos se aplican siempre. Reintentar el mismo `requestId` repite exactamente la misma pregunta.
 
 Búsqueda `GET /api/clock/employees?search=` (2 a 80 caracteres): sólo empleados `ACTIVO`, máximo 12, orden apellido/nombre. Coincide por nombre, por apellido, por varias palabras repartidas entre nombre y apellido (en cualquier orden) o por DNI. El DNI se compara contra `Employee.dni` **ignorando separadores** (`regexp_replace(dni, '[^0-9]', '', 'g') LIKE '%<dígitos>%'`, SQL parametrizado; el dato guardado no se modifica) sólo si el término es numérico (dígitos con puntos, espacios o guiones) y tiene al menos 2 dígitos (`CLOCK_SEARCH_MIN_LENGTH`, el mismo mínimo que nombre y apellido): `32`, `324`, `3240`, `32401`, `32401118` y `32.401.118` encuentran tanto `32.401.118` como `32401118`. Nunca busca por legajo. `clock/status` devuelve `{ employee, openShift: { id, startAt } | null }` (sin conceptos horarios). La respuesta de salida de `photo-punch` devuelve `employee`, `workShift` (`id`, `startAt`, `endAt`, `totalMinutes`, `totalHours`) y `segments` (etiquetas para pantalla), sin las filas internas de `TimeEntry`/`TimeSegment`.
 
@@ -1584,69 +1592,11 @@ PATCH /api/time-entries/:id
 
 Desde 2026-11-03, editar `hours` fija `source = ADMIN` en la fila: las horas pasan a ser "reconocidas por una persona" aunque la fila haya nacido de una fichada (`workShiftId`/`timeSegmentId` no cambian). Es la señal que usan los francos para computar horas reconocidas (`docs/decisions/EMPLOYEE_DAY_OFF.md` §7.1).
 
-No permite editar `CERRADO`. Editar una fila `APROBADO` (o con el período en `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`) exige `correctionReason` en el body. Si quien edita es RRHH (Etapa 6L.3), la fila queda (o se mantiene) `APROBADO` con `approvedByUserId`/`approvedAt` propios sin importar el estado anterior (`BORRADOR`, `EN_REVISION`, `DEVUELTO` o ya `APROBADO`); Nivel 2/3 no tocan el `status` al editar, igual que antes de esta etapa. Con el período `ENVIADO`/`APROBADO`/`CORRECCION_PENDIENTE`, Nivel 2/3 reciben `409 PERIOD_CLOSED_REQUIRES_CORRECTION` (deben usar `POST /workforce/corrections` en su lugar); no existe endpoint de borrado para `TimeEntry`.
+Toda carga de N1/N2/N3 queda efectiva (`APROBADO`) al crearla o editarla, con `approvedByUserId` = autor. Con el período `CERRADO` responde `409 PERIOD_CLOSED` (crear: `409 MONTHLY_CLOSURE_LOCKED`) para todos los roles hasta reabrirlo; ya no existe la corrección directa de RRHH con `correctionReason`.
 
-### Enviar / aprobar / rechazar / devolver
+### Envío y aprobación (retirados)
 
-```txt
-POST /api/time-entries/:id/submit
-POST /api/time-entries/:id/approve
-POST /api/time-entries/:id/reject
-POST /api/time-entries/:id/return
-```
-
-`submit` sigue disponible para RRHH/Supervisión/Nivel 3 (`operationalRoles`). `approve`/`reject`/`return` son **exclusivos de RRHH** (Etapa 6L.3, ajuste posterior): el guard de ruta acepta sólo `NIVEL_1_RRHH` y el servicio responde `403 FORBIDDEN` para cualquier otro rol, sea o no el creador de la carga — Supervisión (Nivel 2) ya no puede aprobar/rechazar/devolver ninguna carga horaria, ni propia ni ajena. RRHH nunca necesita resolver una carga propia por esta vía porque `create`/`update` ya la dejan `APROBADO` directo.
-
-## Mis Pendientes
-
-```txt
-GET /api/pending
-```
-
-Roles: sólo Nivel 1 y Nivel 2 (desde 2026-11-17 su único consumidor es la Bandeja de revisión, `/pendientes`, que no existe para Nivel 3; Nivel 3 → `403 FORBIDDEN`). Carga de horas usa `/api/time-entries`, que no cambia.
-
-Query:
-
-```txt
-kind=all|novelties|timeEntries|hourConceptBreakdowns
-period=YYYY-MM
-page=1
-take=100
-```
-
-`novelties` y `hourConceptBreakdowns` son de una sola fuente y paginan de verdad (`page` + `meta`). `all`/`timeEntries` combinan fuentes y devuelven siempre la primera página de cada una (`meta.page = 1`, `meta.hasMore` si hay más). `summary` informa **totales reales** (`count`), no la cantidad de filas traídas.
-
-Devuelve:
-
-```json
-{
-  "data": {
-    "summary": {
-      "total": 1,
-      "novelties": 1,
-      "timeEntries": 0,
-      "hourConceptBreakdowns": 0
-    },
-    "data": [
-      {
-        "kind": "novelty",
-        "sourceId": "uuid",
-        "status": "PENDIENTE",
-        "employeeId": "uuid-del-legajo",
-        "employeeLabel": "000001 - Apellido, Nombre",
-        "title": "Vacaciones",
-        "subtitle": "NOV-VAC",
-        "quantity": "1"
-      }
-    ],
-    "meta": { "total": 1, "page": 1, "pageSize": 100, "hasMore": false }
-  }
-}
-```
-
-Desde la Etapa 6L.3, `kind` también puede ser `"hourConceptBreakdown"` (desgloses manuales `EN_REVISION` de Nivel 2/3, filtrados por `kind=all|timeEntries` igual que `timeEntry` — `kind=novelties` los excluye) y `summary` suma el campo `hourConceptBreakdowns` con su conteo. Es un campo aditivo: un consumidor que ya leía `summary.total`/`summary.novelties`/`summary.timeEntries` sigue funcionando sin cambios.
-
-**Etapa 6L.5 (aclaración de contrato):** todo ítem expone `employeeId` (antes iba embebido sin tipar en un objeto `employee` que ningún consumidor leía) — es el `:id` que pide `POST /employees/:id/hour-concept-breakdowns/manual/:breakdownId/approve|reject|return` para resolver un ítem `kind: "hourConceptBreakdown"` desde la bandeja de revisión. `sourceId` es el `:breakdownId` en ese caso (o el `:id` de `POST /time-entries/:id/approve|reject|return` cuando `kind: "timeEntry"`).
+`POST /api/time-entries/:id/submit|approve|reject|return` y la bandeja `GET /api/pending` (módulo `pending`) fueron retirados con la simplificación operativa. Las revisiones reales que siguen vigentes (fichadas observadas, jornadas, conflicto carga manual vs. fichada, cobertura de novedades) se resuelven desde Carga de horas y Asistencia, por N1/N2/N3 dentro de su alcance.
 
 ## Documentos
 
@@ -1725,7 +1675,6 @@ Response:
     "activeEmployees": 110,
     "employeesWithEntries": 82,
     "pendingEmployees": 28,
-    "reviewEmployees": 12,
     "countableHours": 1540,
     "coveredHours": 96,
     "computableHours": 1636,
@@ -1738,6 +1687,7 @@ Reglas:
 
 - Respeta el alcance del rol autenticado.
 - Debe usarse para KPI cards del modulo Horas.
+- `pendingEmployees` = personas activas sin horas computables en el período ("Sin horas cargadas"). `reviewEmployees` fue retirado junto con el circuito de aprobación.
 - Evita traer todas las cargas del periodo solo para calcular contadores.
 - `countableHours` ("Total trabajado" en la UI) = Horas base (`TimeEntry` `NORMAL_BASE` APROBADO/EN_REVISION) + horas de conceptos `ADDITIVE_TO_WORKED_TOTAL` (`HourConceptBreakdown` sin RECHAZADO). Nunca suma conceptos `WITHIN_BASE` (ver `docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md`).
 - Desde la etapa 4 (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12), aditivo: `coveredHours` = cobertura de novedades que cuenta (APROBADA, suma, sin revisión) y `computableHours` = `countableHours` + `coveredHours`. `countableHours` no cambia: sigue siendo trabajo real.
@@ -2019,27 +1969,115 @@ WorkRegime es 100% configurable por RRHH — `kind` (`TURNO_OBLIGATORIO`/`TURNO_
 | PATCH | `/work-regimes/:id/status` | RRHH | Activar/inactivar (audita `ACTIVATE`/`DEACTIVATE`) |
 | GET | `/employees/:employeeId/work-regimes` | cualquiera autenticado | Historial de asignaciones, orden `effectiveFrom desc` |
 | GET | `/employees/:employeeId/work-regimes/current?date=YYYY-MM-DD` | cualquiera autenticado | Régimen vigente a esa fecha (`data: null` si no hay ninguno) |
-| POST | `/employees/:employeeId/work-regimes` | RRHH | Asignar régimen con vigencia (404 si `employeeId`/`workRegimeId` no existen; 409 si se solapa) |
-| PATCH | `/employees/:employeeId/work-regimes/:assignmentId` | RRHH | Editar una asignación (re-chequea solapamiento) |
+| POST | `/employees/:employeeId/work-regimes` | RRHH | Asignar régimen con vigencia (404 si `employeeId`/`workRegimeId` no existen; 409 si se solapa). R4.6: un `SIN_TURNO` superpuesto con una membresía de rotación responde `409 WORK_REGIME_OVERLAPS_ROTATION` |
+| PATCH | `/employees/:employeeId/work-regimes/:assignmentId` | RRHH | Editar una asignación (re-chequea solapamiento y la incompatibilidad `SIN_TURNO`/rotación) |
 | PATCH | `/employees/:employeeId/work-regimes/:assignmentId/close` | RRHH | Cerrar vigencia (`effectiveTo`) |
 
 ### Turnos (`shifts`, montado en `/api/shifts`)
 
 Todas las rutas requieren `requireAuth`.
 
+**Alcance por grupo de turnos (R8.2, `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §26).** Las lecturas de este módulo y `GET /api/workforce/shift-templates` combinan el alcance de legajos (`employeeAccessWhere`) con el alcance por grupo (`shifts/shiftGroupAccess.ts`). Nivel 1 ve todo. Nivel 2 ve los grupos de sus filas `UserShiftGroupScope`. Nivel 3 hereda, en vivo, los grupos de los Nivel 2 `ACTIVOS` que lo supervisan. Sin grupos no hay acceso, nunca acceso global. Las escrituras siguen siendo sólo de RRHH hasta R8.3.
+- `GET /groups`, `GET /rotations`, `GET /assignments/summary` y `GET /workforce/shift-templates`: sólo grupos administrables. Una plantilla sin grupo es sólo de Nivel 1.
+- `GET /rotations/:id`, `/rotations/:id/versions/:versionId`, `/rotations/:id/members` y `GET /expected?rotationId=`: una rotación de un grupo no administrable responde `404 ROTATION_NOT_FOUND`, igual que una inexistente.
+- `GET /assignments?shiftTemplateId=` con una plantilla no administrable devuelve `[]`. Sin ese filtro (vista del legajo) sigue mostrando todos los turnos fijos de los legajos del alcance.
+- Personas dentro de una rotación propia: sólo las del alcance de legajos. `GET /rotations/:id` agrega `hiddenMemberCount` y `GET /rotations/:id/members` agrega `meta.hiddenCount`. Los avisos (`issues`) que nombran a una persona oculta, o a un turno fijo de otro grupo, se devuelven con texto genérico (mismo `code` y `severity`, sin `employeeId`).
+- `GET /expected` para Nivel 2/3: los bloques con plantilla de otro grupo (o sin grupo) llevan `template.id = null`, `template.code = null` y `templateHidden: true`; conservan horario, fuente y obligación. `expectedWorkday.shiftTemplateIds` omite esas plantillas, `planning.origin` es `null` si pertenece a otra rotación y `planning.detail` va vacío.
+- Las cachés de respuesta (`/assignments/summary`, `/workforce/shift-templates`) incluyen en la clave la huella del alcance resuelto en cada request: un grupo asignado o revocado rige en la request siguiente.
+
+**Escrituras de Nivel 2/3 (R8.3).** Abiertas a los 3 roles operativos: asignaciones fijas (`POST/PATCH/DELETE /assignments`), rotaciones con sus equipos, versiones, membresías, activación y finalización (`/rotations…`), y plantillas con su reemplazo de horario (`/api/workforce/shift-templates…`). Cada servicio verifica el alcance (`shifts/shiftWriteAccess.ts`). La administración de grupos (`/groups`) sigue siendo sólo de RRHH. Las convocatorias (`PUT /holiday-work/assignments`) se abren a Nivel 1, 2 y 3 por **legajo**, no por grupo (`WORKED_TIME_ACCOUNTING_MODEL.md` §20): todo el lote dentro de `employeeAccessWhere` o `403 EMPLOYEE_SCOPE_FORBIDDEN`; período enviado/aprobado: Nivel 2/3 → `409 PERIOD_CLOSED`, RRHH con `correctionReason` (sin él, `400 HOLIDAY_WORK_CORRECTION_REASON_REQUIRED`). La convocatoria sólo define la obligación de asistir: no reinterpreta horas y recalcula la cobertura de novedades sólo de los legajos cambiados. Validación del horario (§20.1): `422 HOLIDAY_WORK_DATE_NOT_HOLIDAY`, `HOLIDAY_WORK_ROTATION_CONFLICT`, `HOLIDAY_WORK_TEMPLATE_INVALID`; un conflicto de rotación resuelto con plantilla devuelve `scheduleWarning` en la fila. `GET /holiday-work/candidates?date=` agrega `dayOff`, `periodLocked` y `expectedSchedule`. `shiftWriteRoutes.test.ts` inventaría qué rutas están abiertas.
+- Recurso de otro grupo identificado en la ruta (rotación, plantilla, asignación, membresía de un legajo fuera de alcance): `404` igual que inexistente (`ROTATION_NOT_FOUND`, `SHIFT_TEMPLATE_NOT_FOUND`, `SHIFT_ASSIGNMENT_NOT_FOUND`). Plantilla ajena o sin grupo en `POST /assignments`: `404 SHIFT_TEMPLATE_NOT_FOUND`.
+- Grupo en el body (alta o cambio de grupo de una rotación o plantilla, incluido `null`): `403 SHIFT_GROUP_FORBIDDEN`.
+- Efectos indirectos (R8.3.1, ADR §26.4): también exigen todos los legajos realmente afectados activar o desactivar una rotación, crear, editar o borrar versiones y activar o inactivar equipos de una rotación ACTIVA, y editar horario, tolerancias, límites o estado de una plantilla, o borrarla (fijos vigentes, convocatorias futuras y miembros de rotaciones ACTIVAS que la usan). Los cambios descriptivos sólo exigen el grupo.
+- Legajos: toda escritura sobre personas exige que todos estén en el alcance. Si falta uno, `403 EMPLOYEE_SCOPE_FORBIDDEN` sin escribir nada. Aplica a altas fijas masivas, altas de miembros, finalización (con todas las membresías que cierra o cancela) y vista previa o reemplazo de horario (fijos y convocatorias pendientes afectadas).
+- Efectos laterales: `closeFixedAssignments` con un fijo de otro grupo (o sin grupo) responde `409 ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE` sin cerrar nada. `ROTATION_FIXED_ASSIGNMENT_OVERLAP` muestra `template: null` en lugar del código ajeno.
+- Mensajes para Nivel 2/3 (R8.7): si todo lo que menciona el conflicto (grupos y legajos) está en su alcance, el mensaje es el completo. Si no, o si no se puede comprobar: `SHIFT_ASSIGNMENT_OVERLAPS_ROTATION` y `ROTATION_MEMBERSHIP_OVERLAP` sin rotación ajena; `ROTATION_TRANSITION_OVERLAP` y `ROTATION_FINALIZE_STALE` sin `details`; `ROTATION_TEMPLATE_OTHER_GROUP` sin códigos; `ROTATION_ACTIVATION_RETROACTIVE` sin nombres; `issues` y conflictos de asistencia con texto genérico para personas fuera del alcance. `ROTATION_ATTENDANCE_HISTORY_CONFLICT.details.conflicts[]` agrega `employeeId` para Nivel 1. Las respuestas de escritura (rotación, `restsAtTransition`, `transitionOverlaps`) aplican la misma visibilidad que las lecturas.
+
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/assignments` | RRHH/Supervisión/Carga Horaria | Listar asignaciones de turno |
 | GET | `/assignments/summary` | RRHH/Supervisión/Carga Horaria | Conteos agregados por turno (`total`, `enabled`, `disabled`, `other`), respetando alcance por empleado |
-| POST | `/assignments` | RRHH | Asignar turno a un empleado |
-| PATCH | `/assignments/:id` | RRHH | Editar una asignación |
+| POST | `/assignments` | RRHH | Asignar turno a un empleado. R4.6: `409 SHIFT_ASSIGNMENT_OVERLAPS_ROTATION` si la vigencia coincide con una membresía; `409 ROTATION_TRANSITION_OVERLAP` si el primer turno fijo invade un bloque nocturno del último día de la rotación |
+| PATCH | `/assignments/:id` | RRHH | Editar una asignación, con las mismas protecciones contra rotaciones cuando queda `HABILITADO` |
 | DELETE | `/assignments/:id` | RRHH | Quitar una asignación |
 | GET | `/alerts` | RRHH/Supervisión/Carga Horaria | Listar alertas de jornada abierta/vencida |
-| POST | `/alerts/:id/resolve` | RRHH/Supervisión | Resolver una alerta |
+| POST | `/alerts/:id/resolve` | RRHH/Supervisión/Carga horaria (alcance por legajo) | Resolver una alerta |
 | GET | `/holiday-work/dates?from&to` | RRHH/Supervisión/Carga Horaria | Fechas de feriado disponibles para convocar (Etapa 12D) |
 | GET | `/holiday-work/candidates?shiftTemplateId&withoutShift&search&page&take` | RRHH/Supervisión/Carga Horaria | Empleados candidatos a convocar (con o sin turno habitual) |
 | GET | `/holiday-work/assignments?date` | RRHH/Supervisión/Carga Horaria | Convocatorias activas para una fecha |
 | PUT | `/holiday-work/assignments` | RRHH | Guardar convocatorias (upsert por empleado, ver abajo) |
+| GET | `/groups?status` | RRHH/Supervisión/Carga Horaria | Grupos de turnos (lugar), ver abajo |
+| POST | `/groups` | RRHH | Crear grupo de turnos |
+| PATCH | `/groups/:id` | RRHH | Editar código, nombre, orden o estado |
+| DELETE | `/groups/:id` | RRHH | Eliminar un grupo sin plantillas ni rotaciones |
+
+#### Trabajo no programado en alertas (`/alerts`) — R4.5
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.7. Dos valores nuevos de `type` (aditivos; el filtro `?type=` los acepta):
+- `TRABAJO_NO_PROGRAMADO`: jornada sin turno exigible (día que la asignación fija no incluye, descanso de una rotación, feriado sin convocatoria, fuera de los bloques del día). Clasificación **informativa**: se crea con `status: "RESUELTA"`, `severity: "INFO"`, `resolvedByUserId: null`, `resolvedAt` = alta y `resolutionNote` con el motivo; nunca genera `SystemNotification`, nunca se reabre y `POST /alerts/:id/resolve` responde `SHIFT_ALERT_ALREADY_RESOLVED` como con cualquier alerta no pendiente. No aparece con el filtro por defecto (`PENDIENTE`). Los regímenes `SIN_TURNO`, `TURNO_FLEXIBLE` y `alertOnOutOfShift = false` no la generan.
+- `INGRESO_FUERA_DE_VENTANA`: ingreso de un miembro de rotación antes de la ventana de asignación de su bloque posterior del mismo día (antes `TURNO_NO_IDENTIFICADO`). `PENDIENTE`, `ADVERTENCIA`, con aviso inmediato, no suprimible por régimen; no satisface el bloque.
+
+`TURNO_NO_IDENTIFICADO` queda sólo para quien ficha sin ninguna asignación HABILITADA vigente (configuración legacy). En franco o feriado no convocado no se generan alertas de turno (puntualidad, salida anticipada/tardía, jornada insuficiente o fuera de turno); sí `ACTIVIDAD_EN_FRANCO`, jornada extendida y las de falta u olvido de salida.
+
+#### Grupos de turnos (`/groups`) — R3.1
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §23. Un grupo (`ShiftGroup`) es el lugar / ámbito operativo principal de un turno (Planta, Granja, Oficina, Taller…), **no** su función: la función sigue en `ShiftTemplate.categoryName` ("Sereno", "Administrativo"). Es sólo clasificación: ningún cálculo (resolución del turno esperado, alertas, falta de ingreso, Novedades, horas, cierres, fichador) lo lee, y ninguna operación de grupos recalcula cobertura ni reevalúa jornadas.
+
+- Forma: `{ id, code, name, sortOrder, status: "ACTIVO" | "INACTIVO", templateCount, createdAt, updatedAt }`. Orden: `sortOrder` y después `name`.
+- `GET /groups?status=ACTIVO|INACTIVO`: `status` opcional (sin él, todos). Los 3 roles operativos. El alcance por grupo para Nivel 2/3 (`UserShiftGroupScope`) es una etapa posterior (R8); hoy la escritura es sólo RRHH.
+- `POST /groups` — body `{ code, name, sortOrder? }` (`sortOrder` entero 0–9999, default 0). `code` (2–30) y `name` (2–60) se normalizan (sin espacios en los extremos, espacios internos colapsados); `code` se guarda además en MAYÚSCULAS. Ambos deben ser únicos **sin distinguir mayúsculas** («Planta» y «PLANTA» son el mismo nombre): `409 SHIFT_GROUP_DUPLICATE`. El servicio valida antes de escribir y la base lo garantiza con índices únicos sobre `lower(code)` y `lower(name)` (una carrera entre dos altas también termina en 409). Un grupo nace `ACTIVO`.
+- `PATCH /groups/:id` — body parcial `{ code?, name?, sortOrder?, status? }` (al menos un campo). `404 SHIFT_GROUP_NOT_FOUND`; duplicados → `409 SHIFT_GROUP_DUPLICATE`. **Inactivar no desclasifica**: las plantillas ya asociadas conservan el grupo y siguen funcionando igual; sólo deja de poder asociarse a plantillas nuevas.
+- `DELETE /groups/:id`: sólo si el grupo no tiene plantillas ni rotaciones asociadas; si tiene alguna, `409 SHIFT_GROUP_IN_USE` con un mensaje que sugiere inactivarlo. Las FK `ShiftTemplate.shiftGroupId` y `ShiftRotation.shiftGroupId` son `RESTRICT` (segunda defensa: una asociación concurrente también responde 409).
+- Auditoría: entidad `ShiftGroup` (`CREATE`, `UPDATE`, `ACTIVATE`, `DEACTIVATE`, `DELETE`) con código y nombre en la descripción, nunca el id.
+- Caché: toda escritura de grupos invalida la caché backend del catálogo de plantillas (`GET /workforce/shift-templates`), que incluye el grupo de cada plantilla.
+
+#### Administración de rotaciones (`/rotations`) — R4.6
+
+Fuente: `docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md` §25.9. Lecturas: RRHH, Supervisión y Carga Horaria. Escrituras: sólo RRHH. Las fechas son calendario `AAAA-MM-DD`, inclusivas; alta, cambio de equipo y cambios de una rotación activa empiezan como mínimo mañana. No hay alcance por grupo todavía (R8).
+
+| Método | Ruta | Contrato principal |
+|---|---|---|
+| GET / POST | `/rotations` | Lista con `health`; alta `{ code, name, shiftGroupId, observation? }`, siempre `INACTIVO` |
+| GET / PATCH / DELETE | `/rotations/:id` | Detalle con `issues`; código/grupo sólo antes de regir; borrado sólo `INACTIVO` y sin membresías |
+| POST | `/rotations/:id/activate` | Exige diagnóstico sin errores y ninguna membresía iniciada hoy o antes |
+| POST | `/rotations/:id/deactivate` | Sólo si nunca rigió; en otro caso debe finalizarse con fecha |
+| POST | `/rotations/:id/finalize/preview` | Body `{ lastDay }`; devuelve cierres, cancelaciones futuras, transiciones y `confirmationToken` |
+| POST | `/rotations/:id/finalize` | Body `{ lastDay, confirm: true, confirmationToken }`; recalcula bajo lock, token viejo → `ROTATION_FINALIZE_STALE` |
+| POST / PATCH | `/rotations/:id/crews`, `/rotations/:id/crews/:crewId` | Crear/editar equipos; `INACTIVO` sólo si nunca tuvieron membresías |
+| POST | `/rotations/:id/versions` | Crea versión completa `{ effectiveFrom, cycleLengthWeeks, anchorWeekStart, days[] }` y cierra la anterior en X−1 |
+| GET / PATCH / DELETE | `/rotations/:id/versions/:versionId` | Grilla completa; PATCH/DELETE sólo futuras. PATCH admite `expectedUpdatedAt` y responde `ROTATION_VERSION_STALE` si cambió |
+| GET | `/rotations/:id/members?at=&history=` | Membresías con legajo, equipo y vigencia |
+| POST | `/rotations/:id/crews/:crewId/members` | `{ employeeIds, effectiveFrom, effectiveTo?, closeFixedAssignments? }`; la opción explícita cierra fijos en X−1 dentro de la misma transacción |
+| POST | `/rotations/:id/members/:memberId/close` | `{ lastDay }`; conserva completo ese día, incluidos bloques nocturnos |
+| POST | `/rotations/:id/members/:memberId/move` | `{ toCrewId, effectiveFrom }`; cierre X−1 + alta X atómicos |
+| DELETE | `/rotations/:id/members/:memberId` | Cancela únicamente un alta futura que nunca rigió |
+
+Las versiones son contiguas y la grilla se guarda completa: cada día `SHIFT` tiene bloques, cada `REST` no los tiene, todos los turnos están `ACTIVO` y pertenecen al mismo `ShiftGroup`. `DAY_MISSING` es bloqueante para un equipo con miembros. Las escrituras toman lock de la rotación, revalidan el estado, serializan la cobertura por legajo, recalculan Novedades y auditan en la misma transacción. Conflictos de vigencia, `SIN_TURNO`, fijo superpuesto, configuración incompleta y transiciones nocturnas responden 409 con código de dominio. Restricciones reales P2002/P2003, SQLSTATE 23P01/23001 quedan como última defensa y se traducen, nunca se exponen como errores Prisma/PostgreSQL.
+
+La finalización es una confirmación de dos pasos. El token SHA-256 no es un secreto: representa el conjunto canónico y sus `updatedAt`. Las versiones/membresías futuras se auditan con snapshot completo antes de borrarse; si auditoría, recálculo o cualquier escritura falla, se revierte toda la operación. La rotación permanece `ACTIVO` y su finalización se deriva de que no tiene versión/membresía abierta.
+
+#### Vista previa de horarios de rotación (`/expected`) — R4.7
+
+`GET /api/shifts/expected?rotationId=<uuid>&from=AAAA-MM-DD&to=AAAA-MM-DD&page=1&take=25` devuelve la programación guardada de los miembros de una rotación para un rango inclusivo de hasta 42 días. `take` admite 1–100. Lectura: RRHH, Supervisión y Carga Horaria; los empleados se filtran **antes de paginar** con `employeeAccessWhere`. La selección incluye cualquier membresía de esa rotación que intersecte `[from,to]`, aunque sea futura, haya terminado o cambie de equipo dentro del rango; un empleado con varias filas históricas aparece una sola vez.
+
+Respuesta: `{ data, context, meta }`. `meta` usa `{ total, page, pageSize, hasMore }`. `context` identifica la rotación y el rango e incluye:
+
+```json
+{
+  "persistedStatus": "INACTIVO",
+  "readOnly": true,
+  "previewMode": "HYPOTHETICAL_INACTIVE",
+  "affectsRealObligations": false
+}
+```
+
+Para una rotación `ACTIVO`, `previewMode` es `CURRENT_CONFIGURATION`. Para una `INACTIVO`, el servidor cambia a `ACTIVO` **sólo una copia en memoria de la rotación solicitada durante ese request**: no escribe, no audita, no recalcula, no cambia obligaciones reales ni modifica el estado de otras rotaciones.
+
+Cada elemento de `data` contiene el empleado y una celda por cada fecha solicitada, nunca por los días vecinos internos. La celda informa membresía/equipo/versión/semana A–B, plan (`SHIFTS | REST | MISSING | CONFLICT | FIXED_ASSIGNMENT | NONE`), resolución operativa, jornada esperada de Novedades, franco/feriado/convocatoria/régimen, transición y advertencias estructuradas. Los problemas `MISSING`/`CONFLICT` no se ocultan aunque otra precedencia suprima la obligación.
+
+Cada bloque devuelve `operationalDate`, `scheduledStartAt`, `scheduledEndAt` y `durationMinutes`. Un bloque nocturno pertenece exclusivamente a su fecha de inicio: el de viernes 19:00–sábado 07:00 se devuelve en la celda del viernes con timestamps reales y **no** se duplica el sábado. El servicio resuelve D−1/D+1 sólo para calcular transiciones de borde. `restMinutes` es un dato factual; R4.7 no declara descanso insuficiente porque no existe un umbral de negocio vigente.
+
+No hay `POST` de borrador en R4.7. La salud y posibilidad de activación continúan siendo responsabilidad de `GET /rotations/:id` y `POST /rotations/:id/activate` de R4.6.
 
 #### Asignaciones de trabajo en feriados (`/holiday-work/*`) — Etapa 12D
 
@@ -2094,14 +2132,31 @@ Todas las rutas requieren `requireAuth`.
 | Método | Ruta | Rol | Descripción |
 |---|---|---|---|
 | GET | `/closures` | todos los operativos | Cierres mensuales por período |
-| POST | `/closures/submit` | Supervisión/Carga Horaria | Enviar cierre a aprobación. PERF-5D: antes del snapshot procesa en línea el post-proceso de fichadas pendiente de esos legajos (incluidos jobs `FAILED`). Si después de eso algún job de ese período sigue sin terminar (por ejemplo, otro worker lo tiene tomado), responde `409 CLOCK_POSTPROCESS_PENDING` y no escribe el cierre: el snapshot nunca congela desgloses de Motor B incompletos. Etapa 4 de cobertura (`docs/decisions/NOVELTY_COVERAGE_ENGINE.md` §12.7): snapshot `WORKED_TIME_ACCOUNTING_V2` con la cobertura de novedades; si algún legajo tiene días de novedades para revisar responde `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW` (mensaje con legajo, días y fechas; `details.employees[] = { employeeId, reviewDays, reviewDates }`) y no escribe ningún cierre. Etapa 9 de cobertura (§16.2): el snapshot agrega `finnegans = { model: "FINNEGANS_CONFIG_V1", types[] }` con la configuración de Finnegans de los tipos con novedades del legajo en el período (`noveltyTypeId`, `name`, `status`, `exportsToFinnegans`, `finnegansCode`, `finnegansValueUnit`, `finnegansRequiresValidity`, `coverageMode`); una reconstrucción del snapshot la conserva y nunca la agrega a un snapshot anterior. |
-| POST | `/closures/approve` | RRHH | Aprobar cierres en lote |
-| POST | `/closures/:id/return` | RRHH | Devolver un cierre |
-| GET / POST | `/corrections`, `/corrections/:id/approve`, `/corrections/:id/reject` | según rol | Solicitudes de corrección de horas. `GET` exige `period=YYYY-MM` y acepta `status=PENDIENTE|APROBADA|RECHAZADA` — filtrados en el `where` (antes: últimas 500 de todos los períodos, filtradas en el cliente) |
+| GET | `/closures/blockers` | todos los operativos, según alcance | Vista previa `?period=YYYY-MM` de lo que impide cerrar, con el mismo criterio que `/closures/close`. Responde `{ period, employees: [{ employee: { id, legajo, firstName, lastName }, blockers: [{ id, type: OPEN_SHIFT\|INCOMPLETE_SHIFT\|MANUAL_CLOCK_CONFLICT\|NOVELTY_REVIEW, date, title, reason, action, resolution: { module, label, path } }] }], totals }`, sólo de legajos del alcance aún no `CERRADO`. Una jornada sin fin que empezó el último día del mes anterior también figura si su máximo permitido cruza al período. Sin cache. El 409 `CLOSURE_HAS_OPERATIONAL_BLOCKERS` de `/closures/close` trae el mismo detalle en `details.employees` (oculto en producción): la UI vuelve a consultar este endpoint. |
+| POST | `/closures/close` | todos los operativos, según alcance | Cierra definitivamente `{ period, employeeIds }`. Procesa y verifica postprocesos. Bloquea (`409 CLOSURE_HAS_OPERATIONAL_BLOCKERS`, mensaje con persona, fecha y causa) sólo lo que puede cambiar horas: jornada `ABIERTO`, jornada `FALTA_SALIDA`/`FALTA_INGRESO`/`INVALIDO` sin revisar que empezó en el período, y fichada sobre horas manuales sin decidir; además `409 CLOSURE_HAS_PENDING_NOVELTY_REVIEW`. Observaciones de jornadas completas o fichadas, faltas sin registro (inactividad) y demás alertas de turno son informativas y no bloquean. |
+| POST | `/closures/:id/reopen` | todos los operativos, según alcance | Reabre con `{ reason, acknowledgeExportedHistory }`. El motivo y actor quedan auditados. Si hubo exportación, exige confirmación explícita y preserva todas las versiones históricas. |
 | GET / POST | `/notifications`, `/notifications/:id/read`, `/notifications-unread-count` | todos | Notificaciones internas del sistema |
-| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno |
+| GET / POST / PATCH / DELETE | `/shift-templates*` | RRHH (escritura) | Plantillas de turno. Cada item del `GET` incluye grupo e `inUseFromTomorrow`. R4.6 protege historia y ofrece reemplazo fechado; ver abajo. |
+| POST | `/shift-templates/:id/replace-schedule/preview` | RRHH | Vista previa determinística de reemplazo fechado, sin escrituras |
+| POST | `/shift-templates/:id/replace-schedule` | RRHH | Confirma el reemplazo con token; divide/reapunta asignaciones y devuelve dependencias pendientes |
 | GET / POST / PATCH / DELETE | `/double-hour-rules*` | RRHH (escritura) | Reglas de Horas Especiales (`DoubleHourRule`) |
 | GET | `/double-hour-rules/calendar?from&to&kind` | todos los operativos | Preview de calendario de Horas Especiales (ver abajo) |
+
+#### Plantillas: historia y reemplazo de horario — R4.6
+
+`GET /shift-templates` conserva `shiftGroupId` y `shiftGroup: { id, code, name, status, sortOrder } | null` y agrega `inUseFromTomorrow: boolean`, calculado en la misma consulta a partir de asignaciones habilitadas, convocatorias activas y versiones de rotación vigentes/futuras.
+
+Una plantilla **ya rigió** si existe una asignación fija (cualquier estado) con `effectiveFrom <= hoy`, una convocatoria con fecha `<= hoy`, una `WorkShift`, o un bloque de versión con `effectiveFrom <= hoy`. En ese caso:
+
+- cambiar `startTime`/`endTime` → `409 SHIFT_TEMPLATE_SCHEDULE_LOCKED`;
+- inactivar, cambiar de grupo o borrar → `409 SHIFT_TEMPLATE_HISTORY_LOCKED`;
+- tolerancias y límites sí pueden cambiar para el futuro, excepto si hay entradas fijas sin postprocesar (`PENDING`, `PROCESSING` o `FAILED`): `409 SHIFT_TEMPLATE_RULES_PENDING_PUNCHES`.
+
+Una plantilla que aún no rigió se edita normalmente. Borrarla si aparece en cualquier bloque de rotación responde `409 SHIFT_TEMPLATE_IN_ROTATION`, aunque la versión sea futura. Las asignaciones y convocatorias siguen usando sus errores de referencia existentes.
+
+Preview de reemplazo: body `{ effectiveFrom, startTime, endTime, code, name }`, con `effectiveFrom >= mañana`. Devuelve la plantilla origen, asignaciones con acción `SPLIT` o `REPOINT`, `pendingDependencies` (`holidayAssignments`, `rotationVersions`), `complete` y `confirmationToken`. Confirmación: el mismo body más `{ confirmationToken, acknowledgePendingDependencies? }`. Token desactualizado → `409 SHIFT_TEMPLATE_REPLACEMENT_STALE`; dependencias sin reconocimiento → `409 SHIFT_TEMPLATE_REPLACEMENT_DEPENDENCIES`.
+
+Al confirmar se crea una plantilla `ACTIVO` que copia grupo, tolerancias, límites y umbrales; las asignaciones habilitadas que atraviesan X se cierran en X−1 y recrean desde X, y las futuras se reapuntan. Convocatorias y versiones de rotación se informan pero nunca se modifican en silencio; si se reconocen, la respuesta queda `complete: false` hasta resolverlas. Todo ocurre en una transacción SERIALIZABLE, con lock de plantilla y legajos, auditoría y recálculo de cobertura desde X.
 
 #### Notificaciones (`/notifications`) — fecha efectiva, filtros, cursor y enriquecimiento de `employee`
 
@@ -2132,8 +2187,8 @@ El resto de `entityType` (cierres, correcciones, novedades pendientes) no trae `
 `ALERTA_FICHADA` (todas las alertas de turno/fichada, incluida `ACTIVIDAD_EN_FRANCO`), `FALTA_SALIDA`, `FALTA_INGRESO` y `SIN_ACTIVIDAD_REGISTRADA` se crean, por legajo, para la unión deduplicada de:
 
 - **RRHH:** usuarios `ACTIVO` con rol `NIVEL_1_RRHH`.
-- **Responsables directos:** usuarios `ACTIVO` (cualquier rol) con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente sobre el legajo. Vigente = mismo criterio que el alcance (`activeTimeResponsibleWhere` en `employeeAccess.ts`): `status` nulo/`ACTIVO`/`Activo`, `effectiveFrom` nulo o ≤ fecha, `effectiveTo` nulo o ≥ fecha (inclusivos).
-- **Supervisores Nivel 2 heredados:** por cada responsable directo `NIVEL_3_CARGA_HORARIA` `ACTIVO`, los usuarios `NIVEL_2_SUPERVISION` `ACTIVO` que lo supervisan (`UserSupervisionAssignment`). Roles y estados de ambos lados se verifican al resolver: una relación desfasada no concede el aviso. `EmployeeAssignment.role` nunca se usa.
+- **Responsables directos:** usuarios `NIVEL_2_SUPERVISION` `ACTIVO` con un `EmployeeAssignment` `TIME_RESPONSIBLE` vigente sobre el legajo. Vigente = mismo criterio que el alcance (`activeTimeResponsibleWhere` en `employeeAccess.ts`): `status` nulo/`ACTIVO`/`Activo`, `effectiveFrom` nulo o ≤ fecha, `effectiveTo` nulo o ≥ fecha (inclusivos).
+- **Nivel 3 heredados:** por cada responsable directo, los usuarios `NIVEL_3_CARGA_HORARIA` `ACTIVO` que ese Nivel 2 supervisa (`UserSupervisionAssignment`). Roles y estados de ambos lados se verifican al resolver: una relación desfasada no concede el aviso. `EmployeeAssignment.role` nunca se usa.
 
 Cada usuario recibe una sola fila por evento aunque llegue por varias vías. La vigencia se evalúa en la fecha del hecho, no en la de procesamiento: `ShiftAlert.actualAt` (alertas), inicio de la jornada (`FALTA_SALIDA`) y fecha operativa del incidente (`FALTA_INGRESO` / `SIN_ACTIVIDAD_REGISTRADA`). El cambio aplica a eventos nuevos: no hay backfill de notificaciones anteriores. Fuente única: `backend/src/modules/workforce-management/employeeNotificationRecipients.ts` (resolución en batch, a lo sumo 3 consultas por lote). El resto de las notificaciones (`NOVEDAD_PENDIENTE`, `CIERRE_MENSUAL`, `CORRECCION_HORARIA`) siguen siendo sólo para RRHH.
 

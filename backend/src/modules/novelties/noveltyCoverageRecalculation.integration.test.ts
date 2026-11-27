@@ -13,6 +13,9 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+// R8.3: actor de Nivel 1 literal (un import de shiftWriteAccess cargaría el
+// cliente Prisma antes de que la suite apunte a su base).
+const globalShiftActor = (user: Express.AuthUser) => ({ user, scope: { all: true as const } });
 
 const url = process.env.NOVELTY_RECALC_IT_DATABASE_URL;
 
@@ -60,7 +63,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     if (options.template) await holder.shiftAssignment.create({ data: { employeeId: created.id, shiftTemplateId: options.template, effectiveFrom: day("2027-01-01"), weekdays: options.weekdays ?? [] } });
     return created.id;
   };
-  const closure = (employeeId: string, period: string, status: "DEVUELTO" | "ENVIADO") => holder.monthlyTimeClosure.create({ data: { employeeId, period, status, snapshot: { marker: "previo" } } });
+  const closure = (employeeId: string, period: string, status: "ABIERTO" | "CERRADO") => holder.monthlyTimeClosure.create({ data: { employeeId, period, status, snapshot: { marker: "previo" } } });
   const snapshotOf = async (employeeId: string, period: string) => (await holder.monthlyTimeClosure.findFirstOrThrow({ where: { employeeId, period } })).snapshot as { marker?: string; accounting?: { noveltyCoveredMinutes: number }; recalculation?: { reason: string; source?: string } };
 
   beforeAll(async () => {
@@ -114,7 +117,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
   it("francos: asignar → 0 (DAY_OFF) sólo ese día, sin reescribir los demás; cancelar → restaura; el snapshot abierto se reconstruye", async () => {
     const emp = await employee({ template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
     const novelty = await createNovelty(emp, types.vacaciones, "2027-03-01", "2027-03-05");
-    await closure(emp, "2027-03", "DEVUELTO");
+    await closure(emp, "2027-03", "ABIERTO");
     const before = await rows(novelty);
     expect([...before.values()].every((row) => row.outcome === "COVERED" && row.baseMinutes === 480)).toBe(true);
 
@@ -148,12 +151,12 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
 
   it("turnos: L–V → agregar el domingo recalcula sólo esa vigencia (0 → 480 × 2) sin tocar los demás días", async () => {
     const emp = await employee();
-    const [assignment] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.lv, effectiveFrom: day("2027-01-01"), weekdays: [1, 2, 3, 4, 5] } as never, user(), audit());
+    const [assignment] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.lv, effectiveFrom: day("2027-01-01"), weekdays: [1, 2, 3, 4, 5] } as never, globalShiftActor(user()), audit());
     const novelty = await createNovelty(emp, types.vacaciones, "2027-03-01", "2027-03-07");
     const before = await rows(novelty);
     expect(before.get("2027-03-07")).toMatchObject({ outcome: "NO_WORK_OBLIGATION", baseMinutes: 0 });
 
-    await m.assignments.update(assignment!.id, { weekdays: [0, 1, 2, 3, 4, 5] } as never, user(), audit());
+    await m.assignments.update(assignment!.id, { weekdays: [0, 1, 2, 3, 4, 5] } as never, globalShiftActor(user()), audit());
     const after = await rows(novelty);
     expect(after.get("2027-03-07")).toMatchObject({ outcome: "COVERED", baseMinutes: 480 });
     expect(Number(after.get("2027-03-07")!.appliedMultiplier)).toBe(2);
@@ -163,14 +166,14 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
   it("turnos: introducir un solapamiento manda a revisión; quitarlo lo resuelve solo", async () => {
     const emp = await employee({ template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
     const novelty = await createNovelty(emp, types.vacaciones, "2027-03-01", "2027-03-02");
-    const [overlapping] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.all, effectiveFrom: day("2027-02-01"), weekdays: [] } as never, user(), audit());
+    const [overlapping] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.all, effectiveFrom: day("2027-02-01"), weekdays: [] } as never, globalShiftActor(user()), audit());
     const overlapped = await rows(novelty);
     expect([...overlapped.values()].map((row) => [row.outcome, row.scheduleReviewReason, row.reviewStatus])).toEqual([
       ["SCHEDULE_UNRESOLVED", "SHIFT_ASSIGNMENTS_OVERLAP", "PENDING"],
       ["SCHEDULE_UNRESOLVED", "SHIFT_ASSIGNMENTS_OVERLAP", "PENDING"],
     ]);
 
-    await m.assignments.remove(overlapping!.id, audit());
+    await m.assignments.remove(overlapping!.id, globalShiftActor(user()), audit());
     expect([...(await rows(novelty)).values()].map((row) => [row.outcome, row.baseMinutes, row.reviewStatus])).toEqual([
       ["COVERED", 480, "NOT_REQUIRED"],
       ["COVERED", 480, "NOT_REQUIRED"],
@@ -193,7 +196,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     expect(Number(kept.appliedMultiplier)).toBe(3);
 
     // Aparece el turno desde el 10/03: el 14 ya se puede calcular → manda la evidencia; el 7 sigue igual.
-    const [assignment] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.all, effectiveFrom: day("2027-03-10"), weekdays: [] } as never, user(), audit());
+    const [assignment] = await m.assignments.assign({ employeeIds: [emp], shiftTemplateId: templates.all, effectiveFrom: day("2027-03-10"), weekdays: [] } as never, globalShiftActor(user()), audit());
     expect((await rows(secondSunday)).get("2027-03-14")).toMatchObject({ outcome: "COVERED", baseMinutes: 480, reviewStatus: "NOT_REQUIRED", resolution: null, resolutionNote: null });
     expect((await rows(firstSunday)).get("2027-03-07")).toMatchObject({ reviewStatus: "RESOLVED", resolvedBaseMinutes: 480 });
     const dropped = await holder.auditLog.findFirst({ where: { entity: "NoveltyDayCoverage", entityId: secondSunday } });
@@ -201,7 +204,7 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     expect(dropped?.before).toMatchObject({ resolution: "SET_BASE_MINUTES", resolvedBaseMinutes: 480, resolutionNote: "Trabajaba domingos de 8 h" });
 
     // Quitar el turno vuelve a revisión: la resolución descartada no resucita.
-    await m.assignments.remove(assignment!.id, audit());
+    await m.assignments.remove(assignment!.id, globalShiftActor(user()), audit());
     expect((await rows(secondSunday)).get("2027-03-14")).toMatchObject({ outcome: "SCHEDULE_UNRESOLVED", reviewStatus: "PENDING", resolution: null });
   });
 
@@ -213,11 +216,11 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     const theirs = await createNovelty(other, types.jornada, "2027-03-02");
     const theirsBefore = (await rows(theirs)).get("2027-03-02")!;
 
-    await m.workforce.updateShiftTemplate(template, { endTime: "17:00" }, audit());
+    await m.workforce.updateShiftTemplate(template, { endTime: "17:00" }, globalShiftActor(user()), audit());
     expect((await rows(mine)).get("2027-03-02")).toMatchObject({ outcome: "COVERED", baseMinutes: 540, expectedMinutes: 540 });
     expect((await rows(theirs)).get("2027-03-02")!.calculatedAt).toEqual(theirsBefore.calculatedAt);
 
-    await m.workforce.updateShiftTemplate(template, { startTime: "22:00", endTime: "06:00" }, audit());
+    await m.workforce.updateShiftTemplate(template, { startTime: "22:00", endTime: "06:00" }, globalShiftActor(user()), audit());
     expect((await rows(mine)).get("2027-03-02")).toMatchObject({ outcome: "COVERED", baseMinutes: 480, expectedMinutes: 480 });
   });
 
@@ -292,8 +295,8 @@ describe.skipIf(!url)("Recálculo automático de la cobertura de novedades contr
     const emp = await employee({ template: templates.lv, weekdays: [1, 2, 3, 4, 5] });
     const february = await createNovelty(emp, tramite, "2027-02-10");
     const march = await createNovelty(emp, tramite, "2027-03-02");
-    await closure(emp, "2027-02", "ENVIADO");
-    await closure(emp, "2027-03", "DEVUELTO");
+    await closure(emp, "2027-02", "CERRADO");
+    await closure(emp, "2027-03", "ABIERTO");
     // Una novedad NONE puede cargarse en un cierre porque no altera minutos,
     // pero un recálculo automático posterior tampoco debe reinterpretar su
     // snapshot diario dentro del período ya protegido.

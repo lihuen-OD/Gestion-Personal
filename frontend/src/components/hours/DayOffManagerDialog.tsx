@@ -40,15 +40,12 @@ export function DayOffManagerDialog({
   initialDate,
   initialSearch = "",
   initialSelectedEmployeeId,
-  canCorrectClosedPeriods,
   close,
   onSaved,
 }: {
   initialDate: string;
   initialSearch?: string;
   initialSelectedEmployeeId?: string;
-  // Sólo RRHH corrige un período enviado/aprobado, con motivo.
-  canCorrectClosedPeriods: boolean;
   close: () => void;
   onSaved: () => void;
 }) {
@@ -63,7 +60,6 @@ export function DayOffManagerDialog({
   // Seleccionados con su última foto conocida (pueden estar en otra página).
   const [selected, setSelected] = useState<Map<string, DayOffCandidate>>(new Map());
   const [notes, setNotes] = useState("");
-  const [correctionReason, setCorrectionReason] = useState("");
   const [saving, setSaving] = useState<EmployeeDayOffStatus | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -111,7 +107,8 @@ export function DayOffManagerDialog({
   const selectedList = useMemo(() => [...selected.values()], [selected]);
   const toAssign = selectedList.filter((item) => !hasActiveDayOff(item) && !item.holidayWork);
   const toCancel = selectedList.filter(hasActiveDayOff);
-  const blockedByPeriod = (item: DayOffCandidate) => item.periodLocked && !canCorrectClosedPeriods;
+  // Un período CERRADO no se modifica hasta reabrirlo (ningún rol).
+  const blockedByPeriod = (item: DayOffCandidate) => item.periodLocked;
   const selectable = (item: DayOffCandidate) => !blockedByPeriod(item) && !(item.holidayWork && !hasActiveDayOff(item));
   const visibleSelectable = items.filter(selectable);
   const allVisibleSelected = visibleSelectable.length > 0 && visibleSelectable.every((item) => selected.has(item.employee.id));
@@ -148,18 +145,12 @@ export function DayOffManagerDialog({
   const apply = async (status: EmployeeDayOffStatus) => {
     const targets = status === "ACTIVO" ? toAssign : toCancel;
     if (!targets.length || saving) return;
-    const needsReason = targets.some((item) => item.periodLocked);
-    if (needsReason && correctionReason.trim().length < 3) {
-      setError("Indicá el motivo de la corrección: hay personas con el período ya enviado a cierre.");
-      return;
-    }
     setSaving(status);
     setError("");
     setNotice("");
     try {
       const result = await employeeDayOffApiService.save({
         date,
-        correctionReason: needsReason ? correctionReason.trim() : null,
         employees: targets.map((item) => ({ employeeId: item.employee.id, status, ...(status === "ACTIVO" ? { notes: notes.trim() || null } : {}) })),
       });
       const changed = result.summary.changed;
@@ -172,7 +163,6 @@ export function DayOffManagerDialog({
       setNotice(`${base}${alerts}`);
       setSelected(new Map());
       setNotes("");
-      setCorrectionReason("");
       setReloadToken((value) => value + 1);
       onSaved();
     } catch (saveError) {
@@ -181,8 +171,6 @@ export function DayOffManagerDialog({
       setSaving(null);
     }
   };
-
-  const reasonRequired = [...toAssign, ...toCancel].some((item) => item.periodLocked);
 
   return (
     <Modal
@@ -235,7 +223,7 @@ export function DayOffManagerDialog({
                 {items.map((item) => {
                   const checked = selected.has(item.employee.id);
                   const disabledReason = blockedByPeriod(item)
-                    ? "El período ya fue enviado a cierre: sólo RRHH puede corregirlo."
+                    ? "El período está cerrado: reabrilo desde Cierres mensuales para modificarlo."
                     : item.holidayWork && !hasActiveDayOff(item)
                       ? "Está convocado a trabajar el feriado de esa fecha: cancelá la convocatoria antes de asignar franco."
                       : undefined;
@@ -276,12 +264,6 @@ export function DayOffManagerDialog({
             <span>Observación del franco (opcional)</span>
             <input value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} placeholder="Ej.: franco compensatorio acordado con el encargado" />
           </label>
-          {reasonRequired ? (
-            <label className="field">
-              <span>Motivo de la corrección *</span>
-              <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} maxLength={500} rows={2} placeholder="Queda registrado en auditoría: el período ya fue enviado a cierre." />
-            </label>
-          ) : null}
         </div>
 
         {error ? <div className="rule-form-alert-error" role="alert"><AlertTriangle size={16} /><span>{error}</span></div> : null}

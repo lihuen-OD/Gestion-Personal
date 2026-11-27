@@ -28,15 +28,13 @@ export type ClosureSnapshotRecalculation =
   // quitó: la equivalencia de las horas ya cargadas se reinterpreta
   // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §15).
   | { reason: "SPECIAL_HOUR_RULE_CHANGED"; doubleHourRuleId: string; doubleHourRuleName: string }
-  // Cambió la convocatoria de un feriado (§16): define quién cobra el FERIADO.
-  | { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED"; date: string }
   // Se asignó, canceló o reactivó un franco (docs/decisions/EMPLOYEE_DAY_OFF.md
   // §8): las horas automáticas de esa fecha operativa dejan o vuelven a computar.
   | { reason: "EMPLOYEE_DAY_OFF_CHANGED"; date: string }
   // Se resolvió una fichada sobre horas cargadas a mano usando las horas
   // fichadas (docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   | { reason: "MANUAL_HOURS_CONFLICT_RESOLVED"; date: string }
-  // Reconciliación de cargas existentes con el estado vigente de reglas y convocatorias.
+  // Reconciliación de cargas existentes con el estado vigente de las reglas.
   | { reason: "SPECIAL_HOUR_RECONCILIATION" }
   // Cambió una fuente de la cobertura de novedades (turno, franco, regla,
   // relación laboral, configuración del tipo...): docs/decisions/NOVELTY_COVERAGE_ENGINE.md §13.

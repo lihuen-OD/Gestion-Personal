@@ -97,7 +97,7 @@ export function buildHourConceptEmployeePath(hourConceptId: string, employeeId: 
 // que lo unen con sus horas — sobre todo workTreatment, que reinterpreta la
 // historia completa (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12):
 // Legajo y grilla por legajo ("employees"), Carga de horas y Por persona
-// ("time-entries"), Bandeja ("pending"), dashboard, cierres y novedades
+// ("time-entries"), dashboard, cierres y novedades
 // (al eliminar se desvincula su concepto destino). Mismo alcance que
 // hourConcepts.controller.ts::clearHourConceptDependentReadCaches.
 export const HOUR_CONCEPT_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = [

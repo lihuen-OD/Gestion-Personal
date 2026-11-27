@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { roles } from "../../shared/security/roles";
-import { employeeAccessWhere } from "./employeeAccess";
+import { activeTimeResponsibleWhere, employeeAccessWhere, withoutEffectiveTimeResponsibleWhere } from "./employeeAccess";
 
 // Auditoria 2026-08-24 (critico): employeeAccessWhere es el unico filtro de
 // alcance por rol usado por employees/time-entries/novelties/positions y no
@@ -21,31 +21,23 @@ describe("employeeAccessWhere", () => {
 
   type AssignmentFilter = { assignments: { some: { type: string; AND: Array<Record<string, unknown>> } } };
   const responsibleClause = (where: unknown) =>
-    (where as AssignmentFilter).assignments.some.AND.find((clause) => "userId" in clause || "OR" in clause && (clause.OR as Array<Record<string, unknown>>).some((option) => "userId" in option));
+    (where as AssignmentFilter).assignments.some.AND.find((clause) => "userId" in clause || "user" in clause);
 
-  it("Nivel 3 ve solo sus asignaciones directas: TIME_RESPONSIBLE + userId propio, sin herencia", () => {
-    const where = employeeAccessWhere(user(roles.cargaHoraria, "carga-7")) as AssignmentFilter;
-    expect(where.assignments.some.type).toBe("TIME_RESPONSIBLE");
-    expect(responsibleClause(where)).toEqual({ userId: "carga-7" });
-    expect(JSON.stringify(where)).not.toContain("supervisionsAsSupervised");
-  });
-
-  it("Nivel 2 ve la unión: sus TIME_RESPONSIBLE directos o los de los Nivel 3 que supervisa (por relación, sin copiar asignaciones)", () => {
+  it("Nivel 2 ve solo sus TIME_RESPONSIBLE directos (userId propio)", () => {
     const where = employeeAccessWhere(user(roles.supervision, "sup-42")) as AssignmentFilter;
     expect(where.assignments.some.type).toBe("TIME_RESPONSIBLE");
-    expect(responsibleClause(where)).toEqual({
-      OR: [
-        { userId: "sup-42" },
-        { user: { role: roles.cargaHoraria, status: "ACTIVO", supervisionsAsSupervised: { some: { supervisorUserId: "sup-42" } } } },
-      ],
-    });
+    expect(responsibleClause(where)).toEqual({ userId: "sup-42" });
+    expect(JSON.stringify(where)).not.toContain("supervisions");
   });
 
-  it("la herencia exige supervisado Nivel 3 ACTIVO; la rama directa del Nivel 2 y el alcance del Nivel 3 no dependen de eso", () => {
-    const supervision = responsibleClause(employeeAccessWhere(user(roles.supervision, "sup-1"))) as { OR: Array<Record<string, unknown>> };
-    expect(supervision.OR[0]).toEqual({ userId: "sup-1" });
-    expect(supervision.OR[1]).toMatchObject({ user: { role: roles.cargaHoraria, status: "ACTIVO" } });
-    expect(responsibleClause(employeeAccessWhere(user(roles.cargaHoraria, "carga-1")))).toEqual({ userId: "carga-1" });
+  it("Nivel 3 hereda los TIME_RESPONSIBLE de sus Nivel 2 ACTIVOS (por relación, sin copiar ni usar filas propias)", () => {
+    const where = employeeAccessWhere(user(roles.cargaHoraria, "carga-7")) as AssignmentFilter;
+    expect(where.assignments.some.type).toBe("TIME_RESPONSIBLE");
+    expect(responsibleClause(where)).toEqual({
+      user: { role: roles.supervision, status: "ACTIVO", supervisionsAsSupervisor: { some: { supervisedUserId: "carga-7" } } },
+    });
+    // Una fila TIME_RESPONSIBLE a nombre del propio Nivel 3 no abre alcance.
+    expect(JSON.stringify(where)).not.toContain('"userId":"carga-7"');
   });
 
   it("status ACTIVO/Activo estan cubiertos: el filtro acepta ambas variantes ademas de status nulo", () => {
@@ -92,5 +84,14 @@ describe("employeeAccessWhere", () => {
     const where = employeeAccessWhere(user("ROL_INEXISTENTE"));
     expect(where).toEqual({ id: "__NO_ACCESS__" });
     expect(where).not.toEqual({});
+  });
+});
+
+describe("withoutEffectiveTimeResponsibleWhere (KPI «Sin responsable»)", () => {
+  it("sólo cuenta como responsable un TIME_RESPONSIBLE vigente de un Nivel 2 ACTIVO", () => {
+    const where = withoutEffectiveTimeResponsibleWhere(new Date("2026-11-26T15:00:00Z"));
+    expect(where).toEqual({
+      assignments: { none: { ...activeTimeResponsibleWhere("2026-11-26"), user: { role: roles.supervision, status: "ACTIVO" } } },
+    });
   });
 });

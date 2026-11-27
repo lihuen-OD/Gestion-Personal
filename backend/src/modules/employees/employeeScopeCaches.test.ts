@@ -7,7 +7,7 @@ import { shiftAssignmentSummaryCache } from "../shifts/shiftAssignment.cache";
 import {
   attendanceObservationsCache, attendanceSummaryCache, homeSummaryCache, timeEntriesListCache, timeEntriesPeriodEmployeesCache, timeEntriesSummaryCache,
 } from "../time-entries/timeEntries.cache";
-import { closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "../workforce-management/workforce.cache";
+import { closuresCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "../workforce-management/workforce.cache";
 import { clearEmployeeReadCaches } from "./employees.controller";
 import { invalidateEmployeeScopeCaches } from "./employeeScopeCaches";
 
@@ -31,7 +31,6 @@ describe("invalidateEmployeeScopeCaches", () => {
     ["alertas de turnos", shiftAlertListCache],
     ["turnos: resumen", shiftAssignmentSummaryCache],
     ["cierres", closuresCache],
-    ["correcciones", correctionsCache],
     ["dashboard", dashboardMetricsCache],
   ] as Array<[string, AnyCache]>;
   const global: Array<[string, AnyCache]> = [

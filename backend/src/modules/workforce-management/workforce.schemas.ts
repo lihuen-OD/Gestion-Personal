@@ -5,13 +5,8 @@ export const periodQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{
 // Correcciones de Cierre mensual: período y estado se resuelven en el where
 // (antes: fetch de las últimas 500 de todos los períodos + filtro en el
 // cliente, que perdía en silencio correcciones del período fuera de esas 500).
-export const correctionsQuerySchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), status: z.enum(["PENDIENTE", "APROBADA", "RECHAZADA"]).optional() });
-export type CorrectionsQuery = z.infer<typeof correctionsQuerySchema>;
 export const closureSubmitSchema = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/), employeeIds: z.array(z.string().uuid()).min(1).max(500) });
-export const closureBulkSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(500), note: z.string().trim().max(600).optional() });
-export const returnClosureSchema = z.object({ reason: z.string().trim().min(2).max(600) });
-export const correctionCreateSchema = z.object({ timeEntryId: z.string().uuid(), proposedHours: z.coerce.number().min(0).max(24), reason: z.string().trim().min(2).max(600) });
-export const correctionReviewSchema = z.object({ note: z.string().trim().max(600).optional() });
+export const reopenClosureSchema = z.object({ reason: z.string().trim().min(5).max(600), acknowledgeExportedHistory: z.boolean().default(false) });
 // Etapa 9I: page/take real (antes take:200 fijo, sin paginación) — mismo
 // tope máximo de take que shiftAlerts/otras listas chicas de la app (no hace
 // falta un take grande acá, la campanita sólo necesita las últimas 10-20).
@@ -52,6 +47,8 @@ export const shiftTemplateSchema = z.object({
   name: z.string().trim().min(2).max(100),
   description: z.string().trim().max(500).optional().nullable(),
   categoryName: z.string().trim().max(60).optional().nullable(),
+  // R3.1: grupo de turnos (lugar). null = sin grupo (válido); en PATCH, null desasigna.
+  shiftGroupId: z.string().uuid().optional().nullable(),
   startTime: z.string().regex(/^\d{2}:\d{2}$/),
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   entryToleranceBeforeMinutes: z.coerce.number().int().min(0).max(180),
@@ -65,6 +62,22 @@ export const shiftTemplateSchema = z.object({
   status: z.enum(["ACTIVO", "INACTIVO"]).default("ACTIVO"),
 });
 export const updateShiftTemplateSchema = shiftTemplateSchema.partial().refine((value) => Object.keys(value).length > 0, { message: "Indicá al menos un dato para actualizar" });
+const replacementDateKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Usá una fecha con formato AAAA-MM-DD").refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "La fecha no existe");
+const replaceShiftTemplateScheduleBase = z.object({
+  effectiveFrom: replacementDateKey,
+  startTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  endTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  code: z.string().trim().min(2).max(30),
+  name: z.string().trim().min(2).max(100),
+});
+export const replaceShiftTemplateSchedulePreviewSchema = replaceShiftTemplateScheduleBase;
+export const replaceShiftTemplateScheduleSchema = replaceShiftTemplateScheduleBase.extend({
+  confirmationToken: z.string().regex(/^[0-9a-f]{64}$/, "Token de confirmación inválido"),
+  acknowledgePendingDependencies: z.boolean().optional().default(false),
+});
 // Etapa 12B: clasificación estructurada, independiente del nombre libre
 // (`name` sigue siendo sólo texto visible, nunca se usa para lógica). Sin
 // `kind` en el body, queda en OTRO — mismo valor seguro que aplica la

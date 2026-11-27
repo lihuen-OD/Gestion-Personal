@@ -7,6 +7,8 @@ import { resolveWorkObligationCandidates } from "./workObligation.service";
 
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     holidayWorkAssignment: { findMany: vi.fn() },
     shiftAssignment: { findMany: vi.fn() },
     employeeDayOff: { findMany: vi.fn() },
@@ -263,6 +265,22 @@ describe("resolveWorkObligationCandidates — franco (docs/decisions/EMPLOYEE_DA
 
     expect(result.isHoliday).toBe(true);
     expect(result.candidates).toHaveLength(0);
+    expect(result.convokedWithoutSchedule).toEqual([]);
+  });
+
+  // §20: convocado sin turno (sin asignación aplicable, SIN_TURNO, sin plantilla) → obligación de día
+  // sin horario, sólo para el chequeo diario de inactividad; con franco, nada.
+  it("convocados sin turno: obligación de día (sin candidato con horario); el SIN_TURNO también; con franco, no", async () => {
+    mockedHolidayDates.mockResolvedValue([{ date: dateKey, rules: [{ id: "rule-1", name: "Feriados" }] }]);
+    mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([{ employeeId: "sin-asignacion" }, { employeeId: "sin-turno" }, { employeeId: "con-franco" }, { employeeId: "employee-1" }]);
+    mockedPrisma.shiftAssignment.findMany.mockResolvedValue([assignment(), assignment({ employeeId: "sin-turno" })]);
+    mockedRegimes.mockResolvedValue(new Map([["sin-turno", { kind: "SIN_TURNO" }]]));
+    mockedPrisma.employeeDayOff.findMany.mockImplementation(async ({ where }: { where: { employeeId: { in: string[] } } }) => (where.employeeId.in.includes("con-franco") ? [{ employeeId: "con-franco" }] : []));
+
+    const result = await resolveWorkObligationCandidates(dateKey);
+
+    expect(result.candidates.map((candidate) => candidate.employeeId)).toEqual(["employee-1"]);
+    expect(result.convokedWithoutSchedule).toEqual(["sin-asignacion", "sin-turno"]);
   });
 
   it("turno nocturno: el franco del día de inicio programado anula la obligación de esa noche", async () => {

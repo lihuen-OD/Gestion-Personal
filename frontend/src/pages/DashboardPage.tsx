@@ -28,7 +28,7 @@ export function Alert({ label, value, tone }: { label: string; value: string; to
 export function DashboardPage() {
   const { user } = useAuth();
   const level = roleLevel(user!.role);
-  const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, reviewLoads: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, pendingNovelties: 0, headcountByCompany: [], headcountByZone: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
+  const [metrics, setMetrics] = useState<DashboardMetrics>({ active: 0, inactive: 0, total: 0, absenceRate: "0", absenceDays: 0, turnoverRate: "0", exits: 0, averageAge: "0", averageTenure: "0", transported: 0, loadedHours: 0, loadCoverage: 0, pendingLoads: 0, pendingShiftAlerts: 0, expiredDocuments: 0, expiringDocuments: 0, missingResponsible: 0, noveltyReviewDays: 0, headcountByCompany: [], headcountByZone: [], transportByCity: [], transportRoutes: [], upcomingBirthdays: [], period: "" });
   const [metricsStatus, setMetricsStatus] = useState<"loading" | "success" | "error">("loading");
   const [metricsRetry, setMetricsRetry] = useState(0);
   // Etapa 14F.2: separado del estado de metrics — antes ambos compartían un
@@ -106,7 +106,7 @@ export function DashboardPage() {
     </div>
     <div className="dashboard-grid">
       <Section title={level === 2 ? "Dotación por zona vigente" : "Dotación activa por empresa empleadora"} subtitle={level === 2 ? `Total general: ${metrics.active} personas únicas. Una persona puede aparecer en varias zonas; las cantidades por zona no se suman.` : "Distribución calculada sobre legajos activos"}><DashboardBars rows={level === 2 ? metrics.headcountByZone : metrics.headcountByCompany} /></Section>
-      <Section title="Alertas que requieren atención" subtitle="Generadas desde el estado actual del sistema"><div className="alerts"><Alert label="Documentación vencida" value={`${metrics.expiredDocuments} documentos`} tone="red" /><Alert label="Documentación por vencer" value={`${metrics.expiringDocuments} documentos`} tone="orange" /><Alert label="Sin responsable de carga" value={`${metrics.missingResponsible} legajos`} tone="blue" /><Alert label="Cargas horarias pendientes" value={`${metrics.pendingLoads} personas`} tone="orange" /><Alert label="Novedades pendientes" value={`${metrics.pendingNovelties} registros`} tone="purple" /></div></Section>
+      <Section title="Alertas que requieren atención" subtitle="Generadas desde el estado actual del sistema"><div className="alerts"><Alert label="Documentación vencida" value={`${metrics.expiredDocuments} documentos`} tone="red" /><Alert label="Documentación por vencer" value={`${metrics.expiringDocuments} documentos`} tone="orange" /><Alert label="Sin responsable de carga" value={`${metrics.missingResponsible} legajos`} tone="blue" /><Alert label="Personas sin horas cargadas" value={`${metrics.pendingLoads} personas`} tone="orange" /><Alert label="Días de novedad por revisar" value={`${metrics.noveltyReviewDays} días`} tone="purple" /><Alert label="Alertas de turnos pendientes" value={`${metrics.pendingShiftAlerts} alertas`} tone="red" /></div></Section>
     </div>
     <div className="dashboard-grid">
       <Section title="Transporte por localidad" subtitle={`${metrics.transported} personas utilizan transporte de la empresa`}><DashboardBars rows={metrics.transportByCity} /></Section>
@@ -117,7 +117,7 @@ export function DashboardPage() {
       </Section>
     </div>
     <div className="dashboard-grid">
-      <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Pendientes</span></div><div><b>{metrics.reviewLoads}</b><span>En revisión</span></div><div><b>{formatDecimalHoursDuration(metrics.loadedHours)}</b><span>Cargadas</span></div></div></Section>
+      <Section title="Control de carga horaria" subtitle={`Periodo ${metrics.period ? formatPeriodLabel(metrics.period) : "actual"}`}><div className="compact-metrics"><div><b>{metrics.loadCoverage}%</b><span>Cobertura</span></div><div><b>{metrics.pendingLoads}</b><span>Sin horas</span></div><div><b>{metrics.pendingShiftAlerts}</b><span>Alertas pendientes</span></div><div><b>{formatDecimalHoursDuration(metrics.loadedHours)}</b><span>Cargadas</span></div></div></Section>
     </div>
     {level === 1 && <Section title="Actividad reciente" subtitle="Últimos movimientos registrados en la plataforma">
       <DataTable

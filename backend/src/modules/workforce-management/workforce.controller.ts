@@ -1,15 +1,16 @@
 import type { RequestHandler } from "express";
+import { requestShiftGroupScope, shiftGroupScopeCacheKey } from "../shifts/shiftGroupAccess";
+import { requestShiftActor } from "../shifts/shiftWriteAccess";
 import { deletionConflictResponse } from "../../shared/deletion/deletionPlan";
 import type { DoubleHourRuleKind } from "@prisma/client";
 import { requestAuditContext } from "../../shared/audit/requestAuditContext";
 import { requireParam } from "../../shared/http/params";
 import { workforceService } from "./workforce.service";
 import { drainClockPunchPostProcess } from "../clock/clockPunchPostProcess.worker";
-import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
-import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
-import { clearEmployeeReadCaches } from "../employees/employees.controller";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 import { clearNoveltyCoverageReadCaches } from "../novelties/noveltyCoverageReadCaches";
-import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { clearDoubleRulesReadCache, clearMonthlyClosuresReadCaches, clearNotificationsListCache, clearShiftTemplatesReadCache, closuresCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { clearShiftAssignmentSummaryCache } from "../shifts/shiftAssignment.cache";
 
 // Etapa 9C: mismo patrón ya usado en novelties/documents/time-entries/employees
 // controllers — clave por usuario+rol+URL (ninguno de los dos endpoints tiene
@@ -30,48 +31,16 @@ export const workforceController = {
     closuresCache.set(key,data);
     res.json({data});
   }) satisfies RequestHandler,
-  submit: (async (req,res)=>{
-    const data=await workforceService.submitClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req),{ settleClockPunchPostProcess: drainClockPunchPostProcess });
+  closureBlockers: (async (req,res)=>{
+    res.json({data:await workforceService.closureBlockers(String(req.query.period),req.user!)});
+  }) satisfies RequestHandler,
+  close: (async (req,res)=>{
+    const data=await workforceService.closeClosures(req.body.period,req.body.employeeIds,req.user!,requestAuditContext(req),{ settleClockPunchPostProcess: drainClockPunchPostProcess });
     clearMonthlyClosuresReadCaches();
     res.status(201).json({data});
   }) satisfies RequestHandler,
-  approve: (async (req,res)=>{
-    const data=await workforceService.approveClosures(req.body.ids,req.body.note,req.user!,requestAuditContext(req));
-    clearMonthlyClosuresReadCaches();
-    res.json({data});
-  }) satisfies RequestHandler,
-  returnClosure: (async (req,res)=>{
-    const data=await workforceService.returnClosure(requireParam(req,"id"),req.body.reason,req.user!,requestAuditContext(req));
-    clearMonthlyClosuresReadCaches();
-    res.json({data});
-  }) satisfies RequestHandler,
-  corrections: (async (req,res)=>{
-    const key=userScopedCacheKey(req);
-    const cached=correctionsCache.get(key);
-    if(cached){ res.json({data:cached}); return; }
-    const data=await workforceService.corrections(req.user!, req.query as unknown as CorrectionsQuery);
-    correctionsCache.set(key,data);
-    res.json({data});
-  }) satisfies RequestHandler,
-  createCorrection: (async (req,res)=>{
-    const data=await workforceService.createCorrection(req.body,req.user!,requestAuditContext(req));
-    clearMonthlyClosuresReadCaches();
-    res.status(201).json({data});
-  }) satisfies RequestHandler,
-  // Etapa 9B: approveCorrection modifica TimeEntry.hours/totalMinutes (workforce.service.ts) —
-  // igual que cada escritura equivalente en timeEntries.controller.ts, debe invalidar los
-  // caches de lectura de horas/legajo para no mostrar el valor viejo hasta que expire el TTL.
-  // Etapa 14G.8: también actualiza MonthlyTimeClosure.status (workforce.service.ts línea 144)
-  // cuando la corrección tiene closureId — invalida closures/corrections además.
-  approveCorrection: (async (req,res)=>{
-    const data=await workforceService.approveCorrection(requireParam(req,"id"),req.user!,requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
-    clearMonthlyClosuresReadCaches();
-    res.json({data});
-  }) satisfies RequestHandler,
-  rejectCorrection: (async (req,res)=>{
-    const data=await workforceService.rejectCorrection(requireParam(req,"id"),req.body.note,req.user!,requestAuditContext(req));
+  reopen: (async (req,res)=>{
+    const data=await workforceService.reopenClosure(requireParam(req,"id"),req.body,req.user!,requestAuditContext(req));
     clearMonthlyClosuresReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
@@ -94,30 +63,44 @@ export const workforceController = {
   // Etapa 9C: cache de lectura TTL corto (ver workforce.cache.ts) — mismo
   // shape de respuesta que antes, sólo cambia si la data viene de Prisma o
   // del cache.
+  // R8: la clave incluye la huella del alcance por grupo, resuelto en esta
+  // request: un grupo asignado o revocado nunca sirve una entrada vieja.
   shiftTemplates: (async (req,res)=>{
-    const key=userScopedCacheKey(req);
+    const scope=await requestShiftGroupScope(req);
+    const key=`${userScopedCacheKey(req)}:${shiftGroupScopeCacheKey(scope)}`;
     const cached=shiftTemplatesCache.get(key);
     if(cached) return res.json({data:cached});
-    const data=await workforceService.shiftTemplates();
+    const data=await workforceService.shiftTemplates(scope);
     shiftTemplatesCache.set(key,data);
     res.json({data});
   }) satisfies RequestHandler,
   createShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.createShiftTemplate(req.body,requestAuditContext(req));
+    const data=await workforceService.createShiftTemplate(req.body,await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     res.status(201).json({data});
   }) satisfies RequestHandler,
   updateShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,requestAuditContext(req));
+    const data=await workforceService.updateShiftTemplate(requireParam(req,"id"),req.body,await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     clearNoveltyCoverageReadCaches();
     res.json({data});
   }) satisfies RequestHandler,
   removeShiftTemplate: (async (req,res)=>{
-    const data=await workforceService.removeShiftTemplate(requireParam(req,"id"),requestAuditContext(req));
+    const data=await workforceService.removeShiftTemplate(requireParam(req,"id"),await requestShiftActor(req),requestAuditContext(req));
     clearShiftTemplatesReadCache();
     clearNoveltyCoverageReadCaches();
     res.json({data});
+  }) satisfies RequestHandler,
+  previewShiftTemplateScheduleReplacement: (async (req,res)=>{
+    const data=await workforceService.previewShiftTemplateScheduleReplacement(requireParam(req,"id"),req.body,await requestShiftActor(req));
+    res.json({data});
+  }) satisfies RequestHandler,
+  replaceShiftTemplateSchedule: (async (req,res)=>{
+    const data=await workforceService.replaceShiftTemplateSchedule(requireParam(req,"id"),req.body,await requestShiftActor(req),requestAuditContext(req));
+    clearShiftTemplatesReadCache();
+    clearShiftAssignmentSummaryCache();
+    clearNoveltyCoverageReadCaches();
+    res.status(201).json({data});
   }) satisfies RequestHandler,
   doubleRules: (async (req,res)=>{
     const key=userScopedCacheKey(req);

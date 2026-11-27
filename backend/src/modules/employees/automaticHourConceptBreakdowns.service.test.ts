@@ -33,7 +33,7 @@ describe("automaticHourConceptBreakdownsService", () => {
     expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "HourConceptBreakdown" }));
   });
 
-  it.each(["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"])('bloquea cierre %s', async (status) => {
+  it.each(["CERRADO"])('bloquea cierre %s', async (status) => {
     repo.findClosure.mockResolvedValue({ status } as never);
     await expect(service.recalculate("employee-1", "2026-08", user)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     expect(repo.replaceAutomatic).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe("automaticHourConceptBreakdownsService.recalculateForEmployeePeriod —
   });
 
   it("sigue bloqueando por MonthlyTimeClosure igual que el endpoint administrativo", async () => {
-    repo.findClosure.mockResolvedValue({ status: "APROBADO" } as never);
+    repo.findClosure.mockResolvedValue({ status: "CERRADO" } as never);
 
     await expect(service.recalculateForEmployeePeriod({ employeeId: "employee-1", period: "2026-08" })).rejects.toMatchObject({
       statusCode: 409,

@@ -38,6 +38,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
       code: appError.code,
       message: appError.message,
       ...(appError.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: appError.retryAfterSeconds }),
+      ...(appError.clockGuidance === undefined ? {} : { clockGuidance: appError.clockGuidance }),
       details: isProduction ? undefined : appError.details,
     },
   });

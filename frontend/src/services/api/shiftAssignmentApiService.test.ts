@@ -95,6 +95,6 @@ describe("shiftAssignmentApiService — cobertura de novedades (etapa 5, NOVELTY
     vi.mocked(apiRequest).mockResolvedValue({ data: {} });
     await run();
     const families = vi.mocked(invalidateCacheFamily).mock.calls.map(([family]) => family).sort();
-    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "pending", "time-entries", "workforce-config"]);
+    expect(families).toEqual(["dashboard", "employees", "monthly-closures", "novelties", "time-entries", "workforce-config"]);
   });
 });

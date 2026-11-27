@@ -1,13 +1,16 @@
 import { access } from "node:fs/promises";
 import { loadNoveltyCoverageForAccounting } from "../novelties/noveltyCoverageAccounting";
 import { createHash } from "node:crypto";
-import { Prisma, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
+import { Prisma, type AttendanceInactivityIncident, type HourConceptKind, type WorkShift, type WorkShiftSource } from "@prisma/client";
 import { env } from "../../config/env";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService, clearAuditDerivedCaches } from "../audit/audit.service";
 import { AppError } from "../../shared/errors/AppError";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { employeeAccessWhere } from "../employees/employeeAccess";
+import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
+import { lockEmployeeCoverage } from "../novelties/noveltyCoverage.service";
+import { shiftRotationRepository } from "../shifts/shiftRotation.repository";
 import { roles } from "../../shared/security/roles";
 import { redactPiiForRole } from "../../shared/security/piiRedaction";
 import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
@@ -18,10 +21,22 @@ import type { ClassifiedSegmentForPersistence, ClockPunchAttemptKey, ClockPunchP
 import { enqueueClockPunchPostProcess, entryPostProcess, exitPostProcess, rolloverPostProcess, type ClockPunchPostProcessRequest } from "../clock/clockPunchPostProcess.payload";
 import { clockPunchMetric, measureClockPunchPhase } from "../../shared/observability/clockPunchTelemetry";
 import { ClockPunchCooldownConflict, clockPunchCooldownError, clockPunchCooldownGuard } from "./clockPunchCooldown";
-import { failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
+import { failedAttemptClockGuidance, failedAttemptRetryAfterSeconds } from "./clockAttemptErrorMeta";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import type { RecipientsReader } from "../workforce-management/employeeNotificationRecipients";
 import { evaluateShiftExit, notifyClassificationAlerts, flagOpenShiftOverflowForReview } from "../shifts/workShiftEvaluationRunner";
+import { blockDiagnosis, isBlockChangeFromUnblockedShift, isRotationBlockShift, classifyRotationEntry, classifyRotationExit, entryDiagnosis, noEffectiveRotationDiagnosis, type EffectiveRotationEntryClassification, type OpenBlockShift, type RotationEntryClassification, type RotationExitClassification } from "../shifts/rotationEntry";
+import {
+  adoptionFor,
+  exitConfirmationRequired,
+  exitDiagnosis,
+  loadRotationPunchContext,
+  openBlockShiftOf,
+  openShiftBlockDiagnosis,
+  registerRejectedExitAttempt,
+  rotationMembershipRange,
+  shiftLimitExceeded,
+} from "./clockRotation";
 import { compareOpenShiftRisk, computeOpenShiftRisk } from "../shifts/openShiftMonitor.service";
 import { resolveActiveWorkRegime } from "../work-regimes/workRegimes.service";
 import { hourConceptsRepository } from "../hour-concepts/hourConcepts.repository";
@@ -38,6 +53,7 @@ import {
 } from "./workedTimeAccounting";
 import {
   argentinaCalendarDate,
+  calendarDateKey,
   argentinaDateParts,
   argentinaDayRange,
   formatArgentinaDate,
@@ -61,7 +77,6 @@ import type {
   ClockEmployeeSearchQuery,
   ListTimeEntriesQuery,
   PreviewWorkShiftInput,
-  RejectTimeEntryInput,
   TimeEntriesExportQuery,
   TimeEntriesPeriodEmployeesQuery,
   TimeEntriesSummaryQuery,
@@ -339,23 +354,6 @@ async function runValidationsInPriorityOrder(validations: Array<() => Promise<vo
   }
 }
 
-// Etapa 6L.3 (ajuste): la aprobación final de una carga horaria es
-// exclusiva de RRHH — Supervisión ya no puede aprobar/rechazar/devolver
-// cargas de terceros, aunque siga pudiendo revisarlas visualmente. Esto es
-// más estricto que el guard de autoaprobación de abajo: antes bloqueaba sólo
-// que alguien se aprobara a sí mismo, ahora Nivel 2 queda afuera del todo.
-function assertCanApprove(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh) {
-    throw new AppError("Only RRHH can approve, reject or return time entries", 403, "FORBIDDEN");
-  }
-}
-
-function assertCanAdminShift(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh && user.role !== roles.supervision) {
-    throw new AppError("Only RRHH or supervision can manage attendance shifts", 403, "FORBIDDEN");
-  }
-}
-
 function assertEditable(status: string) {
   if (status === "APROBADO" || status === "CERRADO") {
     throw new AppError("Approved or closed time entries cannot be edited", 400, "TIME_ENTRY_LOCKED");
@@ -596,7 +594,7 @@ function clockPunchAuditAfter(workShiftId: string, employeeId: string, origin: C
 }
 
 async function resolveClockValidationContext(employeeId: string, cooldownSince?: Date | null) {
-  const context = await timeEntriesRepository.findClockValidationContext(employeeId, cooldownSince);
+  const context = await timeEntriesRepository.findClockValidationContext(employeeId, cooldownSince, rotationMembershipRange(new Date()));
   if (!context) throw new AppError("No se encontró el legajo seleccionado.", 404, "CLOCK_EMPLOYEE_NOT_FOUND");
   return context;
 }
@@ -737,16 +735,19 @@ async function storeClockPunchPhoto(input: ClockPhotoPunchInput, deviceId: strin
  * ficha de cero. Nunca hay dos fichadas ni dos auditorías.
  * Los cachés derivados de la auditoría se limpian después del commit.
  */
-function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin): ClockPunchTransactionWriter {
+// R4.4 (D5): `rotationDiagnosis` versionado en el mismo AuditLog de la
+// fichada, dentro de su transacción (sólo miembros de rotación / jornadas con bloque).
+function clockPunchAuditWriter(audit: AuditContext | undefined, description: string, employeeId: string, origin: ClockPunchOrigin, rotationDiagnosis?: object): ClockPunchTransactionWriter {
   return async (tx, workShift, timings) => {
     const startedAt = performance.now();
+    const after = clockPunchAuditAfter(workShift.id, employeeId, origin) as Prisma.JsonObject;
     const result = await auditService.registerWithin(tx, {
     ...audit,
     action: "CREATE",
     entity: "WorkShift",
     entityId: workShift.id,
     description,
-    after: clockPunchAuditAfter(workShift.id, employeeId, origin),
+    after: (rotationDiagnosis ? { ...after, rotationDiagnosis: JSON.parse(JSON.stringify(rotationDiagnosis)) } : after) as Prisma.InputJsonValue,
     });
     if (timings) timings.auditMs += performance.now() - startedAt;
     return result;
@@ -757,6 +758,96 @@ function clockPunchAuditWriter(audit: AuditContext | undefined, description: str
 // intento guarda para el reintento y para GET attempts). Se arma con la fila
 // de la jornada que devuelve la transacción, así lo guardado y lo respondido
 // son el mismo objeto.
+const clockHhmm = (instant: Date) => {
+  const { hour, minute } = argentinaDateParts(instant);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
+/**
+ * R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6, decisión del usuario): ingreso a un
+ * bloque POSTERIOR con la jornada del bloque anterior abierta. R4.5 (§25.7):
+ * también con una jornada abierta SIN bloque (`open` null) — mismo mecanismo. Atómico (el
+ * rollover existente): la anterior pasa a FALTA_SALIDA sin endAt, endPunchId
+ * ni horas (TimeEntry 0 h), y se abre la del bloque nuevo con su bloque
+ * congelado. Vale con ALERT_ONLY. Si el vencimiento (u otra fichada) cerró la
+ * anterior en paralelo, se reintenta UNA vez como apertura simple.
+ */
+async function clockBlockChangeEntry(args: {
+  input: ClockPhotoPunchInput;
+  origin: ClockPunchOrigin;
+  audit?: AuditContext;
+  employee: ClockValidationContext;
+  now: Date;
+  evidence: ClockPhotoEvidence;
+  cooldown: ReturnType<typeof clockPunchCooldownGuard>;
+  cooldownSeconds: number;
+  attemptKey: ClockPunchAttemptKey;
+  deviceLabel: string;
+  selectedConcept: { id: string; name: string };
+  openShift: { id: string; startAt: Date };
+  blockChange: { open: OpenBlockShift | null; alertOnly: boolean };
+  rotationEntry: RotationEntryClassification & { kind: "ASSIGNED" };
+}) {
+  const { input, origin, audit, employee, now, evidence, cooldown, cooldownSeconds, attemptKey, deviceLabel, selectedConcept, openShift, blockChange, rotationEntry } = args;
+  const previousBlock = blockChange.open ? openShiftBlockDiagnosis(employee.id, blockChange.open) : null;
+  const previousStretch = blockChange.open
+    ? `del turno de las ${clockHhmm(blockChange.open.scheduledStartAt)} a las ${clockHhmm(blockChange.open.scheduledEndAt)}`
+    : `de la jornada iniciada a las ${clockHhmm(openShift.startAt)}`;
+  const nextBlock = blockDiagnosis(rotationEntry.block);
+  const entryPayload = entryDiagnosis(rotationEntry, now);
+  const description = `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`;
+  const common = {
+    employeeId: employee.id,
+    hourConceptId: selectedConcept.id,
+    hourConceptName: selectedConcept.name,
+    source: origin.source,
+    startAt: now,
+    adoption: adoptionFor(rotationEntry.block),
+    prepareEvidence: clockEvidenceWriter(evidence),
+    cooldown,
+    timingRequestId: input.requestId,
+  };
+  let failure: unknown;
+  try {
+    const workShift = await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+      ...common,
+      openWorkShiftId: openShift.id,
+      missingOutObservation: `Falta registrar la salida ${previousStretch}: se registró el ingreso del turno de las ${clockHhmm(rotationEntry.block.scheduledStartAt)}. Requiere revisión.`,
+      entryObservation: `Ingreso al turno de las ${clockHhmm(rotationEntry.block.scheduledStartAt)}; la jornada anterior quedó sin salida registrada.`,
+      audit: clockPunchAuditWriter(audit, description, employee.id, origin, { ...entryPayload, blockChange: { previousShiftId: openShift.id, previousBlock, alertOnly: blockChange.alertOnly } }),
+      completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
+      postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift, { rotationEntry: entryPayload, blockChange: { ...(previousBlock ? { previousBlock } : {}), nextBlock, alertOnly: blockChange.alertOnly } })),
+    });
+    clearAuditDerivedCaches();
+    return clockEntryResult(employee, workShift, openShift);
+  } catch (error) {
+    failure = error;
+  }
+  if (failure instanceof Error && failure.message === "WORK_SHIFT_ALREADY_CLOSED") {
+    try {
+      const workShift = await timeEntriesRepository.createOpenWorkShift({
+        ...common,
+        audit: clockPunchAuditWriter(audit, description, employee.id, origin, entryPayload),
+        completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
+        postProcess: clockPostProcessWriter(employee.id, entryPostProcess(now, entryPayload)),
+      });
+      clearAuditDerivedCaches();
+      return clockEntryResult(employee, workShift);
+    } catch (retryError) {
+      failure = retryError;
+    }
+  }
+  await cleanupClockEvidence(evidence);
+  if (failure instanceof ClockPunchCooldownConflict) throw clockPunchCooldownError(failure.lastPunchAt, now, cooldownSeconds);
+  if (failure instanceof Prisma.PrismaClientKnownRequestError && failure.code === "P2002") {
+    throw new AppError("El ingreso ya fue registrado por otro intento.", 409, "CLOCK_ALREADY_OPEN");
+  }
+  if (failure instanceof Error && failure.message === "WORK_SHIFT_ALREADY_CLOSED") {
+    throw new AppError("La jornada anterior fue actualizada por otro intento.", 409, "CLOCK_SHIFT_CHANGED");
+  }
+  throw failure;
+}
+
 function clockEntryResult(employee: ClockValidationContext, workShift: Pick<WorkShift, "id" | "startAt">, previousOpenShift?: { id: string; startAt: Date }) {
   return {
     employee: publicEmployeeLabel(employee),
@@ -808,6 +899,7 @@ function clockAttemptCompletionWriter(key: ClockPunchAttemptKey, buildResult: (w
 function failedAttemptError(attempt: { errorMessage: string | null; httpStatus: number | null; errorCode: string | null; response: Prisma.JsonValue | null }) {
   return new AppError(attempt.errorMessage || "La fichada no pudo completarse.", attempt.httpStatus || 409, attempt.errorCode || "CLOCK_ATTEMPT_FAILED", undefined, {
     retryAfterSeconds: failedAttemptRetryAfterSeconds(attempt.response),
+    clockGuidance: failedAttemptClockGuidance(attempt.response),
   });
 }
 
@@ -826,6 +918,8 @@ export function clockAttemptHash(input: ClockPhotoPunchInput) {
     .update(input.photo)
     .update("\0")
     .update(input.thumbnail || "")
+    // R4.4: sólo si viene, así los hashes de los intentos sin confirmación no cambian.
+    .update(input.exitConfirmation ? `\0exit:${input.exitConfirmation.openShiftId}:${input.exitConfirmation.nextBlockKey}` : "")
     .digest("hex");
 }
 
@@ -911,7 +1005,7 @@ function clockPostProcessWriter(employeeId: string, request: ClockPunchPostProce
 // TIME_RESPONSIBLE en el día Argentina de inicio de la jornada).
 // PERF-5D: el post-proceso durable del rollover pasa `db` (su transacción) y
 // `rethrow` (un fallo reintenta el paso en vez de quedar sólo logueado).
-export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification"> & RecipientsReader; rethrow?: boolean } = {}) {
+export async function notifyMissingExit(employeeId: string, workShiftId: string, startAt: Date, options: { db?: Pick<PrismaTransactionClient, "systemNotification"> & RecipientsReader; rethrow?: boolean; message?: string } = {}) {
   // Etapa 10E: best-effort — un fallo acá (ej. problema transitorio de DB)
   // no debe tirar abajo una fichada/rollover que ya se confirmó. El otro
   // llamador (clockPunchMaintenance.ts, cron) ya tenía su propio try/catch
@@ -922,7 +1016,8 @@ export async function notifyMissingExit(employeeId: string, workShiftId: string,
     await notifyUsers(await attendanceRecipients(employeeId, startAt, options.db), {
       type: "FALTA_SALIDA",
       title: "Falta registrar la salida",
-      message: "La jornada venció sin salida registrada y requiere revisión.",
+      // R4.4: el cambio de bloque explica la situación concreta.
+      message: options.message ?? "La jornada venció sin salida registrada y requiere revisión.",
       entityType: "WorkShift",
       entityId: workShiftId,
       eventAt: startAt,
@@ -995,7 +1090,7 @@ export const timeEntriesService = {
     const now = new Date();
     const openShifts = shifts
       .filter((shift) => shift.status === "ABIERTO")
-      .map((shift) => ({ ...shift, risk: computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now) }))
+      .map((shift) => ({ ...shift, risk: computeOpenShiftRisk(shift.startAt, shift.shiftTemplate, now, shift.scheduledStartAt, shift) }))
       .sort((a, b) => compareOpenShiftRisk(a.risk, b.risk));
     const observedShifts = shifts.filter((shift) => shift.status === "OBSERVADO" || shift.status === "FALTA_SALIDA" || shift.status === "FALTA_INGRESO" || shift.status === "INVALIDO");
     const closedShifts = shifts.filter((shift) => shift.status !== "ABIERTO" && !observedShifts.some((observed) => observed.id === shift.id));
@@ -1042,13 +1137,41 @@ export const timeEntriesService = {
   async resolveAttendanceObservation(kindValue: string, id: string, input: ResolveAttendanceObservationInput, user: Express.AuthUser, audit?: AuditContext) {
     const kind = kindValue.toUpperCase();
     if (kind !== "SHIFT" && kind !== "PUNCH" && kind !== "INACTIVITY") throw new AppError("Tipo de observación inválido", 400, "ATTENDANCE_REVIEW_KIND_INVALID");
-    const before = await timeEntriesRepository.findAttendanceObservation(kind, id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
-    const reviewStatus = kind === "INACTIVITY" && "status" in before ? before.status : "reviewStatus" in before ? before.reviewStatus : undefined;
-    if (reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+    const accessWhere = employeeAccessWhere(user);
+    let before;
     let item;
     try {
-      item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+      if (kind === "INACTIVITY") {
+        ({ before, item } = await prisma.$transaction(async (tx) => {
+          const initial = await timeEntriesRepository.findAttendanceObservation("INACTIVITY", id, accessWhere, tx) as AttendanceInactivityIncident | null;
+          if (!initial) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+          const dateKey = calendarDateKey(initial.operationalDate);
+          // Orden global: día → cobertura. Alta/activación toman sólo
+          // cobertura, por lo que ningún flujo nuevo invierte este orden.
+          await lockEmployeeDays(tx, [{ employeeId: initial.employeeId, dateKey }]);
+          await lockEmployeeCoverage(tx, [initial.employeeId]);
+          const current = await timeEntriesRepository.findAttendanceObservation("INACTIVITY", id, accessWhere, tx) as AttendanceInactivityIncident | null;
+          if (!current) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+          if (current.status !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+          if (current.scheduledStartAt === null) {
+            const membership = await shiftRotationRepository.activeRotationMembershipOn(current.employeeId, current.operationalDate, tx);
+            if (membership) {
+              throw new AppError(
+                "Esta fecha ya está cubierta por una rotación activa. Revisá las observaciones de cada bloque sin reemplazar la decisión diaria.",
+                409,
+                "ATTENDANCE_DAILY_INCIDENT_ROTATION_CONFLICT",
+              );
+            }
+          }
+          const updated = await timeEntriesRepository.resolveAttendanceObservation("INACTIVITY", id, input.resolution, input.reason, user.id, tx);
+          return { before: current, item: updated };
+        }));
+      } else {
+        before = await timeEntriesRepository.findAttendanceObservation(kind, id, accessWhere);
+        if (!before) throw new AppError("Observación no encontrada", 404, "ATTENDANCE_REVIEW_NOT_FOUND");
+        if (!("reviewStatus" in before) || before.reviewStatus !== "PENDIENTE") throw new AppError("La observación ya fue resuelta", 400, "ATTENDANCE_REVIEW_ALREADY_RESOLVED");
+        item = await timeEntriesRepository.resolveAttendanceObservation(kind, id, input.resolution, input.reason, user.id);
+      }
     } catch (error) {
       mapPrismaError(error);
       throw error;
@@ -1153,14 +1276,13 @@ export const timeEntriesService = {
   // evaluación de salida usa el turno que adoptó el ingreso, así que primero se
   // procesa el post-proceso pendiente del ingreso de esta jornada.
   async closeWorkShiftManually(id: string, input: AdminCloseWorkShiftInput, user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { workShiftId: string }) => Promise<unknown> } = {}) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     if (before.status !== "ABIERTO") {
       throw new AppError("Solo se pueden cerrar manualmente jornadas abiertas.", 400, "WORK_SHIFT_NOT_OPEN");
     }
-    if (before.timeEntries.some((entry) => entry.status === "APROBADO" || entry.status === "CERRADO")) {
-      throw new AppError("La jornada tiene cargas aprobadas o cerradas.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
+    if (before.timeEntries.some((entry) => entry.status === "CERRADO")) {
+      throw new AppError("La jornada tiene cargas cerradas.", 409, "WORK_SHIFT_LOCKED_TIME_ENTRY");
     }
     await hooks.settleClockPunchPostProcess?.({ workShiftId: before.id });
 
@@ -1210,7 +1332,6 @@ export const timeEntriesService = {
   },
 
   async observeWorkShift(id: string, input: AdminWorkShiftReasonInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     const item = await timeEntriesRepository.observeWorkShift(id, input.reason);
@@ -1227,7 +1348,6 @@ export const timeEntriesService = {
   },
 
   async markMissingOut(id: string, input: AdminWorkShiftReasonInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanAdminShift(user);
     const before = await timeEntriesRepository.findWorkShiftForAdmin(id, employeeAccessWhere(user));
     if (!before) throw new AppError("Work shift not found", 404, "WORK_SHIFT_NOT_FOUND");
     if (before.status !== "ABIERTO") {
@@ -1257,20 +1377,14 @@ export const timeEntriesService = {
       () => ensureNoDuplicate(input.employeeId, input.hourConceptId, input.date),
       () => assertPeriodAllowsCreate(input.employeeId, periodFromCalendarDate(input.date)),
     ]);
-    // Etapa 6L.3: RRHH ya es quien aprueba, así que su propia carga manual no
-    // pasa por BORRADOR/EN_REVISION — queda aplicada/aprobada de una. Nivel
-    // 2/3 mantienen el flujo previo (BORRADOR, luego "Enviar a revisión").
-    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
-    const item = await execute(() => timeEntriesRepository.create(input, user.id, autoApprovedByUserId));
+    const item = await execute(() => timeEntriesRepository.create(input, user.id, user.id));
 
     await auditService.register({
       ...audit,
       action: "CREATE",
       entity: "TimeEntry",
       entityId: item.id,
-      description: autoApprovedByUserId
-        ? `Se cargó y aplicó ${item.hours.toString()} hs (RRHH) para el legajo ${item.employee.legajo}.`
-        : `Se cargó ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
+      description: `Se cargó y aplicó ${item.hours.toString()} hs para el legajo ${item.employee.legajo}.`,
       after: item as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
@@ -1395,6 +1509,7 @@ export const timeEntriesService = {
     // error (clockAttemptErrorMeta.ts), que se publica dentro de `error` —el
     // mismo retryAfterSeconds de la respuesta original—, nunca como resultado.
     const retryAfterSeconds = attempt.status === "FAILED" ? failedAttemptRetryAfterSeconds(attempt.response) : undefined;
+    const clockGuidance = attempt.status === "FAILED" ? failedAttemptClockGuidance(attempt.response) : undefined;
     return {
       requestId: attempt.requestId,
       status: attempt.status,
@@ -1404,6 +1519,7 @@ export const timeEntriesService = {
         message: attempt.errorMessage || "La fichada no pudo completarse.",
         httpStatus: attempt.httpStatus || 500,
         ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+        ...(clockGuidance === undefined ? {} : { clockGuidance }),
       } : null,
     };
   },
@@ -1472,6 +1588,7 @@ export const timeEntriesService = {
         message: appError.message,
         httpStatus: appError.statusCode,
         retryAfterSeconds: appError.retryAfterSeconds,
+        clockGuidance: appError.clockGuidance,
       }).catch(() => null);
       // F11.1: la fichada ya se confirmó (intento COMPLETED en su
       // transacción) y lo que falló fue un paso posterior: se responde el
@@ -1543,12 +1660,65 @@ export const timeEntriesService = {
     if (input.punchType === "OUT" && input.hourConceptId && input.hourConceptId !== selectedConcept.id) {
       throw new AppError("La salida debe conservar el tipo de jornada elegido en el ingreso.", 409, "CLOCK_SHIFT_CONCEPT_MISMATCH");
     }
-    if (input.punchType === "IN" && currentOpenShift && shiftMinutes(currentOpenShift.startAt, now) <= MAX_SHIFT_MINUTES) {
+    // R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): sólo miembros de rotación o
+    // jornadas con bloque congelado. Para el resto, `rotationContext` es null y
+    // todo lo que sigue es exactamente el flujo legacy.
+    const isRotationMember = (context._count?.shiftRotationMemberships ?? 0) > 0;
+    const openBlockShift = currentOpenShift && isRotationBlockShift(currentOpenShift) ? currentOpenShift : null;
+    const rotationContext = isRotationMember || (input.punchType === "OUT" && openBlockShift) ? await loadRotationPunchContext(employee.id, now) : null;
+    let rotationEntry: EffectiveRotationEntryClassification | null = null;
+    // R4.5.1: diagnóstico sólo para el AuditLog cuando la fecha no tiene rotación efectiva.
+    let rotationAuditOnly: ReturnType<typeof noEffectiveRotationDiagnosis> | undefined;
+    let blockChange: { open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>> | null; alertOnly: boolean } | null = null;
+    if (input.punchType === "IN" && rotationContext && isRotationMember) {
+      const classified = classifyRotationEntry(now, rotationContext.obligationsByDate, rotationContext.blocks);
+      // R4.5.1 (SHIFT_ROTATION_AUDIT_PLAN.md §25.8): una membresía cercana (D−1..D+1)
+      // no alcanza. Sin rotación efectiva en la fecha rige el legacy: sin bloque,
+      // sin payload de rotación y con sus turnos fijos en el post-proceso.
+      if (classified.kind === "NO_EFFECTIVE_ROTATION") rotationAuditOnly = noEffectiveRotationDiagnosis(now);
+      else rotationEntry = classified;
+      // Cambio de bloque: entrada asignada inequívocamente a un bloque POSTERIOR
+      // al de la jornada abierta → se acepta siempre (aun ALERT_ONLY y < 1200).
+      if (openBlockShift && rotationEntry?.kind === "ASSIGNED" && rotationEntry.block.scheduledStartAt.getTime() > openBlockShift.scheduledStartAt.getTime()) {
+        const open = await openBlockShiftOf(openBlockShift);
+        if (open) blockChange = { open, alertOnly: (await resolveActiveWorkRegime(employee.id, now))?.openShiftOverflowAction === "ALERT_ONLY" };
+      } else if (currentOpenShift && !openBlockShift && rotationEntry?.kind === "ASSIGNED" && isBlockChangeFromUnblockedShift(currentOpenShift.startAt, rotationEntry.block, rotationContext.blocks)) {
+        // R4.5 (§25.7): jornada abierta SIN bloque (fuera de ventana, no
+        // programada, franco, sin configuración) y ENTRADA válida a un bloque
+        // posterior: mismo cambio de bloque de R4.4 — la anterior queda en
+        // FALTA_SALIDA sin salida ni horas inventadas; nunca se adopta el bloque
+        // sobre la jornada anterior ni se suman sus horas.
+        blockChange = { open: null, alertOnly: (await resolveActiveWorkRegime(employee.id, now))?.openShiftOverflowAction === "ALERT_ONLY" };
+      }
+    }
+    let rotationExit: { classification: RotationExitClassification & { kind: "LIKELY_FORGOTTEN_EXIT" }; open: NonNullable<Awaited<ReturnType<typeof openBlockShiftOf>>>; confirmed: boolean } | null = null;
+    if (input.punchType === "OUT" && input.exitConfirmation && (!currentOpenShift || currentOpenShift.id !== input.exitConfirmation.openShiftId)) {
+      // La confirmación quedó vieja (la jornada cambió: otra fichada, el vencimiento…).
+      if (currentOpenShift) throw new AppError("Tu jornada cambió mientras confirmabas. Volvé a fichar.", 409, "CLOCK_SHIFT_CHANGED");
+    }
+    if (input.punchType === "OUT" && openBlockShift && rotationContext) {
+      const open = await openBlockShiftOf(openBlockShift);
+      if (open) {
+        const classification = classifyRotationExit(now, open, rotationContext.blocks);
+        if (classification.kind === "LIMIT_EXCEEDED") {
+          await registerRejectedExitAttempt({ requestId: input.requestId, employeeId: employee.id, legajo: employee.legajo, open, classification, now, audit }).catch(() => undefined);
+          throw shiftLimitExceeded(open, classification.nextBlock, now);
+        }
+        if (classification.kind === "LIKELY_FORGOTTEN_EXIT") {
+          const confirmation = input.exitConfirmation;
+          if (!confirmation || confirmation.nextBlockKey !== classification.nextBlock.obligationKey) throw exitConfirmationRequired(open, classification.nextBlock, now);
+          rotationExit = { classification, open, confirmed: true };
+        }
+      }
+    }
+    if (input.punchType === "IN" && currentOpenShift && !blockChange && shiftMinutes(currentOpenShift.startAt, now) <= MAX_SHIFT_MINUTES) {
       throw new AppError("Ya existe un ingreso abierto para este empleado.", 409, "CLOCK_ALREADY_OPEN");
     }
     if (input.punchType === "OUT" && !currentOpenShift) {
       throw new AppError("No hay un ingreso abierto para este empleado.", 409, "CLOCK_NO_OPEN_SHIFT");
     }
+    const adoption = rotationEntry?.kind === "ASSIGNED" ? adoptionFor(rotationEntry.block) : undefined;
+    const rotationEntryPayload = rotationEntry ? entryDiagnosis(rotationEntry, now) : undefined;
     const exitPreparation = input.punchType === "OUT" && currentOpenShift
       ? await (async () => {
         const hourConcept = selectedConcept;
@@ -1578,7 +1748,7 @@ export const timeEntriesService = {
       classified: runAhead(classifySegmentsForEmployee(employee.id, exitPreparation.calculation.segments, exitPreparation.hourConcept)),
       specialHours: runAhead(resolveSpecialHourRulesByDate(employee.id, exitPreparation.calculation.segments.map((segment) => segment.date))),
     } : null;
-    const rolloverRegime = input.punchType === "IN" && currentOpenShift && shiftMinutes(currentOpenShift.startAt, now) > MAX_SHIFT_MINUTES
+    const rolloverRegime = input.punchType === "IN" && currentOpenShift && !blockChange && shiftMinutes(currentOpenShift.startAt, now) > MAX_SHIFT_MINUTES
       ? runAhead(resolveActiveWorkRegime(employee.id, now))
       : null;
     let evidence: ClockPhotoEvidence;
@@ -1601,6 +1771,9 @@ export const timeEntriesService = {
 
     if (input.punchType === "IN") {
       const openShift = currentOpenShift;
+      if (openShift && blockChange && rotationEntry?.kind === "ASSIGNED") {
+        return clockBlockChangeEntry({ input, origin, audit, employee, now, evidence, cooldown, cooldownSeconds, attemptKey, deviceLabel, selectedConcept, openShift, blockChange, rotationEntry });
+      }
       if (openShift) {
         const exceededMinutes = shiftMinutes(openShift.startAt, now);
         // Régimen ALERT_ONLY: nunca hace rollover automático de la jornada
@@ -1619,11 +1792,12 @@ export const timeEntriesService = {
               source: origin.source,
               startAt: now,
               missingOutObservation: "Olvido de salida marcado automaticamente al registrar un nuevo ingreso desde el fichador con foto.",
+              adoption,
               prepareEvidence: clockEvidenceWriter(evidence),
               cooldown,
-              audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+              audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload ?? rotationAuditOnly),
               completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created, openShift)),
-              postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift)),
+              postProcess: clockPostProcessWriter(employee.id, rolloverPostProcess(now, openShift, { rotationEntry: rotationEntryPayload })),
               timingRequestId: input.requestId,
             });
           } catch (error) {
@@ -1659,11 +1833,12 @@ export const timeEntriesService = {
           hourConceptName: selectedConcept.name,
           source: origin.source,
           startAt: now,
+          adoption,
           prepareEvidence: clockEvidenceWriter(evidence),
           cooldown,
-          audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+          audit: clockPunchAuditWriter(audit, `Ingreso con foto registrado desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationEntryPayload ?? rotationAuditOnly),
           completeAttempt: clockAttemptCompletionWriter(attemptKey, (created) => clockEntryResult(employee, created)),
-          postProcess: clockPostProcessWriter(employee.id, entryPostProcess(now)),
+          postProcess: clockPostProcessWriter(employee.id, entryPostProcess(now, rotationEntryPayload)),
           timingRequestId: input.requestId,
         });
       } catch (error) {
@@ -1718,12 +1893,19 @@ export const timeEntriesService = {
         segments: classifiedSegments,
         prepareEvidence: clockEvidenceWriter(evidence),
         cooldown,
-        audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin),
+        audit: clockPunchAuditWriter(audit, `Salida con foto registrada desde el dispositivo de fichada ${deviceLabel} para legajo ${employee.legajo}.`, employee.id, origin, rotationExit ? exitDiagnosis(rotationExit.classification, rotationExit.open, now, rotationExit.confirmed) : openBlockShift ? { version: 1, evaluatedAt: now.toISOString(), exit: "NORMAL", openShiftId: openBlockShift.id } : undefined),
         completeAttempt: clockAttemptCompletionWriter(attemptKey, (closed) => clockExitResult(employee, closed, calculation)),
-        postProcess: clockPostProcessWriter(employee.id, exitPostProcess(now, classifiedSegments, classifiedSegments.map((segment) => periodFromCalendarDate(segment.date)), audit)),
+        postProcess: clockPostProcessWriter(employee.id, exitPostProcess(now, classifiedSegments, classifiedSegments.map((segment) => periodFromCalendarDate(segment.date)), audit, rotationExit ? {
+          kind: "LIKELY_FORGOTTEN_EXIT",
+          confirmed: rotationExit.confirmed,
+          previousBlock: { templateCode: rotationExit.open.template.code, scheduledStartAt: rotationExit.open.scheduledStartAt, scheduledEndAt: rotationExit.open.scheduledEndAt },
+          nextBlock: { obligationKey: rotationExit.classification.nextBlock.obligationKey, operationalDate: rotationExit.classification.nextBlock.operationalDate, templateCode: rotationExit.classification.nextBlock.template.code, scheduledStartAt: rotationExit.classification.nextBlock.scheduledStartAt, scheduledEndAt: rotationExit.classification.nextBlock.scheduledEndAt },
+          minutesAfterScheduledEnd: rotationExit.classification.minutesAfterScheduledEnd,
+        } : undefined)),
         timingRequestId: input.requestId,
         returnEntries: false,
         specialHours,
+        overlapGuard: Boolean(openBlockShift),
       });
     } catch (error) {
       await cleanupClockEvidence(evidence);
@@ -1733,6 +1915,9 @@ export const timeEntriesService = {
       }
       if (error instanceof Error && error.message === "WORK_SHIFT_ALREADY_CLOSED") {
         throw new AppError("La salida ya fue registrada por otro intento.", 409, "CLOCK_ALREADY_CLOSED");
+      }
+      if (error instanceof Error && error.message === "WORK_SHIFT_OVERLAP") {
+        throw new AppError("No pudimos registrar la salida: se superpone con otra jornada registrada. Avisá a tu encargado.", 409, "CLOCK_SHIFT_OVERLAP");
       }
       throw error;
     }
@@ -1765,18 +1950,8 @@ export const timeEntriesService = {
       where: { employeeId_period: { employeeId: before.employeeId, period: before.period } },
       select: { status: true },
     });
-    const requiresCorrectionRequest = isMonthlyClosureLocked(monthlyClosure);
-    if (requiresCorrectionRequest && user.role !== roles.rrhh) {
-      throw new AppError(
-        "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise.",
-        409,
-        "PERIOD_CLOSED_REQUIRES_CORRECTION",
-      );
-    }
-    if (before.status === "APROBADO" || requiresCorrectionRequest) {
-      if (!input.correctionReason) {
-        throw new AppError("Indicá el motivo de la corrección de la hora registrada.", 400, "TIME_ENTRY_CORRECTION_REASON_REQUIRED");
-      }
+    if (isMonthlyClosureLocked(monthlyClosure)) {
+      throw new AppError("El período está cerrado. Reabrilo antes de modificar horas.", 409, "PERIOD_CLOSED");
     }
 
     const employeeId = before.employeeId;
@@ -1790,101 +1965,16 @@ export const timeEntriesService = {
       () => ensureNoDuplicate(employeeId, hourConceptId, date, id),
     ]);
 
-    // Etapa 6L.3: toda edición hecha por RRHH aplica/aprueba directamente,
-    // sea que esté corrigiendo una carga ya aprobada (arriba, con
-    // correctionReason) o editando una que seguía en BORRADOR/EN_REVISION/
-    // DEVUELTO — RRHH nunca necesita mandarse una carga propia a revisión.
-    // Nivel 2/3 no reciben este parámetro, así que el status no se toca acá,
-    // igual que antes de esta etapa.
-    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
-    const item = await execute(() => timeEntriesRepository.update(id, before, input, autoApprovedByUserId));
+    // Toda edición de N1/N2/N3 queda efectiva (APROBADO) con su autor.
+    const item = await execute(() => timeEntriesRepository.update(id, before, input, user.id));
     await auditService.register({
       ...audit,
       action: "UPDATE",
       entity: "TimeEntry",
       entityId: item.id,
-      description: `Se actualizo carga horaria del legajo ${item.employee.legajo}.${input.correctionReason ? ` Motivo: ${input.correctionReason}` : ""}`,
+      description: `Se actualizo carga horaria del legajo ${item.employee.legajo}.`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async submit(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "BORRADOR" && before.status !== "DEVUELTO") {
-      throw new AppError("Only draft or returned entries can be submitted", 400, "TIME_ENTRY_STATUS_NOT_SUBMITTABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.submit(id));
-    await auditService.register({
-      ...audit,
-      action: "UPDATE",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se envio a revision carga horaria del legajo ${item.employee.legajo}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async approve(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be approved", 400, "TIME_ENTRY_STATUS_NOT_APPROVABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.approve(id, user.id));
-    await auditService.register({
-      ...audit,
-      action: "APPROVE",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se aprobo carga horaria del legajo ${item.employee.legajo}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async reject(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be rejected", 400, "TIME_ENTRY_STATUS_NOT_REJECTABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.reject(id));
-    await auditService.register({
-      ...audit,
-      action: "REJECT",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se rechazo carga horaria del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
-    });
-    return redactPiiForRole(item, user);
-  },
-
-  async returnForCorrection(id: string, input: RejectTimeEntryInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanApprove(user);
-    const before = await timeEntriesRepository.findById(id, employeeAccessWhere(user));
-    if (!before) throw new AppError("Time entry not found", 404, "TIME_ENTRY_NOT_FOUND");
-    if (before.status !== "EN_REVISION") {
-      throw new AppError("Only entries in review can be returned", 400, "TIME_ENTRY_STATUS_NOT_RETURNABLE");
-    }
-    const item = await execute(() => timeEntriesRepository.returnForCorrection(id));
-    await auditService.register({
-      ...audit,
-      action: "RETURN",
-      entity: "TimeEntry",
-      entityId: item.id,
-      description: `Se devolvio carga horaria del legajo ${item.employee.legajo}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
     });
     return redactPiiForRole(item, user);
   },
@@ -1918,7 +2008,7 @@ export const timeEntriesService = {
       const unapproved = findUnapprovedEmployeeIdsForExport(employeeIds, closuresByEmployeeId);
       if (unapproved.length) {
         throw new AppError(
-          "El período debe estar aprobado antes de exportar para liquidación.",
+          "El período debe estar cerrado antes de exportar para liquidación.",
           409,
           "MONTHLY_CLOSURE_NOT_APPROVED",
         );

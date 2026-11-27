@@ -7,6 +7,7 @@ import type { LoginInput, RefreshTokenInput } from "./auth.schemas";
 import { authRepository } from "./auth.repository";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
+import { resolveShiftGroupScope, toShiftGroupAccess } from "../shifts/shiftGroupAccess";
 
 function signAccessToken(payload: { sub: string; email: string; role: string }) {
   const options: SignOptions = { expiresIn: env.JWT_ACCESS_EXPIRES_IN as SignOptions["expiresIn"] };
@@ -75,6 +76,8 @@ export const authService = {
 
     const tokens = issueTokens(user);
     const { passwordHash: _passwordHash, refreshTokenVersion: _refreshTokenVersion, ...safeUser } = user;
+    // R8.4: alcance por grupo de turnos para la UI (no es autoridad).
+    const shiftGroupAccess = toShiftGroupAccess(await resolveShiftGroupScope(user));
 
     await auditService.register({
       ...audit,
@@ -85,7 +88,7 @@ export const authService = {
       description: "Inicio de sesion exitoso.",
     });
 
-    return { user: safeUser, ...tokens };
+    return { user: { ...safeUser, shiftGroupAccess }, ...tokens };
   },
 
   async refresh(input: RefreshTokenInput) {
@@ -114,7 +117,8 @@ export const authService = {
       }
 
       const { refreshTokenVersion: _refreshTokenVersion, ...safeUser } = user;
-      return { user: safeUser, ...issueTokens(user) };
+      const shiftGroupAccess = toShiftGroupAccess(await resolveShiftGroupScope(user));
+      return { user: { ...safeUser, shiftGroupAccess }, ...issueTokens(user) };
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw new AppError("Invalid refresh token", 401, "INVALID_REFRESH_TOKEN");

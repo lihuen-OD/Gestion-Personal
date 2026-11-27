@@ -77,26 +77,10 @@ export function resolveWinningRules<T extends { priority: number; multiplier: un
   return { winners: topRules, multiplier, conflicting: topRules.length > 1 };
 }
 
-// Política FERIADO + convocatoria (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16):
-// la regla FERIADO define cuánto vale trabajar el día; la convocatoria
-// (HolidayWorkAssignment ACTIVA) define quién fue convocado.
-// - Si la fecha tiene al menos un convocado ACTIVO, las reglas FERIADO aplican
-//   sólo a los convocados, aunque la regla tenga otro alcance.
-// - Si la fecha no tiene ninguna convocatoria, cada regla usa su alcance
-//   (feriados globales previos siguen funcionando igual).
-// Las demás clasificaciones (DOMINGO, JORNADA_ESPECIAL, OTRO) nunca dependen
-// de la convocatoria. Devuelve las reglas candidatas antes del matching por
-// calendario (ruleMatchesDate) y la resolución por prioridad.
-export function specialHourRulesForEmployeeOnDate<T extends { kind: string }>(input: {
-  employeeId: string;
-  rulesInEmployeeScope: T[];
-  feriadoRules: T[];
-  convokedEmployeeIds: ReadonlySet<string>;
-}): T[] {
-  if (!input.convokedEmployeeIds.size) return input.rulesInEmployeeScope;
-  const nonFeriado = input.rulesInEmployeeScope.filter((rule) => rule.kind !== "FERIADO");
-  return input.convokedEmployeeIds.has(input.employeeId) ? [...nonFeriado, ...input.feriadoRules] : nonFeriado;
-}
+// FERIADO y convocatoria (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20,
+// reemplaza §16): la regla FERIADO aplica según SU alcance a quien trabaje,
+// convocado o no. La convocatoria (HolidayWorkAssignment) sólo define la
+// obligación de asistir y nunca interviene en la selección de reglas.
 
 // Resultado del motor de Hora Especial para un empleado + fecha.
 export type SpecialHourRuleResolution<T extends { id: string; multiplier: unknown }> = WinningRulesResult<T> & { matchedRules: T[] };

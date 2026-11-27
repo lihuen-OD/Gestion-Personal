@@ -55,7 +55,6 @@ export type NoveltyLoadLayout = {
   legacyHours: boolean;
   observationRequired: boolean;
   documentationRequired: boolean;
-  requiresApproval: boolean;
   countsTowardTotal: boolean;
 };
 
@@ -69,7 +68,6 @@ export function noveltyLoadLayout(type: NoveltyType): NoveltyLoadLayout {
     legacyHours: type.rules.allowsHours && mode !== "MANUAL_MINUTES",
     observationRequired: type.rules.requiresObservation,
     documentationRequired: type.rules.requiresDocumentation,
-    requiresApproval: type.rules.requiresApproval,
     countsTowardTotal: mode !== "NONE" && type.coverage.countsTowardTotal,
   };
 }
@@ -78,9 +76,8 @@ export function noveltyLoadLayout(type: NoveltyType): NoveltyLoadLayout {
 export function noveltyTypeLoadSummary(type: NoveltyType): string[] {
   const layout = noveltyLoadLayout(type);
   const lines = [coverageTimeDescription(type.coverage)];
-  if (type.coverage.mode !== "NONE") lines.push(layout.countsTowardTotal ? "Suma al total computable una vez aprobada." : "Es informativa: no suma al total.");
+  if (type.coverage.mode !== "NONE") lines.push(layout.countsTowardTotal ? "Suma al total computable." : "Es informativa: no suma al total.");
   lines.push(layout.dateMode === "range" ? "Puede cargarse por varios días." : "Se carga para un solo día.");
-  if (layout.requiresApproval) lines.push("Requiere aprobación.");
   return lines;
 }
 
@@ -175,7 +172,7 @@ export function buildNoveltyCreateInput(
   type: NoveltyType,
   values: NoveltyLoadValues,
   employeeIds: string[],
-  extra: { targetHourConceptId?: string | null; correctionReason?: string | null } = {},
+  extra: { targetHourConceptId?: string | null } = {},
 ) {
   const layout = noveltyLoadLayout(type);
   return {
@@ -188,7 +185,6 @@ export function buildNoveltyCreateInput(
     quantityDays: null,
     observation: values.observation.trim() || null,
     targetHourConceptId: extra.targetHourConceptId ?? null,
-    ...(extra.correctionReason?.trim() ? { correctionReason: extra.correctionReason.trim() } : {}),
   };
 }
 
@@ -287,7 +283,7 @@ export type NoveltyPreviewSummary = {
   days: number;
   /** Lo que la novedad representa (cuente o no). */
   coveredMinutes: number;
-  /** Lo que sumaría al total computable una vez aprobada. */
+  /** Lo que suma al total computable al guardarla. */
   computableMinutes: number;
   settlementMinutes: number;
   informativeMinutes: number;

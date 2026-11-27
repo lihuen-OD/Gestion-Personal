@@ -14,6 +14,7 @@ import {
   isShiftAssignmentActiveOnDate,
   isShiftAssignmentApplicableForInstant,
   isShiftAssignmentApplicableOnWeekday,
+  lateEntryThresholdMs,
   matchShiftForEmployee,
   type ShiftTemplateRef,
   workShiftOperationalDateKey,
@@ -599,6 +600,42 @@ describe("evaluateOpenShiftRisk — Etapa 10E (default de olvido de salida sin t
   });
 });
 
+describe("evaluateOpenShiftRisk — R4.9C.2 (default de olvido acotado por la jornada cumplida)", () => {
+  // Planta con parámetros de QA: anticipación 30, salida +20, sin aviso de olvido configurado.
+  const planta = (startTime: string, endTime: string) =>
+    template({ id: `p-${startTime}`, code: `PLANTA-${startTime}-${endTime}`, startTime, endTime, crossesMidnight: endTime <= startTime, entryToleranceBeforeMinutes: 30, exitToleranceAfterMinutes: 20 });
+
+  it("12 h (19–07): ingreso 30 min antes y salida al límite de tolerancia nunca es MISSING_OUT; un minuto después, sí", () => {
+    const startAt = at(18, 30, 10);
+    expect(evaluateOpenShiftRisk({ startAt, now: at(7, 19, 11), template: planta("19:00", "07:00"), scheduledStartAt: at(19, 0, 10) }).level).toBe("NORMAL");
+    const late = evaluateOpenShiftRisk({ startAt, now: at(7, 20, 11), template: planta("19:00", "07:00"), scheduledStartAt: at(19, 0, 10) });
+    expect(late.missingOutThresholdMinutes).toBe(770);
+    expect(late.level).toBe("MISSING_OUT");
+  });
+
+  it("10 h (17–03) con ingreso anticipado permitido: el umbral es 650, no 600 (antes avisaba a las 02:30 con salida programada 03:00)", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(16, 30, 10), now: at(2, 30, 11), template: planta("17:00", "03:00") });
+    expect(result.missingOutThresholdMinutes).toBe(650);
+    expect(result.level).toBe("NORMAL");
+  });
+
+  it("turnos cortos conservan el default de 600 (4 h y 8 h)", () => {
+    expect(evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(17, 0), template: planta("07:00", "11:00") })).toMatchObject({ missingOutThresholdMinutes: 600, level: "MISSING_OUT" });
+    expect(evaluateOpenShiftRisk({ startAt: at(7, 0), now: at(16, 59), template: planta("07:00", "15:00") })).toMatchObject({ missingOutThresholdMinutes: 600, level: "NORMAL" });
+  });
+
+  it("legacy nocturno ingresado pasada la medianoche: el umbral no depende de la salida esperada (que cae un día después)", () => {
+    const result = evaluateOpenShiftRisk({ startAt: at(0, 30, 11), now: at(10, 30, 11), template: nightShift });
+    expect(result.missingOutThresholdMinutes).toBe(600);
+    expect(result.level).toBe("MISSING_OUT");
+  });
+
+  it("con aviso de olvido configurado, se mantiene la regla de la plantilla", () => {
+    const configured = template({ id: "cfg", code: "CFG", startTime: "19:00", endTime: "07:00", crossesMidnight: true, exitToleranceAfterMinutes: 20, missingOutAlertAfterMinutes: 60 });
+    expect(evaluateOpenShiftRisk({ startAt: at(19, 0, 10), now: at(8, 20, 11), template: configured, scheduledStartAt: at(19, 0, 10) }).missingOutThresholdMinutes).toBe(800);
+  });
+});
+
 describe("evaluateNewEntryWithOpenShift", () => {
   it("bloquea nuevo ingreso si la jornada previa es del mismo día y está normal", () => {
     const decision = evaluateNewEntryWithOpenShift({ previousOpenShiftStartAt: at(7, 0), now: at(12, 0), previousShiftRisk: "NORMAL" });
@@ -847,5 +884,22 @@ describe("workShiftOperationalDateKey — fecha operativa de una jornada (EMPLOY
 
   it("sin turno adoptado: fecha argentina del ingreso (21:30 ART del 10 = 00:30 UTC del 11)", () => {
     expect(workShiftOperationalDateKey(new Date("2026-11-11T00:30:00.000Z"), null)).toBe("2026-11-10");
+  });
+});
+
+describe("lateEntryThresholdMs — R4.9C.2 O2 (vencimiento de falta = frontera de puntualidad)", () => {
+  it("tolerancia 10: +10:29.999 puntual y no vencido; +10:30.000 tardío y vencido", () => {
+    expect(lateEntryThresholdMs(10)).toBe(630_000);
+  });
+
+  it("para cualquier desfase, 'tardío' de evaluateEntryPunctuality ⇔ desfase ≥ umbral (tolerancias 0, 10 y 30)", () => {
+    for (const tolerance of [0, 10, 30]) {
+      const shift = template({ id: `t${tolerance}`, code: "T", startTime: "07:00", endTime: "15:00", entryToleranceAfterMinutes: tolerance });
+      const threshold = lateEntryThresholdMs(tolerance);
+      for (const offset of [threshold - 60_000, threshold - 1, threshold, threshold + 1, threshold + 29_999, threshold - 30_000]) {
+        const late = evaluateEntryPunctuality({ case: "ENABLED", template: shift, differenceMinutes: Math.round(offset / 60_000) } as Parameters<typeof evaluateEntryPunctuality>[0]).lateArrival;
+        expect(late, `tol ${tolerance}, +${offset} ms`).toBe(offset >= threshold);
+      }
+    }
   });
 });

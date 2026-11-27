@@ -15,6 +15,13 @@ vi.mock("./shiftAssignment.service", () => ({
   shiftAssignmentService: { summary: vi.fn(), list: vi.fn(), assign: vi.fn(), update: vi.fn(), remove: vi.fn() },
 }));
 
+// R8: el alcance de un Nivel 2/3 se resuelve contra ShiftGroup (Prisma
+// mockeado). `scopedGroups` simula sus filas en cada request.
+const scopedGroups = vi.hoisted(() => ({ ids: [] as string[] }));
+vi.mock("../../shared/prisma/client", () => ({
+  prisma: { shiftGroup: { findMany: vi.fn(async () => scopedGroups.ids.map((id) => ({ id }))) } },
+}));
+
 vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
 }));
@@ -92,6 +99,27 @@ describe("shiftAssignmentController.summary — cache backend (Etapa 14H.3)", ()
     await shiftAssignmentController.summary(fakeReq({ user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA2);
     expect(mockedSummary).toHaveBeenCalledTimes(2); // sigue en 2: hit de cache para user-a
     expect(resA2.json).toHaveBeenCalledWith({ data: expect.arrayContaining([expect.objectContaining({ total: 5 })]) });
+  });
+
+  it("R8: al cambiar los grupos del usuario la clave cambia — una revocación nunca sirve el resumen viejo", async () => {
+    mockedSummary
+      .mockResolvedValueOnce([{ shiftTemplateId: "planta", total: 3, enabled: 3, disabled: 0, other: 0 }])
+      .mockResolvedValueOnce([]);
+    const n2 = { user: { id: "user-n2", role: "NIVEL_2_SUPERVISION" } } as Partial<Request>;
+
+    scopedGroups.ids = ["g-planta"];
+    const before = fakeRes();
+    await shiftAssignmentController.summary(fakeReq(n2), before);
+    expect(mockedSummary).toHaveBeenLastCalledWith(expect.anything(), { all: false, groupIds: new Set(["g-planta"]) });
+
+    scopedGroups.ids = [];
+    const after = fakeRes();
+    await shiftAssignmentController.summary(fakeReq(n2), after);
+
+    expect(mockedSummary).toHaveBeenCalledTimes(2);
+    expect(mockedSummary).toHaveBeenLastCalledWith(expect.anything(), { all: false, groupIds: new Set() });
+    expect(after.json).toHaveBeenCalledWith({ data: [] });
+    scopedGroups.ids = [];
   });
 
   it("clearShiftAssignmentSummaryCache() invalida la cache — el próximo pedido vuelve a pegarle al service", async () => {

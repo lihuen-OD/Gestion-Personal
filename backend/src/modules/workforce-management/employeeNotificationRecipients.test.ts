@@ -9,52 +9,52 @@ vi.mock("../../shared/prisma/client", () => ({ prisma: {} }));
 // de esos filtros contra PostgreSQL (usuarios inactivos, vigencias, roles
 // cambiados) la prueba employeeNotificationRecipients.integration.test.ts.
 
-type Assignment = { employeeId: string; userId: string | null; user: { role: string } | null };
+type Assignment = { employeeId: string; userId: string | null };
 type Supervision = { supervisorUserId: string; supervisedUserId: string };
 
 const N3 = "NIVEL_3_CARGA_HORARIA";
 const N2 = "NIVEL_2_SUPERVISION";
 const DAY = "2026-11-17";
 
+// `assignments` simula lo que devuelve la base YA filtrada (sólo Nivel 2
+// ACTIVO); el filtro en sí se verifica en "consultas".
 function fakeDb(rows: { rrhh?: string[]; assignments?: Assignment[]; supervisions?: Supervision[] }) {
   const db = {
     user: { findMany: vi.fn().mockResolvedValue((rows.rrhh ?? []).map((id) => ({ id }))) },
     employeeAssignment: { findMany: vi.fn().mockResolvedValue(rows.assignments ?? []) },
     userSupervisionAssignment: {
-      findMany: vi.fn(async (args: { where: { supervisedUserId: { in: string[] } } }) =>
-        (rows.supervisions ?? []).filter((row) => args.where.supervisedUserId.in.includes(row.supervisedUserId))),
+      findMany: vi.fn(async (args: { where: { supervisorUserId: { in: string[] } } }) =>
+        (rows.supervisions ?? []).filter((row) => args.where.supervisorUserId.in.includes(row.supervisorUserId))),
     },
   };
   return db as typeof db & RecipientsReader;
 }
 
-const direct = (employeeId: string, userId: string, role: string): Assignment => ({ employeeId, userId, user: { role } });
+const direct = (employeeId: string, userId: string): Assignment => ({ employeeId, userId });
 
 describe("resolveEmployeeNotificationRecipientsBatch — consultas", () => {
   let db: ReturnType<typeof fakeDb>;
   beforeEach(() => {
-    db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "joaquin", N3)], supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }] });
+    db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "eugenia")], supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }] });
   });
 
-  it("RRHH: sólo usuarios ACTIVO con rol Nivel 1 (1, 2)", async () => {
+  it("RRHH: sólo usuarios ACTIVO con rol Nivel 1", async () => {
     await resolveEmployeeNotificationRecipientsBatch(["emp"], DAY, db);
     expect(db.user.findMany).toHaveBeenCalledWith({ where: { role: "NIVEL_1_RRHH", status: "ACTIVO" }, select: { id: true } });
   });
 
-  it("asignaciones: criterio canónico de vigencia en la fecha de referencia + usuario ACTIVO, todos los legajos en una consulta (11-14)", async () => {
+  it("asignaciones: vigencia canónica + usuario Nivel 2 ACTIVO, todos los legajos en una consulta", async () => {
     await resolveEmployeeNotificationRecipientsBatch(["emp", "emp-2", "emp"], DAY, db);
     expect(db.employeeAssignment.findMany).toHaveBeenCalledTimes(1);
     const where = db.employeeAssignment.findMany.mock.calls[0]![0].where;
-    expect(where.AND).toEqual([activeTimeResponsibleWhere(DAY), { employeeId: { in: ["emp", "emp-2"] } }, { user: { status: "ACTIVO" } }]);
-    // Ningún filtro por EmployeeAssignment.role (legacy).
-    expect(JSON.stringify(where)).not.toContain('"role"');
+    expect(where.AND).toEqual([activeTimeResponsibleWhere(DAY), { employeeId: { in: ["emp", "emp-2"] } }, { user: { role: N2, status: "ACTIVO" } }]);
   });
 
-  it("supervisiones: ambos lados verificados por rol y estado al resolver, una consulta para todos los Nivel 3 (7-10)", async () => {
+  it("supervisiones: Nivel 3 ACTIVO supervisados por los Nivel 2 responsables, ambos lados verificados, una consulta", async () => {
     await resolveEmployeeNotificationRecipientsBatch(["emp"], DAY, db);
     expect(db.userSupervisionAssignment.findMany).toHaveBeenCalledTimes(1);
     expect(db.userSupervisionAssignment.findMany.mock.calls[0]![0].where).toEqual({
-      supervisedUserId: { in: ["joaquin"] },
+      supervisorUserId: { in: ["eugenia"] },
       supervised: { role: N3, status: "ACTIVO" },
       supervisor: { role: N2, status: "ACTIVO" },
     });
@@ -66,73 +66,50 @@ describe("resolveEmployeeNotificationRecipientsBatch — consultas", () => {
     expect(db.employeeAssignment.findMany).not.toHaveBeenCalled();
   });
 
-  it("sin responsables Nivel 3 no consulta supervisiones", async () => {
-    db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "eugenia", N2)] });
+  it("sin responsables Nivel 2 no consulta supervisiones", async () => {
+    db = fakeDb({ rrhh: ["rrhh"] });
     await resolveEmployeeNotificationRecipientsBatch(["emp"], DAY, db);
     expect(db.userSupervisionAssignment.findMany).not.toHaveBeenCalled();
   });
 });
 
 describe("resolveEmployeeNotificationRecipientsBatch — composición", () => {
-  it("caso real: RRHH + Joaquín (N3 responsable) + Eugenia (N2 que lo supervisa) (1, 3, 5)", async () => {
-    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("oficina", "joaquin", N3)], supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }] });
-    expect(await resolveEmployeeNotificationRecipients("oficina", DAY, db)).toEqual(["rrhh", "joaquin", "eugenia"]);
+  it("caso Planta: RRHH + Planta (N2 responsable) + Nivel 3 que supervisa", async () => {
+    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("992", "planta")], supervisions: [{ supervisorUserId: "planta", supervisedUserId: "carga" }] });
+    expect(await resolveEmployeeNotificationRecipients("992", DAY, db)).toEqual(["rrhh", "planta", "carga"]);
   });
 
-  it("Nivel 2 responsable directo recibe (4)", async () => {
-    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "eugenia", N2)] });
+  it("Nivel 2 responsable sin supervisados recibe sólo él", async () => {
+    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "eugenia")] });
     expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["rrhh", "eugenia"]);
   });
 
-  it("Nivel 2 que supervisa a OTRO Nivel 3 no recibe (6)", async () => {
-    const db = fakeDb({
-      assignments: [direct("emp", "joaquin", N3)],
-      supervisions: [{ supervisorUserId: "otra-n2", supervisedUserId: "otro-n3" }],
-    });
-    expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["joaquin"]);
+  it("Nivel 3 supervisado por OTRO Nivel 2 no recibe", async () => {
+    const db = fakeDb({ assignments: [direct("emp", "eugenia")], supervisions: [{ supervisorUserId: "otra-n2", supervisedUserId: "otro-n3" }] });
+    expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["eugenia"]);
   });
 
-  it("responsable directo con rol distinto de Nivel 3 no genera herencia aunque exista una relación (9)", async () => {
+  it("Nivel 3 con dos Nivel 2 responsables del mismo legajo → un solo userId", async () => {
     const db = fakeDb({
-      assignments: [direct("emp", "ex-n3", "NIVEL_2_SUPERVISION")],
-      supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "ex-n3" }],
+      assignments: [direct("emp", "eugenia"), direct("emp", "planta")],
+      supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }, { supervisorUserId: "planta", supervisedUserId: "joaquin" }],
     });
-    expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["ex-n3"]);
+    expect((await resolveEmployeeNotificationRecipients("emp", DAY, db)).sort()).toEqual(["eugenia", "joaquin", "planta"]);
   });
 
-  it("Nivel 2 directo y además heredado → un solo userId (15)", async () => {
+  it("filas repetidas y RRHH que además figura nunca duplican", async () => {
+    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "eugenia"), direct("emp", "eugenia")], supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "rrhh" }] });
+    expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["rrhh", "eugenia"]);
+  });
+
+  it("batch: Map por legajo; legajo sin responsables recibe sólo RRHH", async () => {
     const db = fakeDb({
       rrhh: ["rrhh"],
-      assignments: [direct("emp", "eugenia", N2), direct("emp", "joaquin", N3)],
-      supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }],
-    });
-    const recipients = await resolveEmployeeNotificationRecipients("emp", DAY, db);
-    expect(recipients.filter((id) => id === "eugenia")).toHaveLength(1);
-    expect(recipients.sort()).toEqual(["eugenia", "joaquin", "rrhh"]);
-  });
-
-  it("Nivel 2 que supervisa dos responsables del mismo legajo → un solo userId (16)", async () => {
-    const db = fakeDb({
-      assignments: [direct("emp", "joaquin", N3), direct("emp", "maria", N3)],
-      supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }, { supervisorUserId: "eugenia", supervisedUserId: "maria" }],
-    });
-    expect((await resolveEmployeeNotificationRecipients("emp", DAY, db)).sort()).toEqual(["eugenia", "joaquin", "maria"]);
-  });
-
-  it("filas equivalentes repetidas y RRHH que además es responsable nunca duplican", async () => {
-    const db = fakeDb({ rrhh: ["rrhh"], assignments: [direct("emp", "joaquin", N3), direct("emp", "joaquin", N3), direct("emp", "rrhh", "NIVEL_1_RRHH")] });
-    expect(await resolveEmployeeNotificationRecipients("emp", DAY, db)).toEqual(["rrhh", "joaquin"]);
-  });
-
-  it("batch: Map por legajo, cada uno con sus responsables; legajo sin responsables recibe sólo RRHH", async () => {
-    const db = fakeDb({
-      rrhh: ["rrhh"],
-      assignments: [direct("a", "joaquin", N3), direct("b", "maria", N3)],
+      assignments: [direct("a", "eugenia"), direct("b", "planta")],
       supervisions: [{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }],
     });
     const map = await resolveEmployeeNotificationRecipientsBatch(["a", "b", "c"], DAY, db);
-    expect(Object.fromEntries(map)).toEqual({ a: ["rrhh", "joaquin", "eugenia"], b: ["rrhh", "maria"], c: ["rrhh"] });
-    expect(db.employeeAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(Object.fromEntries(map)).toEqual({ a: ["rrhh", "eugenia", "joaquin"], b: ["rrhh", "planta"], c: ["rrhh"] });
     expect(db.userSupervisionAssignment.findMany).toHaveBeenCalledTimes(1);
   });
 });

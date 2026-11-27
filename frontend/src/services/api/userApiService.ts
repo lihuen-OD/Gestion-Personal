@@ -1,12 +1,13 @@
 import { apiRequest } from "./apiClient";
 import { collectAllPages } from "./listQuery";
 import { orgStructureApiService } from "./orgStructureApiService";
-import type { Role, User, UserSupervisionPerson } from "../../types";
+import type { Role, User, UserShiftGroup, UserSupervisionPerson } from "../../types";
 
 type ApiRole = "NIVEL_1_RRHH" | "NIVEL_2_SUPERVISION" | "NIVEL_3_CARGA_HORARIA";
 type ApiStatus = "ACTIVO" | "INACTIVO";
 
 type ApiSupervisionPerson = { id: string; name: string; email: string; role: ApiRole; status: ApiStatus };
+type ApiShiftGroup = { id: string; code: string; name: string; status: ApiStatus };
 
 type ApiUser = {
   id: string;
@@ -20,6 +21,8 @@ type ApiUser = {
   employee?: { id: string; legajo: string; firstName: string; lastName: string } | null;
   supervisedUsers?: ApiSupervisionPerson[];
   supervisorUsers?: ApiSupervisionPerson[];
+  shiftGroups?: ApiShiftGroup[];
+  inheritedShiftGroups?: Array<{ group: ApiShiftGroup; viaSupervisors: Array<{ id: string; name: string; email: string }> }>;
 };
 
 type ApiListResponse = { data: ApiUser[] };
@@ -49,7 +52,21 @@ function mapSupervisionPerson(person: ApiSupervisionPerson): UserSupervisionPers
   return { id: person.id, name: person.name, email: person.email, status: statusFromApi(person.status) };
 }
 
+function mapShiftGroup(group: ApiShiftGroup): UserShiftGroup {
+  return { id: group.id, code: group.code, name: group.name, status: statusFromApi(group.status) };
+}
+
 const SUPERVISION_ROLE: Role = "Nivel 2 - Supervisión / Gestión";
+
+/**
+ * R8: grupos de turnos de un Nivel 2. Sólo se envían si la pantalla los
+ * modificó (`shiftGroupIds` definido): omitirlos conserva los actuales y así
+ * editar otro dato (o activar/inactivar) nunca pisa una asignación. Para otro
+ * rol no se envían: el backend quita los grupos de quien deja de ser Nivel 2.
+ */
+function shiftGroupsPayload(user: Omit<User, "id"> | User) {
+  return user.role === SUPERVISION_ROLE && user.shiftGroupIds !== undefined ? { shiftGroupIds: user.shiftGroupIds } : {};
+}
 
 /**
  * Lista completa de Nivel 3 supervisados: sólo la manda un Nivel 2 (el backend
@@ -76,6 +93,8 @@ function mapFromApi(item: ApiUser): User {
     supervisedUserIds: supervisedUsers.map((person) => person.id),
     supervisedUsers,
     supervisorUsers: (item.supervisorUsers ?? []).map(mapSupervisionPerson),
+    shiftGroups: (item.shiftGroups ?? []).map(mapShiftGroup),
+    inheritedShiftGroups: (item.inheritedShiftGroups ?? []).map((entry) => ({ group: mapShiftGroup(entry.group), viaSupervisors: entry.viaSupervisors })),
   };
 }
 
@@ -113,6 +132,7 @@ export const userApiService = {
         companyId: scope.companyId,
         employeeId: user.employeeId || null,
         ...supervisionPayload(user),
+        ...shiftGroupsPayload(user),
       },
       // El modal muestra el error en contexto: sin aviso global duplicado.
       silentErrors: true,
@@ -132,6 +152,7 @@ export const userApiService = {
         companyId: scope.companyId,
         employeeId: user.employeeId || null,
         ...supervisionPayload(user),
+        ...shiftGroupsPayload(user),
       },
       silentErrors: true,
     });

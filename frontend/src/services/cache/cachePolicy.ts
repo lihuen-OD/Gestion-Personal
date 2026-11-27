@@ -10,7 +10,6 @@ export type CacheFamily =
   | "employees"
   | "time-entries"
   | "novelties"
-  | "pending"
   | "work-regimes"
   | "audit"
   | "notifications"
@@ -20,15 +19,13 @@ export type CacheFamily =
 
 // Familias que muestran contabilidad de horas (total trabajado, equivalencia
 // para liquidación, cierres): Legajo y grilla por legajo ("employees"), Carga
-// de horas y Por persona ("time-entries"), Bandeja ("pending"), dashboard y
-// cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
+// de horas y Por persona ("time-entries"), dashboard y cierres. Se invalidan juntas cuando algo reinterpreta horas ya cargadas: un
 // concepto horario, una regla de Hora Especial o la convocatoria de un
 // feriado (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §12, §15 y §16). Mismo alcance que
 // backend/src/modules/time-entries/workedTimeReadCaches.ts.
 export const WORKED_TIME_DERIVED_CACHE_FAMILIES: readonly CacheFamily[] = [
   "employees",
   "time-entries",
-  "pending",
   "dashboard",
   "monthly-closures",
 ];
@@ -186,13 +183,6 @@ export const cachePolicies = {
     sensitive: true,
     schemaVersion: CACHE_SCHEMA_VERSION,
   },
-  pendingQueue: {
-    family: "pending",
-    ttlMs: 30_000,
-    persist: false,
-    sensitive: true,
-    schemaVersion: CACHE_SCHEMA_VERSION,
-  },
   auditParametersCatalog: {
     family: "audit-parameters",
     ttlMs: 10 * 60_000,
@@ -337,6 +327,16 @@ export const cachePolicies = {
   // en los 4, mismo rango que el backend ya usa para shiftTemplates/
   // doubleRules — no persistidos (IndexedDB) por ser TTL corto.
   shiftTemplatesCatalog: {
+    family: "workforce-config",
+    ttlMs: 30_000,
+    persist: false,
+    sensitive: false,
+    schemaVersion: CACHE_SCHEMA_VERSION,
+  },
+  // R3 (SHIFT_ROTATION_AUDIT_PLAN.md §23): grupos de turnos. Misma familia que
+  // las plantillas: cualquier escritura de grupos o de plantillas invalida
+  // ambos catálogos (el de plantillas trae nombre, orden y estado del grupo).
+  shiftGroupsCatalog: {
     family: "workforce-config",
     ttlMs: 30_000,
     persist: false,

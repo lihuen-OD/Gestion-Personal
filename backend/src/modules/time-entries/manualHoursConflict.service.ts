@@ -3,7 +3,6 @@ import { argentinaCalendarDate, argentinaDayRange, calendarDateKey, formatArgent
 import { AppError } from "../../shared/errors/AppError";
 import { employeePeriodKey, findProtectedClosurePeriods, ProtectedClosurePeriodError } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { prisma } from "../../shared/prisma/client";
-import { roles } from "../../shared/security/roles";
 import { formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { auditService, clearAuditDerivedCaches, type AuditContext } from "../audit/audit.service";
 import { lockEmployeeDays } from "../employee-day-offs/employeeDayLock";
@@ -79,7 +78,7 @@ export function shiftDays(shift: ManualHoursConflictRow["workShift"]): ShiftDays
     const current = segmentsByDate.get(key);
     segmentsByDate.set(key, { minutes: (current?.minutes ?? 0) + segment.minutes, last: { id: segment.id, startAt: segment.fromDateTime, endAt: segment.toDateTime } });
   }
-  const operationalDateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate);
+  const operationalDateKey = workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate, shift.scheduledStartAt);
   return { operationalDateKey, dayKeys: [...new Set([...segmentsByDate.keys(), operationalDateKey])].sort(), segmentsByDate };
 }
 
@@ -179,8 +178,6 @@ export const manualHoursConflictService = {
       throw new AppError("Employee not found or outside your scope", 403, "EMPLOYEE_SCOPE_FORBIDDEN");
     }
 
-    const isRrhh = user.role === roles.rrhh;
-    const correctionReason = input.correctionReason?.trim() || null;
     const outcome = await prisma.$transaction(async (tx) => {
       const alert = (await repository.findConflict(id, tx))!;
       const { operationalDateKey, dayKeys, segmentsByDate } = shiftDays(alert.workShift);
@@ -204,13 +201,10 @@ export const manualHoursConflictService = {
       if (input.decision === "USE_CLOCK") {
         const protectedPeriods = await findProtectedClosurePeriods(tx, pairs);
         if (protectedPeriods.size) {
-          if (!isRrhh) {
-            throw new ProtectedClosurePeriodError(
-              [...protectedPeriods.entries()].map(([key, status]) => ({ employeeId, period: key.split(":")[1]!, status })),
-              "El período ya fue enviado o aprobado: sólo RRHH puede usar las horas fichadas, con motivo.",
-            );
-          }
-          if (!correctionReason) throw new AppError("El período ya fue enviado o aprobado: indicá el motivo de la corrección.", 400, "MANUAL_HOURS_CORRECTION_REASON_REQUIRED");
+          throw new ProtectedClosurePeriodError(
+            [...protectedPeriods.entries()].map(([key, status]) => ({ employeeId, period: key.split(":")[1]!, status })),
+            "El período está cerrado. Reabrilo antes de usar las horas fichadas.",
+          );
         }
         const normalHourConceptId = alert.workShift.hourConceptId ?? await repository.findNormalHourConceptId(tx);
         // El mismo motor de Horas Especiales que la salida (puede responder
@@ -264,9 +258,9 @@ export const manualHoursConflictService = {
         action: "UPDATE",
         entity: "ShiftAlert",
         entityId: id,
-        description: `Se resolvió la actividad fichada sobre horas cargadas manualmente de ${formatEmployeeReference(alert.employee)} del ${dateLabel}: ${decisionText}.${correctionReason ? ` Motivo: ${correctionReason}` : ""}`,
+        description: `Se resolvió la actividad fichada sobre horas cargadas manualmente de ${formatEmployeeReference(alert.employee)} del ${dateLabel}: ${decisionText}.`,
         before: { decision: null, operationalDate: operationalDateKey, days: before.days, manualMinutes: before.manualMinutes, clockMinutes: before.clockMinutes } as Prisma.InputJsonValue,
-        after: { decision: input.decision, operationalDate: operationalDateKey, days: after.days, correctionReason } as Prisma.InputJsonValue,
+        after: { decision: input.decision, operationalDate: operationalDateKey, days: after.days } as Prisma.InputJsonValue,
       });
       return { changed: true as const, rebuilt, periods: pairs.map((pair) => pair.period), employeeId, dateLabel };
     }, { timeout: 20_000 });

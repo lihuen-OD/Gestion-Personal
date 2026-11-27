@@ -18,9 +18,7 @@ vi.mock("./novelties.service", () => ({
   noveltiesService: {
     list: vi.fn(),
     create: vi.fn(),
-    approve: vi.fn(),
-    approveMany: vi.fn(),
-    reject: vi.fn(),
+    update: vi.fn(),
     remove: vi.fn(),
     resolveCoverageDay: vi.fn(),
   },
@@ -31,7 +29,7 @@ vi.mock("../time-entries/workedTimeReadCaches", () => ({
 }));
 
 const mockedService = noveltiesService as unknown as {
-  list: Mock; create: Mock; approve: Mock; approveMany: Mock; reject: Mock; remove: Mock;
+  list: Mock; create: Mock; update: Mock; remove: Mock;
 };
 
 const userA: Express.AuthUser = { id: "user-a", email: "a@example.com", name: "Usuario A", role: "NIVEL_1_RRHH" };
@@ -134,37 +132,30 @@ describe("noveltiesController.list — noveltiesListCache (Etapa 14I.6)", () => 
     expect(mockedService.list).toHaveBeenCalledTimes(2);
   });
 
-  it("approve()/reject()/remove() también invalidan noveltiesListCache", async () => {
+  it("update()/remove() también invalidan noveltiesListCache", async () => {
     mockedService.list.mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } });
-    mockedService.approve.mockResolvedValue({ id: "nov-1", status: "APROBADO" });
-    mockedService.reject.mockResolvedValue({ id: "nov-1", status: "RECHAZADO" });
+    mockedService.update.mockResolvedValue({ id: "nov-1", status: "APROBADO" });
     mockedService.remove.mockResolvedValue({ ok: true });
     const req = fakeReq();
 
     await noveltiesController.list(req, fakeRes());
-    await noveltiesController.approve(fakeReq({ params: { id: "nov-1" } }), fakeRes());
+    await noveltiesController.update(fakeReq({ params: { id: "nov-1" }, body: { observation: "ajuste" } }), fakeRes());
     await noveltiesController.list(req, fakeRes());
     expect(mockedService.list).toHaveBeenCalledTimes(2);
 
-    await noveltiesController.reject(fakeReq({ params: { id: "nov-1" }, body: { reason: "no aplica" } }), fakeRes());
-    await noveltiesController.list(req, fakeRes());
-    expect(mockedService.list).toHaveBeenCalledTimes(3);
-
     await noveltiesController.remove(fakeReq({ params: { id: "nov-1" } }), fakeRes());
     await noveltiesController.list(req, fakeRes());
-    expect(mockedService.list).toHaveBeenCalledTimes(4);
+    expect(mockedService.list).toHaveBeenCalledTimes(3);
   });
 });
 
-// Etapa 4 (NOVELTY_COVERAGE_ENGINE.md §12): una novedad aprobada cambia
+// Etapa 4 (NOVELTY_COVERAGE_ENGINE.md §12): una novedad efectiva cambia
 // totales, así que toda mutación limpia las cachés derivadas de horas
 // (grillas, resumen, dashboard, cierres), no sólo las de time-entries.
 describe("noveltiesController — mutaciones limpian las cachés derivadas de horas", () => {
   it.each([
     ["create", () => noveltiesController.create(fakeReq({ body: {} }), fakeRes())],
-    ["approve", () => noveltiesController.approve(fakeReq({ params: { id: "n-1" } as never }), fakeRes())],
-    ["approveMany", () => noveltiesController.approveMany(fakeReq({ body: { ids: ["n-1"] } }), fakeRes())],
-    ["reject", () => noveltiesController.reject(fakeReq({ params: { id: "n-1" } as never, body: { reason: "x" } }), fakeRes())],
+    ["update", () => noveltiesController.update(fakeReq({ params: { id: "n-1" } as never, body: { observation: "x" } }), fakeRes())],
     ["remove", () => noveltiesController.remove(fakeReq({ params: { id: "n-1" } as never }), fakeRes())],
     ["resolveCoverageDay", () => noveltiesController.resolveCoverageDay(fakeReq({ params: { id: "n-1", date: "2026-11-16" } as never, body: {} }), fakeRes())],
   ])("%s", async (_name, run) => {

@@ -135,38 +135,23 @@ describe("employeeListRequest filtros sectorId/costCenterId (Etapa 8F)", () => {
   });
 });
 
-describe("employeeApiService — invalidación de cache 'time-entries'/'pending' tras mutar HourConceptBreakdown (Etapa 11A)", () => {
-  // Bug encontrado durante la auditoría 11A: estos 5 métodos no invalidaban
+describe("employeeApiService — invalidación de cache 'time-entries' tras mutar HourConceptBreakdown (Etapa 11A)", () => {
+  // Bug encontrado durante la auditoría 11A: estos métodos no invalidaban
   // ningún cache de frontend — la columna "Especiales" de la grilla de
-  // período (family "time-entries") y la Bandeja de revisión (family
-  // "pending") podían quedar hasta 30s desactualizadas tras guardar/aprobar/
-  // rechazar/devolver un desglose manual, o recalcular los automáticos.
-  it("saveManualHourConceptBreakdown invalida 'time-entries' y 'pending'", async () => {
+  // período (family "time-entries") podía quedar hasta 30s desactualizada
+  // tras guardar un desglose manual o recalcular los automáticos.
+  it("saveManualHourConceptBreakdown invalida 'time-entries' y 'dashboard'", async () => {
     const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
     vi.mocked(apiRequest).mockResolvedValue({ data: { id: "breakdown-1" } });
 
     await employeeApiService.saveManualHourConceptBreakdown("employee-1", { date: "2026-08-12", hourConceptId: "colectivo-id", minutes: 120 });
 
     expect(spy).toHaveBeenCalledWith("time-entries", expect.any(String));
-    expect(spy).toHaveBeenCalledWith("pending", expect.any(String));
+    expect(spy).toHaveBeenCalledWith("dashboard", expect.any(String));
     spy.mockRestore();
   });
 
-  it("approve/reject/returnManualHourConceptBreakdown invalidan 'time-entries' y 'pending'", async () => {
-    const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
-    vi.mocked(apiRequest).mockResolvedValue({ data: { id: "breakdown-1" } });
-
-    await employeeApiService.approveManualHourConceptBreakdown("employee-1", "breakdown-1");
-    await employeeApiService.rejectManualHourConceptBreakdown("employee-1", "breakdown-1", "motivo");
-    await employeeApiService.returnManualHourConceptBreakdown("employee-1", "breakdown-1", "motivo");
-
-    expect(spy).toHaveBeenCalledWith("time-entries", expect.any(String));
-    expect(spy).toHaveBeenCalledWith("pending", expect.any(String));
-    expect(spy.mock.calls.filter(([family]) => family === "time-entries")).toHaveLength(3);
-    spy.mockRestore();
-  });
-
-  it("recalculateAutomaticHourConceptBreakdowns invalida 'time-entries' (no cambia estado de revisión, no hace falta 'pending')", async () => {
+  it("recalculateAutomaticHourConceptBreakdowns invalida 'time-entries'", async () => {
     const spy = vi.spyOn(cache, "invalidateCacheFamily").mockResolvedValue(undefined);
     vi.mocked(apiRequest).mockResolvedValue({ data: { employeeId: "employee-1", period: "2026-08", processedShifts: 0, eligibleConcepts: 0, generated: 0, removed: 0 } });
 
@@ -366,46 +351,37 @@ describe("employeeApiService.replaceAssignments — ya no envía 'role' para TIM
     vi.clearAllMocks();
   });
 
-  it("manda role: null aunque el legajo tenga un valor legacy en timeResponsibleRole", async () => {
-    vi.mocked(apiRequest).mockImplementation(async (url: unknown) => {
-      // userApiService.getAll recorre las páginas de /users (collectAllPages).
-      if (typeof url === "string" && url.startsWith("/users?")) {
-        return {
-          data: [
-            {
-              id: "user-1",
-              name: "15taller@losodwyer.com",
-              email: "15taller@losodwyer.com",
-              role: "NIVEL_3_CARGA_HORARIA",
-              status: "ACTIVO",
-              employee: { id: "employee-2", legajo: "200", firstName: "15", lastName: "Taller" },
-            },
-          ],
-        } as never;
-      }
-      return { data: employeePayload } as never;
-    });
+  it("manda el userId elegido con role y personName nulos, sin resolver usuarios por nombre", async () => {
+    vi.mocked(apiRequest).mockImplementation(async () => ({ data: employeePayload }) as never);
 
     const employee = mapEmployeeFromApi(employeePayload);
     const updated = {
       ...employee,
-      timeResponsibles: ["15 Taller"],
-      timeResponsible: "15 Taller",
+      timeResponsibles: ["Planta"],
+      timeResponsible: "Planta",
+      timeResponsibleUserIds: ["user-1", "user-1"],
       timeResponsibleRole: "Nivel 2 - Supervisión / Gestión",
     };
 
     await employeeApiService.replaceAssignments(updated);
 
+    expect(vi.mocked(apiRequest).mock.calls.some(([calledUrl]) => typeof calledUrl === "string" && calledUrl.startsWith("/users"))).toBe(false);
     const assignmentsCall = vi.mocked(apiRequest).mock.calls.find(([calledUrl]) => calledUrl === `/employees/${updated.id}/assignments`);
-    expect(assignmentsCall).toBeDefined();
-    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string; role: string | null; userId: string | null }> } };
-    const timeResponsibleAssignment = body.body.assignments.find((item) => item.type === "TIME_RESPONSIBLE");
+    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string; role: string | null; userId: string | null; personName: string | null }> } };
+    const timeResponsibles = body.body.assignments.filter((item) => item.type === "TIME_RESPONSIBLE");
+    // La asignación identifica *quién* (userId, deduplicado), nunca un nombre suelto ni un nivel.
+    expect(timeResponsibles).toEqual([expect.objectContaining({ userId: "user-1", personName: null, role: null })]);
+  });
 
-    expect(timeResponsibleAssignment).toBeDefined();
-    expect(timeResponsibleAssignment?.role).toBeNull();
-    // El vínculo real sigue resolviéndose por userId — la asignación identifica
-    // *quién* es responsable, nunca *qué nivel* tiene (eso vive en User.role).
-    expect(timeResponsibleAssignment?.userId).toBe("user-1");
+  it("un responsable legacy sólo por nombre (sin usuario) no se reenvía como TIME_RESPONSIBLE", async () => {
+    vi.mocked(apiRequest).mockImplementation(async () => ({ data: employeePayload }) as never);
+    const updated = { ...mapEmployeeFromApi(employeePayload), timeResponsibles: ["Wicky Stefania"], timeResponsibleUserIds: [] };
+
+    await employeeApiService.replaceAssignments(updated);
+
+    const assignmentsCall = vi.mocked(apiRequest).mock.calls.find(([calledUrl]) => calledUrl === `/employees/${updated.id}/assignments`);
+    const body = assignmentsCall![1] as { body: { assignments: Array<{ type: string }> } };
+    expect(body.body.assignments.filter((item) => item.type === "TIME_RESPONSIBLE")).toEqual([]);
   });
 });
 

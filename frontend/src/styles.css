@@ -2161,7 +2161,27 @@ a.employee-hours-status-item:hover{border-color:var(--ds-blue-300);background:va
 .holiday-work-muted{color:var(--color-text-secondary,#64778a)}
 .holiday-work-save-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--color-border-light,#e2e8f0)}
 .holiday-work-save-bar .rule-scope-help{flex:1;min-width:220px;margin:0}
-.holiday-work-section table tr.is-selected td{background:#f4fbfb}
+/* "Gestionar feriados" (Gestión horaria): diálogo ancho con fechas y convocatoria. */
+.holiday-work-manager{display:grid;gap:18px;min-width:0}
+.holiday-work-block{display:grid;gap:12px;min-width:0}
+.holiday-work-block-title{margin:0;font-size:15px;color:#1f3a4d}
+.holiday-work-manager .holiday-work-month-nav{margin-bottom:0}
+.holiday-work-manager .holiday-work-filters{margin:0}
+.holiday-work-manager .holiday-work-quick-actions{margin-bottom:0}
+.holiday-work-manager .holiday-work-save-bar{margin-top:0}
+.modal-body .holiday-work-manager .info-note,.modal-body .holiday-work-manager .rule-form-alert-error{margin:0}
+.holiday-work-table-shell{max-height:min(48vh,460px);overflow:auto}
+.table-shell>table.holiday-work-table thead th,.table-shell>table.holiday-work-table tbody td{vertical-align:middle!important;padding:10px 14px!important}
+.holiday-work-table thead th{position:sticky;top:0;z-index:1;background:var(--ds-slate-50)}
+.holiday-work-table tr.is-selected td{background:#f4fbfb}
+/* En columna (móvil), .search-field{flex:1} estiraría la búsqueda a lo alto. */
+@media(max-width:640px){.holiday-work-manager .holiday-work-filters .search-field{flex:none}}
+.holiday-work-person{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.holiday-work-hint{margin:0;font-size:13px}
+.holiday-work-correction{display:grid;gap:6px}
+.holiday-work-legacy-hours{display:block;margin-bottom:4px;font-size:11px}
+/* La capa base fija el borde de input/select con !important. */
+.holiday-work-table select[aria-invalid="true"]{border-color:var(--ds-amber-500,#d97706)!important}
 @media(max-width:640px){.holiday-work-filters{flex-direction:column;align-items:stretch}.holiday-work-filters .field,.holiday-work-filters .search-field{min-width:0}.holiday-work-save-bar{flex-direction:column;align-items:stretch}}
 /* Etapa 13J.3: .people-search-toolbar es display:grid (ver línea 34), no
    flex — flex-direction:column acá nunca tuvo ningún efecto (bug latente,
@@ -2814,17 +2834,373 @@ input[aria-invalid="true"],textarea[aria-invalid="true"],select[aria-invalid="tr
 .context-novelty-card .novelty-preview{position:static}
 @media(max-width:900px){.novelty-load-layout{grid-template-columns:minmax(0,1fr)}.novelty-preview{position:static}}
 @media(max-width:520px){.novelty-load-dates{grid-template-columns:minmax(0,1fr)}.novelty-load-duration{max-width:none}}
-/* Usuarios y roles: responsables de carga supervisados por un Nivel 2 (SupervisedUsersSelector) y ayuda del empleado vinculado. Reusa .people-search. */
-.supervised-users-head{display:grid;gap:4px}
-.supervised-users-head b{color:var(--color-text-primary,#203648);font-size:13px}
-.supervised-users-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
-.supervised-users .people-search-results{max-height:220px}
-.supervised-users .people-search-results b{display:inline-flex;align-items:center;gap:8px}
-.supervised-users button:disabled{cursor:not-allowed;opacity:.6}
+/* Usuarios y roles: selector múltiple compartido (MultiOptionSelector: responsables de carga supervisados y grupos de turnos de un Nivel 2) y ayuda del empleado vinculado. Reusa .people-search. */
+.multi-option-select-head{display:grid;gap:4px}
+.multi-option-select-head b{color:var(--color-text-primary,#203648);font-size:13px}
+.multi-option-select-head small{color:var(--color-text-muted);font-size:12px;line-height:1.45}
+.multi-option-select .people-search-results{max-height:220px}
+.multi-option-select .people-search-results b{display:inline-flex;align-items:center;gap:8px}
+.multi-option-select button:disabled{cursor:not-allowed;opacity:.6}
+.multi-option-select-error{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.multi-option-select-error small{color:var(--color-danger,#b42318);font-size:12.5px}
 .modal-body label>small.field-hint{display:block;margin-top:6px}
 /* Modal de usuario: grilla explícita de 2 columnas parejas (sin ella,
    .form-stack>.form-actions{grid-column:span 2} arma columnas implícitas
    desparejas). Notas, bloques anchos, error y acciones ocupan la fila. */
 .modal-body .user-form{grid-template-columns:repeat(2,minmax(0,1fr))}
-.user-form>.info-note,.user-form>.supervised-users,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
+.user-form>.info-note,.user-form>.multi-option-select,.user-form>.inherited-shift-groups,.user-form>.user-form-wide,.user-form>.error,.user-form>.form-actions{grid-column:1/-1}
 @media(max-width:620px){.modal-body .user-form{grid-template-columns:minmax(0,1fr)}}
+
+/* R3.2 — Turnos agrupados por grupo (lugar). docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §23. */
+.shift-group-sections{display:grid;gap:12px;padding:14px 16px 16px}
+.shift-group-section{border:1px solid var(--ds-slate-200);border-radius:var(--radius-lg);background:#fff;overflow:hidden}
+.shift-group-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:10px 14px;background:var(--ds-slate-50)}
+.shift-group-section:has(.shift-group-body) .shift-group-head{border-bottom:1px solid var(--ds-slate-200)}
+.shift-group-toggle{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 6px 4px 2px;border:0;border-radius:var(--radius-md);background:transparent;color:var(--ds-slate-800);font-size:14px;font-weight:700;text-align:left;cursor:pointer}
+.shift-group-toggle:hover{background:var(--ds-slate-100)}
+.shift-group-toggle:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px}
+.shift-group-toggle svg{flex:none;color:var(--ds-slate-500)}
+.shift-group-title{overflow-wrap:anywhere}
+.shift-group-meta{display:flex;align-items:center;gap:8px;margin-left:auto}
+.shift-group-count{color:var(--ds-slate-500);font-size:12px;font-weight:600;white-space:nowrap}
+.shift-group-hint{flex-basis:100%;margin:0;color:var(--color-text-muted);font-size:12px}
+.shift-group-section.is-ungrouped .shift-group-head{background:#fff}
+.shift-group-section.is-inactive .shift-group-title{color:var(--ds-slate-500)}
+.shift-group-body .table-shell{border:0;border-radius:0}
+.shift-group-body .empty-compact{padding:12px 14px!important}
+.shift-category-cell{color:var(--color-text-muted)}
+/* Supera a `.table-shell>table{table-layout:auto!important}` sólo en la vista agrupada: columnas alineadas entre grupos. */
+.table-shell>table.shift-table-grouped{table-layout:fixed!important}
+/* Anchos calculados para los textos reales (encabezados en mayúsculas con ícono de orden, códigos y horarios) a ~1024 px útiles (1366). */
+.shift-table-grouped .col-code{width:11%}.shift-table-grouped .col-name{width:10%}.shift-table-grouped .col-category{width:12%}.shift-table-grouped .col-schedule{width:10.5%}.shift-table-grouped .col-midnight{width:10.5%}
+.shift-table-grouped .col-enabled{width:12%}.shift-table-grouped .col-disabled{width:15%}.shift-table-grouped .col-status{width:9%}.shift-table-grouped .col-actions{width:10%}
+.table-shell>table.shift-table-grouped thead th{white-space:normal!important}
+.table-shell>table.shift-table-grouped thead th,.table-shell>table.shift-table-grouped tbody td{padding-left:10px!important;padding-right:10px!important}
+.table-shell>table.shift-table-grouped thead th:first-child,.table-shell>table.shift-table-grouped tbody td:first-child{padding-left:16px!important}
+.table-shell>table.shift-table-grouped thead th,.table-shell>table.shift-table-grouped tbody td{overflow-wrap:normal!important;word-break:normal!important}
+.shift-groups-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:14px 16px 0!important;padding:10px 12px}
+.shift-groups-note p{flex:1 1 280px;margin:0}
+.shift-groups-note b{flex-basis:100%}
+.info-note.warning{border-color:var(--ds-amber-200);border-left-color:var(--ds-amber-600);background:var(--ds-amber-50)}
+.info-note.warning b{color:var(--ds-amber-700)}
+.shift-group-panel-error{margin:12px 16px 0}
+.shift-detail-classification{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px}
+.shift-detail-classification b{color:var(--ds-slate-700);font-weight:600}
+.shift-group-form .form-grid{grid-template-columns:repeat(3,minmax(0,1fr));padding:0}
+@media(max-width:700px){.shift-group-sections{padding:12px}.shift-group-meta{margin-left:0}.shift-group-form .form-grid{grid-template-columns:1fr}}
+/* R4.8A: rotaciones de turnos (listado en Turnos y detalle). Reutiliza panel, tabla, badges e info-note; sólo agrega la distribución propia. */
+.rotations-table .col-rotation{width:22%}.rotations-table .col-group{width:12%}.rotations-table .col-state{width:10%}.rotations-table .col-health{width:15%}.rotations-table .col-count{width:8%;text-align:right}
+/* `thead th` fuerza text-align:left!important en todo el sistema; los conteos se alinean con su encabezado. */
+.rotations-table thead th.col-count{text-align:right!important}.rotations-table .col-version{width:15%}.rotations-table .col-actions{width:10%}
+.rotation-name-link{display:grid;gap:2px;color:var(--color-text-primary)}
+.rotation-name-link span{color:var(--color-text-secondary);font-size:13px}
+.rotation-name-link:hover b{text-decoration:underline}
+.rotation-name-link:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px;border-radius:4px}
+.rotation-muted{display:block;color:var(--color-text-muted);font-size:12px}
+.col-group .rotation-muted{display:inline}
+.rotation-version-label{display:block;white-space:nowrap}
+.rotation-action-error{margin:0 0 16px}
+.rotation-state-note{margin:0 0 20px!important;padding:12px 16px}
+.rotation-state-note p{margin:0}
+.rotation-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:stretch;margin-bottom:20px}
+.rotation-summary-grid>.panel{margin-bottom:0!important}
+.rotation-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin:0}
+.rotation-facts dt{color:var(--color-text-muted);font-size:12px}
+.rotation-facts dd{margin:4px 0 0;color:var(--color-text-primary);font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.rotation-fact-wide{grid-column:1/-1}
+.rotation-fact-wide dd{font-weight:400;white-space:pre-line}
+.rotation-fact-detail{display:block;margin-top:2px;color:var(--color-text-muted);font-size:12px;font-weight:400}
+.rotation-issues-ok{display:flex;align-items:center;gap:8px;color:var(--color-success)}
+.rotation-issues-ok p{margin:0;color:var(--color-text-primary);font-size:14px}
+.rotation-issues-summary{margin:0 0 12px;color:var(--color-text-secondary);font-size:14px}
+.rotation-issue-list{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.rotation-issue{display:flex;gap:12px;padding:12px 16px;border:1px solid var(--ds-slate-200);border-left-width:4px;border-radius:10px;background:#fff}
+.rotation-issue.is-error{border-left-color:var(--ds-red-600);background:var(--ds-red-50)}
+.rotation-issue.is-warning{border-left-color:var(--ds-amber-600);background:var(--ds-amber-50)}
+.rotation-issue-icon{flex:none;margin-top:1px}
+.rotation-issue.is-error .rotation-issue-icon{color:var(--ds-red-600)}
+.rotation-issue.is-warning .rotation-issue-icon{color:var(--ds-amber-700)}
+.rotation-issue-body{min-width:0}
+.rotation-issue-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:0;color:var(--color-text-primary);font-size:14px;font-weight:700}
+.rotation-issue-count{color:var(--color-text-muted);font-size:12px;font-weight:600}
+.rotation-issue-explanation{margin:2px 0 0;color:var(--color-text-secondary);font-size:13px}
+.rotation-issue-messages{margin:8px 0 0;padding-left:18px;color:var(--color-text-primary);font-size:13px;line-height:1.5}
+.rotation-issue-more{margin-top:6px;padding:2px 0;border:0;background:none;color:var(--color-primary);font-size:13px;font-weight:600}
+.rotation-issue-more:hover{text-decoration:underline}
+.rotation-issue-more:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:2px;border-radius:4px}
+/* `.form-stack>.form-actions{grid-column:span 2}` genera dos columnas implícitas: cada fila del formulario ocupa todo el ancho. */
+.rotation-form,.rotation-cell-form{grid-template-columns:minmax(0,1fr)}
+.rotation-form>.form-actions,.rotation-cell-form>.form-actions{grid-column:1/-1}
+.rotation-form .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:0}
+.rotation-form-full{grid-column:1/-1}
+/* El estilo global de campos (input,select,textarea{background:#fff!important}) no distingue deshabilitados: un dato bloqueado (código o grupo que ya no se pueden cambiar) debe verse como tal. */
+.rotation-form :is(input,select,textarea):disabled{background:var(--color-bg-muted)!important;color:var(--color-text-secondary)!important;cursor:not-allowed}
+.rotation-form textarea{width:100%;resize:vertical}
+@media(max-width:1100px){.rotation-summary-grid{grid-template-columns:1fr}}
+@media(max-width:700px){.rotation-facts,.rotation-form .form-grid{grid-template-columns:1fr}.rotation-issue{padding:12px}}
+/* R4.8B1: equipos y grilla del ciclo (sólo lectura). Mismo patrón de tabla del sistema; los !important sólo superan los de `tbody td`/`thead th` globales. */
+.rotation-crews-table .col-order{width:80px}.rotation-crews-table .col-code{width:120px}.rotation-crews-table .col-count{width:110px;text-align:right}.rotation-crews-table .col-state{width:120px}.rotation-crews-table .col-actions{width:120px}
+.rotation-crews-table thead th.col-count{text-align:right!important}
+/* `.table-shell` corta palabras en cualquier punto en pantallas angostas; los nombres de equipo se cortan entre palabras (la tabla se desplaza). */
+.table-shell>table.rotation-crews-table tbody td{overflow-wrap:normal!important;word-break:normal!important;white-space:normal!important;min-width:96px}
+.rotation-section-error{margin:0 0 12px}
+.rotation-section-footnote{margin:12px 0 0;color:var(--color-text-muted);font-size:12px}
+.rotation-version-select{display:flex;align-items:center;gap:8px}
+.rotation-version-select label{color:var(--color-text-secondary);font-size:13px;font-weight:600;white-space:nowrap}
+.rotation-version-select select{width:min(340px,60vw)}
+.rotation-version-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px 24px;margin:0 0 16px}
+.rotation-version-facts dt{color:var(--color-text-muted);font-size:12px}
+.rotation-version-facts dd{margin:4px 0 0;color:var(--color-text-primary);font-size:14px;font-weight:600}
+.rotation-grid-note{margin:0 0 16px!important;padding:10px 14px}
+.rotation-grid-note p{margin:0}
+.rotation-grid-legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin:0 0 12px;padding:0;list-style:none;color:var(--color-text-secondary);font-size:12px}
+.rotation-grid-legend li{display:flex;align-items:center;gap:8px}
+.rotation-legend-sample{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-legend-sample.is-shift{border:1px solid var(--ds-blue-200);background:var(--ds-blue-50);color:var(--ds-slate-800)}
+.rotation-legend-sample.is-rest{border:1px solid var(--ds-slate-200);background:var(--ds-slate-100);color:var(--ds-slate-600)}
+.rotation-legend-sample.is-missing{border:1px dashed var(--ds-amber-600);background:var(--ds-amber-50);color:var(--ds-amber-700)}
+.table-shell>table.rotation-grid{table-layout:fixed!important}
+.table-shell>table.rotation-grid thead th{text-align:center!important;padding:10px 8px!important}
+.table-shell>table.rotation-grid thead th.rotation-grid-week{text-align:left!important;padding-left:16px!important}
+.rotation-grid abbr{text-decoration:none}
+.rotation-grid th.rotation-grid-week{width:96px}
+.rotation-grid tbody th.rotation-grid-week{padding:10px 8px 10px 16px;color:var(--ds-slate-600);font-size:13px;font-weight:600;text-align:left;vertical-align:top;white-space:nowrap}
+.rotation-grid-crew th{padding:10px 16px;border-top:1px solid var(--ds-slate-200);background:var(--ds-slate-50);color:var(--color-text-primary);font-size:13px;font-weight:700;text-align:left}
+/* La etiqueta del equipo acompaña a la columna fija al desplazar. */
+.rotation-grid-crew-label{position:sticky;left:16px;display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px;max-width:calc(100vw - 96px)}
+.rotation-grid-crew-code{color:var(--color-text-muted);font-size:12px;font-weight:600}
+/* Las cabeceras de fila no son encabezados de columna: sin las mayúsculas globales de `th`. */
+.table-shell>table.rotation-grid tbody th{text-transform:none!important;letter-spacing:normal!important}
+/* La columna "Semana" queda fija al desplazar la grilla en pantallas angostas. */
+.rotation-grid .rotation-grid-week{position:sticky;left:0;z-index:1;background:#fff}
+.rotation-grid thead .rotation-grid-week{z-index:2;background:var(--ds-slate-50)}
+.rotation-grid tbody tr:hover{background:transparent}
+.table-shell>table.rotation-grid tbody td.rotation-grid-cell{padding:6px!important;vertical-align:top;white-space:normal!important}
+.rotation-grid-cell.has-issues{box-shadow:inset 0 0 0 2px var(--ds-red-500)}
+.rotation-blocks{display:grid;gap:4px;margin:0;padding:0;list-style:none}
+.rotation-block{display:grid;gap:1px;padding:4px 6px;border:1px solid var(--ds-blue-200);border-radius:6px;background:var(--ds-blue-50);text-align:center}
+.rotation-block.is-overnight{border-color:var(--ds-purple-200);background:var(--ds-purple-50)}
+.rotation-block-time{color:var(--ds-slate-800);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rotation-block-code{overflow:hidden;color:var(--ds-slate-600);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.rotation-next-day{display:inline-block;margin-left:3px;padding:0 4px;border-radius:4px;background:var(--ds-purple-700);color:#fff;font-size:10px;font-weight:700;line-height:15px;vertical-align:1px;text-decoration:none;cursor:help}
+.rotation-legend-sample .rotation-next-day{margin-left:4px}
+.rotation-rest,.rotation-missing{display:flex;align-items:center;justify-content:center;gap:4px;min-height:38px;padding:4px 6px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-rest{border:1px solid var(--ds-slate-200);background:var(--ds-slate-100);color:var(--ds-slate-600)}
+.rotation-missing{border:1px dashed var(--ds-amber-600);background:var(--ds-amber-50);color:var(--ds-amber-700)}
+.rotation-cell-issue{display:flex;align-items:center;justify-content:center;gap:3px;margin-top:4px;color:var(--ds-red-700);font-size:11px;font-weight:700}
+.rotation-grid-issues{margin-top:16px;padding:12px 16px;border:1px solid var(--ds-slate-200);border-radius:10px;background:#fff}
+.rotation-grid-issues h4{margin:0 0 8px;color:var(--color-text-primary);font-size:14px}
+.rotation-grid-issues ul{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:13px}
+.rotation-grid-issues li{display:flex;align-items:flex-start;gap:8px;color:var(--color-text-primary)}
+.rotation-grid-issues li svg{flex:none;margin-top:2px}
+.rotation-grid-issues li.is-error svg{color:var(--ds-red-600)}
+.rotation-grid-issues li.is-warning svg{color:var(--ds-amber-700)}
+.rotation-form .rotation-crew-form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:700px){.rotation-version-select{flex-wrap:wrap}.rotation-version-select select{width:100%}.rotation-form .rotation-crew-form-grid{grid-template-columns:1fr}}
+/* R4.8B2: editor de versiones. Reutiliza la grilla de B1; la celda editable es un botón con el mismo contenido. */
+.rotation-grid-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 12px}
+.rotation-version-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 16px}
+.button.subtle.rotation-danger-button{color:var(--ds-red-700)!important}
+.button.subtle.rotation-danger-button:hover{border-color:var(--ds-red-200)!important;background:var(--ds-red-50)!important}
+.rotation-cell-button{display:block;width:100%;min-height:44px;padding:2px;border:1px solid transparent;border-radius:8px;background:none;color:inherit;font:inherit;text-align:inherit;cursor:pointer}
+.rotation-cell-button:hover{border-color:var(--ds-blue-300);background:var(--ds-blue-50)}
+.rotation-cell-button:focus-visible{outline:2px solid var(--ds-blue-500);outline-offset:1px}
+.rotation-grid-cell.has-issues .rotation-cell-button{border-color:transparent}
+.rotation-editor-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;align-items:start;margin:0 0 16px}
+.rotation-editor-fields input,.rotation-editor-fields select{width:100%}
+.rotation-save-error{margin:0 0 16px;padding:12px 16px;border:1px solid var(--ds-red-200);border-left:4px solid var(--ds-red-600);border-radius:10px;background:var(--ds-red-50);color:var(--color-text-primary);font-size:13px}
+.rotation-save-error-title{display:flex;align-items:flex-start;gap:8px;margin:0;font-size:14px;font-weight:700}
+.rotation-save-error-title svg{flex:none;margin-top:1px;color:var(--ds-red-600)}
+.rotation-save-error ul{margin:8px 0 0;padding-left:42px;line-height:1.5}
+.rotation-save-error-hint{margin:8px 0 0 24px;color:var(--color-text-secondary)}
+.rotation-save-error-actions{margin:10px 0 0 24px}
+.rotation-editor-empty{margin:0;padding:16px;border:1px dashed var(--ds-slate-300);border-radius:10px;color:var(--color-text-secondary);font-size:14px;text-align:center}
+/* La barra de guardado queda visible al recorrer grillas largas: el panel del editor no recorta (overflow) para que `sticky` use el scroll de la página. */
+.panel.rotation-editor{overflow:visible!important}
+.panel.rotation-editor>.panel-body{overflow:visible!important}
+.rotation-editor-footer{position:sticky;bottom:0;z-index:3;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 16px;margin:16px -20px -20px;padding:12px 20px;border-top:1px solid var(--ds-slate-200);border-radius:0 0 10px 10px;background:#fff;box-shadow:0 -6px 16px #0f172a0d}
+.rotation-editor-status{flex:1 1 320px;min-width:0}
+.rotation-editor-status p{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:13px}
+.rotation-editor-status svg{flex:none;margin-top:1px}
+.rotation-editor-status .is-warning{color:var(--ds-amber-700)}
+.rotation-editor-status .is-ok{color:var(--color-success)}
+.rotation-editor-actions{display:flex;gap:8px}
+.rotation-cell-form .choice-group{margin:0}
+.rotation-cell-blocks{display:grid;gap:10px;margin:0;padding:14px;border:1px solid var(--ds-slate-200);border-radius:10px}
+.rotation-cell-blocks legend{padding:0 4px;color:var(--color-text-primary);font-size:13px;font-weight:700}
+.rotation-cell-blocks .field-hint,.rotation-cell-blocks .field-error{margin:0}
+.rotation-cell-block-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.rotation-cell-block-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+.rotation-cell-block-row select{width:100%}
+.rotation-cell-remove{margin-bottom:6px}
+.rotation-cell-blocks>.button{justify-self:start}
+.rotation-cell-save-hint{margin:0}
+.rotation-conflict-body{display:grid;gap:14px}
+.rotation-conflict-body>p{margin:0;color:var(--color-text-secondary);font-size:14px}
+@media(max-width:1100px){.rotation-editor-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.rotation-editor-fields{grid-template-columns:1fr}.rotation-editor-footer{margin:16px -16px -16px;padding:12px 16px}.rotation-editor-actions{width:100%}.rotation-editor-actions .button{flex:1}.rotation-grid-actions{justify-content:flex-start}}
+.rotation-editor-anchor{scroll-margin-top:16px}
+/* R4.8C: personas de la rotación. */
+.rotation-members-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px}
+.rotation-members-toolbar .tabs{margin:0!important}
+.rotation-members-table .col-legajo{width:90px}.rotation-members-table .col-crew{width:18%}.rotation-members-table .col-date{width:120px}.rotation-members-table .col-state{width:110px}.rotation-members-table .col-actions{width:130px}
+.table-shell>table.rotation-members-table tbody td{overflow-wrap:normal!important;word-break:normal!important;white-space:normal!important}
+.table-shell>table.rotation-members-table tbody td.col-date,.table-shell>table.rotation-members-table tbody td.col-legajo{white-space:nowrap!important}
+.rotation-member-name{margin-right:8px}
+.rotation-members-table .rotation-muted{display:inline;font-size:inherit}
+.rotation-without-fixed{display:grid;gap:6px;margin:0 0 16px!important;padding:12px 16px}
+.rotation-without-fixed p,.rotation-without-fixed ul{margin:0}
+.rotation-without-fixed ul{padding-left:20px}
+.rotation-without-fixed .button{justify-self:start}
+.rotation-form .rotation-members-form-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+/* El selector ya trae su propio recuadro: el grupo sólo aporta la leyenda. */
+.rotation-members-picker{display:grid;gap:8px;min-width:0;margin:0;padding:0;border:0}
+.rotation-members-picker legend{margin-bottom:6px;padding:0;color:var(--color-text-primary);font-size:13px;font-weight:700}
+.rotation-members-count{margin:0;color:var(--color-text-secondary);font-size:12px}
+.rotation-members-count.is-over{color:var(--ds-red-700);font-weight:700}
+.rotation-fixed-conflict{display:grid;gap:8px;padding:12px 16px;border:1px solid var(--ds-amber-200);border-left:4px solid var(--ds-amber-600);border-radius:10px;background:var(--ds-amber-50);color:var(--color-text-primary);font-size:13px}
+.rotation-fixed-conflict p,.rotation-fixed-conflict ul{margin:0}
+.rotation-fixed-conflict ul{padding-left:20px;line-height:1.5}
+.rotation-fixed-conflict-title{display:flex;align-items:flex-start;gap:8px;font-size:14px;font-weight:700}
+.rotation-fixed-conflict-title svg{flex:none;margin-top:1px;color:var(--ds-amber-700)}
+.rotation-fixed-conflict-check{display:flex;align-items:flex-start;gap:8px}
+.rotation-fixed-conflict-check label{color:var(--color-text-primary)!important;font-size:13px!important;font-weight:600!important;cursor:pointer}
+.rotation-modal-lead{margin:0;color:var(--color-text-secondary);font-size:13px;line-height:1.5}
+.rotation-modal-note{margin:0}
+@media(max-width:700px){.rotation-form .rotation-members-form-grid{grid-template-columns:1fr}}
+/* R4.8D: vista previa. Scroll interno (horizontal y vertical) para que persona y encabezados queden fijos. */
+.rotation-preview-controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 16px;margin:0 0 16px}
+.rotation-preview-controls .field-stack{min-width:160px}
+.rotation-preview-controls input,.rotation-preview-controls select{width:100%}
+.rotation-preview-nav{display:flex;flex-wrap:wrap;gap:8px}
+.rotation-preview-range{display:flex;align-items:center;gap:10px;margin:0 0 10px;color:var(--color-text-secondary);font-size:13px;font-weight:600}
+.rotation-preview-refreshing{color:var(--color-text-muted);font-weight:500}
+.rotation-preview-simulation{margin:0 0 16px!important;padding:12px 16px}
+.rotation-preview-simulation p{margin:0}
+.rotation-legend-sample.is-fixed{border:1px solid var(--ds-slate-300);background:#fff;color:var(--ds-slate-700)}
+.rotation-legend-sample.is-conflict{border:1px solid var(--ds-red-200);background:var(--ds-red-50);color:var(--ds-red-700)}
+.rotation-legend-sample.is-none{border:1px solid var(--ds-slate-200);background:#fff;color:var(--ds-slate-500)}
+.table-shell.rotation-preview-shell{max-height:max(420px,calc(100vh - 260px));overflow:auto!important;transition:opacity .15s ease}
+.table-shell.rotation-preview-shell.is-busy{opacity:.6}
+.table-shell>table.rotation-preview-grid{table-layout:fixed!important}
+.rotation-preview-grid th,.rotation-preview-grid td{border-bottom:1px solid var(--ds-slate-200)}
+/* El encabezado completo es un único bloque fijo: las dos filas se mueven juntas (sin offsets por fila). La regla global `th{position:sticky;top:0}` se anula acá. */
+.table-shell>table.rotation-preview-grid thead{position:sticky;top:0;z-index:3;background:var(--ds-slate-50)}
+.table-shell>table.rotation-preview-grid thead tr{background:var(--ds-slate-50)}
+.table-shell>table.rotation-preview-grid thead th{position:static;padding:6px 4px!important;background:var(--ds-slate-50)!important;text-align:center!important;letter-spacing:.02em!important}
+.table-shell>table.rotation-preview-grid thead th.rotation-preview-person-head{position:sticky;left:0;z-index:4;width:220px;padding-left:16px!important;text-align:left!important}
+.rotation-preview-days abbr{display:block;text-decoration:none}
+.rotation-preview-date{display:block;color:var(--ds-slate-500);font-size:11px;font-weight:500;letter-spacing:0;text-transform:none}
+.rotation-preview-week{display:block;min-height:18px;margin:-2px 0 2px;color:var(--ds-slate-500);font-size:11px;font-weight:700;white-space:nowrap}
+.rotation-preview-week.has-week{color:var(--ds-blue-700)}
+.rotation-preview-week.is-continued{color:var(--ds-slate-400);font-weight:600}
+/* Separador de tramo de semana del ciclo: borde más marcado al empezar cada semana. */
+.rotation-preview-grid .is-week-start{box-shadow:inset 2px 0 0 var(--ds-blue-200)}
+.table-shell>table.rotation-preview-grid thead th.is-today{background:var(--ds-blue-100)!important;color:var(--ds-blue-800,#1e40af)!important}
+.table-shell>table.rotation-preview-grid tbody th.rotation-preview-person{position:sticky;top:auto;left:0;z-index:1;white-space:normal!important;width:220px;padding:8px 12px 8px 16px;background:#fff;text-align:left;vertical-align:top;text-transform:none!important;letter-spacing:normal!important;box-shadow:1px 0 0 var(--ds-slate-200)}
+.rotation-preview-person-name{display:block;color:var(--color-text-primary);font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.rotation-preview-person-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:2px;color:var(--color-text-muted);font-size:12px;font-weight:500}
+.table-shell>table.rotation-preview-grid tbody td.rotation-preview-cell{padding:4px!important;vertical-align:top;white-space:normal!important}
+.rotation-preview-grid tbody tr:hover{background:transparent}
+.rotation-preview-cell.is-today{background:var(--ds-blue-50)}
+.rotation-preview-cell.has-errors .rotation-cell-button{box-shadow:inset 0 0 0 2px var(--ds-red-500)}
+.rotation-preview-blocks{display:grid;gap:3px}
+.rotation-preview-blocks.is-suppressed .rotation-block{border-style:dashed;opacity:.6}
+.rotation-block.is-fixed{border-color:var(--ds-slate-300);background:#fff}
+.rotation-conflict{display:flex;align-items:center;justify-content:center;gap:4px;min-height:38px;padding:4px 6px;border:1px solid var(--ds-red-200);border-radius:6px;background:var(--ds-red-50);color:var(--ds-red-700);font-size:12px;font-weight:600;white-space:nowrap}
+.rotation-preview-none{display:flex;align-items:center;justify-content:center;min-height:38px;color:var(--ds-slate-400);font-size:14px}
+.rotation-preview-tags{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 4px;margin-top:3px}
+.rotation-preview-tag{padding:0 5px;border-radius:4px;background:var(--ds-slate-100);color:var(--ds-slate-700);font-size:10px;font-weight:700;line-height:16px;white-space:nowrap}
+.rotation-preview-alert{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:700}
+.rotation-preview-alert.is-error{color:var(--ds-red-700)}
+.rotation-preview-alert.is-warning{color:var(--ds-amber-700)}
+.rotation-preview-detail{display:grid;gap:18px}
+.rotation-preview-detail section{display:grid;gap:8px}
+.rotation-preview-detail h4{margin:0;padding-bottom:6px;border-bottom:1px solid var(--ds-slate-200);color:var(--color-text-primary);font-size:14px}
+.rotation-preview-detail-blocks{display:grid;gap:6px;margin:0;padding-left:20px;font-size:13px}
+.rotation-preview-detail-blocks li span{display:block;color:var(--color-text-secondary)}
+.rotation-preview-detail-text,.rotation-preview-detail-empty{margin:0;color:var(--color-text-primary);font-size:14px}
+.rotation-preview-detail-empty{color:var(--color-text-secondary)}
+.rotation-preview-detail-warnings{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:13px}
+.rotation-preview-detail-warnings li{display:flex;gap:6px}
+.rotation-preview-detail-warnings svg{flex:none;margin-top:2px}
+.rotation-preview-detail-warnings .is-error svg{color:var(--ds-red-600)}
+.rotation-preview-detail-warnings .is-warning svg{color:var(--ds-amber-700)}
+@media(max-width:700px){.rotation-preview-controls .field-stack{flex:1 1 140px}.table-shell>table.rotation-preview-grid tbody th.rotation-preview-person,.table-shell>table.rotation-preview-grid thead th.rotation-preview-person-head{width:150px}}
+/* R4.8E: activación y finalización. */
+.rotation-lifecycle-error{margin:0 0 16px}
+.rotation-finalize-result{display:grid;gap:6px;margin:0 0 20px!important;padding:12px 16px}
+.rotation-finalize-result p,.rotation-finalize-result ul{margin:0}
+.rotation-finalize-result ul{padding-left:20px}
+.rotation-finalize-result .button{justify-self:start}
+.rotation-finalize{display:grid;gap:16px}
+.rotation-finalize-date{display:flex;flex-wrap:wrap;align-items:flex-start;gap:12px 16px}
+.rotation-finalize-date .field-stack{flex:1 1 260px;min-width:0}
+.rotation-finalize-date .button{margin-top:22px}
+.rotation-finalize-preview{display:grid;gap:12px}
+.rotation-finalize-summary{margin:0;color:var(--color-text-primary);font-size:14px}
+.rotation-finalize-impact{padding:12px 16px;border:1px solid var(--ds-slate-200);border-radius:10px;background:#fff}
+.rotation-finalize-impact.is-warning{border-color:var(--ds-amber-200);background:var(--ds-amber-50)}
+.rotation-finalize-impact.is-danger{border-color:var(--ds-red-200);background:var(--ds-red-50)}
+.rotation-finalize-impact.is-info{background:var(--ds-slate-50)}
+.rotation-finalize-impact h4{display:flex;align-items:center;gap:8px;margin:0 0 6px;color:var(--color-text-primary);font-size:14px}
+.rotation-finalize-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;padding:0 6px;border-radius:999px;background:var(--ds-slate-200);color:var(--ds-slate-700);font-size:12px;line-height:20px}
+.rotation-finalize-impact ul{display:grid;gap:4px;margin:0;padding-left:20px;font-size:13px;line-height:1.5}
+.rotation-finalize-impact .field-hint{margin:6px 0 0}
+.rotation-finalize-empty{margin:0;color:var(--color-text-secondary);font-size:13px}
+.rotation-finalize-blocked{display:flex;align-items:flex-start;gap:8px;margin:0;color:var(--ds-red-700);font-size:13px;font-weight:600}
+.rotation-finalize-blocked svg{flex:none;margin-top:1px}
+.rotation-finalize-check{display:flex;align-items:flex-start;gap:8px;padding:12px 16px;border:1px solid var(--ds-red-200);border-radius:10px;background:#fff}
+.rotation-finalize-check label{color:var(--color-text-primary)!important;font-size:13px!important;font-weight:600!important;cursor:pointer}
+@media(max-width:700px){.rotation-finalize-date .button{width:100%;margin-top:0}}
+/* Una regla global de campos dentro de modales fuerza min-height:40px también en casillas: las de confirmación vuelven a 16 px y quedan alineadas con su texto. */
+.rotation-finalize-check input[type="checkbox"],.rotation-fixed-conflict-check input[type="checkbox"]{width:16px!important;height:16px!important;min-height:16px!important;margin:1px 0 0!important;padding:0!important}
+.rotation-finalize .rotation-grid-note{margin:0!important}
+/* R8: grupos de turnos heredados por un Nivel 3 (sólo lectura) y aviso de pérdida de accesos en Usuarios. */
+.inherited-shift-groups-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.inherited-shift-groups-list li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;padding:9px 11px;border:1px solid var(--color-border-light);border-radius:9px;background:#fff;min-width:0}
+.inherited-shift-groups-name{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.inherited-shift-groups-name b{color:var(--color-text-primary,#203648);font-size:13px}
+.inherited-shift-groups-name small,.inherited-shift-groups-via{color:var(--color-text-muted);font-size:12px}
+.inherited-shift-groups-via{overflow-wrap:anywhere}
+.inherited-shift-groups-empty{color:#7c8b98;font-size:12px;font-style:normal}
+.user-access-loss ul{display:grid;gap:3px;margin:6px 0 0;padding-left:18px}
+.user-access-loss li{font-size:12.5px;line-height:1.45}
+/* R8: bloque de vista previa con turno de otro grupo (sin código visible). */
+.rotation-block-code.is-hidden-template{font-style:italic}
+.rotation-hidden-members p{margin:0}
+.shift-assignment-foreign{color:var(--color-text-muted);font-style:italic}
+
+/* Cierres mensuales: pendientes que impiden cerrar (vista previa estructurada). */
+.closure-blockers-summary{margin:0;padding:14px 18px 10px;color:#45596b;font-size:12px}
+.closure-blockers-summary b{color:#1f3b4d}
+.closure-blockers-clear{display:flex;align-items:center;gap:10px;margin:16px 18px;padding:12px 14px;border:1px solid #cfe9dd;border-radius:9px;background:#f1faf5;color:#25825b;font-size:12px;font-weight:600}
+.closure-badge-row{display:flex;flex-wrap:wrap;gap:6px}
+.closure-badge-row .badge{margin-left:0}
+.closure-muted{color:#8594a3;font-size:12px}
+.closure-pending-trigger{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #f3d9ad;border-radius:20px;background:#fff7ea;color:#9a5f1c;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.closure-pending-trigger:hover{border-color:#e6b765;background:#fff1d9}
+.closure-pending-trigger:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.closure-blocker-groups{display:grid;gap:14px}
+.closure-blocker-group{border:1px solid #e4eaf0;border-radius:10px;background:#fff;overflow:hidden}
+.closure-blocker-group>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #edf0f4;background:#f8fafc}
+.closure-blocker-group>header div{display:flex;align-items:baseline;gap:10px;min-width:0}
+.closure-blocker-group>header b{color:#1f3b4d;font-size:13px}
+.closure-blocker-group>header span{color:#7a8998;font-size:11px}
+.closure-blocker-group ul{margin:0;padding:0;list-style:none}
+.closure-blocker-item{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:14px;align-items:start;padding:12px 14px;border-bottom:1px solid #f0f3f6}
+.closure-blocker-item:last-child{border-bottom:0}
+.closure-blocker-meta{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.closure-blocker-meta time{color:#1f3b4d;font-size:12px;font-weight:700}
+.closure-blocker-meta .badge{margin-left:0}
+.closure-blocker-body{min-width:0}
+.closure-blocker-body b{display:block;color:#1f3b4d;font-size:13px}
+.closure-blocker-body p{margin:4px 0 0;color:#5d6f81;font-size:12px;line-height:1.5}
+.closure-blocker-action span{color:#14767d;font-weight:700}
+.closure-blocker-link{white-space:nowrap}
+@media(max-width:760px){
+  .closure-blocker-item{grid-template-columns:1fr;gap:8px}
+  .closure-blocker-meta{flex-direction:row;align-items:center}
+  .closure-blocker-link{justify-self:start}
+  .closure-blocker-group>header{flex-wrap:wrap}
+}

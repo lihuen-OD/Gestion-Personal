@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import type { User } from "../types";
 import { authApiService } from "../services/api/authApiService";
 import { refreshTokenStorage, tokenStorage } from "../services/api/apiClient";
@@ -8,6 +8,11 @@ interface AuthValue {
   user?: User;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  /**
+   * R8: vuelve a leer el alcance por grupo de turnos (`/auth/me`) para que una
+   * asignación o revocación hecha por RRHH se vea sin volver a iniciar sesión.
+   */
+  refreshShiftGroupAccess: () => Promise<void>;
 }
 const AuthContext = createContext<AuthValue | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -41,6 +46,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const refreshShiftGroupAccess = useCallback(async () => {
+    try {
+      const current = await authApiService.me();
+      setUser((previous) => {
+        if (!previous || previous.id !== current.id) return previous;
+        const next = { ...previous, shiftGroupAccess: current.shiftGroupAccess };
+        sessionStorage.setItem("losod_user", JSON.stringify(next));
+        return next;
+      });
+    } catch {
+      // Sin red o sesión vencida: se conserva lo conocido; el backend sigue decidiendo.
+    }
+  }, []);
+
   const logout = async () => {
     try {
       await authApiService.logout();
@@ -54,6 +73,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user, login, logout, refreshShiftGroupAccess }}>{children}</AuthContext.Provider>;
 }
 export const useAuth = () => useContext(AuthContext)!;

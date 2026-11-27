@@ -226,7 +226,6 @@ export function NoveltyCoverageResolutionModal({ target, close, onResolved }: { 
         resolution: selected,
         baseMinutes: selected === "SET_BASE_MINUTES" ? baseMinutes : null,
         note: note.trim(),
-        correctionReason: note.trim(),
       });
       onResolved();
       close();

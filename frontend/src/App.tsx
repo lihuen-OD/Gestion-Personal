@@ -41,7 +41,7 @@ const WorkScheduleSettingsPage = lazy(() => import("./pages/WorkScheduleSettings
 const ShiftsPage = lazy(() => import("./pages/ShiftsPage").then((module) => ({ default: module.ShiftsPage })));
 const ShiftCreatePage = lazy(() => import("./pages/ShiftCreatePage").then((module) => ({ default: module.ShiftCreatePage })));
 const ShiftDetailPage = lazy(() => import("./pages/ShiftDetailPage").then((module) => ({ default: module.ShiftDetailPage })));
-const HolidayWorkAssignmentsPage = lazy(() => import("./pages/HolidayWorkAssignmentsPage").then((module) => ({ default: module.HolidayWorkAssignmentsPage })));
+const RotationDetailPage = lazy(() => import("./pages/RotationDetailPage").then((module) => ({ default: module.RotationDetailPage })));
 const ClockDevicesPage = lazy(() => import("./pages/ClockDevicesPage").then((module) => ({ default: module.ClockDevicesPage })));
 
 function PageLoader() {
@@ -94,8 +94,10 @@ export function App() {
           <Route path="/configuracion/turnos-horas-especiales" element={<WorkScheduleSettingsPage />} />
           <Route path="/configuracion/turnos" element={<ShiftsPage />} />
           <Route path="/configuracion/turnos/nuevo" element={<ShiftCreatePage />} />
+          <Route path="/configuracion/turnos/rotaciones/:id" element={<RotationDetailPage />} />
           <Route path="/configuracion/turnos/:id" element={<ShiftDetailPage />} />
-          <Route path="/configuracion/turnos-asignaciones-feriados" element={<HolidayWorkAssignmentsPage />} />
+          {/* Las convocatorias a feriado se gestionan desde Gestión horaria ("Gestionar feriados"). */}
+          <Route path="/configuracion/turnos-asignaciones-feriados" element={<Navigate to="/horas?gestionar=feriados" replace />} />
           <Route path="/configuracion/dispositivos-fichada" element={<RoleRoute allowedLevels={[1]}><ClockDevicesPage /></RoleRoute>} />
           <Route path="/horas" element={<HoursPage />} />
           <Route path="/horas/:id" element={<EmployeeHoursPage />} />
@@ -108,7 +110,7 @@ export function App() {
           <Route path="/auditoria" element={<AuditPage />} />
           <Route path="/configuracion" element={<SettingsPage />} />
           <Route path="/reportes" element={<RoleRoute allowedLevels={[1]}><ReportsPage /></RoleRoute>} />
-          <Route path="/pendientes" element={<RoleRoute allowedLevels={[1, 2]}><HoursPage pendingOnly /></RoleRoute>} />
+          <Route path="/pendientes" element={<Navigate to="/horas" replace />} />
           <Route path="/cierres" element={<MonthlyClosuresPage />} />
           <Route path="/notificaciones" element={<NotificationsPage />} />
           <Route path="*" element={<Navigate to="/" />} />

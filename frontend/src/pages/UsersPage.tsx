@@ -3,7 +3,7 @@ import { Navigate } from "react-router-dom";
 import { KeyRound, Pencil, Plus, Power } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
-import type { Employee, Role, User, UserSupervisionPerson } from "../types";
+import type { Employee, Role, User, UserShiftGroup, UserSupervisionPerson } from "../types";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { userApiService } from "../services/api/userApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
@@ -22,12 +22,15 @@ import { displayLegajo } from "../utils/employee";
 import { useAsyncAction } from "../utils/useAsyncAction";
 import { useSort, type SortAccessors } from "../utils/sort";
 import { confirmAction } from "../services/appDialog";
-import { getUserErrorMessage } from "../services/api/apiClient";
+import { ApiError, getUserErrorMessage } from "../services/api/apiClient";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
 import { SupervisedUsersSelector } from "../components/users/SupervisedUsersSelector";
+import { InheritedShiftGroupsPanel, ShiftGroupsSelector, shiftGroupOptions } from "../components/users/ShiftGroupAccessFields";
+import { shiftGroupApiService, type ShiftGroup } from "../services/api/shiftGroupApiService";
 
 const SUPERVISION_ROLE: Role = "Nivel 2 - Supervisión / Gestión";
 const CARGA_ROLE: Role = "Nivel 3 - Administrativo de Carga Horaria";
+const RRHH_ROLE: Role = "Nivel 1 - RRHH";
 
 type UserDraft = Omit<User, "id">;
 
@@ -50,8 +53,33 @@ function emptyUserDraft(): UserDraft {
   };
 }
 
-function peopleList(people: UserSupervisionPerson[]) {
+function peopleList(people: Array<{ name: string }>) {
   return people.map((person) => person.name).join(", ");
+}
+
+function groupList(groups: UserShiftGroup[]) {
+  return groups.map((group) => group.name).join(", ");
+}
+
+type ShiftGroupLoss = { person: string; groups: UserShiftGroup[] };
+
+/**
+ * R8: responsables de carga que dejarían de heredar grupos al guardar. Sólo
+ * cuenta los grupos que heredan únicamente a través de este Nivel 2 (si otro
+ * supervisor activo también se los da, los conservan). Usa la herencia que
+ * devolvió el backend; es un aviso, no autorización.
+ */
+function inheritedLosses(users: User[], supervisorId: string, affected: Array<{ personId: string; groups: UserShiftGroup[] }>): ShiftGroupLoss[] {
+  const byId = new Map(users.map((user) => [user.id, user]));
+  return affected.flatMap(({ personId, groups }) => {
+    const person = byId.get(personId);
+    if (!person) return [];
+    const lost = groups.filter((group) => {
+      const entry = person.inheritedShiftGroups?.find((item) => item.group.id === group.id);
+      return !entry || entry.viaSupervisors.every((via) => via.id === supervisorId);
+    });
+    return lost.length ? [{ person: person.name, groups: lost }] : [];
+  });
 }
 
 // La empresa es un dato administrativo existente; no concede permisos.
@@ -83,6 +111,9 @@ export function UsersPage() {
   // están cacheados (services/cache), así que abrir el modal de nuevo dentro
   // del TTL no vuelve a pegarle a la red.
   const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  // R8: catálogo de grupos de turnos, sólo para el modal (cacheado en services/cache).
+  const [shiftGroupCatalog, setShiftGroupCatalog] = useState<ShiftGroup[]>([]);
+  const [shiftGroupsStatus, setShiftGroupsStatus] = useState<"loading" | "error" | "ready">("loading");
 
   useEffect(() => {
     let mounted = true;
@@ -102,7 +133,18 @@ export function UsersPage() {
     };
   }, [refresh]);
 
+  const loadShiftGroups = () => {
+    setShiftGroupsStatus("loading");
+    shiftGroupApiService.list()
+      .then((groups) => {
+        setShiftGroupCatalog(groups);
+        setShiftGroupsStatus("ready");
+      })
+      .catch(() => setShiftGroupsStatus("error"));
+  };
+
   const ensureCatalogLoaded = () => {
+    loadShiftGroups();
     setCatalogStatus("loading");
     Promise.all([orgStructureApiService.getCatalog(), employeeApiService.getAllOptions()])
       .then(([catalog, apiEmployeeOptions]) => {
@@ -132,7 +174,9 @@ export function UsersPage() {
 
   const openEdit = (user: User, focusPassword = false) => {
     setEditingUserId(user.id);
-    setDraft({ ...user, password: "", supervisedUserIds: user.supervisedUserIds ?? [] });
+    // `shiftGroupIds` queda sin definir hasta que se toque el selector: así
+    // editar otro dato nunca reenvía (ni pisa) los grupos del usuario.
+    setDraft({ ...user, password: "", supervisedUserIds: user.supervisedUserIds ?? [], shiftGroupIds: undefined });
     setError(focusPassword ? "Completa la nueva contrasena y guarda los cambios." : "");
     setOpen(true);
     ensureCatalogLoaded();
@@ -154,6 +198,14 @@ export function UsersPage() {
     if (!editingUserId && password.length < 8) return setError("La contrasena debe tener al menos 8 caracteres.");
     if (editingUserId && password && password.length < 8) return setError("La nueva contrasena debe tener al menos 8 caracteres.");
 
+    if (accessLosses.length) {
+      const confirmed = await confirmAction(
+        `Al guardar se pierden accesos a turnos:\n${accessLosses.map((line) => `• ${line}`).join("\n")}\n\n¿Querés continuar?`,
+        { title: "Confirmar pérdida de accesos", confirmLabel: "Guardar igual", tone: "danger" },
+      );
+      if (!confirmed) return;
+    }
+
     const payload: UserDraft = {
       ...draft,
       name: draft.name.trim(),
@@ -169,7 +221,9 @@ export function UsersPage() {
       if (editingUserId) await userApiService.update({ ...payload, id: editingUserId });
       else await userApiService.create(payload);
     } catch (saveError) {
-      setError(getUserErrorMessage(saveError, "No se pudo guardar el usuario. Intentá nuevamente."));
+      setError(saveError instanceof ApiError && saveError.code === "SHIFT_GROUP_INACTIVE"
+        ? "Uno de los grupos de turnos elegidos está inactivo y no se puede asignar. Quitalo de la selección."
+        : getUserErrorMessage(saveError, "No se pudo guardar el usuario. Intentá nuevamente."));
       return;
     }
     if (editingUserId && password) {
@@ -191,7 +245,7 @@ export function UsersPage() {
     const confirmed = await confirmAction(
       activating
         ? `¿Querés habilitar nuevamente el acceso de ${user.name}?`
-        : `¿Querés inactivar el acceso de ${user.name}? No podrá ingresar hasta que vuelvas a activarlo.`,
+        : `¿Querés inactivar el acceso de ${user.name}? No podrá ingresar hasta que vuelvas a activarlo.${user.role === SUPERVISION_ROLE && user.shiftGroups?.length ? ` Sus grupos de turnos (${groupList(user.shiftGroups)}) se conservan pero quedan suspendidos: los responsables de carga que supervisa dejan de heredarlos hasta reactivarlo.` : ""}`,
       {
         title: activating ? "Activar usuario" : "Inactivar usuario",
         confirmLabel: activating ? "Activar" : "Inactivar",
@@ -222,6 +276,38 @@ export function UsersPage() {
   const linkedEmployeeOwner = useMemo(() => new Map(users
     .filter((user) => user.employeeId && user.id !== editingUserId)
     .map((user) => [user.employeeId!, user.name])), [users, editingUserId]);
+  // R8: grupos de turnos.
+  const storedGroups = editingUser?.role === SUPERVISION_ROLE ? editingUser.shiftGroups ?? [] : [];
+  const selectedGroupIds = draft.shiftGroupIds ?? storedGroups.map((group) => group.id);
+  const groupOptions = shiftGroupOptions(shiftGroupCatalog, new Set([...selectedGroupIds, ...storedGroups.map((group) => group.id)]), storedGroups);
+  const groupsById = new Map<string, UserShiftGroup>([
+    ...storedGroups.map((group) => [group.id, group] as const),
+    ...shiftGroupCatalog.map((group) => [group.id, { id: group.id, code: group.code, name: group.name, status: group.status === "ACTIVO" ? "Activo" : "Inactivo" } as UserShiftGroup] as const),
+  ]);
+  const staysSupervisor = draft.role === SUPERVISION_ROLE && editingUser?.role === SUPERVISION_ROLE;
+  const losesShiftGroups = editingUser?.role === SUPERVISION_ROLE && draft.role !== SUPERVISION_ROLE && storedGroups.length > 0;
+  const removedGroups = staysSupervisor ? storedGroups.filter((group) => !selectedGroupIds.includes(group.id)) : [];
+  const keptGroups = staysSupervisor ? selectedGroupIds.map((id) => groupsById.get(id)).filter((group): group is UserShiftGroup => Boolean(group) && storedGroups.some((stored) => stored.id === group!.id)) : [];
+  const removedSupervised = staysSupervisor ? (editingUser!.supervisedUsers ?? []).filter((person) => !(draft.supervisedUserIds ?? []).includes(person.id)) : [];
+  const suspendsShiftGroups = staysSupervisor && editingUser!.status === "Activo" && draft.status === "Inactivo" && storedGroups.length > 0;
+  const inheritedLoss = editingUser && editingUser.role === SUPERVISION_ROLE
+    ? inheritedLosses(users, editingUser.id, [
+        // Quien deja de ser supervisado pierde lo que sólo heredaba de este Nivel 2…
+        ...removedSupervised.map((person) => ({ personId: person.id, groups: keptGroups })),
+        // …y los supervisados pierden los grupos que se quitan (o todos, si deja de ser Nivel 2 o se inactiva).
+        ...(editingUser.supervisedUsers ?? []).map((person) => ({
+          personId: person.id,
+          groups: losesShiftGroups || suspendsShiftGroups ? storedGroups : removedGroups,
+        })),
+      ])
+    : [];
+  const accessLosses = [
+    ...(losesShiftGroups ? [`${editingUser!.name} pierde sus grupos de turnos (${groupList(storedGroups)}) al dejar de ser Nivel 2.`] : []),
+    ...(removedGroups.length ? [`${editingUser!.name} deja de administrar ${groupList(removedGroups)}.`] : []),
+    ...(suspendsShiftGroups ? [`Mientras esté inactivo, sus grupos de turnos (${groupList(storedGroups)}) quedan suspendidos.`] : []),
+    ...inheritedLoss.map((loss) => `${loss.person} deja de heredar ${groupList(loss.groups)}.`),
+  ];
+
   const losesSupervised = editingUser?.role === SUPERVISION_ROLE && draft.role !== SUPERVISION_ROLE && (editingUser.supervisedUsers?.length ?? 0) > 0;
   const losesSupervisors = editingUser?.role === CARGA_ROLE && draft.role !== CARGA_ROLE && (editingUser.supervisorUsers?.length ?? 0) > 0;
 
@@ -306,16 +392,42 @@ export function UsersPage() {
               disabled={isSaving}
             />
           ) : null}
+          {draft.role === SUPERVISION_ROLE ? (
+            <ShiftGroupsSelector
+              options={groupOptions}
+              selectedIds={selectedGroupIds}
+              onChange={(shiftGroupIds) => setDraft({ ...draft, shiftGroupIds })}
+              disabled={isSaving}
+              status={shiftGroupsStatus}
+              onRetry={loadShiftGroups}
+            />
+          ) : null}
+          {draft.role === CARGA_ROLE ? (
+            <InheritedShiftGroupsPanel
+              inherited={editingUser?.role === CARGA_ROLE ? editingUser.inheritedShiftGroups ?? [] : []}
+              supervisors={editingUser?.role === CARGA_ROLE ? editingUser.supervisorUsers ?? [] : []}
+              stored={editingUser?.role === CARGA_ROLE}
+            />
+          ) : null}
+          {draft.role === RRHH_ROLE ? (
+            <p className="muted small user-form-wide">Nivel 1 - RRHH administra todos los grupos de turnos: no necesita asignaciones.</p>
+          ) : null}
+          {accessLosses.length ? (
+            <div className="info-note compact user-access-loss" role="note">
+              <b>Al guardar, se pierden accesos a turnos</b>
+              <ul>{accessLosses.map((line) => <li key={line}>{line}</li>)}</ul>
+            </div>
+          ) : null}
           {losesSupervised ? (
             <div className="info-note compact" role="note">
               <b>Al guardar, dejará de supervisar responsables de carga</b>
-              <p>Con el rol {draft.role} se quitan sus responsables supervisados ({peopleList(editingUser!.supervisedUsers!)}) y deja de ver los legajos que tenían asignados.</p>
+              <p>Con el rol {draft.role} se quitan sus responsables supervisados ({peopleList(editingUser!.supervisedUsers!)}), que dejan de heredar los legajos asignados a este usuario.</p>
             </div>
           ) : null}
           {losesSupervisors ? (
             <div className="info-note compact" role="note">
               <b>Al guardar, dejará de ser responsable de carga supervisado</b>
-              <p>{peopleList(editingUser!.supervisorUsers!)} dejará{editingUser!.supervisorUsers!.length === 1 ? "" : "n"} de acceder a los legajos asignados a este usuario.</p>
+              <p>Dejará de heredar los legajos asignados a {peopleList(editingUser!.supervisorUsers!)}.</p>
             </div>
           ) : null}
           <label className="user-form-wide">

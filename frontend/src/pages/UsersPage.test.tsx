@@ -8,6 +8,18 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { employeeApiService } from "../services/api/employeeApiService";
 import type { Employee, User } from "../types";
 import { ApiError } from "../services/api/apiClient";
+import { shiftGroupApiService, type ShiftGroup } from "../services/api/shiftGroupApiService";
+import { confirmAction } from "../services/appDialog";
+
+vi.mock("../services/api/shiftGroupApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/shiftGroupApiService")>();
+  return { ...actual, shiftGroupApiService: { ...actual.shiftGroupApiService, list: vi.fn() } };
+});
+
+vi.mock("../services/appDialog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/appDialog")>();
+  return { ...actual, confirmAction: vi.fn() };
+});
 
 const mockUseAuth = vi.fn();
 vi.mock("../context/AuthContext", () => ({
@@ -65,6 +77,8 @@ beforeEach(() => {
   authAsRrhh();
   vi.mocked(orgStructureApiService.getCatalog).mockResolvedValue(emptyCatalog as never);
   vi.mocked(employeeApiService.getAllOptions).mockResolvedValue([]);
+  vi.mocked(shiftGroupApiService.list).mockResolvedValue([]);
+  vi.mocked(confirmAction).mockResolvedValue(true);
 });
 
 describe("UsersPage — Etapa 9E (catálogo diferido al abrir el modal)", () => {
@@ -179,7 +193,7 @@ describe("UsersPage — responsables de carga supervisados (Nivel 2)", () => {
     expect(within(options).getAllByRole("button").map((button) => button.textContent)).toEqual(["CARGA PAÑOLpanol@test.com", "CARGA PLANTAplanta@test.com"]);
     expect(within(options).queryByText("OTRO ENCARGADO")).not.toBeInTheDocument();
     expect(within(options).queryByText("CARGA VIEJA")).not.toBeInTheDocument();
-    expect(screen.getByText(/podrá acceder a los legajos asignados a los responsables de carga seleccionados/)).toBeInTheDocument();
+    expect(screen.getByText(/heredan los legajos y grupos de turnos asignados a este usuario/)).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Rol *"), "Nivel 1 - RRHH");
     expect(screen.queryByRole("region", { name: "Responsables de carga supervisados" })).not.toBeInTheDocument();
@@ -271,5 +285,176 @@ describe("UsersPage — empleado vinculado y errores de guardado", () => {
     await user.type(screen.getByLabelText("Nueva contrasena (opcional)"), "clave-nueva-1");
     await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
     expect(await screen.findByText(/Los datos del usuario se guardaron, pero no se pudo cambiar la contraseña/)).toBeInTheDocument();
+  });
+});
+
+describe("UsersPage — grupos de turnos (R8)", () => {
+  const group = (id: string, code: string, name: string, sortOrder: number, status: ShiftGroup["status"] = "ACTIVO"): ShiftGroup => ({ id, code, name, sortOrder, status, templateCount: 0, createdAt: "", updatedAt: "" });
+  const catalog = [group("g-planta", "PLANTA", "Planta", 10), group("g-taller", "TALLER", "Taller", 20), group("g-maq", "MAQ", "Maquinaria", 30), group("g-viejo", "VIEJO", "Depósito viejo", 40, "INACTIVO"), group("g-otro-viejo", "OTRO", "Otro inactivo", 50, "INACTIVO")];
+  const stefi = buildUser({
+    id: "n2-stefi", name: "Stefi", email: "stefi@test.com", role: N2,
+    supervisedUserIds: ["n3-joaquin"], supervisedUsers: [{ id: "n3-joaquin", name: "Joaquín", email: "joaquin@test.com", status: "Activo" }], supervisorUsers: [],
+    shiftGroups: [{ id: "g-planta", code: "PLANTA", name: "Planta", status: "Activo" }, { id: "g-viejo", code: "VIEJO", name: "Depósito viejo", status: "Inactivo" }],
+  });
+  const eugenia = buildUser({ id: "n2-eugenia", name: "Eugenia", email: "eugenia@test.com", role: N2, supervisedUsers: [], supervisorUsers: [], shiftGroups: [{ id: "g-taller", code: "TALLER", name: "Taller", status: "Activo" }] });
+  const joaquin = buildUser({
+    id: "n3-joaquin", name: "Joaquín", email: "joaquin@test.com", role: N3,
+    supervisorUsers: [{ id: "n2-stefi", name: "Stefi", email: "stefi@test.com", status: "Activo" }, { id: "n2-eugenia", name: "Eugenia", email: "eugenia@test.com", status: "Activo" }],
+    inheritedShiftGroups: [
+      { group: { id: "g-planta", code: "PLANTA", name: "Planta", status: "Activo" }, viaSupervisors: [{ id: "n2-stefi", name: "Stefi", email: "stefi@test.com" }] },
+      { group: { id: "g-taller", code: "TALLER", name: "Taller", status: "Activo" }, viaSupervisors: [{ id: "n2-eugenia", name: "Eugenia", email: "eugenia@test.com" }, { id: "n2-stefi", name: "Stefi", email: "stefi@test.com" }] },
+    ],
+  });
+  const groupsRegion = () => screen.getByRole("region", { name: "Grupos de turnos que administra" });
+  const groupOptions = () => within(within(groupsRegion()).getByRole("group", { name: "Grupos de turnos disponibles" })).getAllByRole("button");
+
+  beforeEach(() => {
+    vi.mocked(shiftGroupApiService.list).mockResolvedValue(catalog);
+    vi.mocked(userApiService.getAll).mockResolvedValue([buildUser(), stefi, eugenia, joaquin]);
+    vi.mocked(userApiService.update).mockResolvedValue(stefi);
+    vi.mocked(userApiService.create).mockResolvedValue(stefi);
+  });
+
+  it("Nivel 2: muestra los grupos asignados; ofrece activos y el inactivo ya asignado (con badge), no otros inactivos", async () => {
+    await openEditFor("Stefi");
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+    expect(groupOptions().map((button) => button.textContent)).toEqual(["PlantaPLANTA", "TallerTALLER", "MaquinariaMAQ", "Depósito viejoInactivoVIEJO"]);
+    expect(within(groupsRegion()).getByRole("button", { name: /Planta/, pressed: true })).toBeInTheDocument();
+    expect(within(groupsRegion()).getByRole("button", { name: /Depósito viejo/, pressed: true })).toBeInTheDocument();
+    expect(within(groupsRegion()).getByText("2 grupos seleccionados")).toBeInTheDocument();
+    expect(screen.queryByText("Otro inactivo")).not.toBeInTheDocument();
+  });
+
+  it("agrega y quita grupos y guarda la lista completa", async () => {
+    const user = await openEditFor("Stefi");
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+    await user.click(within(groupsRegion()).getByRole("button", { name: /Taller/ }));
+    await user.click(screen.getByRole("button", { name: "Quitar Depósito viejo" }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(userApiService.update).toHaveBeenCalledWith(expect.objectContaining({ id: "n2-stefi", shiftGroupIds: ["g-planta", "g-taller"] })));
+  });
+
+  it("editar otro dato no toca los grupos (no se envían)", async () => {
+    const user = await openEditFor("Stefi");
+    const name = screen.getByLabelText("Nombre y apellido *");
+    await user.clear(name);
+    await user.type(name, "Stefanía");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(userApiService.update).toHaveBeenCalled());
+    expect(vi.mocked(userApiService.update).mock.calls[0]![0].shiftGroupIds).toBeUndefined();
+    expect(confirmAction).not.toHaveBeenCalled();
+  });
+
+  it("quitar todos: avisa a quién afecta, pide confirmación y envía []; cancelar no guarda", async () => {
+    const user = await openEditFor("Stefi");
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+    await user.click(within(groupsRegion()).getByRole("button", { name: "Quitar todos" }));
+    expect(within(groupsRegion()).getByText("Sin grupos asignados: no podrá administrar turnos.")).toBeInTheDocument();
+    const note = screen.getByText("Al guardar, se pierden accesos a turnos").closest("[role='note']") as HTMLElement;
+    expect(note).toHaveTextContent("Stefi deja de administrar Planta, Depósito viejo.");
+    // Joaquín hereda Planta sólo de Stefi; Taller también le llega por Eugenia.
+    expect(note).toHaveTextContent("Joaquín deja de heredar Planta, Depósito viejo.");
+
+    vi.mocked(confirmAction).mockResolvedValueOnce(false);
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(confirmAction).toHaveBeenCalledWith(expect.stringContaining("Joaquín deja de heredar"), expect.objectContaining({ tone: "danger" })));
+    expect(userApiService.update).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(userApiService.update).toHaveBeenCalledWith(expect.objectContaining({ shiftGroupIds: [] })));
+  });
+
+  it("dejar de supervisar a un Nivel 3 avisa qué grupos deja de heredar", async () => {
+    const user = await openEditFor("Stefi");
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+    await user.click(screen.getByRole("button", { name: "Quitar Joaquín" }));
+    const note = screen.getByText("Al guardar, se pierden accesos a turnos").closest("[role='note']") as HTMLElement;
+    expect(note).toHaveTextContent("Joaquín deja de heredar Planta, Depósito viejo.");
+  });
+
+  it("cambiar de Nivel 2 a otro rol avisa la pérdida de grupos y confirma; no envía grupos", async () => {
+    const user = await openEditFor("Stefi");
+    await user.selectOptions(screen.getByLabelText("Rol *"), N3);
+    expect(screen.queryByRole("region", { name: "Grupos de turnos que administra" })).not.toBeInTheDocument();
+    const note = screen.getByText("Al guardar, se pierden accesos a turnos").closest("[role='note']") as HTMLElement;
+    expect(note).toHaveTextContent("Stefi pierde sus grupos de turnos (Planta, Depósito viejo) al dejar de ser Nivel 2.");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(userApiService.update).toHaveBeenCalled());
+    expect(confirmAction).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(userApiService.update).mock.calls[0]![0]).toMatchObject({ role: N3 });
+  });
+
+  it("inactivar un Nivel 2 con grupos avisa que quedan suspendidos", async () => {
+    const user = await openEditFor("Stefi");
+    await user.selectOptions(screen.getByLabelText("Estado"), "Inactivo");
+    const note = screen.getByText("Al guardar, se pierden accesos a turnos").closest("[role='note']") as HTMLElement;
+    expect(note).toHaveTextContent("quedan suspendidos");
+    expect(note).toHaveTextContent("Joaquín deja de heredar Planta");
+  });
+
+  it("Nivel 3: muestra los grupos heredados y de quién provienen, sólo lectura", async () => {
+    await openEditFor("Joaquín");
+    const panel = screen.getByRole("region", { name: "Grupos de turnos heredados" });
+    expect(within(panel).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["PlantaPLANTAvía Stefi", "TallerTALLERvía Eugenia, Stefi"]);
+    expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Grupos de turnos que administra" })).not.toBeInTheDocument();
+  });
+
+  it("Nivel 3 sin herencia y alta de un Nivel 3: lo explica", async () => {
+    vi.mocked(userApiService.getAll).mockResolvedValue([{ ...joaquin, inheritedShiftGroups: [], supervisorUsers: [] }]);
+    const user = await openEditFor("Joaquín");
+    expect(screen.getByText("No hereda grupos: todavía no lo supervisa ningún Nivel 2.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await user.click(screen.getByRole("button", { name: "Crear usuario" }));
+    expect(within(screen.getByRole("region", { name: "Grupos de turnos heredados" })).getByText(/Los heredará cuando un Nivel 2/)).toBeInTheDocument();
+  });
+
+  it("Nivel 1: no muestra selector ni herencia", async () => {
+    const user = await openEditFor("Stefi");
+    await user.selectOptions(screen.getByLabelText("Rol *"), "Nivel 1 - RRHH");
+    expect(screen.getByText(/administra todos los grupos de turnos/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Grupos de turnos heredados" })).not.toBeInTheDocument();
+  });
+
+  it("catálogo con error: lo informa con reintento y, al guardar, conserva los grupos", async () => {
+    vi.mocked(shiftGroupApiService.list).mockRejectedValueOnce(new Error("offline"));
+    const user = await openEditFor("Stefi");
+    const alert = await within(groupsRegion()).findByRole("alert");
+    expect(alert).toHaveTextContent("Los grupos actuales se conservan si guardás.");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await waitFor(() => expect(userApiService.update).toHaveBeenCalled());
+    expect(vi.mocked(userApiService.update).mock.calls[0]![0].shiftGroupIds).toBeUndefined();
+  });
+
+  it("catálogo con error: «Reintentar» vuelve a cargarlo", async () => {
+    vi.mocked(shiftGroupApiService.list).mockRejectedValueOnce(new Error("offline"));
+    const user = await openEditFor("Stefi");
+    await within(groupsRegion()).findByRole("alert");
+    await user.click(within(groupsRegion()).getByRole("button", { name: "Reintentar" }));
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+  });
+
+  it("alta de un Nivel 2 con grupos", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Stefi");
+    await user.click(screen.getByRole("button", { name: "Crear usuario" }));
+    await user.type(screen.getByLabelText("Nombre y apellido *"), "Nueva Encargada");
+    await user.type(screen.getByLabelText("Email de acceso *"), "nueva@test.com");
+    await user.type(screen.getByLabelText("Contrasena inicial *"), "secreto123");
+    await user.selectOptions(screen.getByLabelText("Rol *"), N2);
+    await waitFor(() => expect(groupOptions()).toHaveLength(3));
+    await user.click(within(groupsRegion()).getByRole("button", { name: /Maquinaria/ }));
+    await user.click(screen.getByRole("button", { name: "Guardar usuario" }));
+    await waitFor(() => expect(userApiService.create).toHaveBeenCalledWith(expect.objectContaining({ role: N2, shiftGroupIds: ["g-maq"] })));
+  });
+
+  it("un grupo inactivo rechazado por el backend se explica en contexto", async () => {
+    vi.mocked(userApiService.update).mockRejectedValue(new ApiError("El grupo de turnos X está inactivo", "SHIFT_GROUP_INACTIVE", 409));
+    const user = await openEditFor("Stefi");
+    await waitFor(() => expect(groupOptions()).toHaveLength(4));
+    await user.click(within(groupsRegion()).getByRole("button", { name: /Taller/ }));
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    expect(await screen.findByText(/Uno de los grupos de turnos elegidos está inactivo/)).toBeInTheDocument();
   });
 });

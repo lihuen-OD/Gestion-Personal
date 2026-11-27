@@ -28,7 +28,7 @@ const sortAccessors: SortAccessors<NoveltyType, "code" | "name" | "kind" | "stat
 // de grilla y se agrega "Tiempo" (cuánto cubre y si suma), sin enums.
 export function NoveltyTypeTable({ items, canEdit, onToggleStatus }: { items: NoveltyType[]; canEdit: boolean; onToggleStatus: (item: NoveltyType) => void }) {
   const { sorted, sort, toggleSort } = useSort(items, sortAccessors);
-  return items.length ? <TableShell minWidth={1040}><table><thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Novedad" sortKey="name" sort={sort} onSort={toggleSort} /><SortableHeader label="Categoria" sortKey="kind" sort={sort} onSort={toggleSort} /><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Tiempo</th><th>Finnegans</th><th>Aprobacion</th><th>Acciones</th></tr></thead><tbody>{sorted.map((item) => {
+  return items.length ? <TableShell minWidth={1040}><table><thead><tr><SortableHeader label="Codigo" sortKey="code" sort={sort} onSort={toggleSort} /><SortableHeader label="Novedad" sortKey="name" sort={sort} onSort={toggleSort} /><SortableHeader label="Categoria" sortKey="kind" sort={sort} onSort={toggleSort} /><SortableHeader label="Estado" sortKey="status" sort={sort} onSort={toggleSort} /><th>Tiempo</th><th>Finnegans</th><th>Acciones</th></tr></thead><tbody>{sorted.map((item) => {
     const statusLabel = activoInactivoLabel(item.status);
     return <tr key={item.id}>
     <td><b>{item.code}</b></td>
@@ -37,7 +37,6 @@ export function NoveltyTypeTable({ items, canEdit, onToggleStatus }: { items: No
     <td><Badge tone={statusTone(statusLabel)}>{statusLabel}</Badge></td>
     <td><span className="novelty-type-time">{coverageShortLabel(item.coverage)}</span>{coverageRegistersTime(item.coverage) ? <span className="table-sub">{item.coverage.countsTowardTotal ? "Suma al total" : "Informativa"}</span> : null}</td>
     <td>{yes(item.rules.exportsToFinnegans)}</td>
-    <td>{yes(item.rules.requiresApproval)}</td>
     <td><div className="table-actions"><Link className="table-icon-action" title="Ver detalle" aria-label="Ver detalle" to={`/configuracion/tipos-novedades/${item.id}`}><Eye size={14} /><span>Ver detalle</span></Link>{canEdit && <button className="table-icon-action" title="Activar/Inactivar" aria-label="Activar/Inactivar" onClick={() => onToggleStatus(item)}><Power size={14} /><span>Activar/Inactivar</span></button>}</div></td>
   </tr>;
   })}</tbody></table></TableShell> : <EmptyState text="No hay tipos de novedades para los filtros aplicados." />;

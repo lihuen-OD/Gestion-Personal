@@ -38,6 +38,8 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
   let cargaA: AppUser;
   let cargaB: AppUser;
   let cargaC: AppUser;
+  let jefeB: AppUser;
+  let jefeC: AppUser;
   let encargado: AppUser;
 
   const token = (user: AppUser) => jwt.sign({ sub: user.id, email: user.email, role: user.role }, m.env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
@@ -108,21 +110,26 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
     cargaB = await createUser("CARGA PANOL", "NIVEL_3_CARGA_HORARIA");
     cargaC = await createUser("CARGA OFICINA", "NIVEL_3_CARGA_HORARIA");
     encargado = await createUser("ENCARGADO PLANTA", "NIVEL_2_SUPERVISION");
+    jefeB = await createUser("ENCARGADO PANOL", "NIVEL_2_SUPERVISION");
+    jefeC = await createUser("ENCARGADO OFICINA", "NIVEL_2_SUPERVISION");
 
     for (const [index, legajo] of ["A", "B", "C", "D", "E", "F", "G", "H", "X", "OLD"].entries()) {
       const created = await holder.employee.create({ data: { legajo, cuil: `20-8${index}`, dni: `8${index}`, firstName: "Prueba", lastName: `Alcance ${legajo}` } });
       employee[legajo] = created.id;
     }
-    // CARGA PLANTA: A, B, C. CARGA PAÑOL: D, E y C (C está en los dos).
-    for (const legajo of ["A", "B", "C"]) await assign(legajo, cargaA);
-    for (const legajo of ["D", "E", "C"]) await assign(legajo, cargaB);
-    // CARGA OFICINA (no supervisado): X.
-    await assign("X", cargaC);
-    // Asignación directa histórica del Nivel 2 (compatibilidad): H.
-    await assign("H", encargado);
-    // Asignaciones de A fuera de vigencia: nunca dan alcance.
-    await assign("OLD", cargaA, { effectiveTo: new Date("2020-01-31T00:00:00.000Z") });
-    await assign("G", cargaA, { status: "INACTIVO" });
+    // Regla: N2 recibe legajos directos; N3 hereda los de sus N2 ACTIVOS.
+    // ENCARGADO PLANTA: A, B, C. ENCARGADO PAÑOL: D, E y C (C está en los dos).
+    for (const legajo of ["A", "B", "C"]) await assign(legajo, encargado);
+    for (const legajo of ["D", "E", "C"]) await assign(legajo, jefeB);
+    // ENCARGADO OFICINA (no supervisa a CARGA PLANTA): X.
+    await assign("X", jefeC);
+    // Fila directa histórica de un Nivel 3: H. Nunca abre alcance.
+    await assign("H", cargaA);
+    // Asignaciones de ENCARGADO PLANTA fuera de vigencia: nunca dan alcance.
+    await assign("OLD", encargado, { effectiveTo: new Date("2020-01-31T00:00:00.000Z") });
+    await assign("G", encargado, { status: "INACTIVO" });
+    // CARGA PAÑOL supervisado por ENCARGADO PLANTA (relaciones HTTP más abajo).
+    await supervise(encargado, cargaB);
 
     server = createApp().listen(0);
     await new Promise<void>((resolve) => server.once("listening", () => resolve()));
@@ -137,68 +144,68 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
   });
 
   describe("employeeAccessWhere en consumidores reales", () => {
-    it("RRHH ve todos los legajos sin necesitar relaciones (1, 13)", async () => {
+    it("RRHH ve todos los legajos sin necesitar relaciones", async () => {
       expect(await visibleLegajos(rrhh)).toEqual(["A", "B", "C", "D", "E", "F", "G", "H", "OLD", "X"]);
     });
 
-    it("Nivel 3 ve sólo sus asignaciones vigentes y no hereda las de otros Nivel 3 (2, 10)", async () => {
-      expect(await visibleLegajos(cargaA)).toEqual(["A", "B", "C"]);
-      expect(await visibleLegajos(cargaC)).toEqual(["X"]);
+    it("Nivel 2 ve sólo sus asignaciones directas vigentes y no hereda de otros", async () => {
+      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C"]);
+      expect(await visibleLegajos(jefeC)).toEqual(["X"]);
     });
 
-    it("Nivel 2 sin supervisados conserva sólo sus asignaciones directas (8)", async () => {
-      expect(await visibleLegajos(encargado)).toEqual(["H"]);
+    it("Nivel 3 sin Nivel 2 que lo supervise no ve nada, aunque tenga una fila directa propia", async () => {
+      expect(await visibleLegajos(cargaA)).toEqual([]);
     });
 
-    it("Nivel 2 que supervisa A ve los legajos de A más los directos (3, 8)", async () => {
+    it("Nivel 3 supervisado por un Nivel 2 hereda sus legajos (no su fila propia)", async () => {
       await supervise(encargado, cargaA);
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C", "H"]);
+      expect(await visibleLegajos(cargaA)).toEqual(["A", "B", "C"]);
     });
 
-    it("Nivel 2 que supervisa A y B ve la unión, con C una sola vez, y nada de un Nivel 3 no supervisado (4, 5, 9)", async () => {
-      await supervise(encargado, cargaB);
+    it("Nivel 3 con dos Nivel 2 ve la unión, con C una sola vez, y nada de un Nivel 2 que no lo supervisa", async () => {
+      await supervise(jefeB, cargaA);
       await clearReadCaches();
-      const legajos = await visibleLegajos(encargado);
-      expect(legajos).toEqual(["A", "B", "C", "D", "E", "H"]);
+      const legajos = await visibleLegajos(cargaA);
+      expect(legajos).toEqual(["A", "B", "C", "D", "E"]);
       expect(legajos.filter((legajo) => legajo === "C")).toHaveLength(1);
       expect(legajos).not.toContain("X");
-      const summary = await m.employees.summary({ id: encargado.id, role: encargado.role } as Express.AuthUser);
-      expect(summary.total).toBe(6);
-      const options = await api(encargado, "GET", "/employees/options?take=200");
-      expect((options.json!.data as unknown[]).length).toBe(6);
+      expect(legajos).not.toContain("H");
+      const summary = await m.employees.summary({ id: cargaA.id, role: cargaA.role } as Express.AuthUser);
+      expect(summary.total).toBe(5);
     });
 
-    it("el detalle de un legajo fuera de alcance responde 404, igual que uno inexistente (9)", async () => {
+    it("el detalle de un legajo fuera de alcance responde 404, igual que uno inexistente", async () => {
       expect((await api(encargado, "GET", `/employees/${employee.A}`)).status).toBe(200);
       expect((await api(encargado, "GET", `/employees/${employee.X}`)).status).toBe(404);
     });
 
-    it("es dinámico: agregar F a A lo suma al Nivel 2 y quitarlo lo saca, sin tocar al Nivel 2 (6, 7)", async () => {
-      const relationsBefore = await holder.userSupervisionAssignment.count({ where: { supervisorUserId: encargado.id } });
-      const added = await assign("F", cargaA);
+    it("es dinámico: agregar F al Nivel 2 lo suma al Nivel 3 y quitarlo lo saca, sin copiar asignaciones", async () => {
+      const relationsBefore = await holder.userSupervisionAssignment.count({ where: { supervisedUserId: cargaA.id } });
+      const added = await assign("F", encargado);
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).toContain("F");
+      expect(await visibleLegajos(cargaA)).toContain("F");
       await holder.employeeAssignment.delete({ where: { id: added.id } });
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).not.toContain("F");
-      // Quitar una asignación vigente de A también la saca del Nivel 2.
-      await holder.employeeAssignment.updateMany({ where: { employeeId: employee.B, userId: cargaA.id }, data: { status: "INACTIVO" } });
+      expect(await visibleLegajos(cargaA)).not.toContain("F");
+      // Inactivar una asignación del Nivel 2 también la saca del Nivel 3.
+      await holder.employeeAssignment.updateMany({ where: { employeeId: employee.B, userId: encargado.id }, data: { status: "INACTIVO" } });
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).not.toContain("B");
-      await holder.employeeAssignment.updateMany({ where: { employeeId: employee.B, userId: cargaA.id }, data: { status: "ACTIVO" } });
+      expect(await visibleLegajos(cargaA)).not.toContain("B");
+      await holder.employeeAssignment.updateMany({ where: { employeeId: employee.B, userId: encargado.id }, data: { status: "ACTIVO" } });
       await clearReadCaches();
-      expect(await holder.userSupervisionAssignment.count({ where: { supervisorUserId: encargado.id } })).toBe(relationsBefore);
-      expect(await holder.employeeAssignment.count({ where: { userId: encargado.id } })).toBe(1);
+      expect(await holder.userSupervisionAssignment.count({ where: { supervisedUserId: cargaA.id } })).toBe(relationsBefore);
+      // El Nivel 3 sigue sin filas propias nuevas (sólo la histórica H).
+      expect(await holder.employeeAssignment.count({ where: { userId: cargaA.id } })).toBe(1);
     });
 
-    it("una relación desfasada con un supervisado que ya no es Nivel 3 no abre alcance", async () => {
-      await holder.user.update({ where: { id: cargaB.id }, data: { role: "NIVEL_1_RRHH" } });
+    it("una relación desfasada con un supervisor que ya no es Nivel 2 no transmite alcance", async () => {
+      await holder.user.update({ where: { id: jefeB.id }, data: { role: "NIVEL_1_RRHH" } });
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C", "H"]);
-      await holder.user.update({ where: { id: cargaB.id }, data: { role: "NIVEL_3_CARGA_HORARIA" } });
+      expect(await visibleLegajos(cargaA)).toEqual(["A", "B", "C"]);
+      await holder.user.update({ where: { id: jefeB.id }, data: { role: "NIVEL_2_SUPERVISION" } });
       await clearReadCaches();
-      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C", "D", "E", "H"]);
+      expect(await visibleLegajos(cargaA)).toEqual(["A", "B", "C", "D", "E"]);
     });
   });
 
@@ -248,10 +255,11 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
       // Nivel 2 → Nivel 1: deja de supervisar.
       expect((await api(rrhh, "PATCH", `/users/${deposito.id}`, { role: "NIVEL_1_RRHH" })).status).toBe(200);
       expect(await holder.userSupervisionAssignment.count({ where: { supervisorUserId: deposito.id } })).toBe(0);
-      // Nivel 3 supervisado → Nivel 2: deja de estar supervisado; el Nivel 2 pierde ese alcance.
+      // Nivel 3 supervisado → Nivel 2: deja de estar supervisado y no hereda nada; el Nivel 2 conserva lo suyo.
       expect((await api(rrhh, "PATCH", `/users/${cargaB.id}`, { role: "NIVEL_2_SUPERVISION" })).status).toBe(200);
       expect(await holder.userSupervisionAssignment.count({ where: { supervisedUserId: cargaB.id } })).toBe(0);
-      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C", "H"]);
+      expect(await visibleLegajos({ ...cargaB, role: "NIVEL_2_SUPERVISION" })).toEqual([]);
+      expect(await visibleLegajos(encargado)).toEqual(["A", "B", "C"]);
       const audit = await holder.auditLog.findFirstOrThrow({ where: { entity: "UserSupervisionAssignment", entityId: encargado.id, description: { contains: "dejó de ser Nivel 3" } } });
       expect(audit.description).toContain("CARGA PANOL");
     });
@@ -310,46 +318,55 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
       }
     });
 
-    it("revocación: B supervisa A, A tiene E; al quitar A→E desde Legajos, la siguiente consulta de B ya no lo ve", async () => {
-      // A (Nivel 3) recibe E por el write path real.
-      expect((await putAssignments("REV", [cargaR.id])).status).toBe(200);
-      // B (Nivel 2 que supervisa A) ve E en consumidores cacheados.
+    it("revocación: B (N2) tiene E y supervisa a A (N3); al quitar B→E desde Legajos, la siguiente consulta de ambos ya no lo ve", async () => {
+      // B (Nivel 2) recibe E por el write path real.
+      expect((await putAssignments("REV", [jefeR.id])).status).toBe(200);
       expect(await visibleLegajos(jefeR)).toEqual(["REV"]);
       expect(await detailStatus(jefeR, "REV")).toBe(200);
       expect(await hoursLegajos(jefeR)).toEqual(["REV"]);
+      // A (Nivel 3 supervisado por B) lo hereda en consumidores cacheados.
+      expect(await visibleLegajos(cargaR)).toEqual(["REV"]);
+      expect(await hoursLegajos(cargaR)).toEqual(["REV"]);
       // Dashboard es sólo de Nivel 1 desde 2026-11-17: Nivel 2 no lo lee por API.
       expect((await api(jefeR, "GET", "/dashboard/metrics")).status).toBe(403);
 
       // Las respuestas están cacheadas: un cambio hecho directo en la base
       // (sin pasar por la API) todavía no se ve.
-      await holder.employeeAssignment.create({ data: { employeeId: legajo("STALE"), userId: cargaR.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
-      expect(await visibleLegajos(jefeR)).toEqual(["REV"]);
-      expect(await hoursLegajos(jefeR)).toEqual(["REV"]);
+      await holder.employeeAssignment.create({ data: { employeeId: legajo("STALE"), userId: jefeR.id, type: "TIME_RESPONSIBLE", status: "ACTIVO" } });
+      expect(await visibleLegajos(cargaR)).toEqual(["REV"]);
+      expect(await hoursLegajos(cargaR)).toEqual(["REV"]);
 
-      // Se quita A→E desde Legajos: sin esperar TTL ni dormir.
+      // Se quita B→E desde Legajos: sin esperar TTL ni dormir.
       expect((await putAssignments("REV", [])).status).toBe(200);
+      expect(await visibleLegajos(cargaR)).toEqual(["STALE"]);
+      expect(await hoursLegajos(cargaR)).toEqual(["STALE"]);
       expect(await visibleLegajos(jefeR)).toEqual(["STALE"]);
       expect(await detailStatus(jefeR, "REV")).toBe(404);
-      expect(await hoursLegajos(jefeR)).toEqual(["STALE"]);
-      // También el responsable directo.
-      expect(await visibleLegajos(cargaR)).toEqual(["STALE"]);
     });
 
-    it("incorporación: A no tiene E; al agregar A→E desde Legajos, la siguiente consulta de B lo ve", async () => {
-      // B ya tiene su listado y su detalle de E (404) cacheados.
-      expect(await visibleLegajos(jefeR)).toEqual(["STALE"]);
+    it("incorporación: B no tiene E; al agregar B→E desde Legajos, la siguiente consulta de A lo ve", async () => {
+      expect(await visibleLegajos(cargaR)).toEqual(["STALE"]);
       expect(await detailStatus(jefeR, "ADD")).toBe(404);
-      expect(await hoursLegajos(jefeR)).toEqual(["STALE"]);
+      expect(await hoursLegajos(cargaR)).toEqual(["STALE"]);
 
-      expect((await putAssignments("ADD", [cargaR.id])).status).toBe(200);
+      expect((await putAssignments("ADD", [jefeR.id])).status).toBe(200);
 
-      expect(await visibleLegajos(jefeR)).toEqual(["ADD", "STALE"]);
-      expect(await detailStatus(jefeR, "ADD")).toBe(200);
-      expect(await hoursLegajos(jefeR)).toEqual(["ADD", "STALE"]);
       expect(await visibleLegajos(cargaR)).toEqual(["ADD", "STALE"]);
+      expect(await hoursLegajos(cargaR)).toEqual(["ADD", "STALE"]);
+      expect(await detailStatus(jefeR, "ADD")).toBe(200);
+      expect(await visibleLegajos(jefeR)).toEqual(["ADD", "STALE"]);
+    });
+
+    it("el responsable de carga debe ser un Nivel 2 activo: un Nivel 3 o un nombre suelto → 422 sin escribir", async () => {
+      const before = await holder.employeeAssignment.count({ where: { employeeId: legajo("ADD") } });
+      const asN3 = await putAssignments("ADD", [cargaR.id]);
+      expect([asN3.status, asN3.json!.error!.code]).toEqual([422, "TIME_RESPONSIBLE_REQUIRES_N2_USER"]);
+      const nameOnly = await api(rrhh, "PUT", `/employees/${legajo("ADD")}/assignments`, { assignments: [{ type: "TIME_RESPONSIBLE", personName: "Wicky Stefania" }] });
+      expect([nameOnly.status, nameOnly.json!.error!.code]).toEqual([422, "TIME_RESPONSIBLE_REQUIRES_N2_USER"]);
+      expect(await holder.employeeAssignment.count({ where: { employeeId: legajo("ADD") } })).toBe(before);
     });
   });
-  describe("Nivel 3 inactivo: deja de transmitir alcance al Nivel 2, sin borrar la relación (invalidación inmediata por /users)", () => {
+  describe("Nivel 2 inactivo: deja de transmitir alcance al Nivel 3, sin borrar la relación (invalidación inmediata por /users)", () => {
     let cargaI: AppUser;
     let jefeI: AppUser;
     const period = new Date().toISOString().slice(0, 7);
@@ -358,54 +375,40 @@ describe.skipIf(!url)("Supervisión Nivel 2 → Nivel 3 contra PostgreSQL local"
       expect(status).toBe(200);
       return (json!.data as Array<{ employee: { legajo: string } }>).map((item) => item.employee.legajo).sort();
     };
-    const detailStatus = async (user: AppUser, key: string) => (await api(user, "GET", `/employees/${employee[key]}`)).status;
     const setStatus = async (target: AppUser, status: "ACTIVO" | "INACTIVO") => expect((await api(rrhh, "PATCH", `/users/${target.id}`, { status })).status).toBe(200);
 
     beforeAll(async () => {
       cargaI = await createUser("CARGA INACTIVABLE", "NIVEL_3_CARGA_HORARIA");
       jefeI = await createUser("JEFE INACTIVABLE", "NIVEL_2_SUPERVISION");
-      for (const [index, key] of ["INA", "DIRI"].entries()) {
-        const created = await holder.employee.create({ data: { legajo: key, cuil: `20-6${index}`, dni: `6${index}`, firstName: "Prueba", lastName: `Inactivo ${key}` } });
-        employee[key] = created.id;
-      }
-      await assign("INA", cargaI);
-      await assign("DIRI", jefeI);
+      const created = await holder.employee.create({ data: { legajo: "INA", cuil: "20-60", dni: "60", firstName: "Prueba", lastName: "Inactivo INA" } });
+      employee.INA = created.id;
+      await assign("INA", jefeI);
       await supervise(jefeI, cargaI);
       await clearReadCaches();
     });
 
-    it("ACTIVO → INACTIVO → ACTIVO: el Nivel 2 pierde y recupera los legajos heredados en la consulta siguiente; sus directos no cambian; la relación se conserva (1, 2, 3, 5, 8)", async () => {
-      // (1) Nivel 3 activo: el Nivel 2 hereda INA y conserva su directo DIRI (respuestas quedan cacheadas).
-      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
-      expect(await detailStatus(jefeI, "INA")).toBe(200);
-      expect(await hoursLegajos(jefeI)).toEqual(["DIRI", "INA"]);
-      // (6) El Nivel 3 ve su propio alcance directo.
+    it("ACTIVO → INACTIVO → ACTIVO: el Nivel 3 pierde y recupera los legajos heredados en la consulta siguiente; la relación se conserva", async () => {
       expect(await visibleLegajos(cargaI)).toEqual(["INA"]);
+      expect(await hoursLegajos(cargaI)).toEqual(["INA"]);
 
-      // (2, 8) Se inactiva por el write path real: sin esperar TTL.
-      await setStatus(cargaI, "INACTIVO");
-      expect(await visibleLegajos(jefeI)).toEqual(["DIRI"]);
-      expect(await detailStatus(jefeI, "INA")).toBe(404);
-      expect(await hoursLegajos(jefeI)).toEqual(["DIRI"]);
-      // La relación no se borra al inactivar.
+      await setStatus(jefeI, "INACTIVO");
+      expect(await visibleLegajos(cargaI)).toEqual([]);
+      expect(await hoursLegajos(cargaI)).toEqual([]);
       expect(await holder.userSupervisionAssignment.count({ where: { supervisorUserId: jefeI.id, supervisedUserId: cargaI.id } })).toBe(1);
-      // RRHH sigue global (7).
-      expect(await visibleLegajos(rrhh)).toEqual(expect.arrayContaining(["DIRI", "INA"]));
+      expect(await visibleLegajos(rrhh)).toEqual(expect.arrayContaining(["INA"]));
 
-      // (3, 8) Se reactiva: vuelve a heredar en la consulta siguiente.
-      await setStatus(cargaI, "ACTIVO");
-      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
-      expect(await detailStatus(jefeI, "INA")).toBe(200);
-      expect(await hoursLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+      await setStatus(jefeI, "ACTIVO");
+      expect(await visibleLegajos(cargaI)).toEqual(["INA"]);
+      expect(await hoursLegajos(cargaI)).toEqual(["INA"]);
     });
 
-    it("relación existente con un supervisado que ya no tiene rol Nivel 3 (aunque esté ACTIVO): no hereda (4)", async () => {
-      await holder.user.update({ where: { id: cargaI.id }, data: { role: "NIVEL_1_RRHH" } });
+    it("relación existente con un supervisor que ya no tiene rol Nivel 2 (aunque esté ACTIVO): no hereda", async () => {
+      await holder.user.update({ where: { id: jefeI.id }, data: { role: "NIVEL_1_RRHH" } });
       await clearReadCaches();
-      expect(await visibleLegajos(jefeI)).toEqual(["DIRI"]);
-      await holder.user.update({ where: { id: cargaI.id }, data: { role: "NIVEL_3_CARGA_HORARIA" } });
+      expect(await visibleLegajos(cargaI)).toEqual([]);
+      await holder.user.update({ where: { id: jefeI.id }, data: { role: "NIVEL_2_SUPERVISION" } });
       await clearReadCaches();
-      expect(await visibleLegajos(jefeI)).toEqual(["DIRI", "INA"]);
+      expect(await visibleLegajos(cargaI)).toEqual(["INA"]);
     });
   });
 });

@@ -16,7 +16,6 @@ import { hourConceptRulesByConceptRouter, hourConceptRulesRouter } from "./modul
 import { noveltyTypesRouter } from "./modules/novelty-types/noveltyTypes.routes";
 import { noveltiesRouter } from "./modules/novelties/novelties.routes";
 import { orgStructureRouter } from "./modules/org-structure/orgStructure.routes";
-import { pendingRouter } from "./modules/pending/pending.routes";
 import { positionsRouter } from "./modules/positions/positions.routes";
 import { salaryCategoriesRouter } from "./modules/salary-categories/salaryCategories.routes";
 import { shiftsRouter } from "./modules/shifts/shifts.routes";
@@ -48,7 +47,6 @@ apiRouter.use("/hour-concepts/:hourConceptId/rules", hourConceptRulesByConceptRo
 apiRouter.use("/novelty-types", noveltyTypesRouter);
 apiRouter.use("/novelties", noveltiesRouter);
 apiRouter.use("/org-structure", orgStructureRouter);
-apiRouter.use("/pending", pendingRouter);
 apiRouter.use("/positions", positionsRouter);
 apiRouter.use("/salary-categories", salaryCategoriesRouter);
 apiRouter.use("/shifts", shiftsRouter);

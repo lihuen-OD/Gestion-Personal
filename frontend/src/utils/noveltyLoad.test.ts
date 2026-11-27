@@ -54,10 +54,9 @@ describe("payload de alta", () => {
     expect(buildNoveltyCreateInput(expected, values(), ["e1"]).toDate).toBeNull();
     expect(buildNoveltyCreateInput(expected, values({ toDate: "2026-11-22" }), ["e1"]).toDate).toBe("2026-11-22");
   });
-  it("la observación se envía recortada o null; el motivo de corrección sólo si existe", () => {
+  it("la observación se envía recortada o null; nunca se envía motivo de corrección", () => {
     expect(buildNoveltyCreateInput(fixed, values({ observation: "  hola " }), ["e1"])).toMatchObject({ observation: "hola" });
     expect(buildNoveltyCreateInput(fixed, values(), ["e1"])).not.toHaveProperty("correctionReason");
-    expect(buildNoveltyCreateInput(fixed, values(), ["e1"], { correctionReason: " motivo " })).toMatchObject({ correctionReason: "motivo" });
   });
 });
 

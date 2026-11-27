@@ -20,6 +20,14 @@ describe("formatApiErrorMessage", () => {
     })).toBe("Revisá los campos obligatorios o inválidos: Sexo, Nacionalidad.");
   });
 
+  it("explains a transaction timeout as a save that did not complete, without technical details", () => {
+    const message = formatApiErrorMessage({
+      error: { code: "TRANSACTION_TIMEOUT", message: "Transaction already closed: The timeout for this transaction was 30000 ms" },
+    });
+    expect(message).toBe("El guardado no se completó porque la operación tardó demasiado. No se guardó ningún cambio: podés intentarlo de nuevo.");
+    expect(message).not.toMatch(/Transaction|Prisma|ms/);
+  });
+
   it("keeps a user-facing business message when there are no field errors", () => {
     expect(formatApiErrorMessage({
       error: { code: "BUSINESS_ERROR", message: "La operación no está permitida." },

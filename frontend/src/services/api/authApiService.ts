@@ -1,4 +1,4 @@
-import type { Role, User } from "../../types";
+import type { Role, ShiftGroupAccess, User } from "../../types";
 import { apiRequest } from "./apiClient";
 
 type BackendRole = "NIVEL_1_RRHH" | "NIVEL_2_SUPERVISION" | "NIVEL_3_CARGA_HORARIA";
@@ -11,6 +11,8 @@ interface BackendUser {
   role: BackendRole;
   status: BackendStatus;
   companyId?: string | null;
+  /** R8.4: alcance por grupo de turnos (pista para la UI). */
+  shiftGroupAccess?: ShiftGroupAccess;
 }
 
 interface LoginResponse {
@@ -35,6 +37,7 @@ function mapUser(user: BackendUser): User {
     status: user.status === "ACTIVO" ? "Activo" : "Inactivo",
     company: user.companyId || undefined,
     sector: undefined,
+    ...(user.shiftGroupAccess ? { shiftGroupAccess: { all: user.shiftGroupAccess.all, groupIds: [...user.shiftGroupAccess.groupIds] } } : {}),
   };
 }
 

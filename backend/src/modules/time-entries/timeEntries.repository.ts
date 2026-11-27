@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ApprovalStatus, EmployeeStatus, Prisma, WorkShiftSource, WorkShiftStatus, type HourConceptKind, type WorkShift } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+import type { ClockGuidance } from "../../shared/errors/clockGuidance";
 import { AppError } from "../../shared/errors/AppError";
 import { FICHADA_ORIGIN_NOTE } from "./timeEntryObservationText";
 import { ClockPunchCooldownConflict, type ClockPunchCooldownGuard } from "./clockPunchCooldown";
@@ -22,7 +23,7 @@ import {
   needsOperationalDate,
   operationalDateKeyForShift,
 } from "./manualHoursConflict";
-import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, specialHourRulesForEmployeeOnDate, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourApplicationRows, type SpecialHourRuleResolution } from "../workforce-management/doubleHourRuleMatching";
 import { laborHistoryService } from "../labor-history/laborHistory.service";
 import { clockPunchMetric } from "../../shared/observability/clockPunchTelemetry";
 import { markClockPunchQueryPhase } from "../../shared/observability/clockPunchQueryBudget";
@@ -55,6 +56,35 @@ import { CLOCK_SEARCH_MIN_LENGTH } from "./timeEntries.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 
 // Etapa 10B: nota de la alerta POSIBLE_OLVIDO_SALIDA resuelta por un rollover (también la usa el post-proceso durable, PERF-5D).
+/** Regla única de superposición de jornadas (WORK_SHIFT_OVERLAP): sólo jornadas con horas (endAt). */
+function findOverlappingWorkShiftWithin(db: Pick<PrismaTransactionClient, "workShift">, employeeId: string, startAt: Date, endAt: Date, excludeId?: string) {
+  return db.workShift.findFirst({
+    where: {
+      employeeId,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      status: { not: "ANULADO" },
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+    },
+    select: { id: true, startAt: true, endAt: true },
+  });
+}
+
+/**
+ * R4.4 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.6): bloque de rotación
+ * adoptado y CONGELADO en la apertura de la jornada (sólo miembros de
+ * rotación con la entrada asignada a un bloque). Sin él, la jornada nace como
+ * siempre (sin plantilla; la adopción legacy la hace el post-proceso).
+ */
+export type WorkShiftBlockAdoption = {
+  shiftTemplateId: string;
+  shiftTemplateSource: "ROTATION" | "HOLIDAY_CONVOCATION";
+  scheduledStartAt: Date;
+  maxAllowedMinutes: number;
+  /** R4.6 (§25.9): reglas de la plantilla del bloque, congeladas en la apertura. */
+  templateRulesSnapshot: Prisma.InputJsonValue;
+};
+
 export const ROLLOVER_OVERFLOW_RESOLUTION_NOTE = "Resuelta automáticamente: la jornada quedó marcada como olvido de salida al registrarse un nuevo ingreso.";
 
 const timeEntryListOrderBy: SortOrderByMap<(typeof timeEntryListSortKeys)[number], Prisma.TimeEntryOrderByWithRelationInput> = {
@@ -367,7 +397,7 @@ async function resolveDoubleHourMultiplierForManualEntry(employeeId: string, dat
 
 export type SpecialHourResolution = SpecialHourRuleResolution<DoubleHourRuleForEngine>;
 
-type SpecialHourRuleReader = Pick<PrismaTransactionClient, "doubleHourRule" | "holidayWorkAssignment"> & HistoryReader;
+type SpecialHourRuleReader = Pick<PrismaTransactionClient, "doubleHourRule"> & HistoryReader;
 
 /** Fecha que el motor no puede resolver sin inventar: falta la vigencia de alguna dimensión que la regla restringe. */
 export type MissingScopeHistory = {
@@ -398,8 +428,6 @@ const specialHourRuleInclude = { dates: true, sector: { select: { isLegacy: true
 type SpecialHourEngineInputs = {
   history: EngineScopeHistory;
   rulesForEmployee: DoubleHourRuleWithSector[];
-  feriadoRules: DoubleHourRuleWithSector[];
-  convocations: Array<{ date: Date; employeeId: string }>;
 };
 
 function specialHourDateRange(dates: Date[]) {
@@ -410,38 +438,33 @@ function specialHourDateRange(dates: Date[]) {
 }
 
 // Motor ÚNICO de Hora Especial por empleado + fecha (docs/decisions/
-// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §16; ORG_LOCATION_REORGANIZATION.md
+// WORKED_TIME_ACCOUNTING_MODEL.md §6, §15 y §20; ORG_LOCATION_REORGANIZATION.md
 // §18-§19). Lo usan la carga manual, los desgloses, el fichador
 // (createFromWorkShift/closeOpenWorkShift) y la reinterpretación de la historia:
 // - reglas ACTIVAS vigentes en la fecha cuyo alcance (empresa empleadora,
 //   sector, centro de costo, puesto) se cumple con la HISTORIA del legajo
 //   vigente ESE día, y lista explícita de legajos;
-// - FERIADO + convocatoria: si la fecha tiene convocados (HolidayWorkAssignment
-//   ACTIVA), las reglas FERIADO aplican sólo a ellos
-//   (specialHourRulesForEmployeeOnDate);
+// - FERIADO igual que cualquier otra regla: según su alcance, sin mirar la
+//   convocatoria (§20; la convocatoria sólo define la obligación de asistir);
 // - ganadoras por prioridad (resolveWinningRules).
 // Una fecha cuya resolución depende de una dimensión sin vigencia registrada
 // queda como `missingHistory`: nunca se completa con el valor actual. Consultas
-// fijas por llamada (historia del rango, reglas, FERIADO y convocatorias), sin
-// importar cuántas fechas. `db` permite correrlo dentro de la transacción que
-// cambia una regla o una convocatoria, para ver su estado nuevo.
+// fijas por llamada (historia del rango y reglas), sin importar cuántas fechas.
+// `db` permite correrlo dentro de la transacción que cambia una regla, para ver
+// su estado nuevo.
 export async function evaluateSpecialHourRulesByDate(employeeId: string, dates: Date[], db: SpecialHourRuleReader = prisma): Promise<Map<string, SpecialHourEvaluation>> {
   if (!dates.length) return new Map();
   const { from, to, vigencyWhere } = specialHourDateRange(dates);
-  const [history, rulesForEmployee, feriadoRules, convocations] = await Promise.all([
+  const [history, rulesForEmployee] = await Promise.all([
     laborHistoryService.loadEngineScopeHistory(db, employeeId, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
     db.doubleHourRule.findMany({ where: { ...vigencyWhere, AND: [ruleEmployeeListWhere(employeeId)] }, include: specialHourRuleInclude }),
-    // Sin filtro de alcance: con convocatoria, el convocado queda alcanzado
-    // aunque la regla FERIADO tenga otro alcance.
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: specialHourRuleInclude }),
-    db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
-  return evaluateSpecialHourDates(employeeId, dates, { history, rulesForEmployee, feriadoRules, convocations });
+  return evaluateSpecialHourDates(employeeId, dates, { history, rulesForEmployee });
 }
 
 /**
- * El mismo motor para varios legajos con consultas fijas (historia, reglas,
- * FERIADO y convocatorias una vez para todos), no 7 por legajo: la
+ * El mismo motor para varios legajos con consultas fijas (historia y reglas
+ * una vez para todos), no 7 por legajo: la
  * reinterpretación de una regla alcanza a muchos legajos dentro de una
  * transacción con tiempo límite. Se carga la ventana que cubre todas las
  * fechas; la evaluación por fecha descarta lo que no está vigente ese día, así
@@ -453,7 +476,7 @@ export async function evaluateSpecialHourRulesForEmployees(datesByEmployee: Map<
   if (!employees.length) return result;
   const employeeIds = employees.map(([employeeId]) => employeeId);
   const { from, to, vigencyWhere } = specialHourDateRange(employees.flatMap(([, dates]) => dates));
-  const [histories, listedRules, feriadoRules, convocations] = await Promise.all([
+  const [histories, listedRules] = await Promise.all([
     laborHistoryService.loadEngineScopeHistoryByEmployee(db, employeeIds, { fromKey: calendarDateKey(from), toKey: calendarDateKey(to) }),
     // Mismo filtro que ruleEmployeeListWhere, para todos los legajos: la lista
     // explícita de la regla se resuelve por legajo en memoria.
@@ -461,38 +484,29 @@ export async function evaluateSpecialHourRulesForEmployees(datesByEmployee: Map<
       where: { ...vigencyWhere, AND: [{ OR: [{ employees: { none: {} } }, { employees: { some: { employeeId: { in: employeeIds } } } }] }] },
       include: { ...specialHourRuleInclude, employees: { select: { employeeId: true } } },
     }),
-    db.doubleHourRule.findMany({ where: { ...vigencyWhere, kind: "FERIADO" }, include: specialHourRuleInclude }),
-    db.holidayWorkAssignment.findMany({ where: { status: "ACTIVA", date: { gte: from, lte: to } }, select: { date: true, employeeId: true } }),
   ]);
   for (const [employeeId, dates] of employees) {
     const rulesForEmployee = listedRules
       .filter((rule) => !rule.employees.length || rule.employees.some((item) => item.employeeId === employeeId))
       .map(({ employees: _employees, ...rule }) => rule);
-    result.set(employeeId, evaluateSpecialHourDates(employeeId, dates, { history: histories.get(employeeId)!, rulesForEmployee, feriadoRules, convocations }));
+    result.set(employeeId, evaluateSpecialHourDates(employeeId, dates, { history: histories.get(employeeId)!, rulesForEmployee }));
   }
   return result;
 }
 
-function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, rulesForEmployee, feriadoRules, convocations }: SpecialHourEngineInputs): Map<string, SpecialHourEvaluation> {
+function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, rulesForEmployee }: SpecialHourEngineInputs): Map<string, SpecialHourEvaluation> {
   const result = new Map<string, SpecialHourEvaluation>();
-  const convokedByDate = new Map<string, Set<string>>();
-  for (const convocation of convocations) {
-    const key = calendarDateKey(convocation.date);
-    convokedByDate.set(key, (convokedByDate.get(key) ?? new Set<string>()).add(convocation.employeeId));
-  }
   const activeDates = buildActiveDatesByRule(rulesForEmployee);
   const isVigent = (rule: DoubleHourRuleForEngine, date: Date) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date);
   for (const date of dates) {
     const key = calendarDateKey(date);
     if (result.has(key)) continue;
-    const convoked = convokedByDate.get(key) ?? new Set<string>();
     // Sólo importa el alcance de reglas vigentes que caen en la fecha por
-    // calendario; con convocatoria, el FERIADO lo decide la convocatoria.
+    // calendario (FERIADO incluido: §20).
     const inScope: DoubleHourRuleWithSector[] = [];
     let missingHistory: MissingScopeHistory | null = null;
     for (const rule of rulesForEmployee) {
       if (!isVigent(rule, date) || !ruleMatchesDate(rule, date, activeDates)) continue;
-      if (convoked.size && rule.kind === "FERIADO") continue;
       const evaluation = evaluateRuleScope(ruleScopeOf(rule), history, key);
       if (evaluation.kind === "MATCH") inScope.push(rule);
       else if (evaluation.kind === "MISSING" && !missingHistory) {
@@ -503,13 +517,7 @@ function evaluateSpecialHourDates(employeeId: string, dates: Date[], { history, 
       result.set(key, { missingHistory });
       continue;
     }
-    const candidates = specialHourRulesForEmployeeOnDate({
-      employeeId,
-      rulesInEmployeeScope: inScope,
-      feriadoRules: feriadoRules.filter((rule) => isVigent(rule, date)),
-      convokedEmployeeIds: convoked,
-    });
-    const matchedRules = matchingDoubleHourRules(candidates, date);
+    const matchedRules = matchingDoubleHourRules(inScope, date);
     const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
     result.set(key, { resolution: { multiplier, matchedRules, winners, conflicting } });
   }
@@ -850,7 +858,10 @@ export const timeEntriesRepository = {
   },
 
   createClockPunchAttempt(input: { requestId: string; employeeId: string; deviceId: string; punchType: "INGRESO" | "SALIDA"; requestHash: string }) {
-    return prisma.clockPunchAttempt.create({ data: input });
+    // R4.9C.2 O2: `startedAt` con el reloj de la aplicación, el mismo de la
+    // fichada, del TTL (service y expireClockPunchAttempts) y del detector de
+    // falta de ingreso, que ubica el intento en curso en su obligación.
+    return prisma.clockPunchAttempt.create({ data: { ...input, startedAt: new Date() } });
   },
 
   findClockPunchAttempt(requestId: string) {
@@ -874,7 +885,7 @@ export const timeEntriesRepository = {
   // F11.1: sólo un intento PROCESSING pasa a FAILED. Un COMPLETED (fichada ya
   // confirmada en su transacción) nunca se pisa. Devuelve el intento tal como
   // quedó, para que el llamador sepa si la fichada se confirmó.
-  async failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number }) {
+  async failClockPunchAttempt(requestId: string, error: { code: string; message: string; httpStatus: number; retryAfterSeconds?: number; clockGuidance?: ClockGuidance }) {
     const response = failedAttemptResponse(error);
     await prisma.clockPunchAttempt.updateMany({
       where: { requestId, status: "PROCESSING" },
@@ -935,7 +946,7 @@ export const timeEntriesRepository = {
   // única conexión.
   async summary(period: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
     const countableStatuses = [ApprovalStatus.APROBADO, ApprovalStatus.EN_REVISION];
-    const [activeEmployees, employeesWithEntries, pendingEmployees, reviewEmployeeGroups, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
+    const [activeEmployees, employeesWithEntries, pendingEmployees, hoursResult, additiveResult, dayOffUncounted, noveltyCoveredMinutes] = await Promise.all([
       prisma.employee.count({
         where: { ...employeeAccessWhere, status: EmployeeStatus.ACTIVO },
       }),
@@ -961,15 +972,6 @@ export const timeEntriesRepository = {
               status: { in: countableStatuses },
             },
           },
-        },
-      }),
-      prisma.timeEntry.groupBy({
-        by: ["employeeId"],
-        orderBy: { employeeId: "asc" },
-        where: {
-          period,
-          employee: employeeAccessWhere,
-          status: ApprovalStatus.EN_REVISION,
         },
       }),
       prisma.timeEntry.aggregate({
@@ -1010,8 +1012,9 @@ export const timeEntriesRepository = {
     return {
       activeEmployees,
       employeesWithEntries,
+      // Personas activas sin horas computables en el período (seguimiento
+      // operativo de carga, no un estado de aprobación).
       pendingEmployees,
-      reviewEmployees: reviewEmployeeGroups.length,
       // "Total trabajado": sólo trabajo real (sin cambios). La cobertura de
       // novedades va aparte y el total computable la suma (aditivo).
       countableHours,
@@ -1398,6 +1401,8 @@ export const timeEntriesRepository = {
           observation: true,
           reviewStatus: true,
           shiftTemplateId: true,
+          scheduledStartAt: true,
+          templateRulesSnapshot: true,
           shiftTemplate: {
             select: {
               id: true,
@@ -1620,17 +1625,17 @@ export const timeEntriesRepository = {
     };
   },
 
-  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string) {
+  resolveAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, resolution: "RESUELTA" | "DESCARTADA", reason: string, userId: string, db: PrismaTransactionClient = prisma) {
     const data = { reviewStatus: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId };
-    if (kind === "SHIFT") return prisma.workShift.update({ where: { id }, data });
-    if (kind === "PUNCH") return prisma.attendancePunch.update({ where: { id }, data });
-    return prisma.attendanceInactivityIncident.update({ where: { id }, data: { status: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId } });
+    if (kind === "SHIFT") return db.workShift.update({ where: { id }, data });
+    if (kind === "PUNCH") return db.attendancePunch.update({ where: { id }, data });
+    return db.attendanceInactivityIncident.update({ where: { id }, data: { status: resolution, reviewNote: reason, reviewedAt: new Date(), reviewedByUserId: userId } });
   },
 
-  findAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
-    if (kind === "SHIFT") return prisma.workShift.findFirst({ where: { id, employee: employeeAccessWhere } });
-    if (kind === "PUNCH") return prisma.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
-    return prisma.attendanceInactivityIncident.findFirst({ where: { id, employee: employeeAccessWhere } });
+  findAttendanceObservation(kind: "SHIFT" | "PUNCH" | "INACTIVITY", id: string, employeeAccessWhere: Prisma.EmployeeWhereInput, db: PrismaTransactionClient = prisma) {
+    if (kind === "SHIFT") return db.workShift.findFirst({ where: { id, employee: employeeAccessWhere } });
+    if (kind === "PUNCH") return db.attendancePunch.findFirst({ where: { id, employee: employeeAccessWhere } });
+    return db.attendanceInactivityIncident.findFirst({ where: { id, employee: employeeAccessWhere } });
   },
 
   findWorkShiftForAdmin(id: string, employeeAccessWhere: Prisma.EmployeeWhereInput) {
@@ -1766,7 +1771,7 @@ export const timeEntriesRepository = {
   // relevante desde ese instante (chequeo PRELIMINAR del cooldown, el mismo
   // criterio que findLatestClockPunchSince); sin él, esa relación viene vacía.
   // La decisión con autoridad sigue siendo guardClockPunchCooldown en la tx.
-  findClockValidationContext(employeeId: string, cooldownSince?: Date | null) {
+  findClockValidationContext(employeeId: string, cooldownSince?: Date | null, rotationRange?: { from: Date; to: Date }) {
     return prisma.employee.findUnique({
       where: { id: employeeId },
       select: {
@@ -1801,6 +1806,11 @@ export const timeEntriesRepository = {
           take: 1,
           select: { timestamp: true },
         },
+        // R4.4: ¿es miembro de una rotación en D−1..D+1? Conteo filtrado en la
+        // MISMA sentencia (subconsulta), sin consultas nuevas para no miembros.
+        ...(rotationRange
+          ? { _count: { select: { shiftRotationMemberships: { where: { effectiveFrom: { lte: rotationRange.to }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: rotationRange.from } }] } } } } }
+          : {}),
       },
     });
   },
@@ -1906,7 +1916,7 @@ export const timeEntriesRepository = {
     return { count, items };
   },
 
-  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
+  async createOpenWorkShift(input: { employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; adoption?: WorkShiftBlockAdoption; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -1938,6 +1948,7 @@ export const timeEntriesRepository = {
           status: WorkShiftStatus.ABIERTO,
           startAt: input.startAt,
           maxAllowedMinutes: 20 * 60,
+          ...(input.adoption ?? {}),
         },
       });
       if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
@@ -1955,7 +1966,7 @@ export const timeEntriesRepository = {
     return result;
   },
 
-  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
+  async rolloverExpiredOpenWorkShift(input: { openWorkShiftId: string; employeeId: string; hourConceptId?: string; hourConceptName?: string; source: WorkShiftSource; startAt: Date; missingOutObservation: string; entryObservation?: string; adoption?: WorkShiftBlockAdoption; punchEvidence?: PunchEvidenceInput; prepareEvidence?: ClockPunchEvidenceWriter; cooldown?: ClockPunchCooldownGuard; audit?: ClockPunchTransactionWriter; completeAttempt?: ClockPunchTransactionWriter; postProcess?: ClockPunchPostProcessWriter; timingRequestId?: string }) {
     const startedAt = performance.now();
     let callbackStartedAt = startedAt;
     const timings: ClockPunchTransactionTimings = { auditMs: 0, attemptCompletionMs: 0 };
@@ -2011,7 +2022,7 @@ export const timeEntriesRepository = {
           type: "INGRESO",
           timestamp: input.startAt,
           source: input.source,
-          observation: "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
+          observation: input.entryObservation ?? "Ingreso habilitado luego de marcar automaticamente la jornada anterior como olvido de salida.",
           ...punchEvidenceData(evidence),
         },
       });
@@ -2027,6 +2038,7 @@ export const timeEntriesRepository = {
           status: WorkShiftStatus.ABIERTO,
           startAt: input.startAt,
           maxAllowedMinutes: 20 * 60,
+          ...(input.adoption ?? {}),
         },
       });
       if (input.postProcess) await input.postProcess(tx, { attendancePunchId: punch.id, workShift });
@@ -2152,15 +2164,7 @@ export const timeEntriesRepository = {
   },
 
   findOverlappingWorkShift(employeeId: string, startAt: Date, endAt: Date) {
-    return prisma.workShift.findFirst({
-      where: {
-        employeeId,
-        status: { not: "ANULADO" },
-        startAt: { lt: endAt },
-        endAt: { gt: startAt },
-      },
-      select: { id: true, startAt: true, endAt: true },
-    });
+    return findOverlappingWorkShiftWithin(prisma, employeeId, startAt, endAt);
   },
 
   // autoApprovedByUserId != null => quien carga (RRHH, Etapa 6L.3) aplica la
@@ -2312,7 +2316,9 @@ export const timeEntriesRepository = {
           include: timeEntryInclude,
         });
 
-        if (existing && !editableStatuses.includes(existing.status)) {
+        // Las cargas son efectivas al guardar (APROBADO) y no bloquean sumar el
+        // tramo, igual que en el fichador; el mes CERRADO lo protege su guard.
+        if (existing && existing.status !== "APROBADO" && !editableStatuses.includes(existing.status)) {
           throw new Error(`TIME_ENTRY_LOCKED:${existing.id}`);
         }
 
@@ -2430,6 +2436,12 @@ export const timeEntriesRepository = {
     // relee cada uno con su include después de escribirlo. El cierre manual de
     // RRHH (default) los sigue devolviendo para su respuesta y su auditoría.
     returnEntries?: boolean;
+    // R4.4: sólo la salida de una jornada con bloque de rotación. Dentro de la
+    // transacción: ninguna otra jornada CON horas (endAt) del empleado puede
+    // superponerse con [inicio, salida) — misma regla que WORK_SHIFT_OVERLAP de
+    // la carga manual (findOverlappingWorkShift). Las jornadas sin endAt
+    // (FALTA_SALIDA) no tienen horas y no cuentan.
+    overlapGuard?: boolean;
   }) {
     // Fuera de la transacción: sólo lecturas de configuración de sistema
     // (Horas Especiales activas + su alcance, conceptos nocturnos) que no
@@ -2506,6 +2518,9 @@ export const timeEntriesRepository = {
       });
       if (!workShift) {
         throw new Error("WORK_SHIFT_ALREADY_CLOSED");
+      }
+      if (input.overlapGuard && await findOverlappingWorkShiftWithin(tx, input.employeeId, workShift.startAt, input.endAt, workShift.id)) {
+        throw new Error("WORK_SHIFT_OVERLAP");
       }
       // F7.1 (FICHADOR_STANDALONE_PWA_PLAN.md §26.12): la salida
       // (AttendancePunch) guarda el canal de ESTA request (`input.source`),
@@ -2691,12 +2706,11 @@ export const timeEntriesRepository = {
     const appliedMultiplier = await resolveDoubleHourMultiplierForManualEntry(before.employeeId, date);
     // D-5: en un período protegido sólo pasa la corrección explícita de RRHH
     // con motivo (el servicio ya lo exige); el lock compartido se toma igual.
-    const explicitCorrection = Boolean(autoApprovedByUserId && input.correctionReason);
     return prisma.$transaction(async (tx) => {
       await assertClosurePeriodsWritable(tx, [
         { employeeId: before.employeeId, period: periodFromCalendarDate(before.date) },
         { employeeId: before.employeeId, period: periodFromCalendarDate(date) },
-      ], { explicitCorrection, message: "El período ya fue enviado a cierre. Solicitá la corrección para que RH la revise." });
+      ], { explicitCorrection: false, message: "El período está cerrado. Reabrilo antes de modificar horas." });
       return tx.timeEntry.update({
       where: { id },
       data: {
@@ -2717,35 +2731,4 @@ export const timeEntriesRepository = {
     });
   },
 
-  submit(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "EN_REVISION" },
-      include: timeEntryInclude,
-    });
-  },
-
-  approve(id: string, approvedByUserId: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "APROBADO", approvedByUserId, approvedAt: new Date(), rejectedAt: null },
-      include: timeEntryInclude,
-    });
-  },
-
-  reject(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null, rejectedAt: new Date() },
-      include: timeEntryInclude,
-    });
-  },
-
-  returnForCorrection(id: string) {
-    return prisma.timeEntry.update({
-      where: { id },
-      data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null, rejectedAt: null },
-      include: timeEntryInclude,
-    });
-  },
 };

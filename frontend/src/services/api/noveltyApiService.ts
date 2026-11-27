@@ -2,7 +2,7 @@ import { apiRequest } from "./apiClient";
 import { appendSortParams, collectAllPages } from "./listQuery";
 import type { SortState } from "../../utils/sort";
 import { NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES, type CacheFamily, invalidateCacheFamily } from "../cache";
-import type { Novelty, Role, User } from "../../types";
+import type { Novelty } from "../../types";
 import type { NoveltyCoverageReviewReason, NoveltyCoverageState } from "../../types/workedTimeAccounting.types";
 import { fileToBase64 } from "../../utils/documentFile";
 
@@ -32,7 +32,6 @@ type ApiNovelty = {
     exportsToFinnegans: boolean;
     allowsHours: boolean;
     timeEntryBehavior?: "NO_BLOQUEA" | "BLOQUEA_NUEVA_CARGA";
-    approvalRoles?: Role[];
     finnegansCode?: string | null;
     finnegansName?: string | null;
   };
@@ -119,26 +118,16 @@ export type ResolveNoveltyCoverageDayInput = {
   resolution: NoveltyCoverageResolutionAction;
   baseMinutes?: number | null;
   note: string;
-  correctionReason?: string | null;
 };
 
 // Etapa 4 de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §12): una
 // novedad aprobada cambia totales (cobertura), así que sus mutaciones
 // invalidan todas las familias con contabilidad de horas (grilla por legajo,
-// Carga de horas, Bandeja, dashboard, cierres) además de las novedades.
+// Carga de horas, dashboard, cierres) además de las novedades.
 export const NOVELTY_DEPENDENT_CACHE_FAMILIES: readonly CacheFamily[] = NOVELTY_COVERAGE_DERIVED_CACHE_FAMILIES;
 
 async function invalidateNoveltyDependentCaches(reason: string) {
   await Promise.all(NOVELTY_DEPENDENT_CACHE_FAMILIES.map((family) => invalidateCacheFamily(family, reason)));
-}
-
-const fallbackApprovalRoles: Role[] = ["Nivel 1 - RRHH"];
-const validRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
-
-function normalizeRoles(value: unknown): Role[] {
-  if (!Array.isArray(value)) return fallbackApprovalRoles;
-  const roles = value.filter((item): item is Role => validRoles.includes(item as Role));
-  return roles.length ? roles : fallbackApprovalRoles;
 }
 
 export type CreateNoveltyApiInput = {
@@ -150,8 +139,6 @@ export type CreateNoveltyApiInput = {
   quantityDays?: number | null;
   observation?: string | null;
   targetHourConceptId?: string | null;
-  // Corrección de RRHH sobre un período ya enviado a cierre (etapa 3).
-  correctionReason?: string | null;
 };
 
 function dateOnly(value?: string | null) {
@@ -207,7 +194,6 @@ export function mapNoveltyFromApi(item: ApiNovelty): Novelty {
     targetHourConceptId: item.targetHourConceptId || undefined,
     targetHourConceptName: item.targetHourConcept?.name,
     timeEntryBehavior: item.noveltyType.timeEntryBehavior,
-    approvalRoles: normalizeRoles(item.noveltyType.approvalRoles),
     exportsToFinnegans: item.noveltyType.exportsToFinnegans,
     finnegansCode: item.noveltyType.finnegansCode || undefined,
     finnegansName: item.noveltyType.finnegansName || undefined,
@@ -291,23 +277,10 @@ export const noveltyApiService = {
     return response.data.map(mapNoveltyFromApi);
   },
 
-  async approve(id: string) {
-    const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/approve`, { method: "POST" });
-    await invalidateNoveltyDependentCaches("novelty approved");
-    return mapNoveltyFromApi(response.data);
-  },
-  async approveMany(ids: string[]) {
-    const response = await apiRequest<{ data: ApiNovelty[] }>("/novelties/bulk-approve", { method: "POST", body: { ids } });
-    await invalidateNoveltyDependentCaches("novelties approved in bulk");
-    return response.data.map(mapNoveltyFromApi);
-  },
-
-  async reject(id: string, reason = "Rechazo operativo") {
-    const response = await apiRequest<ApiItemResponse>(`/novelties/${id}/reject`, {
-      method: "POST",
-      body: { reason },
-    });
-    await invalidateNoveltyDependentCaches("novelty rejected");
+  async update(id: string, input: Partial<CreateNoveltyApiInput>) {
+    const { employeeIds: _employeeIds, ...body } = input;
+    const response = await apiRequest<ApiItemResponse>(`/novelties/${id}`, { method: "PATCH", body });
+    await invalidateNoveltyDependentCaches("novelty updated");
     return mapNoveltyFromApi(response.data);
   },
 
@@ -334,9 +307,5 @@ export const noveltyApiService = {
     });
     await invalidateNoveltyDependentCaches("novelty coverage day resolved");
     return response.data;
-  },
-
-  canApprove(novelty: Novelty, user: User) {
-    return user.role === "Nivel 1 - RRHH" || Boolean(novelty.approvalRoles?.includes(user.role));
   },
 };
