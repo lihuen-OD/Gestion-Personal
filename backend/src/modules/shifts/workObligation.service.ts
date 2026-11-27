@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../shared/prisma/client";
 import { argentinaCalendarDate } from "../../shared/datetime/argentinaTime";
 import { workforceService } from "../workforce-management/workforce.service";
@@ -64,14 +65,20 @@ export interface WorkObligationResolution {
 export async function resolveWorkObligationCandidates(dateKey: string): Promise<WorkObligationResolution> {
   const referenceDate = argentinaCalendarDate(dateKey);
 
-  // Feriado por calendario, sin alcance de la regla (deuda P7): para alertas,
-  // todo feriado alcanza a todos. Sin ningún convocado corta antes de leer
-  // asignaciones.
+  // Feriado por calendario, sin alcance de la regla (P7 resuelto, §20): para la
+  // obligación, todo feriado alcanza a todos. Sin ningún convocado corta antes
+  // de leer asignaciones.
   const holidayDays = await workforceService.holidayDatesInRange(referenceDate, referenceDate);
   const isHoliday = holidayDays.length > 0;
   let convokedEmployeeIds: string[] | null = null;
+  // P8 (§20): plantilla de cada convocatoria (null = sin plantilla, con su turno habitual).
+  const convocationTemplates = new Map<string, Prisma.ShiftTemplateGetPayload<object> | null>();
   if (isHoliday) {
-    const assignments = await prisma.holidayWorkAssignment.findMany({ where: { date: referenceDate, status: "ACTIVA" }, select: { employeeId: true } });
+    const assignments = await prisma.holidayWorkAssignment.findMany({
+      where: { date: referenceDate, status: "ACTIVA", employee: { status: "ACTIVO" } },
+      select: { employeeId: true, shiftTemplate: true },
+    });
+    for (const item of assignments) convocationTemplates.set(item.employeeId, item.shiftTemplate);
     convokedEmployeeIds = assignments.map((item) => item.employeeId);
     if (!convokedEmployeeIds.length) return { isHoliday, candidates: [] };
   }
@@ -111,6 +118,11 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
     applicableByEmployee.set(assignment.employeeId, list);
   }
 
+  // P8 (§20): un convocado con plantilla obliga con ella aunque no tenga
+  // ningún turno fijo aplicable ese día.
+  for (const [employeeId, template] of convocationTemplates) {
+    if (template && !applicableByEmployee.has(employeeId)) applicableByEmployee.set(employeeId, []);
+  }
   // La rotación reemplaza a los turnos fijos: quien tiene plan de rotación ese
   // día no aporta candidatos fijos (defensa de la Opción C, §24.11).
   for (const employeeId of rotation.keys()) applicableByEmployee.delete(employeeId);
@@ -123,19 +135,28 @@ export async function resolveWorkObligationCandidates(dateKey: string): Promise<
   const withDayOff = new Set(dayOffs.map((item) => item.employeeId));
   const candidates: WorkObligationCandidate[] = [];
   for (const [employeeId, employeeAssignments] of applicableByEmployee) {
+    const convocationTemplate = convocationTemplates.get(employeeId) ?? null;
     const resolution = resolveExpectedShift(
       {
         dateKey,
+        employeeId,
         assignments: employeeAssignments,
         dayOff: withDayOff.has(employeeId),
         // Sólo los convocados llegan hasta acá en un feriado.
         holiday: isHoliday ? "IN_SCOPE" : null,
         convocation: isHoliday ? { employeeId } : null,
         regimeKind: regimes.get(employeeId)?.kind ?? null,
+        convocationTemplate,
       },
       "WORK_OBLIGATION",
     );
     if (resolution.obligation !== "SHIFT") continue;
+    // Convocatoria con plantilla: su bloque (mismo inicio programado que el fichador y la evidencia).
+    const block = resolution.blocks[0];
+    if (block && convocationTemplate) {
+      candidates.push({ employeeId, template: toTemplateRef(convocationTemplate), scheduledStartAt: block.scheduledStartAt });
+      continue;
+    }
     // Selección LEGACY entre varias aplicables: inicio más temprano (P1).
     const earliest = pickEarliestFixedCandidate(dateKey, resolution.fixedCandidates);
     if (earliest) candidates.push({ employeeId, template: earliest.template, scheduledStartAt: earliest.scheduledStartAt });

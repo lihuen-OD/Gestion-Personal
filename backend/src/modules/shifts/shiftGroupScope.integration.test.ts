@@ -544,10 +544,15 @@ describe.skipIf(!url)("R8 — turnos con alcance por grupo y por legajo (Postgre
       expect((await api(users.stefi, "PATCH", `/shifts/rotations/${ownRotation}`, { name: "Rotación de Stefi" })).status).toBe(200);
     });
 
-    it("grupos y convocatorias siguen siendo sólo de RRHH", async () => {
+    it("grupos siguen siendo sólo de RRHH; la convocatoria se abre por legajo, nunca por grupo de turnos", async () => {
       expect((await api(users.stefi, "POST", "/shifts/groups", { code: "NUEVO", name: "Nuevo" })).status).toBe(403);
       expect((await api(users.stefi, "PATCH", `/shifts/groups/${group.planta}`, { name: "Planta" })).status).toBe(403);
-      expect((await api(users.joaquin, "PUT", "/shifts/holiday-work/assignments", { date: "2027-05-01", assignments: [] })).status).toBe(403);
+      // "hidden2" tiene un turno fijo de Planta (grupo de Stefi) pero ningún
+      // responsable: el grupo no da permiso para convocarlo (§20, 12D §5).
+      const response = await api(users.stefi, "PUT", "/shifts/holiday-work/assignments", { date: "2027-05-01", assignments: [{ employeeId: employee.hidden2, status: "ACTIVA" }] });
+      expect(response.status).toBe(403);
+      expect(response.json).toMatchObject({ error: { code: "EMPLOYEE_SCOPE_FORBIDDEN" } });
+      expect(await holder.holidayWorkAssignment.count({ where: { employeeId: employee.hidden2, date: day("2027-05-01"), status: "ACTIVA" } })).toBe(0);
     });
   });
   describe("efectos indirectos sobre legajos fuera del alcance (R8.3)", () => {

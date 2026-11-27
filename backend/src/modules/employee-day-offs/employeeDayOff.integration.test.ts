@@ -232,9 +232,13 @@ describe.skipIf(!url)("Francos contra PostgreSQL local", () => {
 
   it("franco y convocatoria al feriado del mismo día en paralelo: exactamente uno queda activo, el otro recibe 409", async () => {
     const date = "2026-12-25";
+    // §20: sólo se convoca a un feriado del calendario y con horario resoluble (plantilla explícita).
+    const feriado = await holder.doubleHourRule.create({ data: { name: "Navidad", recurrenceType: "FECHA", fromDate: m.datetime.argentinaCalendarDate(date), toDate: m.datetime.argentinaCalendarDate(date), multiplier: 2, kind: "FERIADO", reason: "it" } });
+    await holder.specialHourRuleDate.create({ data: { ruleId: feriado.id, date: m.datetime.argentinaCalendarDate(date) } });
+    const guardia = await holder.shiftTemplate.create({ data: { code: "GUARDIA-IT", name: "Guardia", startTime: "08:00", endTime: "16:00", expectedMinutes: 480 } });
     const outcomes = await Promise.allSettled([
       saveDayOff("holiday", date, "ACTIVO", rrhh),
-      m.holiday.save({ date: m.datetime.argentinaCalendarDate(date), assignments: [{ employeeId: employeeId("holiday"), status: "ACTIVA" }] } as never, rrhh),
+      m.holiday.save({ date: m.datetime.argentinaCalendarDate(date), assignments: [{ employeeId: employeeId("holiday"), status: "ACTIVA", shiftTemplateId: guardia.id }] } as never, rrhh),
     ]);
 
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);

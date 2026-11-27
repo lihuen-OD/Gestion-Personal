@@ -332,9 +332,11 @@ test("admin configuration performance journey — recorrido macro de Configuraci
   // -------------------------------------------------------------------
   // C. Asignaciones de feriados
   // -------------------------------------------------------------------
+  // Las convocatorias se gestionan desde Gestión horaria ("Gestionar
+  // feriados"); la dirección anterior de Configuración redirige y abre el diálogo.
   await measure("Entrar a Asignaciones de feriados", ZONE.feriados, false, async () => {
     await page.goto("/configuracion/turnos-asignaciones-feriados");
-    return { visibleLocator: page.locator("h1").first(), emptyLocator: page.locator(".empty") };
+    return { visibleLocator: page.getByRole("dialog", { name: "Gestionar feriados" }), emptyLocator: page.locator(".modal .empty") };
   });
 
   const holidayChip = page.locator(".holiday-work-date-chip").first();

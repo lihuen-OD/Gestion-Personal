@@ -176,6 +176,10 @@ describe("guarda estática del código del diagnóstico", () => {
     script: readFileSync(path.join(root, "scripts/diagnose-shift-assignments.ts"), "utf8"),
     analysis: readFileSync(path.join(__dirname, "shiftAssignmentDiagnostic.ts"), "utf8"),
     guard: readFileSync(path.join(__dirname, "readOnlyDiagnostic.ts"), "utf8"),
+    // §20 F2.4: diagnóstico de convocatorias a feriado (mismas guardas).
+    holidayScript: readFileSync(path.join(root, "scripts/diagnose-holiday-convocations.ts"), "utf8"),
+    holidayAnalysis: readFileSync(path.join(__dirname, "holidayConvocationDiagnostic.ts"), "utf8"),
+    holidaySchedule: readFileSync(path.join(__dirname, "../holidayConvocationSchedule.ts"), "utf8"),
   };
   const WRITE_PATTERNS = [
     /\.(create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)\s*\(/,
@@ -189,8 +193,7 @@ describe("guarda estática del código del diagnóstico", () => {
   });
 
   it("la única sentencia raw no-SELECT es SET TRANSACTION READ ONLY, en el módulo de guardas", () => {
-    expect(files.script).not.toMatch(/\$executeRaw|\$queryRaw/);
-    expect(files.analysis).not.toMatch(/\$executeRaw|\$queryRaw/);
+    for (const source of [files.script, files.analysis, files.holidayScript, files.holidayAnalysis, files.holidaySchedule]) expect(source).not.toMatch(/\$executeRaw|\$queryRaw/);
     expect(files.guard.match(/\$executeRaw`[^`]*`/g)).toEqual(["$executeRaw`SET TRANSACTION READ ONLY`"]);
   });
 
@@ -203,11 +206,12 @@ describe("guarda estática del código del diagnóstico", () => {
     expect(files.analysis).toMatch(/import type \{ PrismaTransactionClient \} from "..\/..\/..\/shared\/prisma\/client"/);
   });
 
-  it("el script usa la transacción de sólo lectura y valida el destino antes de conectar", () => {
-    const assertAt = files.script.indexOf("assertDiagnosticTargetAllowed(target, args)");
-    const connectAt = files.script.indexOf("new PrismaClient(");
+  it.each([["script"], ["holidayScript"]] as const)("%s usa la transacción de sólo lectura y valida el destino antes de conectar", (name) => {
+    const source = files[name];
+    const assertAt = source.indexOf("assertDiagnosticTargetAllowed(target, args)");
+    const connectAt = source.indexOf("new PrismaClient(");
     expect(assertAt).toBeGreaterThan(-1);
     expect(connectAt).toBeGreaterThan(assertAt);
-    expect(files.script).toMatch(/runInReadOnlyTransaction\(prisma,/);
+    expect(source).toMatch(/runInReadOnlyTransaction\(prisma,/);
   });
 });

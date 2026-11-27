@@ -1,4 +1,4 @@
-import { Building2, CalendarCheck, CalendarClock, ChevronRight, ClipboardList, Clock3, FolderOpen, MonitorSmartphone, ShieldCheck, Workflow } from "lucide-react";
+import { Building2, CalendarClock, ChevronRight, ClipboardList, Clock3, FolderOpen, MonitorSmartphone, ShieldCheck, Workflow } from "lucide-react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { roleLevel } from "../utils/roles";
@@ -8,13 +8,15 @@ import { PageHeader } from "../components/ui/PageHeader";
 // del sidebar de Gestión horaria (navigation.tsx, sólo Nivel 1 —
 // /configuracion/liquidacion). Esta pantalla es para parámetros/catálogos
 // de configuración, no para repetir accesos operativos ya presentes en la
-// navegación principal — por eso no incluye una card de Exportación.
+// navegación principal — por eso no incluye una card de Exportación. Por el
+// mismo motivo tampoco incluye las convocatorias a feriado: se gestionan desde
+// Gestión horaria ("Gestionar feriados"); el calendario y los multiplicadores
+// siguen en "Horas especiales".
 export function SettingsPage() {
   const { user } = useAuth();
   if (roleLevel(user!.role) !== 1) return <Navigate to="/" />;
   const cards = [
     { name: "Turnos", icon: <CalendarClock />, path: "/configuracion/turnos" },
-    { name: "Asignaciones de feriados", icon: <CalendarCheck />, path: "/configuracion/turnos-asignaciones-feriados" },
     { name: "Horas especiales", icon: <Clock3 />, path: "/configuracion/turnos-horas-especiales" },
     { name: "Regímenes laborales", icon: <Workflow />, path: "/configuracion/regimenes-laborales" },
     { name: "Empresas y estructura", icon: <Building2 />, path: "/configuracion/empresas-estructura" },

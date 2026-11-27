@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   BarChart3,
+  CalendarCheck,
   CalendarOff,
   CheckCircle2,
   ClipboardList,
@@ -33,6 +34,7 @@ import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, mont
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
+import { HolidayWorkAssignmentDialog } from "../components/hours/HolidayWorkAssignmentDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
 import { ManualHoursConflictsPanel } from "../components/hours/ManualHoursConflictsPanel";
@@ -371,6 +373,17 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   // "Gestionar francos": abierto desde el encabezado (fecha sugerida) o desde
   // el detalle de un día (esa fecha y esa persona preseleccionada).
   const [dayOffDialog, setDayOffDialog] = useState<{ date: string; search?: string; employeeId?: string } | null>(null);
+  // "Gestionar feriados" (convocatorias): también se abre desde la dirección
+  // anterior de Configuración, que redirige con ?gestionar=feriados.
+  const holidayDialogOpen = !pendingOnly && searchParams.get("gestionar") === "feriados";
+  const setHolidayDialogOpen = (open: boolean) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (open) next.set("gestionar", "feriados");
+      else next.delete("gestionar");
+      return next;
+    }, { replace: true });
+  };
   // Fichadas sobre horas cargadas a mano del período (MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   const [manualConflicts, setManualConflicts] = useState<ManualHoursConflict[]>([]);
   const [manualConflictsError, setManualConflictsError] = useState("");
@@ -765,6 +778,9 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
             <>
               <Button variant="subtle" icon={CalendarOff} onClick={() => setDayOffDialog({ date: defaultDayOffDate })}>
                 Gestionar francos
+              </Button>
+              <Button variant="subtle" icon={CalendarCheck} onClick={() => setHolidayDialogOpen(true)}>
+                Gestionar feriados
               </Button>
               <Button
                 variant="subtle"
@@ -1535,6 +1551,17 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           close={() => setDayOffDialog(null)}
           // El servicio ya invalidó las cachés derivadas: la grilla y el
           // resumen se vuelven a pedir sin recargar la página.
+          onSaved={() => setRefresh((value) => value + 1)}
+        />
+      ) : null}
+
+      {holidayDialogOpen ? (
+        <HolidayWorkAssignmentDialog
+          initialMonth={period}
+          canCorrectClosedPeriods={Boolean(user && roleLevel(user.role) === 1)}
+          close={() => setHolidayDialogOpen(false)}
+          // La convocatoria cambia la obligación del día (cobertura de
+          // novedades): la grilla y el resumen se vuelven a pedir.
           onSaved={() => setRefresh((value) => value + 1)}
         />
       ) : null}

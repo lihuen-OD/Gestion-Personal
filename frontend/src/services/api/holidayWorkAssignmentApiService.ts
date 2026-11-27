@@ -16,13 +16,26 @@ export type HolidayDate = { date: string; rules: Array<{ id: string; name: strin
 
 export type HolidayWorkAssignmentStatus = "ACTIVA" | "CANCELADA";
 
+// Turno REAL del feriado sin la convocatoria (§20): fijo vigente ese día,
+// bloques de la rotación, descanso, día sin configurar, conflicto o ninguno.
+export type HolidayWorkExpectedSchedule = {
+  kind: "FIXED" | "ROTATION_SHIFTS" | "ROTATION_REST" | "ROTATION_MISSING" | "ROTATION_CONFLICT" | "NONE";
+  blocks: Array<{ templateId: string; code: string; name: string | null; startTime: string; endTime: string }>;
+  planReason: string | null;
+};
+
 export type HolidayWorkAssignmentCandidate = {
   id: string;
   legajo: string;
   firstName: string;
   lastName: string;
   status: string;
-  shiftAssignments: Array<{ shiftTemplate: { id: string; code: string; name: string } }>;
+  // Con `date`: turno real del feriado. null sin fecha.
+  expectedSchedule?: HolidayWorkExpectedSchedule | null;
+  // Franco ACTIVO en el feriado pedido (`date`): no se puede convocar.
+  dayOff?: boolean;
+  // Período de `date` enviado/aprobado: sólo RRHH lo corrige, con motivo.
+  periodLocked?: boolean;
 };
 
 export type HolidayWorkAssignment = {
@@ -38,6 +51,8 @@ export type HolidayWorkAssignment = {
   updatedAt: string;
   employee: { id: string; legajo: string; firstName: string; lastName: string; status: string };
   shiftTemplate?: { id: string; code: string; name: string } | null;
+  // §20: rotación con conflicto resuelta con la plantilla de la convocatoria.
+  scheduleWarning?: string;
 };
 
 export type HolidayWorkAssignmentInput = {
@@ -50,7 +65,7 @@ export type HolidayWorkAssignmentInput = {
 };
 
 // A7: `locationZoneId` + `locationDate` (día del feriado). M2 retiró el filtro por sector anterior.
-export type HolidayWorkCandidatesFilters = { locationZoneId?: string; locationDate?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
+export type HolidayWorkCandidatesFilters = { date?: string; locationZoneId?: string; locationDate?: string; shiftTemplateId?: string; withoutShift?: boolean; search?: string; page?: number; take?: number };
 export type HolidayWorkCandidatesMeta = { total: number; page: number; pageSize: number; hasMore: boolean };
 
 export const holidayWorkAssignmentApiService = {
@@ -59,8 +74,7 @@ export const holidayWorkAssignmentApiService = {
   // cachePolicy.ts) -- el journey 14H.1/14H.3 detectó 2 requests duplicadas
   // (StrictMode) al entrar a esta pantalla. Se invalida sola cuando cambia
   // una regla de Horas Especiales (misma familia); saveAssignments no la
-  // invalida porque las convocatorias no cambian qué fechas son feriado (sí
-  // cambian quién cobra el feriado: ver saveAssignments).
+  // invalida porque las convocatorias no cambian qué fechas son feriado.
   getHolidayDates(from: string, to: string) {
     const path = `/shifts/holiday-work/dates?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
     return cachedData({
@@ -79,6 +93,7 @@ export const holidayWorkAssignmentApiService = {
   async getCandidates(filters: HolidayWorkCandidatesFilters = {}) {
     const params = new URLSearchParams();
     params.set("take", String(filters.take || 300));
+    if (filters.date) params.set("date", filters.date);
     if (filters.locationZoneId) {
       params.set("locationZoneId", filters.locationZoneId);
       if (filters.locationDate) params.set("locationDate", filters.locationDate);
@@ -93,12 +108,13 @@ export const holidayWorkAssignmentApiService = {
   getAssignmentsByDate(date: string) {
     return apiRequest<{ data: { date: string; assignments: HolidayWorkAssignment[] } }>(`/shifts/holiday-work/assignments?date=${encodeURIComponent(date)}`, { apiCache: false }).then((response) => response.data);
   },
-  // La convocatoria define quién cobra un FERIADO (docs/decisions/
-  // WORKED_TIME_ACCOUNTING_MODEL.md §16): el backend reinterpreta las horas
-  // ya cargadas de la fecha, así que se invalidan todas las pantallas que
-  // muestran contabilidad de horas (no las fechas de feriado, que no cambian).
-  async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[]) {
-    const result = await apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body: { date, assignments } }).then((response) => response.data);
+  // La convocatoria sólo define la obligación de asistir (docs/decisions/
+  // WORKED_TIME_ACCOUNTING_MODEL.md §20): no reinterpreta horas, pero cambia la
+  // cobertura de novedades de los convocados (obligación del día), así que se
+  // invalidan las pantallas derivadas de esa cobertura.
+  async saveAssignments(date: string, assignments: HolidayWorkAssignmentInput[], correctionReason?: string | null) {
+    const body = { date, assignments, ...(correctionReason ? { correctionReason } : {}) };
+    const result = await apiRequest<{ data: HolidayWorkAssignment[] }>("/shifts/holiday-work/assignments", { method: "PUT", body }).then((response) => response.data);
     await invalidateNoveltyCoverageDerivedCaches("holiday work assignments saved");
     return result;
   },

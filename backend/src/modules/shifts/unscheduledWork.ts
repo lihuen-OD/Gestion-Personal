@@ -49,7 +49,8 @@ export function hasVigentEnabledAssignment(assignments: readonly AssignmentVigen
 
 /**
  * Precedencia (fecha operativa D): franco → feriado no convocado → turno
- * propio que matcheó (incluye el convocado con su turno habitual, P8) →
+ * propio que matcheó (el de la convocatoria si tiene plantilla, P8 §20; si no,
+ * el habitual) →
  * convocado sin turno → día no incluido en su asignación → sin configuración.
  */
 export function classifyFixedEntry(input: { match: Pick<ShiftMatchResult, "case">; facts: EntryDayFacts; hasVigentEnabledAssignment: boolean }): FixedEntryClassification {
@@ -69,7 +70,7 @@ export function hasNoEnforceableShift(facts: EntryDayFacts): boolean {
 /**
  * Hechos de (empleado, fecha) con los mismos criterios que la obligación
  * (`resolveWorkObligationCandidates` / `resolveRotationObligations`): feriado
- * por calendario sin alcance (deuda P7), convocatoria ACTIVA, franco ACTIVO.
+ * por calendario sin alcance (P7, §20), convocatoria ACTIVA, franco ACTIVO.
  * Hasta 3 lecturas, sólo desde el post-proceso asíncrono (nunca en la fichada).
  */
 export async function loadEntryDayFacts(employeeId: string, dateKey: string): Promise<EntryDayFacts> {
@@ -88,6 +89,25 @@ export async function loadEntryDayFacts(employeeId: string, dateKey: string): Pr
     holiday,
     convoked: convocations.some((row) => row.employeeId === employeeId),
   };
+}
+
+/**
+ * P8 (WORKED_TIME_ACCOUNTING_MODEL.md §20): plantilla de la convocatoria ACTIVA
+ * de (empleado, fecha) si la fecha es feriado por calendario. Con ella, el
+ * matching de la entrada de un turno fijo usa ESA plantilla en lugar de las
+ * asignaciones habituales (mismo criterio que la obligación y Novedades).
+ * null = sin feriado, sin convocatoria o convocatoria sin plantilla ACTIVA.
+ */
+export async function loadConvocationTemplateId(employeeId: string, dateKey: string): Promise<string | null> {
+  const date = argentinaCalendarDate(dateKey);
+  const holidayDays = await workforceService.holidayDatesInRange(date, date);
+  if (!holidayDays.length) return null;
+  const convocations = await prisma.holidayWorkAssignment.findMany({
+    where: { employeeId, date, status: "ACTIVA" },
+    select: { shiftTemplateId: true, shiftTemplate: { select: { status: true } } },
+  });
+  const convocation = convocations[0];
+  return convocation?.shiftTemplateId && convocation.shiftTemplate?.status === "ACTIVO" ? convocation.shiftTemplateId : null;
 }
 
 const WEEKDAY_NAMES = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];

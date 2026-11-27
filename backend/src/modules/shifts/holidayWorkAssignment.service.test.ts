@@ -9,13 +9,14 @@ import { roles } from "../../shared/security/roles";
 import { holidayWorkAssignmentRepository } from "./holidayWorkAssignment.repository";
 import { holidayWorkAssignmentService } from "./holidayWorkAssignment.service";
 import type { HolidayWorkAssignmentFields } from "./holidayWorkAssignmentChanges";
-import { reinterpretSpecialHoursOnDates } from "../workforce-management/specialHourReinterpretation";
-import { auditClosureRecalculations } from "../workforce-management/closureRecalculationAudit";
+import { validateConvocationSchedules } from "./holidayConvocationValidation";
+import { resolveConvocationSchedules } from "./holidayConvocationSchedule";
+import { findProtectedClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 
 // Etapa 5: el recálculo de cobertura de novedades se prueba en
 // noveltyCoverageRecalculation.test.ts y en la integración PostgreSQL.
 import { lockNoveltyCoverageGlobally } from "../novelties/noveltyCoverage.service";
-import { auditNoveltyCoverageRecalculation, emptyNoveltyCoverageRecalculation, rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
+import { auditNoveltyCoverageRecalculation, emptyNoveltyCoverageRecalculation, lockNoveltyCoverageForEmployees, rebuildNoveltyCoverageSnapshots, recalculateNoveltyCoverage } from "../novelties/noveltyCoverageRecalculation";
 vi.mock("../novelties/noveltyCoverage.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../novelties/noveltyCoverage.service")>()),
   lockEmployeeCoverage: vi.fn(),
@@ -52,10 +53,16 @@ vi.mock("../../shared/prisma/client", () => ({
   },
 }));
 
-// §16: la convocatoria define quién cobra el FERIADO; el guardado delega la
-// reinterpretación en el motor central (cubierto en specialHourReinterpretation.test.ts).
-vi.mock("../workforce-management/specialHourReinterpretation", () => ({ reinterpretSpecialHoursOnDates: vi.fn() }));
-vi.mock("../workforce-management/closureRecalculationAudit", () => ({ auditClosureRecalculations: vi.fn() }));
+// §20: la convocatoria sólo define la obligación; el guardado nunca
+// reinterpreta horas. El período protegido se consulta sólo para Nivel 2/3.
+vi.mock("../../shared/monthlyClosure/closurePeriodGuard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../shared/monthlyClosure/closurePeriodGuard")>()),
+  findProtectedClosurePeriods: vi.fn(),
+}));
+
+// §20 (D9): la validación del horario se prueba en holidayConvocationValidation.test.ts.
+vi.mock("./holidayConvocationValidation", () => ({ validateConvocationSchedules: vi.fn() }));
+vi.mock("./holidayConvocationSchedule", () => ({ resolveConvocationSchedules: vi.fn() }));
 
 vi.mock("../audit/audit.service", () => ({
   auditService: { register: vi.fn().mockResolvedValue(null) },
@@ -76,11 +83,14 @@ const mockedPrisma = prisma as unknown as { employee: { count: Mock }; $transact
 // EMPLOYEE_DAY_OFF.md §5: el guardado toma el lock por empleado + fecha y
 // verifica francos activos; sin francos por default.
 const TX = { holidayWorkAssignment: {}, $executeRaw: vi.fn(), employeeDayOff: { findMany: vi.fn() } };
-const noChanges = { timeEntries: 0, breakdowns: 0, segments: 0, employees: 0, periods: [], rebuiltClosures: [], protectedPeriods: [], changes: { timeEntries: [], breakdowns: [], segments: [] } };
 const mockedAudit = auditService.register as unknown as Mock;
 const mockedHolidayDates = workforceService.holidayDatesInRange as unknown as Mock;
 
 const rrhh = { id: "user-1", role: roles.rrhh } as unknown as Express.AuthUser;
+const supervisor = { id: "user-2", role: roles.supervision } as unknown as Express.AuthUser;
+const loader = { id: "user-3", role: roles.cargaHoraria } as unknown as Express.AuthUser;
+// Legajos del alcance de los Nivel 2/3 de prueba (employeeAccessWhere real).
+let inScopeIds = new Set<string>();
 
 // Repositorio en memoria: las pruebas verifican filas, respuesta y auditoría
 // reales, no sólo llamadas. `stored` es la tabla de convocatorias de la fecha.
@@ -95,10 +105,19 @@ beforeEach(() => {
   vi.clearAllMocks();
   stored = new Map();
   mockedPrisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback(TX));
-  mockedPrisma.employee.count.mockImplementation(async ({ where }: { where: { id: { in: string[] } } }) => new Set(where.id.in).size);
+  inScopeIds = new Set();
+  // countEmployeesInScope: { AND: [{ id: { in } }, accessWhere] }. RRHH ({})
+  // ve todo; Nivel 2/3 sólo `inScopeIds`.
+  mockedPrisma.employee.count.mockImplementation(async ({ where }: { where: { AND: [{ id: { in: string[] } }, Record<string, unknown>] } }) => {
+    const ids = new Set(where.AND[0].id.in);
+    return Object.keys(where.AND[1]).length ? [...ids].filter((id) => inScopeIds.has(id)).length : ids.size;
+  });
   TX.$executeRaw.mockResolvedValue(0);
   TX.employeeDayOff.findMany.mockResolvedValue([]);
-  vi.mocked(reinterpretSpecialHoursOnDates).mockResolvedValue(noChanges as never);
+  vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map());
+  // Toda fecha de estos tests es feriado; el horario de los convocados, válido.
+  mockedHolidayDates.mockResolvedValue([{ date: "feriado", rules: [] }]);
+  vi.mocked(validateConvocationSchedules).mockResolvedValue(new Map());
   repo.findExistingForEmployees.mockImplementation(async (_date: Date, ids: string[]) => ids.flatMap((id) => (stored.has(id) ? [{ ...stored.get(id)! }] : [])));
   repo.createMany.mockImplementation(async (_date: Date, items: Array<{ employeeId: string; fields: HolidayWorkAssignmentFields }>, userId: string) => {
     for (const { employeeId, fields } of items) stored.set(employeeId, { id: `hwa-${employeeId}`, employeeId, ...fields, createdByUserId: userId, updatedByUserId: userId });
@@ -150,7 +169,7 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
     expect(mockedAudit.mock.calls.filter(([input]) => input.action === "CREATE")).toHaveLength(40);
   });
 
-  it("guardado sin cambios: no escribe, no audita y no recalcula cobertura ni horas, pero valida francos y toma los locks", async () => {
+  it("guardado sin cambios: no escribe, no audita y no recalcula cobertura, pero valida francos y toma el lock de día", async () => {
     seed("employee-1", { notes: "Convocado" });
     seed("employee-2");
 
@@ -160,10 +179,10 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
     expect(repo.updateMany).not.toHaveBeenCalled();
     expect(mockedAudit).not.toHaveBeenCalled();
     expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
-    expect(reinterpretSpecialHoursOnDates).not.toHaveBeenCalled();
     expect(auditNoveltyCoverageRecalculation).not.toHaveBeenCalled();
     expect(TX.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(lockNoveltyCoverageGlobally).toHaveBeenCalledTimes(1);
+    expect(lockNoveltyCoverageGlobally).not.toHaveBeenCalled();
+    expect(lockNoveltyCoverageForEmployees).toHaveBeenCalledWith(TX, []);
     expect(TX.employeeDayOff.findMany).toHaveBeenCalledTimes(1);
     expect(stored.get("employee-1")!.updatedByUserId).toBe("user-0");
     expect(result.map((row) => row.employeeId)).toEqual(["employee-1", "employee-2"]);
@@ -182,7 +201,7 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
       before: expect.objectContaining({ shiftTemplateId: "template-1", expectedStartTime: "08:00" }),
       after: expect.objectContaining({ shiftTemplateId: "template-2", expectedStartTime: "09:00" }),
     }));
-    expect(reinterpretSpecialHoursOnDates).toHaveBeenCalledTimes(1);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledTimes(1);
   });
 
   it("cambio de observaciones: es una modificación real (update + auditoría)", async () => {
@@ -233,7 +252,7 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
     expect(stored.size).toBe(0);
     expect(result).toEqual([]);
     expect(mockedAudit).not.toHaveBeenCalled();
-    expect(reinterpretSpecialHoursOnDates).not.toHaveBeenCalled();
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
   });
 
   it("mezcla: sólo audita lo que cambió (sin auditorías innecesarias de los convocados sin cambios)", async () => {
@@ -276,12 +295,13 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
     expect(repo.createMany).not.toHaveBeenCalled();
   });
 
-  it("rechaza si algún employeeId no existe", async () => {
+  it("rechaza si algún employeeId no existe: 403, igual que un legajo ajeno (no revela si existe)", async () => {
     mockedPrisma.employee.count.mockResolvedValue(0);
 
     const attempt = holidayWorkAssignmentService.save({ date, assignments: [active("employee-inexistente")] }, rrhh);
 
-    await expect(attempt).rejects.toBeInstanceOf(AppError);
+    await expect(attempt).rejects.toMatchObject({ statusCode: 403, code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("error de unicidad concurrente (P2002 en createMany) se traduce en un 409 prolijo y no audita", async () => {
@@ -323,33 +343,21 @@ describe("holidayWorkAssignmentService.save — guardado en lote (fix/holiday-wo
     expect(mockedPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
   });
 
-  // §16 (reemplaza "no toca liquidación" de 12D): guardar la convocatoria y
-  // reinterpretar las horas de la fecha ocurren en la MISMA transacción, con
-  // el motor central — el servicio no escribe horas por su cuenta.
-  it("guarda la convocatoria y reinterpreta las horas de la fecha en la misma transacción", async () => {
-    await holidayWorkAssignmentService.save({ date, assignments: [active("employee-1")] }, rrhh);
+  // §20 (reemplaza §16): la convocatoria sólo define la obligación de asistir.
+  // El guardado nunca reinterpreta horas ni audita recálculos de liquidación:
+  // el servicio ya no importa el motor de reinterpretación.
+  it("guarda la convocatoria y recalcula sólo la cobertura de los legajos cambiados en la misma transacción", async () => {
+    seed("employee-2");
+    await holidayWorkAssignmentService.save({ date, assignments: [active("employee-1"), active("employee-2")] }, rrhh);
 
-    expect(repo.findExistingForEmployees).toHaveBeenCalledWith(date, ["employee-1"], TX);
+    expect(repo.findExistingForEmployees).toHaveBeenCalledWith(date, ["employee-1", "employee-2"], TX);
     expect(repo.createMany).toHaveBeenCalledWith(date, expect.any(Array), "user-1", TX);
-    expect(reinterpretSpecialHoursOnDates).toHaveBeenCalledWith(TX, [date], { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: date.toISOString().slice(0, 10) });
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(TX, { from: date, to: date, employeeIds: ["employee-1"] }, expect.objectContaining({ source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED" }), { rebuildSnapshots: false });
+    expect(mockedAudit.mock.calls.map(([input]) => input.entityId)).toEqual(["employee-1"]);
   });
 
-  it("si cambió la equivalencia, audita el recálculo en lenguaje humano y los cierres recalculados", async () => {
-    const rebuiltClosures = [{ id: "closure-1", employeeId: "employee-31", period: "2026-10", before: {}, after: {} }];
-    vi.mocked(reinterpretSpecialHoursOnDates).mockResolvedValueOnce({ ...noChanges, timeEntries: 1, breakdowns: 1, employees: 1, periods: ["2026-10"], rebuiltClosures } as never);
-
-    await holidayWorkAssignmentService.save({ date, assignments: [active("employee-31")] }, rrhh, { userId: "user-1" });
-
-    const descriptions = mockedAudit.mock.calls.map(([input]) => input.description);
-    expect(descriptions).toEqual([
-      `Se convocó a 31 a trabajar el feriado del ${label}.`,
-      `Convocatoria del feriado del ${label}: Se recalcularon 2 carga(s) de 1 legajo(s) y 1 cierre(s) mensual(es).`,
-    ]);
-    expect(auditClosureRecalculations).toHaveBeenCalledWith(rebuiltClosures, expect.stringContaining("cambio de la convocatoria del feriado"), { userId: "user-1" }, expect.any(Function));
-  });
-
-  it("rollback cuando falla el recálculo: el error se propaga dentro de la transacción y nada se audita", async () => {
-    vi.mocked(reinterpretSpecialHoursOnDates).mockRejectedValueOnce(new Error("boom"));
+  it("rollback cuando falla el recálculo de cobertura: el error se propaga dentro de la transacción y nada se audita", async () => {
+    vi.mocked(recalculateNoveltyCoverage).mockRejectedValueOnce(new Error("boom"));
 
     await expect(holidayWorkAssignmentService.save({ date, assignments: [active("employee-1")] }, rrhh)).rejects.toThrow("boom");
     expect(mockedAudit).not.toHaveBeenCalled();
@@ -412,22 +420,153 @@ describe("holidayWorkAssignmentService.candidates/listByDate — permisos y scop
   });
 });
 
-describe("holidayWorkAssignmentService.save — cobertura de novedades (etapa 5, NOVELTY_COVERAGE_ENGINE.md §13)", () => {
+describe("holidayWorkAssignmentService.save — cobertura de novedades (NOVELTY_COVERAGE_ENGINE.md §13, §20)", () => {
   const holiday = new Date("2026-10-12T00:00:00.000Z");
 
-  it("convocar cambia el feriado de toda la fecha: lock global tras el de día, cobertura de esa fecha antes de reinterpretar, y sólo se reconstruyen los snapshots que la reinterpretación no rehízo", async () => {
+  it("orden de locks día → cobertura por legajo; sin lock global; reconstruye sólo los snapshots de los pares cambiados", async () => {
     const order: string[] = [];
     // El lock por empleado + fecha es el único $executeRaw de este servicio.
     TX.$executeRaw.mockImplementationOnce(async () => (order.push("dayLock"), 0));
-    vi.mocked(lockNoveltyCoverageGlobally).mockImplementationOnce(async () => void order.push("globalCoverageLock"));
+    vi.mocked(lockNoveltyCoverageForEmployees).mockImplementationOnce(async () => void order.push("employeeCoverageLock"));
     vi.mocked(recalculateNoveltyCoverage).mockImplementationOnce(async (_db, _scope, reason) => (order.push("coverage"), { ...emptyNoveltyCoverageRecalculation(reason), changedPairs: [{ employeeId: "employee-1", period: "2026-10" }] }));
-    const rebuiltByReinterpretation = [{ id: "closure-1", employeeId: "employee-1", period: "2026-10", before: {}, after: {} }];
-    vi.mocked(reinterpretSpecialHoursOnDates).mockImplementationOnce(async () => (order.push("reinterpret"), { ...noChanges, rebuiltClosures: rebuiltByReinterpretation }) as never);
     await holidayWorkAssignmentService.save({ date: holiday, assignments: [{ employeeId: "employee-1", status: "ACTIVA" } as never] }, rrhh);
 
-    expect(order).toEqual(["dayLock", "globalCoverageLock", "coverage", "reinterpret"]);
-    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(TX, { from: holiday, to: holiday }, { source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", label: "cambio de la convocatoria del feriado del 12/10/2026" }, { rebuildSnapshots: false });
-    expect(rebuildNoveltyCoverageSnapshots).toHaveBeenCalledWith(TX, [{ employeeId: "employee-1", period: "2026-10" }], expect.objectContaining({ source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED" }), rebuiltByReinterpretation);
+    expect(order).toEqual(["dayLock", "employeeCoverageLock", "coverage"]);
+    expect(lockNoveltyCoverageGlobally).not.toHaveBeenCalled();
+    expect(lockNoveltyCoverageForEmployees).toHaveBeenCalledWith(TX, ["employee-1"]);
+    expect(recalculateNoveltyCoverage).toHaveBeenCalledWith(TX, { from: holiday, to: holiday, employeeIds: ["employee-1"] }, { source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", label: "cambio de la convocatoria del feriado del 12/10/2026" }, { rebuildSnapshots: false });
+    expect(rebuildNoveltyCoverageSnapshots).toHaveBeenCalledWith(TX, [{ employeeId: "employee-1", period: "2026-10" }], expect.objectContaining({ source: "HOLIDAY_WORK_ASSIGNMENT_CHANGED" }));
     expect(auditNoveltyCoverageRecalculation).toHaveBeenCalledTimes(1);
+  });
+});
+
+// docs/decisions/HOLIDAY_WORK_ASSIGNMENTS_12D.md §5 (actualizado): Nivel 1, 2 y
+// 3 convocan, siempre sobre legajos de su alcance (employeeAccessWhere), todo
+// o nada. Nunca por grupo de turnos.
+describe("holidayWorkAssignmentService.save — alcance por legajo (N1/N2/N3)", () => {
+  const date = new Date("2026-08-27");
+
+  it("Nivel 2 convoca legajos de su alcance", async () => {
+    inScopeIds = new Set(["employee-1", "employee-2"]);
+
+    await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }, { employeeId: "employee-2", status: "ACTIVA" }] }, supervisor);
+
+    expect(stored.get("employee-1")).toMatchObject({ status: "ACTIVA", createdByUserId: "user-2" });
+    const [{ where }] = mockedPrisma.employee.count.mock.calls[0]! as [{ where: { AND: [unknown, Record<string, unknown>] } }];
+    expect(where.AND[1]).toHaveProperty("assignments");
+  });
+
+  it("un solo legajo ajeno en el lote → 403 EMPLOYEE_SCOPE_FORBIDDEN, antes de la transacción, sin escribir ni auditar", async () => {
+    inScopeIds = new Set(["employee-1"]);
+
+    await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }, { employeeId: "employee-9", status: "CANCELADA" }] }, loader))
+      .rejects.toMatchObject({ statusCode: 403, code: "EMPLOYEE_SCOPE_FORBIDDEN" });
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+    expect(stored.size).toBe(0);
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("período enviado a cierre: Nivel 2/3 no cambian la convocatoria (409 PERIOD_CLOSED, sin escribir)", async () => {
+    inScopeIds = new Set(["employee-1"]);
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+
+    await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, supervisor))
+      .rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+    expect(recalculateNoveltyCoverage).not.toHaveBeenCalled();
+  });
+
+  it("período enviado a cierre: RRHH sin motivo → 400 y no escribe", async () => {
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+
+    await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, rrhh))
+      .rejects.toMatchObject({ statusCode: 400, code: "HOLIDAY_WORK_CORRECTION_REASON_REQUIRED" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+  });
+
+  it("período enviado a cierre: RRHH con motivo corrige y el motivo queda en la auditoría sólo de los legajos protegidos", async () => {
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+
+    await holidayWorkAssignmentService.save({ date, correctionReason: "  Pedido de planta  ", assignments: [{ employeeId: "employee-1", status: "ACTIVA" }, { employeeId: "employee-2", status: "ACTIVA" }] }, rrhh);
+
+    expect(stored.get("employee-1")).toMatchObject({ status: "ACTIVA" });
+    const audits = Object.fromEntries(mockedAudit.mock.calls.map(([input]) => [input.entityId, input]));
+    expect(audits["employee-1"]).toMatchObject({ description: "Se convocó a 1 a trabajar el feriado del 27/08/2026. Motivo: Pedido de planta", after: expect.objectContaining({ correctionReason: "Pedido de planta" }) });
+    expect(audits["employee-2"].description).toBe("Se convocó a 2 a trabajar el feriado del 27/08/2026.");
+    expect(audits["employee-2"].after).not.toHaveProperty("correctionReason");
+  });
+
+  it("período protegido con guardado sin cambios efectivos: no bloquea (no hay nada que proteger)", async () => {
+    inScopeIds = new Set(["employee-1"]);
+    seed("employee-1");
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["employee-1:2026-08", "ENVIADO"]]) as never);
+
+    await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, supervisor);
+
+    expect(findProtectedClosurePeriods).not.toHaveBeenCalled();
+  });
+});
+
+// WORKED_TIME_ACCOUNTING_MODEL.md §20 (D9/P7): sólo se convoca a feriados del
+// calendario y ninguna convocatoria ACTIVA queda sin horario resoluble.
+describe("holidayWorkAssignmentService.save — horario resoluble (§20)", () => {
+  const date = new Date("2026-08-27");
+
+  it("una fecha que no es feriado → 422 antes de la transacción; cancelar igual se permite", async () => {
+    mockedHolidayDates.mockResolvedValue([]);
+
+    await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, rrhh))
+      .rejects.toMatchObject({ statusCode: 422, code: "HOLIDAY_WORK_DATE_NOT_HOLIDAY" });
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+
+    seed("employee-1");
+    await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "CANCELADA" }] }, rrhh);
+    expect(stored.get("employee-1")!.status).toBe("CANCELADA");
+  });
+
+  it("valida sólo las convocatorias que quedan ACTIVAS con un cambio (no las sin cambios ni las cancelaciones), dentro de la transacción y antes de escribir", async () => {
+    seed("employee-2");
+    seed("employee-3");
+    vi.mocked(validateConvocationSchedules).mockImplementationOnce(async () => {
+      expect(repo.createMany).not.toHaveBeenCalled();
+      return new Map();
+    });
+
+    await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA", shiftTemplateId: "tpl" }, { employeeId: "employee-2", status: "ACTIVA" }, { employeeId: "employee-3", status: "CANCELADA" }] }, rrhh);
+
+    expect(validateConvocationSchedules).toHaveBeenCalledWith(TX, "2026-08-27", [{ employeeId: "employee-1", shiftTemplateId: "tpl" }]);
+  });
+
+  it("si la validación rechaza, no escribe ni audita", async () => {
+    vi.mocked(validateConvocationSchedules).mockRejectedValueOnce(new AppError("sin turno", 422, "HOLIDAY_WORK_SCHEDULE_REQUIRED"));
+
+    await expect(holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA" }] }, rrhh)).rejects.toMatchObject({ code: "HOLIDAY_WORK_SCHEDULE_REQUIRED" });
+    expect(repo.createMany).not.toHaveBeenCalled();
+    expect(mockedAudit).not.toHaveBeenCalled();
+  });
+
+  it("el aviso de conflicto de rotación viaja en la respuesta y en la auditoría (nunca se oculta)", async () => {
+    vi.mocked(validateConvocationSchedules).mockResolvedValueOnce(new Map([["employee-1", "La rotación tiene un conflicto ese día (los bloques del día se superponen); rige el turno de la convocatoria."]]));
+
+    const result = await holidayWorkAssignmentService.save({ date, assignments: [{ employeeId: "employee-1", status: "ACTIVA", shiftTemplateId: "tpl" }] }, rrhh);
+
+    expect(result[0]).toMatchObject({ scheduleWarning: expect.stringContaining("los bloques del día se superponen") });
+    expect(mockedAudit).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining("rige el turno de la convocatoria") }));
+  });
+});
+
+describe("holidayWorkAssignmentService.candidates — turno real del feriado (§20)", () => {
+  it("con fecha agrega expectedSchedule, franco y período cerrado; sin fecha, expectedSchedule null", async () => {
+    repo.findCandidates.mockResolvedValue([[{ id: "employee-1", legajo: "1", dayOffs: [{ id: "d" }], monthlyClosures: [{ status: "ENVIADO" }] }], 1]);
+    vi.mocked(resolveConvocationSchedules).mockResolvedValue(new Map([["employee-1", { kind: "ROTATION_REST", blocks: [], planReason: null }]]));
+    const date = new Date("2026-12-08T00:00:00.000Z");
+
+    const result = await holidayWorkAssignmentService.candidates({ date, page: 1, take: 100 }, rrhh);
+
+    expect(resolveConvocationSchedules).toHaveBeenCalledWith(prisma, ["employee-1"], "2026-12-08");
+    expect(result.items).toEqual([{ id: "employee-1", legajo: "1", dayOff: true, periodLocked: true, expectedSchedule: { kind: "ROTATION_REST", blocks: [], planReason: null } }]);
+
+    repo.findCandidates.mockResolvedValue([[{ id: "employee-1", legajo: "1", dayOffs: [], monthlyClosures: [] }], 1]);
+    expect((await holidayWorkAssignmentService.candidates({ page: 1, take: 100 }, rrhh)).items[0]).toMatchObject({ expectedSchedule: null, dayOff: false, periodLocked: false });
   });
 });

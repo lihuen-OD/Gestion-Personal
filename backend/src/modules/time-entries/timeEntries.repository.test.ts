@@ -1594,9 +1594,9 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     await timeEntriesRepository.closeOpenWorkShift(closeInput());
 
     expect(mockedPrisma.employeePositionPeriod.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ employeeId }) }));
-    // Motor único (§16): reglas en alcance + reglas FERIADO + convocatorias.
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
-    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
+    // Motor único (§20): sólo reglas en alcance; la convocatoria no interviene.
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
     // Ninguna corrió contra el `tx` mockeado -- confirma que no compiten por
     // el timeout de la transacción.
@@ -3264,58 +3264,57 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
     expect(Number(result.get("2026-08-15"))).toBe(1);
     expect(Number(result.get("2026-08-16"))).toBe(2);
     // Consultas fijas sin importar cuántas fechas: historia del rango (una por
-    // dimensión), reglas candidatas, reglas FERIADO y convocatorias (§16, §19).
+    // dimensión) y reglas candidatas (§20, §19). Nunca convocatorias.
     expect(mockedPrisma.employeePositionPeriod.findMany).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
-    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: "ACTIVO", fromDate: { lte: sunday }, OR: [{ toDate: null }, { toDate: { gte: saturday } }] }),
     }));
   });
 
-  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16: FERIADO + convocatoria.
-  describe("FERIADO + convocatoria (HolidayWorkAssignment ACTIVA)", () => {
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20 (reemplaza §16): el
+  // FERIADO aplica según SU alcance a quien trabaje; la convocatoria sólo
+  // define la obligación y el motor ni siquiera la consulta.
+  describe("FERIADO §20: alcance de la regla, nunca la convocatoria", () => {
     const holiday = new Date("2026-10-05T00:00:00.000Z");
     const feriado = { ...sundayRule, id: "rule-feriado", kind: "FERIADO", recurrenceType: "FECHA", weekdays: [], fromDate: holiday, toDate: holiday, dates: [{ date: holiday, isActive: true }] };
     const domingo = { ...sundayRule, kind: "DOMINGO", fromDate: new Date("2026-01-01T00:00:00.000Z") };
-    // La consulta "en alcance" y la de reglas FERIADO (sin filtro de alcance) se distinguen por `kind`.
-    function rules({ inScope, feriadoAll }: { inScope: unknown[]; feriadoAll: unknown[] }) {
-      mockedPrisma.doubleHourRule.findMany.mockImplementation(async ({ where }: { where: { kind?: string } }) => (where.kind === "FERIADO" ? feriadoAll : inScope));
-    }
     const convoked = (...employeeIds: string[]) => mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue(employeeIds.map((employeeId) => ({ date: holiday, employeeId })));
     const multiplier = async (employeeId: string, date = holiday) => Number((await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(date.toISOString().slice(0, 10)));
 
-    it("CASO 1 — convocado + feriado x2 → x2, aunque la regla tenga otro alcance", async () => {
-      rules({ inScope: [], feriadoAll: [feriado] });
+    it("convocado fuera del alcance de la regla → x1 (la convocatoria no lo alcanza)", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
       convoked("employee-31");
-      expect(await multiplier("employee-31")).toBe(2);
+      expect(await multiplier("employee-31")).toBe(1);
     });
 
-    it("CASO 5 — la fecha tiene convocados: quien no está convocado queda en x1 aunque la regla sea global", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
+    it("no convocado alcanzado por la regla → x2 aunque la fecha tenga otros convocados", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       convoked("employee-31");
       expect(await multiplier("employee-31")).toBe(2);
-      expect(await multiplier("employee-30")).toBe(1);
+      expect(await multiplier("employee-30")).toBe(2);
     });
 
-    it("sin ninguna convocatoria en la fecha, la regla usa su alcance como hasta hoy (feriado global no se rompe)", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
+    it("sin ninguna convocatoria en la fecha, igual: la regla usa su alcance", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       convoked();
       expect(await multiplier("employee-30")).toBe(2);
     });
 
-    it("CASO 6 — DOMINGO no depende de la convocatoria", async () => {
+    it("DOMINGO tampoco depende de la convocatoria", async () => {
       const sunday = new Date("2026-10-04T00:00:00.000Z");
-      rules({ inScope: [domingo], feriadoAll: [] });
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([domingo]);
       mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([{ date: sunday, employeeId: "otro" }]);
       expect(await multiplier("employee-30", sunday)).toBe(2);
     });
 
-    it("sólo cuentan convocatorias ACTIVAS del rango", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
-      convoked();
+    it("el motor no consulta convocatorias ni reglas FERIADO fuera del alcance", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       await multiplier("employee-30");
-      expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVA", date: { gte: holiday, lte: holiday } }, select: { date: true, employeeId: true } });
+      expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
+      expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.doubleHourRule.findMany.mock.calls[0]![0]).not.toHaveProperty("where.kind");
     });
   });
 

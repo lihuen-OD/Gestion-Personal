@@ -27,10 +27,6 @@
  */
 import { argentinaCalendarDate, calendarDateKey, calendarDaysInclusive, nextCalendarDateKey } from "../../shared/datetime/argentinaTime";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
-import { evaluateRuleScope, type EngineScopeHistory } from "../labor-history/laborHistory.scope";
-import { laborHistoryService } from "../labor-history/laborHistory.service";
-import type { HistoryReader } from "../labor-history/laborHistory.repository";
-import { ruleScopeOf } from "../time-entries/specialHourRuleScope";
 import { buildActiveDatesByRule, ruleMatchesDate, type RecurrenceType } from "../workforce-management/doubleHourRuleMatching";
 import { computeExpectedMinutes, parseShiftTime } from "./shiftTemplateTime";
 import { activeRegimeKindOn, resolveExpectedShift, type ExpectedShiftPolicy, type ExpectedShiftResolution, type HolidayScopeStatus, type RegimePeriod } from "./expectedShiftResolver";
@@ -67,7 +63,10 @@ export type WorkdaySource =
   | "NONE";
 
 /** De dónde salieron los minutos esperados (sólo WORKDAY o el intento fallido). */
-export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "CONVOCATION_TIMES" | "ROTATION_BLOCKS";
+// El horario libre de la convocatoria (expectedStartTime/EndTime) ya no es
+// fuente de minutos (§20, D9): obligación, fichador y Novedades usan sólo
+// plantillas y bloques.
+export type WorkdayMinutesSource = "CONVOCATION_SHIFT_TEMPLATE" | "SHIFT_ASSIGNMENT" | "ROTATION_BLOCKS";
 
 /**
  * R4.2: problema de configuración de la rotación del día (CONFLICT o MISSING),
@@ -203,68 +202,30 @@ export function expectedMinutesForTemplates(templates: WorkdayShiftTemplate[]): 
 
 export type FeriadoRuleForWorkday = {
   id: string;
-  name: string;
   recurrenceType: RecurrenceType;
   fromDate: Date;
   toDate: Date | null;
   weekdays: number[];
   dates: Array<{ date: Date; isActive: boolean }>;
-  companyId: string | null;
-  sectorId: string | null;
-  costCenterId: string | null;
-  positionId: string | null;
-  sector: null | { isLegacy: boolean };
-  employees: Array<{ employeeId: string }>;
 };
 
-export function feriadoRuleRestrictsHistory(rule: Pick<FeriadoRuleForWorkday, "companyId" | "sectorId" | "costCenterId" | "positionId">) {
-  return Boolean(rule.companyId || rule.sectorId || rule.costCenterId || rule.positionId);
-}
-
 /**
- * Estado de feriado por fecha para un legajo, con las mismas piezas que el
- * motor de Horas Especiales (vigencia + `ruleMatchesDate` + lista de legajos +
- * `evaluateRuleScope` sobre la historia vigente ese día) pero SIN la política
- * de convocatoria: la convocatoria decide quién trabaja, no si la fecha es
- * feriado para el legajo. `history` puede omitirse si ninguna regla restringe
- * dimensiones de la historia.
+ * Feriados de la OBLIGACIÓN (P7 resuelto, WORKED_TIME_ACCOUNTING_MODEL.md §20):
+ * una fecha con alguna regla FERIADO ACTIVA vigente que cae en ella por
+ * calendario es feriado para TODOS los legajos, sin mirar alcance ni lista de
+ * legajos — el mismo criterio que la falta de ingreso, la inactividad y el
+ * fichador (`workforceService.holidayDatesInRange`). Sin convocatoria no hay
+ * obligación ese día. El alcance de la regla sólo decide el multiplicador de
+ * las horas trabajadas (motor de Horas Especiales).
  */
-export function resolveEmployeeHolidayStatus(input: {
-  employeeId: string;
-  dateKeys: string[];
-  feriadoRules: FeriadoRuleForWorkday[];
-  history: EngineScopeHistory | null;
-}): Map<string, HolidayScopeStatus> {
+export function resolveCalendarHolidayDates(dateKeys: string[], feriadoRules: FeriadoRuleForWorkday[]): Map<string, HolidayScopeStatus> {
   const result = new Map<string, HolidayScopeStatus>();
-  if (!input.feriadoRules.length) return result;
-  const activeDates = buildActiveDatesByRule(input.feriadoRules);
-  for (const dateKey of input.dateKeys) {
+  if (!feriadoRules.length) return result;
+  const activeDates = buildActiveDatesByRule(feriadoRules);
+  for (const dateKey of dateKeys) {
     const date = argentinaCalendarDate(dateKey);
-    let matchesCalendar = false;
-    let missing = false;
-    let inScope = false;
-    for (const rule of input.feriadoRules) {
-      const vigent = rule.fromDate <= date && (!rule.toDate || rule.toDate >= date);
-      if (!vigent || !ruleMatchesDate(rule, date, activeDates)) continue;
-      matchesCalendar = true;
-      if (rule.employees.length && !rule.employees.some((item) => item.employeeId === input.employeeId)) continue;
-      if (!feriadoRuleRestrictsHistory(rule)) {
-        inScope = true;
-        break;
-      }
-      if (!input.history) {
-        missing = true;
-        continue;
-      }
-      const evaluation = evaluateRuleScope(ruleScopeOf(rule), input.history, dateKey);
-      if (evaluation.kind === "MATCH") {
-        inScope = true;
-        break;
-      }
-      if (evaluation.kind === "MISSING") missing = true;
-    }
-    if (!matchesCalendar) continue;
-    result.set(dateKey, inScope ? "IN_SCOPE" : missing ? "SCOPE_HISTORY_MISSING" : "OUT_OF_SCOPE");
+    const isHoliday = feriadoRules.some((rule) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date) && ruleMatchesDate(rule, date, activeDates));
+    if (isHoliday) result.set(dateKey, "IN_SCOPE");
   }
   return result;
 }
@@ -302,24 +263,23 @@ export function resolveEmployeeExpectedShift(
   return resolveExpectedShift(
     {
       dateKey,
+      employeeId: context.employeeId,
       assignments: context.assignments,
       dayOff: context.dayOffDates.has(dateKey),
       holiday: context.holidays.get(dateKey) ?? null,
       convocation: context.convocations.get(dateKey) ?? null,
       regimeKind: activeRegimeKindOn(context.regimes, date),
-      ...rotationInputs(context, dateKey),
+      convocationTemplate: convocationTemplateOf(context, dateKey),
+      ...(context.rotation ? { rotationPlan: resolveRotationDayPlan(context.employeeId, dateKey, context.rotation) } : {}),
     },
     policy,
   );
 }
 
-/** R4.3b: plan del día y plantilla de la convocatoria, sólo para un miembro de rotación (si no, nada: camino legacy). */
-function rotationInputs(context: EmployeeWorkdayContext, dateKey: string) {
-  if (!context.rotation) return {};
-  const rotationPlan = resolveRotationDayPlan(context.employeeId, dateKey, context.rotation);
-  if (!rotationPlan) return {};
+/** Plantilla de la convocatoria del día (P8, §20: reemplaza al turno habitual en fijos y rotaciones). */
+function convocationTemplateOf(context: EmployeeWorkdayContext, dateKey: string) {
   const template = context.convocations.get(dateKey)?.template ?? null;
-  return { rotationPlan, convocationTemplate: template && template.code !== undefined ? { ...template, code: template.code } : null };
+  return template && template.code !== undefined ? { ...template, code: template.code } : null;
 }
 
 /** Traduce la resolución central al resultado de Novedades, sin cambiar ningún valor respecto de la implementación previa a R2. */
@@ -360,7 +320,8 @@ export function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedW
     case "HOLIDAY_CONVOCATION": {
       // Una convocatoria sólo cuenta si la fecha es feriado por calendario
       // (lo garantiza el resolver). Fuente de minutos: turno de la
-      // convocatoria (si está ACTIVO) → turnos aplicables → horario propio.
+      // convocatoria (si está ACTIVO) → turnos aplicables → bloques de la
+      // rotación. Nunca el horario libre (§20).
       const convocation = resolution.convocation!;
       const convocationTemplate = convocation.template?.status === "ACTIVO" ? convocation.template : null;
       if (convocationTemplate) {
@@ -380,12 +341,8 @@ export function projectExpectedWorkday(resolution: WorkdayResolution): ExpectedW
       }
       // R4.2, camino de rotación (sin asignaciones fijas): bloques del plan.
       if (resolution.dayPlan && resolution.blocks.length) return rotationBlocksWorkday("HOLIDAY_CONVOCATION");
-      const start = parseShiftTime(convocation.expectedStartTime);
-      const end = parseShiftTime(convocation.expectedEndTime);
-      if (start !== null && end !== null) {
-        const minutes = computeExpectedMinutes(convocation.expectedStartTime!, convocation.expectedEndTime!, end <= start);
-        return result({ obligation: "WORKDAY", unresolvedReason: null, expectedMinutes: minutes, shiftTemplateIds: [], source: "HOLIDAY_CONVOCATION", minutesSource: "CONVOCATION_TIMES" });
-      }
+      // Convocado sin horario resoluble (sin plantilla y sin turno ese día):
+      // nunca se inventa una jornada — queda a revisar (§20, D9).
       return unresolved("EXPECTED_MINUTES_UNKNOWN", "HOLIDAY_CONVOCATION");
     }
 
@@ -434,8 +391,7 @@ export const MAX_WORKDAY_RANGE_DAYS = 400;
 export type WorkdayContextReader = Pick<
   PrismaTransactionClient,
   "shiftAssignment" | "employeeDayOff" | "holidayWorkAssignment" | "employeeWorkRegime" | "doubleHourRule" | "shiftRotationCrewMember" | "shiftRotation"
-> &
-  HistoryReader;
+>;
 
 const templateSelect = { id: true, code: true, startTime: true, endTime: true, crossesMidnight: true, expectedMinutes: true, status: true } as const;
 
@@ -453,8 +409,8 @@ export function workdayDateKeys(from: Date, to: Date): string[] {
  * Contexto de jornada esperada de varios legajos para un rango de fechas
  * calendario (UTC medianoche, `@db.Date`), con consultas fijas por llamada:
  * asignaciones + turnos, francos, convocatorias, regímenes y reglas FERIADO
- * (5), más la historia laboral (4 + alcances de puesto) sólo si alguna regla
- * FERIADO del rango restringe empresa, sector, centro de costo o puesto.
+ * (5), más la configuración de rotaciones. Sin historia laboral: el feriado de
+ * la obligación es por calendario (P7, §20).
  * Nunca una consulta por legajo ni por día. `db` permite correrlo dentro de
  * una transacción.
  */
@@ -480,30 +436,14 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
     }),
     db.doubleHourRule.findMany({
       where: { kind: "FERIADO", status: "ACTIVO", fromDate: { lte: to }, OR: [{ toDate: null }, { toDate: { gte: from } }] },
-      select: {
-        id: true,
-        name: true,
-        recurrenceType: true,
-        fromDate: true,
-        toDate: true,
-        weekdays: true,
-        companyId: true,
-        sectorId: true,
-        costCenterId: true,
-        positionId: true,
-        dates: { select: { date: true, isActive: true } },
-        sector: { select: { isLegacy: true } },
-        employees: { select: { employeeId: true } },
-      },
+      select: { id: true, recurrenceType: true, fromDate: true, toDate: true, weekdays: true, dates: { select: { date: true, isActive: true } } },
     }),
     // R4.3b: sin membresías es una sola consulta vacía.
     loadRotationConfiguration(db, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]!, employeeIds: ids }),
   ]);
   const rotationMembers = new Set(rotation.memberships.map((membership) => membership.employeeId));
-
-  const histories = feriadoRules.some(feriadoRuleRestrictsHistory)
-    ? await laborHistoryService.loadEngineScopeHistoryByEmployee(db, ids, { fromKey: dateKeys[0]!, toKey: dateKeys[dateKeys.length - 1]! })
-    : null;
+  // Iguales para todos los legajos (P7, §20): se resuelven una sola vez.
+  const holidays = resolveCalendarHolidayDates(dateKeys, feriadoRules);
 
   for (const employeeId of ids) {
     result.set(employeeId, {
@@ -520,7 +460,7 @@ export async function loadEmployeeWorkdayContext(employeeIds: string[], from: Da
       regimes: regimes
         .filter((row) => row.employeeId === employeeId)
         .map((row) => ({ effectiveFrom: row.effectiveFrom, effectiveTo: row.effectiveTo, kind: row.workRegime.kind })),
-      holidays: resolveEmployeeHolidayStatus({ employeeId, dateKeys, feriadoRules, history: histories?.get(employeeId) ?? null }),
+      holidays,
       ...(rotationMembers.has(employeeId) ? { rotation } : {}),
     });
   }

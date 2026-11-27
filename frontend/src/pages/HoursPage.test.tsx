@@ -7,6 +7,7 @@ import { orgStructureApiService } from "../services/api/orgStructureApiService";
 import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
 import { timeEntryApiService } from "../services/api/timeEntryApiService";
 import { employeeDayOffApiService } from "../services/api/employeeDayOffApiService";
+import { holidayWorkAssignmentApiService } from "../services/api/holidayWorkAssignmentApiService";
 import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
 import type { EmployeePeriodDay } from "../services/api/timeEntryApiService";
 import type { DayAccounting, NoveltyCoverageItem } from "../types/workedTimeAccounting.types";
@@ -59,6 +60,10 @@ vi.mock("../services/api/employeeDayOffApiService", async (importOriginal) => {
   return { ...actual, employeeDayOffApiService: { getByDate: vi.fn(), save: vi.fn() } };
 });
 
+vi.mock("../services/api/holidayWorkAssignmentApiService", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/api/holidayWorkAssignmentApiService")>();
+  return { ...actual, holidayWorkAssignmentApiService: { getHolidayDates: vi.fn().mockResolvedValue([]), getCandidates: vi.fn(), getAssignmentsByDate: vi.fn(), saveAssignments: vi.fn() } };
+});
 vi.mock("../services/api/manualHoursConflictApiService", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/api/manualHoursConflictApiService")>();
   return { ...actual, manualHoursConflictApiService: { list: vi.fn(), resolve: vi.fn() } };
@@ -122,9 +127,9 @@ function renderPending() {
   );
 }
 
-function renderGrid() {
+function renderGrid(path = "/horas?period=2026-08") {
   return render(
-    <MemoryRouter initialEntries={["/horas?period=2026-08"]}>
+    <MemoryRouter initialEntries={[path]}>
       <HoursPage />
     </MemoryRouter>,
   );
@@ -1128,6 +1133,47 @@ describe("HoursPage — francos", () => {
     (await waitFor(() => currentDayPopover().getByRole("button", { name: "Gestionar franco" }))).click();
 
     await waitFor(() => expect(employeeDayOffApiService.getByDate).toHaveBeenCalledWith({ date: "2026-08-01", search: "100", page: 1, take: 50 }));
+  });
+});
+
+// "Gestionar feriados" (convocatorias, WORKED_TIME_ACCOUNTING_MODEL.md §20):
+// junto a "Gestionar francos", para Nivel 1, 2 y 3; la dirección anterior de
+// Configuración redirige con ?gestionar=feriados.
+describe("HoursPage — gestionar feriados", () => {
+  beforeEach(() => {
+    vi.mocked(holidayWorkAssignmentApiService.getHolidayDates).mockResolvedValue([]);
+  });
+
+  it.each(["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"] as const)("%s: el botón del encabezado abre el diálogo en el mes de la grilla", async (role) => {
+    authAs(role);
+    renderGrid();
+
+    (await screen.findByRole("button", { name: "Gestionar feriados" })).click();
+
+    expect(await screen.findByRole("dialog", { name: "Gestionar feriados" })).toBeInTheDocument();
+    await waitFor(() => expect(holidayWorkAssignmentApiService.getHolidayDates).toHaveBeenCalledWith("2026-08-01", "2026-08-31"));
+  });
+
+  it("se abre directo con ?gestionar=feriados y se cierra sin perder el período", async () => {
+    authAs("Nivel 2 - Supervisión / Gestión");
+    renderGrid("/horas?period=2026-08&gestionar=feriados");
+
+    const dialog = await screen.findByRole("dialog", { name: "Gestionar feriados" });
+    within(dialog).getByRole("button", { name: "Cerrar" }).click();
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Gestionar feriados" })).not.toBeInTheDocument());
+    expect(holidayWorkAssignmentApiService.getHolidayDates).toHaveBeenCalledWith("2026-08-01", "2026-08-31");
+  });
+
+  it("la bandeja de revisión no muestra el botón", async () => {
+    authAs("Nivel 1 - RRHH");
+    render(
+      <MemoryRouter initialEntries={["/pendientes?period=2026-08"]}>
+        <HoursPage pendingOnly />
+      </MemoryRouter>,
+    );
+    await screen.findByRole("heading", { name: "Bandeja de revisión" });
+    expect(screen.queryByRole("button", { name: "Gestionar feriados" })).not.toBeInTheDocument();
   });
 });
 

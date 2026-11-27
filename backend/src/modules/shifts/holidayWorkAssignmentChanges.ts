@@ -69,3 +69,12 @@ export function groupHolidayWorkAssignmentUpdates(changes: HolidayWorkAssignment
   }
   return [...groups.values()];
 }
+
+/**
+ * Convocatorias que quedan ACTIVAS con un cambio efectivo (alta, reactivación
+ * o edición): las únicas cuyo horario se valida al guardar (§20, D9). Una
+ * convocatoria sin cambios no se revalida: editar a otro no la bloquea.
+ */
+export function activatedHolidayWorkAssignmentChanges<Existing extends ExistingHolidayWorkAssignment>(changes: HolidayWorkAssignmentChange<Existing>[]) {
+  return changes.flatMap((change) => ((change.kind === "CREATE" || change.kind === "UPDATE") && change.fields.status === "ACTIVA" ? [{ employeeId: change.employeeId, shiftTemplateId: change.fields.shiftTemplateId }] : []));
+}
