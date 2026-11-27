@@ -7,15 +7,12 @@ import { findUnapprovedEmployeeIdsForExport, isMonthlyClosureApproved, isMonthly
  * bloquean edición/creación directa de horas.
  */
 describe("isMonthlyClosureLocked", () => {
-  it.each(["ENVIADO", "APROBADO", "CORRECCION_PENDIENTE"] as const)(
-    "%s bloquea (requiere corrección formal / RRHH con motivo)",
-    (status) => {
-      expect(isMonthlyClosureLocked({ status })).toBe(true);
-    },
-  );
+  it("CERRADO bloquea para todos los roles hasta la reapertura", () => {
+    expect(isMonthlyClosureLocked({ status: "CERRADO" })).toBe(true);
+  });
 
-  it.each(["ABIERTO", "DEVUELTO"] as const)("%s NO bloquea (flujo normal permitido)", (status) => {
-    expect(isMonthlyClosureLocked({ status })).toBe(false);
+  it("ABIERTO (incluido un período reabierto) NO bloquea", () => {
+    expect(isMonthlyClosureLocked({ status: "ABIERTO" })).toBe(false);
   });
 
   it("sin cierre (null) no bloquea — período nunca enviado a revisión", () => {
@@ -29,21 +26,16 @@ describe("isMonthlyClosureLocked", () => {
 
 /**
  * Etapa 15E.2 (docs/decisions/TIME_EXPORT_CLOSURE_GATE_15E2.md): la
- * exportación definitiva exige el estado terminal exacto APROBADO — más
- * estricto que isMonthlyClosureLocked (que trata ENVIADO/CORRECCION_PENDIENTE
- * como "bloqueado para edición", no como "exportable").
+ * exportación definitiva exige el cierre terminal CERRADO.
  */
 describe("isMonthlyClosureApproved", () => {
-  it("APROBADO: aprobado", () => {
-    expect(isMonthlyClosureApproved({ status: "APROBADO" })).toBe(true);
+  it("CERRADO: exportable definitivamente", () => {
+    expect(isMonthlyClosureApproved({ status: "CERRADO" })).toBe(true);
   });
 
-  it.each(["ABIERTO", "ENVIADO", "DEVUELTO", "CORRECCION_PENDIENTE"] as const)(
-    "%s: NO aprobado (no exportable definitivamente)",
-    (status) => {
-      expect(isMonthlyClosureApproved({ status })).toBe(false);
-    },
-  );
+  it("ABIERTO: NO exportable definitivamente", () => {
+    expect(isMonthlyClosureApproved({ status: "ABIERTO" })).toBe(false);
+  });
 
   it("sin cierre (null/undefined): no aprobado", () => {
     expect(isMonthlyClosureApproved(null)).toBe(false);
@@ -52,19 +44,19 @@ describe("isMonthlyClosureApproved", () => {
 });
 
 describe("findUnapprovedEmployeeIdsForExport", () => {
-  it("lista vacía cuando todos los empleados tienen cierre APROBADO", () => {
+  it("lista vacía cuando todos los empleados tienen cierre CERRADO", () => {
     const closures = new Map([
-      ["employee-1", { status: "APROBADO" as const }],
-      ["employee-2", { status: "APROBADO" as const }],
+      ["employee-1", { status: "CERRADO" as const }],
+      ["employee-2", { status: "CERRADO" as const }],
     ]);
 
     expect(findUnapprovedEmployeeIdsForExport(["employee-1", "employee-2"], closures)).toEqual([]);
   });
 
-  it("devuelve sólo los employeeId sin cierre APROBADO, preservando cuáles fallan", () => {
+  it("devuelve sólo los employeeId sin cierre CERRADO, preservando cuáles fallan", () => {
     const closures = new Map([
-      ["employee-1", { status: "APROBADO" as const }],
-      ["employee-2", { status: "ENVIADO" as const }],
+      ["employee-1", { status: "CERRADO" as const }],
+      ["employee-2", { status: "ABIERTO" as const }],
     ]);
 
     expect(findUnapprovedEmployeeIdsForExport(["employee-1", "employee-2", "employee-3"], closures)).toEqual([

@@ -325,7 +325,9 @@ La respuesta resume lo eliminado: `deletedBreakdowns`, `deletedRules`, `deletedE
 
 ## 16. FERIADO + convocatoria (HolidayWorkAssignment)
 
-**Estado:** vigente desde 2026-10-05. Reemplaza "HolidayWorkAssignment no interviene en la liquidación" (12A §12, 12D §5/§7/§9 y la primera versión de §15).
+> **Histórico: reemplazado por §20 (2026-11-27).** La convocatoria ya no decide quién cobra el FERIADO. Esta sección se conserva para explicar las cargas y cierres calculados entre el 2026-10-05 y la puesta en marcha de §20.
+
+**Estado:** vigente desde 2026-10-05 hasta §20. Reemplaza "HolidayWorkAssignment no interviene en la liquidación" (12A §12, 12D §5/§7/§9 y la primera versión de §15).
 
 **Regla conceptual (no volver a separarlas):**
 - La regla de Hora Especial **FERIADO** define **cuánto vale** trabajar ese día: fecha, multiplicador y demás configuración. El multiplicador vive sólo en `DoubleHourRule` y nunca se copia a la convocatoria.
@@ -397,3 +399,47 @@ settlement.totalMinutes = normal + dentro de la jornada + adicionales + noveltyM
 ```
 
 `accountNoveltyDay` es la única implementación de los estados (`COUNTED`, `INFORMATIVE`, `PENDING_APPROVAL`, `REVIEW_REQUIRED`). Consumidores con cobertura: grilla por legajo, grilla de período, resumen (`coveredHours`/`computableHours`, aditivos), export y cierre (snapshot `WORKED_TIME_ACCOUNTING_V2`). "Por persona" y el dashboard siguen mostrando sólo trabajo real. "Total trabajado" nunca incluye cobertura.
+
+## 20. FERIADO y convocatoria: regla vigente (2026-11-27, reemplaza §16)
+
+**Regla fundamental (decidida por negocio el 2026-11-27):**
+- La **convocatoria** (`HolidayWorkAssignment` ACTIVA) define **sólo la obligación de asistir** al feriado. Sin convocatoria no hay obligación ni falta, aunque la persona tenga turno o rotación. Una fecha sin convocatorias no obliga a nadie.
+- La **regla FERIADO** (`DoubleHourRule`, administrada por RRHH) define el **multiplicador de las horas efectivamente trabajadas según su alcance**, para quien trabaje, convocado o no. Un no convocado alcanzado por la regla que trabaja cobra ×2; un convocado fuera del alcance de la regla cobra ×1.
+- Una convocatoria nunca altera el multiplicador ni recalcula horas, cargas o cierres de otros legajos.
+
+**Implementación:**
+- Motor único de Hora Especial (`evaluateSpecialHourRulesByDate` / `evaluateSpecialHourRulesForEmployees`, `timeEntries.repository.ts`): FERIADO se evalúa como cualquier otra regla, por alcance con la historia de ese día. Ya no consulta convocatorias ni reglas FERIADO fuera de alcance (2 consultas fijas en lugar de 4). Se eliminó `specialHourRulesForEmployeeOnDate` (`doubleHourRuleMatching.ts`).
+- Guardar convocatorias (`holidayWorkAssignment.service.ts::save`) ya **no** llama a `reinterpretSpecialHoursOnDates` ni audita recálculos de liquidación. Sólo recalcula la cobertura de novedades de los legajos cuya convocatoria cambió (`recalculateNoveltyCoverage` con `employeeIds`, lock de cobertura por legajo, sin lock global) y reconstruye los snapshots abiertos de esos mismos pares. Se quitó el motivo de cierre `HOLIDAY_WORK_ASSIGNMENT_CHANGED` de `ClosureSnapshotRecalculation` (sigue como motivo de cobertura).
+- Permisos (`HOLIDAY_WORK_ASSIGNMENTS_12D.md` §5): `PUT /api/shifts/holiday-work/assignments` abierto a Nivel 1, 2 y 3 sobre los legajos de su alcance (`employeeAccessWhere`, mismo criterio que francos): un legajo ajeno o inexistente en el lote → `403 EMPLOYEE_SCOPE_FORBIDDEN` sin escribir nada. Nunca por grupo de turnos. Período enviado/aprobado: Nivel 2/3 → `409 PERIOD_CLOSED`; RRHH conserva su comportamiento.
+- UI: «Gestionar feriados» en Gestión horaria (Carga de horas), junto a «Gestionar francos». La dirección anterior de Configuración redirige ahí. El calendario, los alcances y los multiplicadores siguen en Horas especiales (sólo RRHH).
+- Cachés: el frontend invalida sólo las familias derivadas de la cobertura de novedades.
+
+**Historia (no se reescribe automáticamente):** las cargas guardadas con §16 pueden diferir de §20 en fechas con convocatoria (no convocados alcanzados que quedaron ×1, convocados fuera de alcance que quedaron ×2). `npm run staging:special-hours:reconcile` (dry-run, `--report`) ya usa el motor de §20 e informa las diferencias; aplicarlo, y qué hacer con meses enviados, aprobados o exportados, requiere autorización explícita.
+
+**Período enviado o aprobado:** como en francos (`EMPLOYEE_DAY_OFF.md` §12), Nivel 2/3 → `409 PERIOD_CLOSED`; RRHH corrige sólo con motivo (`correctionReason`, `400 HOLIDAY_WORK_CORRECTION_REASON_REQUIRED` sin él). El motivo queda en la auditoría de cada legajo protegido y el snapshot protegido no se reconstruye. Una única implementación para ambos guardados: `shared/monthlyClosure/protectedPeriodCorrection.ts`.
+
+### 20.1 Horario esperado de los convocados (F2: P7, P8 y defecto de la simulación de Planta)
+
+**Defecto de Planta (causas):** el editor completaba la plantilla con el primer turno fijo HABILITADO sin mirar vigencia (al entrar a una rotación el fijo sólo se cierra y sigue HABILITADO), y esa plantilla vieja reemplazaba la celda de la rotación; un convocado sin plantilla en un descanso o día sin configurar de su rotación quedaba sin obligación (sin falta ni aviso); y el horario libre de la convocatoria sólo lo usaba Novedades.
+
+**Criterio único de feriado para la obligación (P7):** un feriado del calendario (regla FERIADO ACTIVA vigente que cae en la fecha) es feriado para todos: sin convocatoria no hay obligación ni falta. Lo aplican la obligación de asistencia (`workObligation.service.ts`, `rotationObligation.service.ts`), el fichador (`unscheduledWork.ts`) y Novedades (`expectedWorkday.ts::resolveCalendarHolidayDates`; ya no carga historia laboral para el feriado). El alcance de la regla sólo decide el multiplicador.
+
+**Turno de la convocatoria (P8):** con plantilla utilizable (ACTIVA y con horario válido) la convocatoria obliga con UN bloque de esa plantilla, en turnos fijos y en rotaciones, aunque no haya asignación aplicable y aun con régimen SIN_TURNO; sólo el franco la anula (`expectedShiftResolver.ts`). La falta de ingreso, la inactividad, la evidencia de ingreso, el fichador (matching de la entrada de un fijo, `loadConvocationTemplateId`) y Novedades usan esa plantilla. Sin plantilla rige el turno real del día (fijo vigente o bloques de la rotación). El horario libre (`expectedStartTime/EndTime`) ya no es fuente de minutos (`CONVOCATION_TIMES` eliminado): queda informativo.
+
+**Validación al guardar** (`holidayConvocationValidation.ts`, horario real en `holidayConvocationSchedule.ts`), sólo para las convocatorias que quedan ACTIVAS con un cambio:
+
+| Turno real del día | Sin plantilla | Con plantilla válida |
+|---|---|---|
+| Turno fijo / rotación con turno | OK (usa ese turno) | OK (la plantilla lo reemplaza) |
+| Descanso o día sin configurar en la rotación | OK: obligación de día sin horario (una alerta de ausencia al terminar el día) | OK |
+| Sin turno aplicable / SIN_TURNO | OK: obligación de día sin horario (una alerta de ausencia al terminar el día) | OK |
+| Rotación con conflicto | `422 HOLIDAY_WORK_ROTATION_CONFLICT` (motivo legible) | OK + aviso (`scheduleWarning` en la respuesta y en la auditoría) |
+| Plantilla inactiva o sin horario válido | — | `422 HOLIDAY_WORK_TEMPLATE_INVALID` |
+
+Además, `422 HOLIDAY_WORK_DATE_NOT_HOLIDAY` si se convoca a una fecha que no es feriado del calendario (cancelar siempre se permite).
+
+**Candidatos y editor:** `GET /holiday-work/candidates?date=` devuelve `expectedSchedule` (turno real del día) y filtra «por turno» y «sin turno» con la vigencia y el día de semana de la fecha (y miembros de rotaciones ACTIVAS). El editor muestra el turno del día, no autocompleta ninguna plantilla y exige elegirla cuando no hay turno resoluble.
+
+**Cambios posteriores:** si una rotación o un turno fijo cambian después de convocar y la fecha queda sin turno resoluble, la obligación queda sin bloques (no se inventa un horario) y Novedades marca «Revisar». `scripts/diagnose-holiday-convocations.ts` (sólo lectura) lista las convocatorias ACTIVAS sin horario, con plantilla inválida, con horario libre, con una plantilla distinta del turno real o en fechas que ya no son feriado; corregirlas en una base real requiere autorización.
+
+**Tests:** `expectedShiftResolver`/`expectedWorkday`/`shiftBehavior.characterization` (casos P7/P8/D9 marcados «§20»), `holidayConvocationSchedule.test.ts`, `holidayConvocationValidation.test.ts`, `holidayConvocationDiagnostic.test.ts`, `plantaSimulation.integration.test.ts` (defecto de Planta de punta a punta: candidatos, 422, falta por bloque con aviso, fijo con plantilla, feriado sin convocatorias, ×2 por alcance), `timeEntries.repository.test.ts` y `doubleHourRuleScope.characterization.test.ts` (casos §20 marcados), `specialHourReinterpretation.test.ts` (bloque §20), `holidayWorkAssignment.service.test.ts` (alcance N1/N2/N3, período protegido, cobertura por legajo), `holidayWorkAssignment.integration.test.ts` (PostgreSQL: el ajeno conserva horas, cobertura, cierre y auditoría; N2/N3 reales), `shiftWriteRoutes.test.ts` y `shiftGroupScope.integration.test.ts` (el grupo de turnos no da permiso para convocar).

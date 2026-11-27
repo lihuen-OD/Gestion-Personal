@@ -147,7 +147,6 @@ const errorMessagesByCode: Record<string, string> = {
   TIME_ENTRY_CLOCK_HOURS_EXIST: "Esa fecha ya tiene horas registradas por el fichador. Para reemplazarlas, corregí esa carga desde el detalle del día.",
   MANUAL_HOURS_CONFLICT_NOT_FOUND: "No encontramos la revisión solicitada.",
   MANUAL_HOURS_CONFLICT_ALREADY_RESOLVED: "Esta revisión ya fue resuelta. Actualizá la pantalla para ver la decisión tomada.",
-  MANUAL_HOURS_CORRECTION_REASON_REQUIRED: "El período ya fue enviado o aprobado: indicá el motivo de la corrección.",
   SHIFT_ALERT_REQUIRES_HOURS_DECISION: "Esta revisión se resuelve desde Carga de horas, eligiendo qué horas se computan.",
   TIME_ENTRY_LOCKED: "Las cargas aprobadas o cerradas no se pueden editar.",
   TIME_ENTRY_STATUS_NOT_SUBMITTABLE: "Solo se pueden enviar cargas en borrador o devueltas.",
@@ -157,6 +156,10 @@ const errorMessagesByCode: Record<string, string> = {
   HOUR_CONCEPT_NOT_ENABLED: "El concepto de horas no está habilitado para este empleado.",
   WORK_SHIFT_NOT_FOUND: "No encontramos la jornada solicitada.",
   SHIFT_TEMPLATE_NOT_FOUND: "No encontramos el turno solicitado.",
+  SHIFT_GROUP_DUPLICATE: "Ya existe un grupo con ese código o nombre.",
+  SHIFT_GROUP_IN_USE: "Este grupo tiene turnos asociados. Podés inactivarlo, pero no eliminarlo.",
+  SHIFT_GROUP_INACTIVE: "El grupo elegido está inactivo: no se le pueden asociar turnos nuevos. Elegí un grupo activo o «Sin grupo».",
+  SHIFT_GROUP_NOT_FOUND: "No encontramos el grupo de turnos. Recargá la pantalla e intentá nuevamente.",
   SHIFT_ASSIGNMENT_NOT_FOUND: "No encontramos la asignación de turno solicitada.",
   SHIFT_ALERT_NOT_FOUND: "No encontramos la alerta solicitada.",
   SHIFT_ALERT_ALREADY_RESOLVED: "La alerta ya fue resuelta.",
@@ -187,6 +190,9 @@ const errorMessagesByCode: Record<string, string> = {
   STORAGE_LOCAL_INVALID_KEY: "El archivo no está disponible.",
   STORAGE_LOCAL_FILE_NOT_FOUND: "No encontramos el archivo solicitado.",
   INTERNAL_ERROR: "Ocurrió un problema inesperado. Intentá nuevamente.",
+  // La transacción se revirtió completa: el backend sólo emite este código
+  // cuando no quedó nada guardado.
+  TRANSACTION_TIMEOUT: "El guardado no se completó porque la operación tardó demasiado. No se guardó ningún cambio: podés intentarlo de nuevo.",
   ROUTE_NOT_FOUND: "La operación solicitada no está disponible.",
   MISSING_ROUTE_PARAM: "Falta información necesaria para completar la operación.",
 };
@@ -220,6 +226,11 @@ function isInternalMessage(message: string) {
 // específico que cualquier genérico (por eso no van en errorMessagesByCode).
 const fallbackMessagesByCode: Record<string, string> = {
   USER_SUPERVISION_INVALID_TARGET: "Revisá los responsables de carga seleccionados: sólo se pueden supervisar usuarios Nivel 3 - Administrativo de Carga Horaria.",
+  SHIFT_GROUP_FORBIDDEN: "No administrás ese grupo de turnos. Elegí uno de tus grupos o pedile a RRHH que te lo asigne.",
+  ROTATION_FIXED_ASSIGNMENT_OUT_OF_SCOPE: "Hay turnos fijos superpuestos de otro grupo: no podés cerrarlos desde esta rotación. Pedíselo a RRHH o a quien administre ese grupo.",
+  USER_SHIFT_GROUP_INVALID: "Uno de los grupos de turnos seleccionados ya no existe. Recargá la pantalla e intentá nuevamente.",
+  USER_SHIFT_GROUPS_REQUIRE_SUPERVISOR_ROLE: "Sólo un usuario Nivel 2 - Supervisión / Gestión puede tener grupos de turnos asignados.",
+  USER_SHIFT_GROUP_CONCURRENT_UPDATE: "Los grupos de turnos se modificaron en paralelo. Recargá la pantalla e intentá nuevamente.",
   NOVELTY_TYPE_COVERAGE_CONFIG_INVALID: "La combinación elegida para el tiempo que cubre la novedad no es válida. Revisá las secciones de tiempo, días e impacto.",
   NOVELTY_TYPE_HOURS_DAYS_CONFLICT: "Si al cargar la novedad se indican horas, la unidad de Valor 1 no puede ser \"Días\".",
   NOVELTY_TYPE_FINNEGANS_LINK_REQUIRED: "Para exportar a Finnegans completá el código y el nombre Finnegans.",

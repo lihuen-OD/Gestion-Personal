@@ -92,7 +92,7 @@ describe("noveltyTypeIssues", () => {
 
 describe("describeNoveltyTypeConfig — resumen generado sólo desde la configuración", () => {
   it("Vacaciones (jornada esperada) se describe sin depender del nombre", () => {
-    const item = { ...build({ mode: "EXPECTED_SCHEDULE", dayRule: "WORK_OBLIGATION", appliesSpecialHours: true, countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" }, { allowsDateRange: true, requiresApproval: true }), name: "Cualquier nombre" };
+    const item = { ...build({ mode: "EXPECTED_SCHEDULE", dayRule: "WORK_OBLIGATION", appliesSpecialHours: true, countsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE" }, { allowsDateRange: true }), name: "Cualquier nombre" };
     expect(describeNoveltyTypeConfig(item)).toEqual([
       "Cubre las horas que la persona debía trabajar cada día.",
       "Sólo cuenta en días con obligación laboral: los francos quedan en 0 h y los feriados cuentan sólo si la persona fue convocada.",
@@ -100,7 +100,6 @@ describe("describeNoveltyTypeConfig — resumen generado sólo desde la configur
       "Suma al total computable.",
       "No puede coexistir con horas trabajadas: si hay trabajo real ese día, queda para revisión.",
       "Puede cargarse por rango de fechas.",
-      "Requiere aprobación antes de sumar horas.",
     ]);
   });
 

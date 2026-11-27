@@ -118,7 +118,6 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     status: "ACTIVO",
     rules: {
       exportsToFinnegans: false,
-      requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
       timeEntryBehavior: "NO_BLOQUEA",
@@ -129,7 +128,6 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     },
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
-    approvalRoles: [],
     finnegansCode: null,
     finnegansName: null,
     createdAt: "",
@@ -160,7 +158,7 @@ const maternidad = buildNoveltyType({
 });
 const llegadaTarde = buildNoveltyType({
   id: "type-llegada", code: "LLT", name: "Llegada tarde",
-  rules: { ...baseRules, requiresApproval: false, allowsDateRange: false, allowsHours: true },
+  rules: { ...baseRules, allowsDateRange: false, allowsHours: true },
   coverage: { ...base, mode: "MANUAL_MINUTES" },
 });
 const faltaSinAviso = buildNoveltyType({
@@ -248,7 +246,6 @@ describe("NoveltyModal — Etapa 8: adaptación según el Tipo", () => {
     expect(within(panel).getByText("Requiere revisión")).toBeInTheDocument();
     expect(within(panel).getByText("No se pudo determinar la jornada.")).toBeInTheDocument();
     expect(within(panel).getByText("Cobertura provisional: 0 h")).toBeInTheDocument();
-    expect(within(panel).getByText("Estas horas se muestran como vista previa. No sumarán hasta que la novedad sea aprobada.")).toBeInTheDocument();
     // Resumen agregado sólo con lo calculado por el backend.
     expect(within(panel).getByText("Computables").nextSibling).toHaveTextContent("16 h");
     expect(within(panel).getByText("Para liquidación").nextSibling).toHaveTextContent("24 h");
@@ -438,15 +435,12 @@ describe("NoveltyModal — Etapa 8: observación, documentación y aprobación",
     expect(noveltyApiService.createWithDocument).not.toHaveBeenCalled();
   });
 
-  it("aprobación: para otros roles queda pendiente y no suma; RRHH la crea aprobada", async () => {
+  it("sin aprobación administrativa: ningún rol ve avisos de aprobación pendiente", async () => {
     authAs("Nivel 2 - Supervisión / Gestión");
     renderModal([buildNoveltyType({ ...vacaciones, allowedLoadRoles: ["Nivel 2 - Supervisión / Gestión"] })]);
-    expect(await screen.findByText("Esta novedad quedará pendiente hasta ser aprobada. Mientras esté pendiente será visible, pero no sumará al total.")).toBeInTheDocument();
-  });
-
-  it("aprobación: RRHH ve que queda aprobada al guardar", async () => {
-    renderModal([vacaciones]);
-    expect(await screen.findByText("Este tipo requiere aprobación. Como RRHH, la novedad queda aprobada al guardarla.")).toBeInTheDocument();
+    await screen.findByLabelText("Observación");
+    expect(screen.queryByText(/quedará pendiente hasta ser aprobada/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/requiere aprobación/i)).not.toBeInTheDocument();
   });
 });
 
@@ -481,18 +475,17 @@ describe("NoveltyModal — Etapa 8: errores del backend en lenguaje de negocio",
     renderModal([tramite]);
     await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-    expect(await screen.findByText("No se puede cargar esta novedad porque el período ya está cerrado. Pedile a RRHH que la corrija si hace falta.")).toBeInTheDocument();
+    expect(await screen.findByText("No se puede cargar esta novedad porque el período está cerrado. Reabrilo desde Cierres mensuales para modificarlo.")).toBeInTheDocument();
   });
 
-  it("RRHH en período enviado a cierre: pide el motivo y lo envía", async () => {
-    vi.mocked(noveltyApiService.create).mockRejectedValueOnce(new ApiError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", "NOVELTY_CORRECTION_REASON_REQUIRED", 400));
+  it("período cerrado: no ofrece una corrección con motivo (hay que reabrir el mes)", async () => {
+    vi.mocked(noveltyApiService.create).mockRejectedValue(new ApiError("El período está cerrado.", "PERIOD_CLOSED", 409));
     renderModal([tramite]);
     await screen.findByText("Este tipo cubre 4 h por día según su configuración.");
     await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-
-    await userEvent.type(await screen.findByLabelText("Motivo de la corrección *"), "Carga tardía autorizada");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar novedad" }));
-    await waitFor(() => expect(noveltyApiService.create).toHaveBeenLastCalledWith(expect.objectContaining({ correctionReason: "Carga tardía autorizada" })));
+    await screen.findByText(/Reabrilo desde Cierres mensuales/);
+    expect(screen.queryByLabelText(/Motivo de la corrección/)).not.toBeInTheDocument();
+    expect(noveltyApiService.create).toHaveBeenCalledWith(expect.not.objectContaining({ correctionReason: expect.anything() }));
   });
 
   it("duplicado y solapamiento: se muestra el mensaje específico del backend", async () => {

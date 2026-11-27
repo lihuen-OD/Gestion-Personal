@@ -172,34 +172,6 @@ export const timeEntriesController = {
     res.json({ data: item });
   }) satisfies RequestHandler,
 
-  submit: (async (req, res) => {
-    const item = await timeEntriesService.submit(requireParam(req, "id"), req.user!, requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
-    res.json({ data: item });
-  }) satisfies RequestHandler,
-
-  approve: (async (req, res) => {
-    const item = await timeEntriesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
-    res.json({ data: item });
-  }) satisfies RequestHandler,
-
-  reject: (async (req, res) => {
-    const item = await timeEntriesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
-    res.json({ data: item });
-  }) satisfies RequestHandler,
-
-  returnForCorrection: (async (req, res) => {
-    const item = await timeEntriesService.returnForCorrection(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
-    clearTimeEntriesReadCaches();
-    clearEmployeeReadCaches();
-    res.json({ data: item });
-  }) satisfies RequestHandler,
-
   exportJson: (async (req, res) => {
     const result = await timeEntriesService.exportByPerson(req.query as unknown as TimeEntriesExportQuery, req.user!, requestAuditContext(req));
     res.json({ data: result });

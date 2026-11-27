@@ -17,7 +17,6 @@ function RuleCard({ checked, onToggle, title, description, disabled }: { checked
 export function NoveltyTypeLoadControlFields({ item, setItem, disabled }: { item: NoveltyType; setItem: (item: NoveltyType) => void; disabled?: boolean }) {
   const patchRules = (patch: Partial<NoveltyTypeRules>) => setItem({ ...item, rules: { ...item.rules, ...patch } });
   const manualQuantity = item.coverage.mode === "MANUAL_MINUTES";
-  const sumsHours = item.coverage.mode !== "NONE" && item.coverage.countsTowardTotal;
 
   return <div className="catalog-rules">
     <div className="catalog-rule-grid">
@@ -29,15 +28,6 @@ export function NoveltyTypeLoadControlFields({ item, setItem, disabled }: { item
         description={manualQuantity
           ? "No: cuando la duración se indica al cargar, la novedad es de un único día."
           : "Permite indicar una fecha hasta. Si queda vacía, la novedad vale sólo para la fecha desde."}
-      />
-      <RuleCard
-        title="¿Necesita aprobación antes de contar?"
-        checked={item.rules.requiresApproval}
-        disabled={disabled}
-        onToggle={() => patchRules({ requiresApproval: !item.rules.requiresApproval })}
-        description={item.rules.requiresApproval
-          ? `Las novedades cargadas por Supervisión o Carga Horaria quedan pendientes hasta ser aprobadas; RRHH las aprueba automáticamente.${sumsHours ? " Hasta ser aprobada, la novedad será visible pero no sumará horas." : ""}`
-          : "Las novedades cargadas por roles habilitados quedan aprobadas al crearse."}
       />
       <RuleCard
         title="¿La observación es obligatoria?"
@@ -74,11 +64,7 @@ export function NoveltyTypeLoadControlFields({ item, setItem, disabled }: { item
 
     <div className="novelty-role-grid">
       <RoleChecklist label="Roles que pueden cargarla" value={item.allowedLoadRoles} disabled={disabled} onChange={(allowedLoadRoles) => setItem({ ...item, allowedLoadRoles: allowedLoadRoles as NoveltyType["allowedLoadRoles"] })} />
-      <RoleChecklist label="Roles que pueden aprobarla" value={item.approvalRoles} disabled={disabled} onChange={(approvalRoles) => setItem({ ...item, approvalRoles: approvalRoles as NoveltyType["approvalRoles"] })} />
     </div>
-    {item.rules.requiresApproval && item.approvalRoles.length === 0 ? (
-      <p className="info-note compact">Sin roles de aprobación seleccionados, sólo RRHH podrá aprobar esta novedad.</p>
-    ) : null}
     {item.allowedLoadRoles.length === 0 ? (
       <p className="info-note compact">Sin roles de carga seleccionados, sólo RRHH podrá crear esta novedad.</p>
     ) : null}

@@ -1,9 +1,14 @@
 import { EmployeeStatus } from "@prisma/client";
+import { env } from "../../config/env";
 import { prisma } from "../../shared/prisma/client";
-import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import { argentinaCalendarDate, argentinaDateParts, argentinaDayRange, formatArgentinaDate, nextCalendarDateKey, previousCalendarDateKey } from "../../shared/datetime/argentinaTime";
 import { noveltyCoversDay } from "../novelties/novelties.dateRange";
 import { resolveWorkObligationCandidates, type WorkObligationCandidate } from "../shifts/workObligation.service";
 import { closestOccurrence } from "../shifts/workShiftEvaluation.service";
+import { assignInstantToBlock, DEFAULT_BLOCK_EARLY_WINDOW_MINUTES } from "../shifts/blockAssignment";
+import { effectiveBlocksAround } from "../shifts/rotationObligation.service";
+import type { LoadedRotationTemplate } from "../shifts/rotationPlan.loader";
+import type { ExpectedBlock } from "../shifts/rotationPlan";
 import { calendarDayEventAt } from "../workforce-management/notificationListing";
 import { resolveEmployeeNotificationRecipientsBatch } from "../workforce-management/employeeNotificationRecipients";
 
@@ -121,6 +126,98 @@ export async function findEmployeeIdsWithMatchingEntryEvidence(candidates: WorkO
 }
 
 /**
+ * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): evidencia de
+ * ingreso POR BLOQUE para obligaciones de rotación. Una fichada INGRESO es
+ * evidencia de a lo sumo un bloque: el que le asigna `assignInstantToBlock`
+ * (R4.2) entre los bloques EFECTIVOS de D−1, D y D+1 (convocatoria con
+ * plantilla, franco, feriado, régimen, REST/MISSING/CONFLICT ya aplicados por
+ * `resolveRotationObligations`): una entrada nunca se asigna a un bloque
+ * habitual reemplazado. Fuera de todas las ventanas no satisface nada.
+ * Nunca usa la coincidencia legacy por plantilla aislada.
+ * Devuelve las `obligationKey` con evidencia. Asignar no es puntualidad
+ * (eso es R4.4). Consultas: resolución efectiva en lote + una de fichadas.
+ */
+export async function findSatisfiedBlockObligationKeys(blocks: ReadonlyArray<ExpectedBlock<LoadedRotationTemplate>>): Promise<Set<string>> {
+  const satisfied = new Set<string>();
+  if (!blocks.length) return satisfied;
+  const employeeIds = [...new Set(blocks.map((block) => block.employeeId))];
+  const dates = new Set<string>();
+  for (const block of blocks) {
+    dates.add(previousCalendarDateKey(block.operationalDate));
+    dates.add(block.operationalDate);
+    dates.add(nextCalendarDateKey(block.operationalDate));
+  }
+  const { blocksByEmployee: candidatesByEmployee } = await effectiveBlocksAround(employeeIds, [...dates]);
+  const allCandidates = [...candidatesByEmployee.values()].flat();
+  if (!allCandidates.length) return satisfied;
+  const windowStart = new Date(Math.min(...allCandidates.map((block) => block.scheduledStartAt.getTime())) - DEFAULT_BLOCK_EARLY_WINDOW_MINUTES * 60_000);
+  const windowEnd = new Date(Math.max(...allCandidates.map((block) => block.scheduledEndAt.getTime())));
+  const punches = await prisma.attendancePunch.findMany({
+    where: { employeeId: { in: employeeIds }, type: "INGRESO", timestamp: { gte: windowStart, lt: windowEnd } },
+    select: { employeeId: true, timestamp: true },
+  });
+  for (const punch of punches) {
+    const assignment = assignInstantToBlock(punch.timestamp, candidatesByEmployee.get(punch.employeeId) ?? []);
+    if (assignment.kind === "ASSIGNED") satisfied.add(assignment.block.obligationKey);
+  }
+  return satisfied;
+}
+
+/**
+ * R4.9C.2 O2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.19): fichadas de INGRESO EN
+ * CURSO. El fichador confirma el `ClockPunchAttempt` (PROCESSING) ANTES de
+ * tomar el instante de la fichada, subir la foto y confirmar el
+ * `AttendancePunch`. Un detector que, a partir del vencimiento, lee PRIMERO
+ * los intentos y DESPUÉS las fichadas no puede perder una fichada puntual:
+ * si su intento no estaba visible en la primera lectura, la fichada tomó su
+ * instante después de esa lectura (≥ vencimiento) y es tardía; si estaba
+ * PROCESSING, esa obligación se pospone; si ya estaba COMPLETED, la fichada
+ * ya estaba confirmada (misma transacción) y la segunda lectura la ve.
+ * Sólo cuentan intentos dentro del TTL (vencido el TTL el mantenimiento los
+ * pasa a FAILED). `startedAt` usa el reloj de la aplicación, el mismo de la
+ * fichada y de este chequeo.
+ */
+async function inFlightEntryAttempts(employeeIds: string[], asOf: Date) {
+  if (!employeeIds.length) return [];
+  return prisma.clockPunchAttempt.findMany({
+    where: { employeeId: { in: employeeIds }, punchType: "INGRESO", status: "PROCESSING", startedAt: { gte: new Date(asOf.getTime() - env.CLOCK_ATTEMPT_PROCESSING_TTL_MS) } },
+    select: { employeeId: true, startedAt: true },
+  });
+}
+
+/** O2, legacy: empleados cuyo intento en curso corresponde a ESTA obligación (misma ocurrencia que la evidencia precisa). */
+export async function findEmployeeIdsWithInFlightEntryForObligation(candidates: WorkObligationCandidate[], asOf: Date): Promise<Set<string>> {
+  const attempts = await inFlightEntryAttempts([...new Set(candidates.map((candidate) => candidate.employeeId))], asOf);
+  const deferred = new Set<string>();
+  for (const candidate of candidates) {
+    const matches = attempts.some((attempt) => attempt.employeeId === candidate.employeeId
+      && closestOccurrence(attempt.startedAt, candidate.template.startTime).scheduledAt.getTime() === candidate.scheduledStartAt.getTime());
+    if (matches) deferred.add(candidate.employeeId);
+  }
+  return deferred;
+}
+
+/** O2, rotación: `obligationKey` del bloque al que se asignaría cada intento en curso (misma asignación que la evidencia por bloque). */
+export async function findInFlightBlockObligationKeys(blocks: ReadonlyArray<ExpectedBlock<LoadedRotationTemplate>>, asOf: Date): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const attempts = await inFlightEntryAttempts([...new Set(blocks.map((block) => block.employeeId))], asOf);
+  if (!attempts.length) return keys;
+  const employeeIds = [...new Set(attempts.map((attempt) => attempt.employeeId))];
+  const dates = new Set<string>();
+  for (const block of blocks.filter((candidate) => employeeIds.includes(candidate.employeeId))) {
+    dates.add(previousCalendarDateKey(block.operationalDate));
+    dates.add(block.operationalDate);
+    dates.add(nextCalendarDateKey(block.operationalDate));
+  }
+  const { blocksByEmployee } = await effectiveBlocksAround(employeeIds, [...dates]);
+  for (const attempt of attempts) {
+    const assignment = assignInstantToBlock(attempt.startedAt, blocksByEmployee.get(attempt.employeeId) ?? []);
+    if (assignment.kind === "ASSIGNED") keys.add(assignment.block.obligationKey);
+  }
+  return keys;
+}
+
+/**
  * Etapa 15M.19B: qué empleados quedan exceptuados por una novedad vigente
  * — extraído del `where` de novedades que antes vivía inline en
  * `detectAttendanceInactivity`. Fechas: `toDate` nulo es un único día
@@ -164,6 +261,58 @@ export const INACTIVITY_CANDIDATE_SELECT = {
 } as const;
 
 /**
+ * Avisos internos de incidentes de inactividad (legacy por día y R4.3b por
+ * bloque). R4.3b (§25.5): por incidente, una transacción que PRIMERO reclama
+ * el aviso con un único UPDATE … WHERE notifiedAt IS NULL y sólo si lo ganó
+ * crea las filas `SystemNotification` — se confirman juntos o ninguno. Dos
+ * ejecuciones concurrentes nunca avisan dos veces; un fallo antes de confirmar
+ * deja `notifiedAt` en NULL y el próximo tick/catch-up lo reintenta.
+ * Garantía limitada a los registros internos `SystemNotification`: este flujo
+ * no tiene entregas externas (push/mail).
+ * Destinatarios en batch (RRHH + responsables Nivel 2 + Nivel 3 heredados),
+ * vigencia evaluada en la fecha operativa del incidente — no en el día en que
+ * corre el chequeo (un catch-up de días anteriores usa los responsables de
+ * ese día).
+ */
+export async function claimAndNotifyInactivityIncidents<I extends { id: string; employeeId: string }>(
+  incidents: readonly I[],
+  dateKey: string,
+  type: "SIN_ACTIVIDAD_REGISTRADA" | "FALTA_INGRESO",
+  title: string,
+  buildMessage: (incident: I) => string,
+): Promise<number> {
+  if (!incidents.length) return 0;
+  const recipientsByEmployee = await resolveEmployeeNotificationRecipientsBatch([...new Set(incidents.map((incident) => incident.employeeId))], dateKey);
+  let notified = 0;
+  for (const incident of incidents) {
+    const recipients = recipientsByEmployee.get(incident.employeeId) ?? [];
+    let claimed = false;
+    await prisma.$transaction(async (tx) => {
+      const claim = await tx.attendanceInactivityIncident.updateMany({ where: { id: incident.id, notifiedAt: null }, data: { notifiedAt: new Date() } });
+      if (claim.count !== 1) return;
+      claimed = true;
+      if (recipients.length) {
+        await tx.systemNotification.createMany({
+          data: recipients.map((recipientUserId) => ({
+            recipientUserId,
+            type,
+            priority: "ALTA" as const,
+            title,
+            message: buildMessage(incident),
+            entityType: "AttendanceInactivityIncident",
+            entityId: incident.id,
+            eventAt: calendarDayEventAt(dateKey),
+            link: `/asistencia?observationDate=${dateKey}`,
+          })),
+        });
+      }
+    });
+    if (claimed) notified += recipients.length;
+  }
+  return notified;
+}
+
+/**
  * Etapa 15M.19B: extraído de `detectAttendanceInactivity` para reutilizarse
  * también desde el chequeo intradía de falta de ingreso
  * (missingEntry.service.ts) — ambos escriben al MISMO modelo
@@ -200,36 +349,7 @@ export async function persistAndNotifyInactivityIncidents(
     where: { operationalDate, notifiedAt: null, employeeId: { in: candidates.map((employee) => employee.id) } },
     include: { employee: { select: INACTIVITY_CANDIDATE_SELECT } },
   });
-  // Destinatarios en batch (RRHH + responsables directos + Nivel 2
-  // heredados), vigencia evaluada en la fecha operativa del incidente — no en
-  // el día en que corre el chequeo (un catch-up de días anteriores usa los
-  // responsables de ese día).
-  const recipientsByEmployee = await resolveEmployeeNotificationRecipientsBatch(pendingNotification.map((incident) => incident.employeeId), dateKey);
-  let notified = 0;
-
-  for (const incident of pendingNotification) {
-    const recipients = recipientsByEmployee.get(incident.employeeId) ?? [];
-    await prisma.$transaction(async (tx) => {
-      if (recipients.length) {
-        await tx.systemNotification.createMany({
-          data: recipients.map((recipientUserId) => ({
-            recipientUserId,
-            type,
-            priority: "ALTA",
-            title,
-            message: buildMessage(incident.employee),
-            entityType: "AttendanceInactivityIncident",
-            entityId: incident.id,
-            eventAt: calendarDayEventAt(dateKey),
-            link: `/asistencia?observationDate=${dateKey}`,
-          })),
-        });
-      }
-      await tx.attendanceInactivityIncident.update({ where: { id: incident.id }, data: { notifiedAt: new Date() } });
-    });
-    notified += recipients.length;
-  }
-
+  const notified = await claimAndNotifyInactivityIncidents(pendingNotification, dateKey, type, title, (incident) => buildMessage(incident.employee));
   return { detected: candidates.length, notified };
 }
 
@@ -254,10 +374,18 @@ export async function persistAndNotifyInactivityIncidents(
 // novedad vigente que lo exima.
 export async function detectAttendanceInactivity(dateKey: string): Promise<{ date: string } & PersistInactivityResult> {
   const ranges = operationalDateRanges(dateKey);
-  const { isHoliday, candidates: obligationCandidates } = await resolveWorkObligationCandidates(dateKey);
-  if (!obligationCandidates.length) return { date: dateKey, detected: 0, notified: 0 };
+  const { isHoliday, candidates: allCandidates, convokedWithoutSchedule = [] } = await resolveWorkObligationCandidates(dateKey);
+  // R4.3b (§25.5): una obligación por BLOQUES de rotación registra sus
+  // ausencias sólo por bloque (falta de ingreso por bloque) — nunca
+  // SIN_ACTIVIDAD_REGISTRADA. Se excluye desde el principio, así el resultado
+  // no depende del orden en que corran este proceso y el de falta de ingreso.
+  const blockObligated = new Set(allCandidates.filter((candidate) => candidate.block).map((candidate) => candidate.employeeId));
+  const obligationCandidates = blockObligated.size ? allCandidates.filter((candidate) => !blockObligated.has(candidate.employeeId)) : allCandidates;
+  // Convocados al feriado sin turno (§20): obligación de día sin horario; la
+  // única alerta posible es ésta, al terminar el día.
+  const obligationEmployeeIds = [...new Set([...obligationCandidates.map((candidate) => candidate.employeeId), ...convokedWithoutSchedule])];
+  if (!obligationEmployeeIds.length) return { date: dateKey, detected: 0, notified: 0 };
 
-  const obligationEmployeeIds = obligationCandidates.map((candidate) => candidate.employeeId);
   const [hasEvidence, excludedByNovelty] = await Promise.all([
     findEmployeeIdsWithActivityEvidence(obligationEmployeeIds, ranges),
     findEmployeeIdsExcludedByNovelty(obligationEmployeeIds, ranges.operationalDate),

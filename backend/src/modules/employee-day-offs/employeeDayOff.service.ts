@@ -3,9 +3,8 @@ import { formatEmployeeReference, loadEmployeeReferences } from "../../shared/au
 import { argentinaCalendarDate, formatArgentinaDate, periodCalendarBounds, periodFromCalendarDate } from "../../shared/datetime/argentinaTime";
 import { AppError } from "../../shared/errors/AppError";
 import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
-import { employeePeriodKey, findProtectedClosurePeriods, ProtectedClosurePeriodError } from "../../shared/monthlyClosure/closurePeriodGuard";
+import { assertPeriodsNotClosed } from "../../shared/monthlyClosure/protectedPeriodCorrection";
 import { prisma } from "../../shared/prisma/client";
-import { roles } from "../../shared/security/roles";
 import type { AuditContext, RegisterAuditInput } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
@@ -99,7 +98,6 @@ export const employeeDayOffService = {
     const date = argentinaCalendarDate(input.date);
     const period = periodFromCalendarDate(date);
     const dateLabel = formatArgentinaDate(input.date);
-    const correctionReason = input.correctionReason?.trim() || null;
     const coverageReason = { source: "EMPLOYEE_DAY_OFF_CHANGED" as const, label: `cambio de francos del ${dateLabel}` };
 
     const outcome = await prisma.$transaction(async (tx) => {
@@ -122,18 +120,8 @@ export const employeeDayOffService = {
       }
       if (!changes.length) return { saved: [] as EmployeeDayOffRow[], audits: [] as RegisterAuditInput[], rebuilt: [], alerts: 0, resolvedAlerts: 0, resolvedIncidents: 0, coverage: emptyNoveltyCoverageRecalculation(coverageReason) };
 
-      // Un franco reinterpreta horas: en un período enviado/aprobado sólo RRHH,
-      // con motivo (mismo criterio que la corrección de una hora, §12).
-      const protectedPeriods = await findProtectedClosurePeriods(tx, changes.map((change) => ({ employeeId: change.employeeId, period })));
-      if (protectedPeriods.size) {
-        if (user.role !== roles.rrhh) {
-          throw new ProtectedClosurePeriodError(
-            [...protectedPeriods.entries()].map(([key, status]) => ({ employeeId: key.split(":")[0]!, period, status })),
-            "El período ya fue enviado a cierre. Pedile a RRHH que corrija el franco si hace falta.",
-          );
-        }
-        if (!correctionReason) throw new AppError("Indicá el motivo de la corrección: el período ya fue enviado a cierre.", 400, "DAY_OFF_CORRECTION_REASON_REQUIRED");
-      }
+      // Un franco reinterpreta horas: un período CERRADO no se modifica (§12).
+      await assertPeriodsNotClosed(tx, changes.map((change) => ({ employeeId: change.employeeId, period })), "El período está cerrado. Reabrilo antes de modificar francos.");
 
       const activated = changes.filter((change) => change.kind === "CREATE" || change.kind === "ACTIVATE").map((change) => change.employeeId);
       const deactivated = changes.filter((change) => change.kind === "DEACTIVATE").map((change) => change.employeeId);
@@ -156,14 +144,13 @@ export const employeeDayOffService = {
           ? await employeeDayOffRepository.update(tx, change.existing.id, { status: change.kind === "DEACTIVATE" ? "CANCELADO" : "ACTIVO", notes: change.notes, userId: user.id })
           : await employeeDayOffRepository.create(tx, { employeeId: change.employeeId, date, notes: change.notes, userId: user.id });
         saved.push(row);
-        const isCorrection = protectedPeriods.has(employeePeriodKey({ employeeId: change.employeeId, period }));
         audits.push({
           action: auditAction[change.kind],
           entity: "EmployeeDayOff",
           entityId: row.id,
-          description: `${describe(change.kind, formatEmployeeReference(row.employee), dateLabel)}${isCorrection ? ` Motivo: ${correctionReason}` : ""}`,
+          description: describe(change.kind, formatEmployeeReference(row.employee), dateLabel),
           ...(change.existing ? { before: toItem(change.existing) as unknown as Prisma.InputJsonValue } : {}),
-          after: { ...toItem(row), ...(isCorrection ? { correctionReason } : {}) } as unknown as Prisma.InputJsonValue,
+          after: toItem(row) as unknown as Prisma.InputJsonValue,
         });
       }
 
@@ -184,10 +171,9 @@ export const employeeDayOffService = {
       const changedEmployeeIds = [...new Set(changes.map((change) => change.employeeId))];
       const coverage = await recalculateNoveltyCoverage(tx, { employeeIds: changedEmployeeIds, from: date, to: date }, coverageReason, { rebuildSnapshots: false });
 
-      // Snapshots: sólo cierres no protegidos (un protegido no se reconstruye
-      // automáticamente, ni siquiera en la corrección de RRHH — §12).
+      // Snapshots: sólo cierres ABIERTO (uno CERRADO ya rechazó el guardado).
       const pairs = changedEmployeeIds.map((employeeId) => ({ employeeId, period }));
-      const closures = (await findClosuresForEmployeePeriods(tx, pairs)).filter((closure) => !protectedPeriods.has(employeePeriodKey(closure)));
+      const closures = await findClosuresForEmployeePeriods(tx, pairs);
       const rebuilt = await rebuildClosureSnapshots(tx, closures, { reason: "EMPLOYEE_DAY_OFF_CHANGED", date: input.date });
 
       return { saved, audits, rebuilt, alerts, resolvedAlerts, resolvedIncidents, coverage };

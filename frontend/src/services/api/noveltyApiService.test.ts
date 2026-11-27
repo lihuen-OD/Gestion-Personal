@@ -13,7 +13,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("noveltyApiService — invalidación de cachés", () => {
   it("incluye todas las familias derivadas de horas y la de novedades", () => {
     expect(NOVELTY_DEPENDENT_CACHE_FAMILIES).toEqual(expect.arrayContaining([...WORKED_TIME_DERIVED_CACHE_FAMILIES, "novelties"]));
-    expect(NOVELTY_DEPENDENT_CACHE_FAMILIES).toEqual(expect.arrayContaining(["pending", "monthly-closures", "employees", "dashboard", "time-entries"]));
+    expect(NOVELTY_DEPENDENT_CACHE_FAMILIES).toEqual(expect.arrayContaining(["monthly-closures", "employees", "dashboard", "time-entries"]));
   });
 });
 
@@ -26,7 +26,7 @@ describe("noveltyApiService — resolución diaria de cobertura", () => {
 
   it("envía endpoint y payload exactos e invalida todas las familias derivadas", async () => {
     vi.mocked(apiRequest).mockResolvedValue({ data: resolvedDay });
-    const input = { resolution: "SET_BASE_MINUTES" as const, baseMinutes: 180, note: "Confirmado por supervisión", correctionReason: "Confirmado por supervisión" };
+    const input = { resolution: "SET_BASE_MINUTES" as const, baseMinutes: 180, note: "Confirmado por supervisión" };
 
     await expect(noveltyApiService.resolveCoverageDay("novelty-1", "2026-11-16", input)).resolves.toEqual(resolvedDay);
 

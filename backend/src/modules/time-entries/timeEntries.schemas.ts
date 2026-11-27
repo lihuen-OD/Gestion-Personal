@@ -68,11 +68,6 @@ export const updateTimeEntrySchema = z.object({
   date: z.coerce.date().optional(),
   hours: z.coerce.number().min(0).max(24).optional(),
   observation: z.string().trim().max(800).optional().nullable(),
-  correctionReason: z.string().trim().min(2).max(600).optional(),
-});
-
-export const rejectTimeEntrySchema = z.object({
-  reason: z.string().trim().min(2).max(600),
 });
 
 export const timeEntriesExportQuerySchema = z.object({
@@ -146,7 +141,16 @@ export const clockPhotoPunchSchema = z.object({
     language: z.string().trim().max(40).optional(),
     cameraLabel: z.string().trim().max(180).optional(),
   }).optional(),
-});
+  // R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): sólo para SALIDA. Confirma la
+  // salida de una jornada abierta cuando el fichador la había señalado como
+  // posible olvido de salida; ligada a esa jornada y a ese bloque siguiente
+  // (el servidor revalida todo con el contexto actual). Sin el campo, el
+  // contrato es idéntico al anterior.
+  exitConfirmation: z.object({
+    openShiftId: z.string().uuid(),
+    nextBlockKey: z.string().min(1).max(120),
+  }).optional(),
+}).refine((value) => !value.exitConfirmation || value.punchType === "OUT", { message: "La confirmación de salida sólo aplica a una salida.", path: ["exitConfirmation"] });
 
 export const clockPunchAttemptParamsSchema = z.object({
   requestId: z.string().uuid(),
@@ -169,7 +173,6 @@ export type ResolveAttendanceObservationInput = z.infer<typeof resolveAttendance
 export type TimeEntriesPeriodEmployeesQuery = z.infer<typeof timeEntriesPeriodEmployeesQuerySchema>;
 export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
 export type UpdateTimeEntryInput = z.infer<typeof updateTimeEntrySchema>;
-export type RejectTimeEntryInput = z.infer<typeof rejectTimeEntrySchema>;
 export type TimeEntriesExportQuery = z.infer<typeof timeEntriesExportQuerySchema>;
 export type PreviewWorkShiftInput = z.infer<typeof previewWorkShiftSchema>;
 export type CreateWorkShiftInput = z.infer<typeof createWorkShiftSchema>;
@@ -187,8 +190,6 @@ export const manualHoursConflictsQuerySchema = z.object({
 
 export const resolveManualHoursConflictSchema = z.object({
   decision: z.enum(["KEEP_MANUAL", "USE_CLOCK"]),
-  // Sólo RRHH, y sólo si "Usar horas fichadas" cae en un período enviado o aprobado.
-  correctionReason: z.string().trim().min(2).max(600).optional(),
 });
 
 export type ManualHoursConflictsQuery = z.infer<typeof manualHoursConflictsQuerySchema>;

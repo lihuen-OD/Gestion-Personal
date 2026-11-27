@@ -10,10 +10,6 @@ vi.mock("./timeEntries.service", () => ({
   timeEntriesService: {
     create: vi.fn(),
     update: vi.fn(),
-    submit: vi.fn(),
-    approve: vi.fn(),
-    reject: vi.fn(),
-    returnForCorrection: vi.fn(),
     createWorkShift: vi.fn(),
     closeWorkShiftManually: vi.fn(),
   },
@@ -34,7 +30,7 @@ vi.mock("../employees/employees.controller", () => ({
 }));
 
 const mockedService = timeEntriesService as unknown as {
-  create: Mock; update: Mock; submit: Mock; approve: Mock; reject: Mock; returnForCorrection: Mock;
+  create: Mock; update: Mock;
   createWorkShift: Mock; closeWorkShiftManually: Mock;
 };
 const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
@@ -63,10 +59,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedService.create.mockResolvedValue({ id: "entry-1", status: "APROBADO" });
   mockedService.update.mockResolvedValue({ id: "entry-1", status: "APROBADO" });
-  mockedService.submit.mockResolvedValue({ id: "entry-1", status: "EN_REVISION" });
-  mockedService.approve.mockResolvedValue({ id: "entry-1", status: "APROBADO" });
-  mockedService.reject.mockResolvedValue({ id: "entry-1", status: "RECHAZADO" });
-  mockedService.returnForCorrection.mockResolvedValue({ id: "entry-1", status: "DEVUELTO" });
   mockedService.createWorkShift.mockResolvedValue({ workShift: { id: "shift-1" } });
   mockedService.closeWorkShiftManually.mockResolvedValue({ workShift: { id: "shift-1" } });
 });
@@ -88,26 +80,6 @@ describe("timeEntriesController — invalidación de employeeTimeGridCache (Etap
     await timeEntriesController.update(fakeReq(), fakeRes());
     expect(mockedClearEmployeeTimeGridCache).toHaveBeenCalledTimes(1);
     expect(mockedClearEmployeeReadCaches).not.toHaveBeenCalled();
-  });
-
-  it("submit limpia la caché de la grilla del empleado", async () => {
-    await timeEntriesController.submit(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("approve limpia la caché de la grilla del empleado", async () => {
-    await timeEntriesController.approve(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("reject limpia la caché de la grilla del empleado", async () => {
-    await timeEntriesController.reject(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("returnForCorrection limpia la caché de la grilla del empleado", async () => {
-    await timeEntriesController.returnForCorrection(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
   });
 
   it("create sigue devolviendo el registro completo guardado (para poder actualizar la UI localmente)", async () => {

@@ -26,6 +26,7 @@ vi.mock("../../shared/prisma/client", () => ({
 // de esta etapa.
 vi.mock("../shifts/workObligation.service", () => ({
   resolveWorkObligationCandidates: vi.fn(),
+  resolveRotationBlockCandidates: vi.fn(async () => ({ rotation: new Map(), candidates: [] })),
 }));
 
 const mockedPrisma = prisma as unknown as {
@@ -64,7 +65,7 @@ beforeEach(() => {
   mockedPrisma.attendanceInactivityIncident.createMany.mockResolvedValue({ count: 0 });
   mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
   mockedPrisma.user.findMany.mockResolvedValue([]);
-  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn() } };
+  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
   mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 });
 
@@ -222,7 +223,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       let capturedNotification: { message: string; title: string } | undefined;
       const tx = {
         systemNotification: { createMany: vi.fn((args: { data: Array<{ message: string; title: string }> }) => { capturedNotification = args.data[0]; }) },
-        attendanceInactivityIncident: { update: vi.fn() },
+        attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
       };
       mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
@@ -242,7 +243,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       let capturedNotification: { message: string } | undefined;
       const tx = {
         systemNotification: { createMany: vi.fn((args: { data: Array<{ message: string }> }) => { capturedNotification = args.data[0]; }) },
-        attendanceInactivityIncident: { update: vi.fn() },
+        attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
       };
       mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
@@ -252,7 +253,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     });
   });
 
-  it("SIN_ACTIVIDAD_REGISTRADA: destinatarios en batch = RRHH + responsable Nivel 3 + Nivel 2 que lo supervisa, vigencia evaluada en la fecha operativa", async () => {
+  it("SIN_ACTIVIDAD_REGISTRADA: destinatarios en batch = RRHH + responsable Nivel 2 + Nivel 3 que hereda, vigencia evaluada en la fecha operativa", async () => {
     mockedObligation.mockResolvedValue({ isHoliday: false, candidates: [obligationCandidate("employee-1"), obligationCandidate("employee-2")] });
     mockedPrisma.employee.findMany.mockResolvedValue([employeeRow(), employeeRow({ id: "employee-2" })]);
     mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([
@@ -260,7 +261,7 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
       { id: "incident-2", employeeId: "employee-2", employee: employeeRow({ id: "employee-2" }) },
     ]);
     mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
-    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "joaquin", user: { role: "NIVEL_3_CARGA_HORARIA" } }]);
+    mockedPrisma.employeeAssignment.findMany.mockResolvedValueOnce([{ employeeId: "employee-1", userId: "eugenia" }]);
     mockedPrisma.userSupervisionAssignment.findMany.mockResolvedValueOnce([{ supervisorUserId: "eugenia", supervisedUserId: "joaquin" }]);
     const recipientsByIncident: Record<string, string[]> = {};
     const tx = {
@@ -268,13 +269,13 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
         for (const row of args.data) (recipientsByIncident[row.entityId] ??= []).push(row.recipientUserId);
         expect(args.data.every((row) => row.type === "SIN_ACTIVIDAD_REGISTRADA")).toBe(true);
       }) },
-      attendanceInactivityIncident: { update: vi.fn() },
+      attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
     };
     mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
     const result = await detectAttendanceInactivity(dateKey);
 
-    expect(recipientsByIncident).toEqual({ "incident-1": ["user-rrhh", "joaquin", "eugenia"], "incident-2": ["user-rrhh"] });
+    expect(recipientsByIncident).toEqual({ "incident-1": ["user-rrhh", "eugenia", "joaquin"], "incident-2": ["user-rrhh"] });
     expect(result.notified).toBe(4);
     // Una consulta de asignaciones para todos los incidentes (sin N+1), con la fecha operativa.
     expect(mockedPrisma.employeeAssignment.findMany).toHaveBeenCalledTimes(1);
@@ -294,12 +295,48 @@ describe("detectAttendanceInactivity — Etapa 15M.19B (universo de candidatos p
     let captured: { eventAt: Date; entityType: string } | undefined;
     const tx = {
       systemNotification: { createMany: vi.fn((args: { data: Array<{ eventAt: Date; entityType: string }> }) => { captured = args.data[0]; }) },
-      attendanceInactivityIncident: { update: vi.fn() },
+      attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
     };
     mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 
     await detectAttendanceInactivity(dateKey);
 
     expect(captured).toMatchObject({ entityType: "AttendanceInactivityIncident", eventAt: new Date("2026-08-27T03:00:00.000Z") });
+  });
+});
+
+// §20: convocados al feriado SIN turno (sin plantilla, sin turno fijo, SIN_TURNO):
+// obligación de día sin horario — sólo esta alerta, una vez, al terminar el día.
+describe("detectAttendanceInactivity — convocados al feriado sin turno", () => {
+  it("sin actividad ni novedad: UNA incidencia de día (sin horario) con el texto de convocatoria", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [], convokedWithoutSchedule: ["employee-1"] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+    mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([{ id: "incident-1", employeeId: "employee-1", employee: employeeRow() }]);
+
+    const result = await detectAttendanceInactivity(dateKey);
+
+    expect(result.detected).toBe(1);
+    const data = mockedPrisma.attendanceInactivityIncident.createMany.mock.calls[0]![0].data;
+    expect(data).toEqual([expect.objectContaining({ employeeId: "employee-1", operationalDate, observation: expect.stringContaining("convocada a trabajar el feriado") })]);
+    expect(data[0]).not.toHaveProperty("scheduledStartAt");
+    expect(mockedPrisma.attendanceInactivityIncident.createMany.mock.calls[0]![0].skipDuplicates).toBe(true);
+  });
+
+  it("con fichada o con novedad que lo justifica: no genera nada", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [], convokedWithoutSchedule: ["employee-1", "employee-2"] });
+    mockedPrisma.attendancePunch.findMany.mockResolvedValue([{ employeeId: "employee-1" }]);
+    mockedPrisma.novelty.findMany.mockResolvedValue([{ employeeId: "employee-2" }]);
+
+    expect(await detectAttendanceInactivity(dateKey)).toEqual({ date: dateKey, detected: 0, notified: 0 });
+    expect(mockedPrisma.attendanceInactivityIncident.createMany).not.toHaveBeenCalled();
+  });
+
+  it("un mismo legajo como candidato y sin turno no se duplica", async () => {
+    mockedObligation.mockResolvedValue({ isHoliday: true, candidates: [obligationCandidate("employee-1")], convokedWithoutSchedule: ["employee-1"] });
+    mockedPrisma.employee.findMany.mockResolvedValue([employeeRow()]);
+
+    await detectAttendanceInactivity(dateKey);
+
+    expect(mockedPrisma.employee.findMany.mock.calls[0]![0].where.id.in).toEqual(["employee-1"]);
   });
 });

@@ -1,8 +1,14 @@
 import type { WorkShift } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
+import { argentinaDateKey, argentinaDateParts, argentinaDayRange, formatArgentinaDate } from "../../shared/datetime/argentinaTime";
+import type { z } from "zod";
+import type { rotationEntryPayloadSchema, exitPayloadSchema } from "../clock/clockPunchPostProcess.payload";
+import { isRotationBlockShift } from "./rotationEntry";
 import type { ShiftTemplateLike } from "./shiftTemplateRef.types";
+import { buildTemplateRulesSnapshot, effectiveShiftTemplate } from "./templateRulesSnapshot";
 import { attendanceRecipients, notifyUsers } from "../workforce-management/workforce.service";
 import { resolveActiveWorkRegime, shouldSuppressMissingShiftAlert } from "../work-regimes/workRegimes.service";
+import { classifyFixedEntry, hasNoEnforceableShift, hasVigentEnabledAssignment, loadConvocationTemplateId, loadEntryDayFacts, unscheduledWorkNote, type UnscheduledWorkReason } from "./unscheduledWork";
 import {
   evaluateEntryPunctuality,
   evaluateExitPunctuality,
@@ -10,6 +16,7 @@ import {
   evaluateWorkedDuration,
   isEarlyArrivalReviewRequired,
   matchShiftForEmployee,
+  workShiftOperationalDateKey,
   type EmployeeShiftAssignmentRef,
   type ShiftMatchResult,
   type ShiftTemplateRef,
@@ -47,7 +54,14 @@ export type ShiftAlertTypeValue =
   | "ACTIVIDAD_EN_FRANCO"
   // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: jornada del fichador sobre
   // una fecha con horas cargadas a mano. La crea time-entries (post-proceso).
-  | "ACTIVIDAD_SOBRE_CARGA_MANUAL";
+  | "ACTIVIDAD_SOBRE_CARGA_MANUAL"
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): clasificación informativa de una
+  // jornada sin turno programado. Se crea ya RESUELTA y nunca avisa
+  // (recordInformativeShiftAlert); nunca pasa por createShiftAlert.
+  | "TRABAJO_NO_PROGRAMADO"
+  // R4.5: ingreso de un miembro de rotación antes de la ventana de asignación
+  // de su bloque posterior del mismo día (antes, TURNO_NO_IDENTIFICADO).
+  | "INGRESO_FUERA_DE_VENTANA";
 type ShiftAlertSeverityValue = "INFO" | "ADVERTENCIA" | "CRITICA";
 
 const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> = {
@@ -67,6 +81,8 @@ const severityByAlertType: Record<ShiftAlertTypeValue, ShiftAlertSeverityValue> 
   JORNADA_FUERA_DE_TURNO: "ADVERTENCIA",
   ACTIVIDAD_EN_FRANCO: "ADVERTENCIA",
   ACTIVIDAD_SOBRE_CARGA_MANUAL: "ADVERTENCIA",
+  TRABAJO_NO_PROGRAMADO: "INFO",
+  INGRESO_FUERA_DE_VENTANA: "ADVERTENCIA",
 };
 
 const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
@@ -92,6 +108,8 @@ const labelByAlertType: Record<ShiftAlertTypeValue, string> = {
   JORNADA_FUERA_DE_TURNO: "Jornada fuera de turno",
   ACTIVIDAD_EN_FRANCO: "Actividad registrada en día de franco",
   ACTIVIDAD_SOBRE_CARGA_MANUAL: "Actividad fichada sobre horas cargadas manualmente",
+  TRABAJO_NO_PROGRAMADO: "Trabajo no programado",
+  INGRESO_FUERA_DE_VENTANA: "Ingreso fuera del horario del turno",
 };
 
 // Destino del aviso: Asistencia, salvo los tipos que se deciden en otra pantalla.
@@ -175,6 +193,8 @@ export async function createShiftAlert(input: {
   // docs/decisions/SHIFT_EXIT_CLASSIFICATION_13B.md). Default `true`: no
   // cambia el comportamiento de ningún llamador existente que no lo pase.
   notify?: boolean;
+  /** R4.4: texto del aviso para esta instancia (contexto de la situación). Sin él, el texto fijo del tipo. */
+  message?: string;
   db?: PrismaTransactionClient;
 }) {
   // El override solo existe para casos puntuales que ya tienen su propia
@@ -188,7 +208,27 @@ export async function createShiftAlert(input: {
     update: { actualAt: input.actualAt, scheduledAt: input.scheduledAt, differenceMinutes: input.differenceMinutes ?? undefined, severity, status: "PENDIENTE" },
   });
   if (input.notify === false) return alert;
-  await notifyShiftAlert({ id: alert.id, employeeId: input.employeeId, type: input.type, actualAt: input.actualAt }, input.db);
+  await notifyShiftAlert({ id: alert.id, employeeId: input.employeeId, type: input.type, actualAt: input.actualAt }, input.db, input.message);
+  return alert;
+}
+
+/**
+ * R4.9C.2 (SHIFT_ROTATION_AUDIT_PLAN.md §25.18): crea la alerta SÓLO si no
+ * existe (INSERT … ON CONFLICT DO NOTHING sobre el único workShiftId+type) y
+ * avisa únicamente quien la insertó. Para chequeos periódicos que pueden
+ * correr en paralelo (dos instancias durante un deploy): con leer-y-crear,
+ * ambos veían "no existe" y mandaban dos avisos. Nunca reabre ni modifica una
+ * alerta existente (a diferencia del upsert de createShiftAlert). Devuelve
+ * null si ya existía.
+ */
+export async function createShiftAlertIfAbsent(input: { employeeId: string; workShiftId: string; type: ShiftAlertTypeValue; actualAt: Date; differenceMinutes?: number | null }) {
+  const inserted = await prisma.shiftAlert.createMany({
+    data: [{ employeeId: input.employeeId, workShiftId: input.workShiftId, type: input.type, severity: severityByAlertType[input.type], actualAt: input.actualAt, differenceMinutes: input.differenceMinutes ?? undefined }],
+    skipDuplicates: true,
+  });
+  if (inserted.count === 0) return null;
+  const alert = await prisma.shiftAlert.findUniqueOrThrow({ where: { workShiftId_type: { workShiftId: input.workShiftId, type: input.type } } });
+  await notifyShiftAlert({ id: alert.id, employeeId: input.employeeId, type: input.type, actualAt: input.actualAt });
   return alert;
 }
 
@@ -198,7 +238,7 @@ export async function createShiftAlert(input: {
  * `notify=false` (la salida con horas manuales, MANUAL_HOURS_VS_CLOCK_PUNCH.md)
  * lo manda después desde el post-proceso durable.
  */
-export async function notifyShiftAlert(alert: { id: string; employeeId: string; type: ShiftAlertTypeValue; actualAt: Date }, db?: PrismaTransactionClient) {
+export async function notifyShiftAlert(alert: { id: string; employeeId: string; type: ShiftAlertTypeValue; actualAt: Date }, db?: PrismaTransactionClient, message?: string) {
   // Etapa 10E: la notificación es best-effort — un fallo acá (ej. un
   // problema transitorio de DB al insertar SystemNotification) nunca debe
   // tirar abajo la fichada real que ya se confirmó, ni impedir que la alerta
@@ -208,7 +248,7 @@ export async function notifyShiftAlert(alert: { id: string; employeeId: string; 
     await notifyUsers(await attendanceRecipients(alert.employeeId, alert.actualAt, db), {
       type: "ALERTA_FICHADA",
       title: labelByAlertType[alert.type],
-      message: messageByAlertType[alert.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
+      message: message ?? messageByAlertType[alert.type] ?? DEFAULT_ALERT_NOTIFICATION_MESSAGE,
       entityType: "ShiftAlert",
       entityId: alert.id,
       // Congelado al crear: un upsert posterior de la alerta no mueve esta notificación.
@@ -228,6 +268,38 @@ export async function notifyShiftAlert(alert: { id: string; employeeId: string; 
     });
   }
 }
+
+/**
+ * R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): clasificación INFORMATIVA de una
+ * jornada sin turno programado. Se persiste ya RESUELTA (patrón de resolución
+ * automática: `resolvedByUserId` NULL + nota), con severidad INFO y sin aviso:
+ * no queda pendiente para nadie, se consulta en Alertas (Resueltas/Todas, por
+ * tipo) y la fila es su trazabilidad. Idempotente: el `update` vacío nunca
+ * reabre, re-clasifica ni avisa (a diferencia de `createShiftAlert`).
+ */
+export async function recordInformativeShiftAlert(input: { employeeId: string; workShiftId: string; actualAt: Date; reason: UnscheduledWorkReason; dateKey: string; db?: PrismaTransactionClient }) {
+  const db = input.db ?? prisma;
+  return db.shiftAlert.upsert({
+    where: { workShiftId_type: { workShiftId: input.workShiftId, type: "TRABAJO_NO_PROGRAMADO" } },
+    create: {
+      employeeId: input.employeeId,
+      workShiftId: input.workShiftId,
+      type: "TRABAJO_NO_PROGRAMADO",
+      severity: severityByAlertType.TRABAJO_NO_PROGRAMADO,
+      status: "RESUELTA",
+      actualAt: input.actualAt,
+      resolvedAt: new Date(),
+      resolutionNote: unscheduledWorkNote(input.reason, input.dateKey),
+    },
+    update: {},
+  });
+}
+
+const ROTATION_UNSCHEDULED_REASON: Record<"REST" | "HOLIDAY_NOT_CONVOKED" | "NO_BLOCKS", UnscheduledWorkReason> = {
+  REST: "DESCANSO_ROTACION",
+  HOLIDAY_NOT_CONVOKED: "FERIADO_NO_CONVOCADO",
+  NO_BLOCKS: "FUERA_DEL_TURNO",
+};
 
 // Etapa 13E.1 (docs/decisions/SHIFT_CONFIGURATION_ALERT_POLICY_13E.md):
 // matchShiftForEmployee (entrada, único llamador de esta función) ya nunca
@@ -292,10 +364,95 @@ async function isOutOfShiftAlertSuppressed(employeeId: string, actualAt: Date, a
   return shouldSuppressMissingShiftAlert(regime);
 }
 
-export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date, options: ShiftEvaluationOptions = {}) {
+export type RotationEntryPayload = z.output<typeof rotationEntryPayloadSchema>;
+export type RotationExitPayload = NonNullable<z.output<typeof exitPayloadSchema>["rotationExit"]>;
+
+const hhmm = (instant: Date) => {
+  const { hour, minute } = argentinaDateParts(instant);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
+/**
+ * R4.4 (SHIFT_ROTATION_AUDIT_PLAN.md §25.6): entrada de un miembro de rotación.
+ * La clasificación vino CONGELADA de la fichada (payload); acá sólo se
+ * generan sus alertas. La adopción ya quedó escrita en la apertura: nunca se
+ * recurre a las asignaciones fijas (la rotación las reemplaza ese día).
+ */
+async function evaluateRotationEntry(employeeId: string, workShiftId: string, actualAt: Date, entry: RotationEntryPayload, options: ShiftEvaluationOptions) {
+  const db = options.db ?? prisma;
+  if (entry.kind === "ASSIGNED" && entry.block) {
+    const differenceMinutes = entry.differenceMinutes ?? 0;
+    if (entry.punctuality === "LATE") {
+      await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_TARDE", actualAt, scheduledAt: entry.block.scheduledStartAt, differenceMinutes, db: options.db });
+    }
+    if (entry.punctuality === "EARLY") {
+      const severity = isEarlyArrivalReviewRequired(differenceMinutes) ? "ADVERTENCIA" : undefined;
+      await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_ANTICIPADO", actualAt, scheduledAt: entry.block.scheduledStartAt, differenceMinutes, severity, db: options.db });
+    }
+    return;
+  }
+  if (entry.kind === "CONFIGURATION") {
+    // D3: no suprimible por régimen. Un aviso por (empleado, fecha): las demás
+    // jornadas del mismo día se registran sin volver a avisar.
+    const day = argentinaDayRange(argentinaDateKey(actualAt));
+    const alreadyAlerted = await prisma.shiftAlert.findFirst({
+      where: { employeeId, type: "POSSIBLE_SHIFT_CONFIGURATION_MISSING", workShiftId: { not: workShiftId }, actualAt: { gte: day.startAt, lt: day.endAt } },
+      select: { id: true },
+    });
+    const what = entry.reason === "CONFLICT" ? "tiene una configuración contradictoria" : "no tiene un turno configurado";
+    const message = `La persona fichó el ${formatArgentinaDate(argentinaDateKey(actualAt))} y su programación por rotación ${what} para ese día. Revisá la configuración de la rotación.`;
+    await db.workShift.update({ where: { id: workShiftId }, data: { observation: `Programación por rotación ${entry.reason === "CONFLICT" ? "contradictoria" : "sin configurar"} para la fecha del ingreso; la fichada se registró sin turno.` } });
+    await createShiftAlert({ employeeId, workShiftId, type: "POSSIBLE_SHIFT_CONFIGURATION_MISSING", actualAt, notify: !alreadyAlerted, message, db: options.db });
+    return;
+  }
+  if (entry.kind === "OUTSIDE_WINDOW" && entry.nearestBlock) {
+    // D3: posible ingreso muy anticipado — requiere revisión, no se suprime;
+    // no se clasifica como trabajo no programado ni como ausencia.
+    const minutesBefore = entry.minutesBefore ?? 0;
+    const message = `La persona ingresó ${minutesBefore} min antes de su turno de las ${hhmm(entry.nearestBlock.scheduledStartAt)}, fuera del horario en que se toma como ingreso a ese turno. Revisá si fue un ingreso muy anticipado o trabajo no programado.`;
+    await db.workShift.update({ where: { id: workShiftId }, data: { observation: `Ingreso ${minutesBefore} min antes del turno de las ${hhmm(entry.nearestBlock.scheduledStartAt)}, fuera de la ventana de asignación; requiere revisión.` } });
+    // R4.5: tipo propio (antes TURNO_NO_IDENTIFICADO); mismo aviso inmediato (D3).
+    await createShiftAlert({ employeeId, workShiftId, type: "INGRESO_FUERA_DE_VENTANA", actualAt, scheduledAt: entry.nearestBlock.scheduledStartAt, differenceMinutes: -minutesBefore, message, db: options.db });
+    return;
+  }
+  if (entry.kind === "UNSCHEDULED") {
+    // R4.5: trabajo no programado — informativo, ya resuelto y sin aviso. Los
+    // regímenes sin obligación de turno (SIN_TURNO, TURNO_FLEXIBLE,
+    // alertOnOutOfShift=false) no dejan fila (D5): sus fichadas, horas y
+    // auditoría siguen trazables por sí mismas.
+    if (entry.reason === "REGIME_SIN_TURNO") return;
+    if (await isOutOfShiftAlertSuppressed(employeeId, actualAt, "TURNO_NO_IDENTIFICADO")) return;
+    const reason = ROTATION_UNSCHEDULED_REASON[entry.reason as keyof typeof ROTATION_UNSCHEDULED_REASON] ?? "FUERA_DEL_TURNO";
+    await recordInformativeShiftAlert({ employeeId, workShiftId, actualAt, reason, dateKey: argentinaDateKey(actualAt), db: options.db });
+    return;
+  }
+  // DAY_OFF: sólo ACTIVIDAD_EN_FRANCO (paso de francos) — nunca dos alertas por la misma situación.
+  // CONVOKED_WITHOUT_SCHEDULE: la convocatoria autoriza el trabajo; sólo diagnóstico (AuditLog).
+}
+
+/**
+ * R4.4: régimen ALERT_ONLY y cambio de bloque — la jornada anterior quedó en
+ * FALTA_SALIDA y su revisión se marca CRÍTICA y pendiente. Nunca reabre ni
+ * modifica una alerta ya resuelta o descartada. Sin aviso propio: el aviso de
+ * esta situación es el de falta de salida (uno solo).
+ */
+export async function escalateBlockChangeMissingExit(employeeId: string, previousShiftId: string, actualAt: Date, db: PrismaTransactionClient) {
+  const existing = await db.shiftAlert.findUnique({ where: { workShiftId_type: { workShiftId: previousShiftId, type: "POSIBLE_OLVIDO_SALIDA" } } });
+  if (existing && existing.status !== "PENDIENTE") return existing;
+  if (existing) return existing.severity === "CRITICA" ? existing : db.shiftAlert.update({ where: { id: existing.id }, data: { severity: "CRITICA" } });
+  return createShiftAlert({ employeeId, workShiftId: previousShiftId, type: "POSIBLE_OLVIDO_SALIDA", actualAt, severity: "CRITICA", notify: false, db });
+}
+
+export async function evaluateShiftEntry(employeeId: string, workShiftId: string, actualAt: Date, options: ShiftEvaluationOptions & { rotationEntry?: RotationEntryPayload } = {}) {
+  if (options.rotationEntry) return evaluateRotationEntry(employeeId, workShiftId, actualAt, options.rotationEntry, options);
   const db = options.db ?? prisma;
   const { employeeAssignments, activeTemplates } = await loadMatchingContext(employeeId);
-  const match = matchShiftForEmployee({ actualAt, employeeAssignments, activeTemplates });
+  // P8 (§20): en un feriado convocado con plantilla, la entrada se evalúa
+  // contra ESA plantilla (adopción, puntualidad y salida), no contra el turno
+  // habitual. Mismo día calendario que el matching (P9).
+  const convocationTemplateId = await loadConvocationTemplateId(employeeId, argentinaDateKey(actualAt));
+  const matchingAssignments: EmployeeShiftAssignmentRef[] = convocationTemplateId ? [{ shiftTemplateId: convocationTemplateId, status: "HABILITADO" }] : employeeAssignments;
+  const match = matchShiftForEmployee({ actualAt, employeeAssignments: matchingAssignments, activeTemplates });
 
   // Etapa 13E: un turno GENERAL_UNASSIGNED (ajeno -- coincide por horario
   // pero no está asignado a este empleado) nunca se adopta como el turno real
@@ -316,13 +473,37 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // La condición `match.case !== "GENERAL_UNASSIGNED"` de acá abajo queda
   // como defensa en profundidad (nunca hace daño, documenta la invariante) —
   // no como el mecanismo que evita la adopción, que ahora es estructural.
-  if (match.template && match.case !== "GENERAL_UNASSIGNED") {
+  const adoptedTemplate = match.template && match.case !== "GENERAL_UNASSIGNED" ? match.template : null;
+  if (adoptedTemplate) {
     await db.workShift.update({
       where: { id: workShiftId },
-      data: { shiftTemplateId: match.template.id, maxAllowedMinutes: match.template.absoluteOpenShiftLimitMinutes },
+      // R4.6 (§25.9): las reglas quedan congeladas junto con la adopción.
+      data: { shiftTemplateId: adoptedTemplate.id, maxAllowedMinutes: adoptedTemplate.absoluteOpenShiftLimitMinutes, templateRulesSnapshot: buildTemplateRulesSnapshot(adoptedTemplate, new Date()) },
     });
   }
 
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): la obligación decide primero.
+  // La fecha operativa es la misma que usan el paso de francos y la exclusión
+  // de horas (con la plantilla adoptada). En franco o feriado no convocado la
+  // plantilla se sigue adoptando (fija la fecha operativa y los límites de
+  // jornada abierta), pero no hay turno exigible: sin alertas de turno.
+  const dateKey = workShiftOperationalDateKey(actualAt, adoptedTemplate, null);
+  const facts = await loadEntryDayFacts(employeeId, dateKey);
+  const classification = classifyFixedEntry({
+    match,
+    facts,
+    hasVigentEnabledAssignment: hasVigentEnabledAssignment(employeeAssignments, new Set(activeTemplates.map((template) => template.id)), dateKey),
+  });
+  if (classification.kind === "UNSCHEDULED") {
+    if (!(await isOutOfShiftAlertSuppressed(employeeId, actualAt, "TURNO_NO_IDENTIFICADO"))) {
+      await recordInformativeShiftAlert({ employeeId, workShiftId, actualAt, reason: classification.reason, dateKey, db: options.db });
+    }
+    return;
+  }
+  // Franco: sólo ACTIVIDAD_EN_FRANCO (paso de francos). Convocado sin turno: sólo diagnóstico.
+  if (classification.kind === "DAY_OFF" || classification.kind === "CONVOKED_WITHOUT_SCHEDULE") return;
+
+  // ASSIGNED / NO_ASSIGNMENTS: exactamente como antes.
   const configurationAlertType = alertTypeForMatch(match);
   if (configurationAlertType && !(await isOutOfShiftAlertSuppressed(employeeId, actualAt, configurationAlertType))) {
     await createShiftAlert({ employeeId, workShiftId, type: configurationAlertType, actualAt, differenceMinutes: match.differenceMinutes, db: options.db });
@@ -360,12 +541,27 @@ export async function evaluateShiftEntry(employeeId: string, workShiftId: string
   // genera ninguna fila nueva.
 }
 
-async function resolveMatchForExit(employeeId: string, shiftTemplateId: string | null): Promise<ShiftMatchResult> {
+type ExitShiftRules = { shiftTemplateId: string | null; templateRulesSnapshot?: unknown };
+
+/**
+ * R4.4: la plantilla del bloque congelado es la del turno (sin ShiftAssignment: la rotación es la evidencia).
+ * R4.6 (§25.9): con snapshot, sus reglas congeladas gobiernan la salida (sin leer la plantilla en vivo).
+ */
+async function resolveMatchForBlock(shift: ExitShiftRules & { shiftTemplateId: string }): Promise<ShiftMatchResult> {
+  const template = effectiveShiftTemplate(shift, null) ?? await prisma.shiftTemplate.findUnique({ where: { id: shift.shiftTemplateId } });
+  if (!template) return { case: "NO_MATCH", template: null, differenceMinutes: null };
+  return { case: "ENABLED", template: toTemplateRef(template), differenceMinutes: null };
+}
+
+async function resolveMatchForExit(employeeId: string, shift: ExitShiftRules): Promise<ShiftMatchResult> {
+  const { shiftTemplateId } = shift;
   if (!shiftTemplateId) return { case: "NO_MATCH", template: null, differenceMinutes: null };
-  const [template, assignment] = await Promise.all([
-    prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } }),
+  const frozen = effectiveShiftTemplate(shift, null);
+  const [live, assignment] = await Promise.all([
+    frozen ? Promise.resolve(null) : prisma.shiftTemplate.findUnique({ where: { id: shiftTemplateId } }),
     prisma.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } }),
   ]);
+  const template: ShiftTemplateLike | null = frozen ?? live;
   if (!template) return { case: "NO_MATCH", template: null, differenceMinutes: null };
   const templateRef = toTemplateRef(template);
   if (!assignment) return { case: "GENERAL_UNASSIGNED", template: templateRef, differenceMinutes: null };
@@ -511,10 +707,11 @@ export async function evaluateShiftExit(
   classifiedSegments: ClassifiedSegmentAlertInput[] = [],
   // PERF-5A: la jornada recién cerrada, tal como la devolvió su transacción;
   // sin ella se lee de la base (cierres sin ese dato a mano).
-  closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId">,
+  closedShift?: Pick<WorkShift, "startAt" | "totalMinutes" | "shiftTemplateId"> & Partial<Pick<WorkShift, "shiftTemplateSource" | "scheduledStartAt" | "templateRulesSnapshot">>,
   // PERF-5D: el post-proceso durable pasa su transacción y necesita que un
   // fallo se propague (para reintentar el paso) en vez de quedar sólo logueado.
-  options: ShiftEvaluationOptions & { rethrow?: boolean } = {},
+  // R4.4: `rotationExit` = salida señalada como posible olvido de salida.
+  options: ShiftEvaluationOptions & { rethrow?: boolean; rotationExit?: RotationExitPayload } = {},
 ) {
   try {
     const shift = closedShift ?? await (options.db ?? prisma).workShift.findUnique({ where: { id: workShiftId } });
@@ -524,16 +721,30 @@ export async function evaluateShiftExit(
     // exclusivamente `shift.shiftTemplateId`, ya resuelto en el ingreso
     // (Etapa 13A: siempre el turno propio del empleado cuando aplica ese
     // día). Confirmado con test de regresión, sin necesidad de cambios acá.
-    const match = await resolveMatchForExit(employeeId, shift.shiftTemplateId);
+    // R4.4: jornada con bloque de rotación congelado → su plantilla gobierna la
+    // salida sin exigir ShiftAssignment (G6) y la salida programada sale del
+    // inicio programado del bloque. Jornadas legacy: exactamente como antes.
+    const blockStartAt = isRotationBlockShift(shift) ? shift.scheduledStartAt : null;
+    const match = isRotationBlockShift(shift) ? await resolveMatchForBlock(shift) : await resolveMatchForExit(employeeId, shift);
 
-    const punctuality = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt });
+    // R4.5 (§25.7): jornada legacy que adoptó su plantilla en un franco o un
+    // feriado no convocado — no había turno exigible: sin alertas de turno
+    // (fuera de turno, salida anticipada/tardía, jornada insuficiente). Se
+    // relee al cerrar: un franco cargado después del ingreso también prevalece.
+    // Jornada extendida y conceptos siguen evaluándose (anomalías propias).
+    const legacyTemplate = !blockStartAt && match.template && match.case !== "GENERAL_UNASSIGNED" ? match.template : null;
+    const withoutEnforceableShift = legacyTemplate
+      ? hasNoEnforceableShift(await loadEntryDayFacts(employeeId, workShiftOperationalDateKey(shift.startAt, legacyTemplate, null)))
+      : false;
+    const punctualityResult = evaluateExitPunctuality({ match, startAt: shift.startAt, actualExitAt: actualAt, scheduledStartAt: blockStartAt });
+    const punctuality = withoutEnforceableShift ? { ...punctualityResult, lateLeave: false, earlyLeave: false } : punctualityResult;
 
     // Etapa 10D: régimen (si tiene extendedShiftAlertMinutes seteado) gana por
     // sobre el umbral del turno para decidir JORNADA_EXTENDIDA — ver
     // evaluateWorkedDuration para la prioridad exacta (Régimen → Turno → Default).
     const regime = await resolveActiveWorkRegime(employeeId, shift.startAt);
-    const overlap = evaluateOutOfShiftWorkday({ match, actualStartAt: shift.startAt, actualEndAt: actualAt });
-    const outsideShift = regime?.kind !== "SIN_TURNO" && overlap.evaluated && overlap.outsideShift;
+    const overlap = evaluateOutOfShiftWorkday({ match, actualStartAt: shift.startAt, actualEndAt: actualAt, scheduledStartAt: blockStartAt });
+    const outsideShift = !withoutEnforceableShift && regime?.kind !== "SIN_TURNO" && overlap.evaluated && overlap.outsideShift;
     if (outsideShift) {
       // La alerta temprana de ingreso puede haber sido notificada y no puede
       // "desenviarse". Se conserva el historial, pero deja de quedar activa
@@ -550,7 +761,8 @@ export async function evaluateShiftExit(
     // futuro que vuelva a resolver GENERAL_UNASSIGNED acá. Sin cambios para
     // ENABLED/DISABLED_FOR_EMPLOYEE (evidencia real de una asignación).
     const durationTemplate = match.case === "GENERAL_UNASSIGNED" ? null : match.template;
-    const duration = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    const durationResult = evaluateWorkedDuration({ totalMinutes: shift.totalMinutes ?? 0, template: durationTemplate, regimeMaximumMinutes: regime?.extendedShiftAlertMinutes ?? null });
+    const duration = withoutEnforceableShift ? { ...durationResult, insufficientHours: false } : durationResult;
 
     const byStatus = (status: ClassifiedSegmentAlertInput["conceptStatus"]) => classifiedSegments.filter((segment) => segment.conceptStatus === status);
     const noHabilitadoCount = byStatus("CONCEPTO_NO_HABILITADO").length;
@@ -566,7 +778,21 @@ export async function evaluateShiftExit(
       SALIDA_ANTICIPADA: !outsideShift && punctuality.earlyLeave,
       JORNADA_INSUFICIENTE: duration.insufficientHours,
     };
-    const notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => fired[type]) ?? null;
+    let notifiableWinner: ShiftAlertTypeValue | null = EXIT_ALERT_NOTIFICATION_PRIORITY.find((type) => fired[type]) ?? null;
+    // R4.4: salida cerca del inicio de otro turno (posible olvido de salida).
+    // Es una anomalía relevante: UN solo aviso para la situación, el que ya
+    // elige la prioridad de salida, con su contexto. Por la condición del
+    // disparador siempre corresponde SALIDA_TARDIA; si por configuración no
+    // disparara ninguna, se avisa igual con SALIDA_TARDIA.
+    const rotationExit = options.rotationExit;
+    if (rotationExit && !notifiableWinner) {
+      fired.SALIDA_TARDIA = true;
+      notifiableWinner = "SALIDA_TARDIA";
+    }
+    const winnerMessage = rotationExit
+      ? `Registró la salida a las ${hhmm(actualAt)} del turno de las ${hhmm(rotationExit.previousBlock.scheduledStartAt)} a las ${hhmm(rotationExit.previousBlock.scheduledEndAt)}, cerca de su turno de las ${hhmm(rotationExit.nextBlock.scheduledStartAt)}${rotationExit.confirmed ? ", y confirmó en el fichador que quería registrar esa salida" : ""}. Revisá si corresponde a una jornada extendida o a un olvido de salida.`
+      : undefined;
+    const messageFor = (type: ShiftAlertTypeValue) => (type === notifiableWinner ? winnerMessage : undefined);
 
     if (outsideShift) {
       await createShiftAlert({
@@ -577,20 +803,21 @@ export async function evaluateShiftExit(
         scheduledAt: overlap.scheduledStartAt ?? undefined,
         differenceMinutes: 0,
         notify: notifiableWinner === "JORNADA_FUERA_DE_TURNO",
+        message: messageFor("JORNADA_FUERA_DE_TURNO"),
         db: options.db,
       });
     }
     if (!outsideShift && punctuality.earlyLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA", db: options.db });
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_ANTICIPADA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_ANTICIPADA", message: messageFor("SALIDA_ANTICIPADA"), db: options.db });
     }
-    if (!outsideShift && punctuality.lateLeave) {
-      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? undefined, differenceMinutes: punctuality.differenceMinutes, notify: notifiableWinner === "SALIDA_TARDIA", db: options.db });
+    if ((!outsideShift && punctuality.lateLeave) || (rotationExit && notifiableWinner === "SALIDA_TARDIA")) {
+      await createShiftAlert({ employeeId, workShiftId, type: "SALIDA_TARDIA", actualAt, scheduledAt: punctuality.scheduledExitAt ?? rotationExit?.previousBlock.scheduledEndAt ?? undefined, differenceMinutes: punctuality.differenceMinutes ?? rotationExit?.minutesAfterScheduledEnd ?? null, notify: notifiableWinner === "SALIDA_TARDIA", message: messageFor("SALIDA_TARDIA"), db: options.db });
     }
     if (duration.insufficientHours) {
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_INSUFICIENTE", db: options.db });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_INSUFICIENTE", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_INSUFICIENTE", message: messageFor("JORNADA_INSUFICIENTE"), db: options.db });
     }
     if (duration.extendedShift) {
-      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_EXTENDIDA", db: options.db });
+      await createShiftAlert({ employeeId, workShiftId, type: "JORNADA_EXTENDIDA", actualAt, differenceMinutes: shift.totalMinutes, notify: notifiableWinner === "JORNADA_EXTENDIDA", message: messageFor("JORNADA_EXTENDIDA"), db: options.db });
     }
 
     if (classifiedSegments.length > 0) {

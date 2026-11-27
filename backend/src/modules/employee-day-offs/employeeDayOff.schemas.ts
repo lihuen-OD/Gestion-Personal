@@ -41,7 +41,6 @@ export const saveEmployeeDayOffsSchema = z.object({
   date: dateKeySchema,
   // Obligatorio sólo para que RRHH corrija un período enviado/aprobado
   // (EMPLOYEE_DAY_OFF.md §12); queda en la auditoría.
-  correctionReason: z.string().trim().max(500).nullable().optional(),
   employees: z.array(employeeDayOffItemSchema).min(1).max(500),
 });
 

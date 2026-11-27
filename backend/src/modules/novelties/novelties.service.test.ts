@@ -7,7 +7,8 @@ import { computeNoveltyCoverage, loadRealWorkedMinutesByDay } from "./noveltyCov
 import { prisma } from "../../shared/prisma/client";
 import { storageService } from "../../shared/storage/storage.service";
 import { AppError } from "../../shared/errors/AppError";
-import { persistNoveltyCoverageWithin } from "./noveltyCoverage.service";
+import { assertNoveltyCoverageWritableWithin, persistNoveltyCoverageWithin } from "./noveltyCoverage.service";
+import { auditService } from "../audit/audit.service";
 import { roles } from "../../shared/security/roles";
 
 vi.mock("./novelties.repository", () => ({
@@ -16,6 +17,7 @@ vi.mock("./novelties.repository", () => ({
     approve: vi.fn(),
     reject: vi.fn(),
     remove: vi.fn(),
+    update: vi.fn(),
     countEmployees: vi.fn(),
     findNoveltyType: vi.fn(),
     createMany: vi.fn(),
@@ -64,6 +66,7 @@ const repo = noveltiesRepository as unknown as {
   approve: Mock;
   reject: Mock;
   remove: Mock;
+  update: Mock;
   countEmployees: Mock;
   findNoveltyType: Mock;
   createMany: Mock;
@@ -100,7 +103,7 @@ function novelty(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "novelty-1",
     status: "PENDIENTE",
-    noveltyType: { code: "VAC", name: "Vacaciones", approvalRoles: [] },
+    noveltyType: { code: "VAC", name: "Vacaciones" },
     employee: { legajo: "100" },
     ...overrides,
   };
@@ -108,79 +111,6 @@ function novelty(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-});
-
-// Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
-// Novedades es justificación administrativa — nunca crea ni modifica
-// TimeEntry, sea cual sea su status o `timeEntryBehavior` de su
-// NoveltyType. approve() sólo cambia status + auditoría, siempre con la
-// misma firma de 2 argumentos — no existe ningún "effect" horario que armar
-// ni pasar.
-describe("noveltiesService.approve", () => {
-  it("aprueba una novedad PENDIENTE cambiando sólo status/auditoría, sin ningún efecto horario", async () => {
-    repo.findById.mockResolvedValue(novelty());
-    repo.approve.mockResolvedValue(novelty({ status: "APROBADO" }));
-
-    const result = await noveltiesService.approve("novelty-1", rrhhUser);
-
-    expect(result.status).toBe("APROBADO");
-    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id, expect.anything());
-  });
-
-  it("aprobar un tipo con timeEntryBehavior=BLOQUEA_NUEVA_CARGA tampoco dispara ningún efecto horario (llamada idéntica)", async () => {
-    repo.findById.mockResolvedValue(
-      novelty({ noveltyType: { code: "LLT", name: "Llegada tarde", approvalRoles: [], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" } }),
-    );
-    repo.approve.mockResolvedValue(novelty({ status: "APROBADO", noveltyType: { code: "LLT", name: "Llegada tarde" } }));
-
-    await noveltiesService.approve("novelty-1", rrhhUser);
-
-    expect(repo.approve).toHaveBeenCalledWith("novelty-1", rrhhUser.id, expect.anything());
-    expect(repo.approve).toHaveBeenCalledTimes(1);
-  });
-
-  it("impide aprobar una novedad ya aprobada (regresion: la guarda ya existia, se protege con test)", async () => {
-    repo.findById.mockResolvedValue(novelty({ status: "APROBADO" }));
-
-    await expect(noveltiesService.approve("novelty-1", rrhhUser)).rejects.toMatchObject({
-      statusCode: 400,
-      code: "NOVELTY_STATUS_NOT_APPROVABLE",
-    });
-    expect(repo.approve).not.toHaveBeenCalled();
-  });
-
-  it("impide que un rol sin permiso de aprobacion para ese tipo de novedad apruebe", async () => {
-    repo.findById.mockResolvedValue(novelty({ noveltyType: { code: "VAC", name: "Vacaciones", approvalRoles: [] } }));
-
-    await expect(noveltiesService.approve("novelty-1", supervisionUser)).rejects.toMatchObject({
-      statusCode: 403,
-      code: "NOVELTY_APPROVAL_FORBIDDEN",
-    });
-    expect(repo.approve).not.toHaveBeenCalled();
-  });
-});
-
-describe("noveltiesService.reject", () => {
-  it("rechaza una novedad PENDIENTE con motivo, sin tocar ningún TimeEntry", async () => {
-    repo.findById.mockResolvedValue(novelty());
-    repo.reject.mockResolvedValue(novelty({ status: "RECHAZADO" }));
-
-    const result = await noveltiesService.reject("novelty-1", { reason: "Datos incompletos" }, rrhhUser);
-
-    expect(result.status).toBe("RECHAZADO");
-    // reject() sólo recibe el id: no hay ningún dato de horas para pasar.
-    expect(repo.reject).toHaveBeenCalledWith("novelty-1", expect.anything());
-  });
-
-  it("impide rechazar dos veces la misma novedad (regresion)", async () => {
-    repo.findById.mockResolvedValue(novelty({ status: "RECHAZADO" }));
-
-    await expect(noveltiesService.reject("novelty-1", { reason: "otra vez" }, rrhhUser)).rejects.toMatchObject({
-      statusCode: 400,
-      code: "NOVELTY_STATUS_NOT_REJECTABLE",
-    });
-    expect(repo.reject).not.toHaveBeenCalled();
-  });
 });
 
 // Etapa 15G.1 — ajuste de residual (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
@@ -322,25 +252,27 @@ describe("noveltiesService.create", () => {
     );
   });
 
-  it("un rol no-RRHH crea la novedad PENDIENTE y notifica a RH", async () => {
+  it("Nivel 2 crea la novedad efectiva (APROBADO) al guardar y no notifica a RH", async () => {
     repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision] }));
 
     const items = await noveltiesService.create(createInput(), supervisionUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
-    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", supervisionUser.id, expect.anything());
+    const { notifyRrhh } = await import("../workforce-management/workforce.service");
+    expect(notifyRrhh).not.toHaveBeenCalled();
   });
 
   // Etapa 15G.1 (docs/decisions/NOVELTIES_AS_ADMINISTRATIVE_JUSTIFICATION_15G1.md):
   // decisión funcional final — Novedades NUNCA crea/modifica TimeEntry, sin
   // importar status, rol de quien crea, ni `timeEntryBehavior` del tipo.
   // Estos tests fijan esa garantía para las 4 combinaciones más sensibles:
-  // PENDIENTE/APROBADO × NO_BLOQUEA/BLOQUEA_NUEVA_CARGA — en los 4 casos la
+  // Nivel 2/RRHH × NO_BLOQUEA/BLOQUEA_NUEVA_CARGA — en los 4 casos la
   // llamada a createMany es idéntica en forma (3 argumentos, nunca un 4to
   // "effect").
   it.each([
-    { label: "PENDIENTE + timeEntryBehavior=NO_BLOQUEA", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision] }) },
-    { label: "PENDIENTE + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: supervisionUser, status: "PENDIENTE", type: noveltyType({ allowedLoadRoles: [roles.supervision], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
+    { label: "Nivel 2 + timeEntryBehavior=NO_BLOQUEA", user: supervisionUser, status: "APROBADO", type: noveltyType({ allowedLoadRoles: [roles.supervision] }) },
+    { label: "Nivel 2 + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: supervisionUser, status: "APROBADO", type: noveltyType({ allowedLoadRoles: [roles.supervision], timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
     { label: "APROBADO (RRHH) + timeEntryBehavior=NO_BLOQUEA", user: rrhhUser, status: "APROBADO", type: noveltyType() },
     { label: "APROBADO (RRHH) + timeEntryBehavior=BLOQUEA_NUEVA_CARGA", user: rrhhUser, status: "APROBADO", type: noveltyType({ timeEntryBehavior: "BLOQUEA_NUEVA_CARGA" }) },
   ])("$label: createMany se llama sin ningún efecto horario (input, estado, autor y la transacción)", async ({ user, status, type }) => {
@@ -446,61 +378,19 @@ describe("noveltiesService.create", () => {
     expect(repo.createMany).not.toHaveBeenCalled();
   });
 
-  // Etapa 15L.2A (docs/decisions/NOVELTY_TYPE_MODEL_NORMALIZATION_15L2A.md,
-  // punto 15): requiresApproval ahora decide de verdad el estado inicial
-  // para roles no-RRHH. RRHH sigue siendo autoridad final sin excepción.
-  describe("Etapa 15L.2A — requiresApproval con efecto real", () => {
-    it("Nivel 2 con requiresApproval=true crea PENDIENTE y notifica a RH", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision], requiresApproval: true }));
+  // Simplificación operativa: no existe aprobación posterior; N1/N2/N3
+  // autorizados crean siempre efectivo (APROBADO) y nadie es notificado.
+  it.each([
+    ["Nivel 2", () => supervisionUser, roles.supervision],
+    ["Nivel 3", () => cargaUser, roles.cargaHoraria],
+  ] as const)("%s crea APROBADO sin notificar a RH", async (_label, user, role) => {
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [role] }));
 
-      await noveltiesService.create(createInput(), supervisionUser);
+    await noveltiesService.create(createInput(), user());
 
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
-      const { notifyRrhh } = await import("../workforce-management/workforce.service");
-      expect(notifyRrhh).toHaveBeenCalled();
-    });
-
-    it("Nivel 2 con requiresApproval=false crea APROBADO directo y NO notifica a RH", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision], requiresApproval: false }));
-
-      await noveltiesService.create(createInput(), supervisionUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", supervisionUser.id, expect.anything());
-      const { notifyRrhh } = await import("../workforce-management/workforce.service");
-      expect(notifyRrhh).not.toHaveBeenCalled();
-    });
-
-    it("Nivel 3 con requiresApproval=false crea APROBADO directo (mismo criterio que Nivel 2)", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.cargaHoraria], requiresApproval: false }));
-
-      await noveltiesService.create(createInput(), cargaUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", cargaUser.id, expect.anything());
-    });
-
-    it("Nivel 3 con requiresApproval=true crea PENDIENTE", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.cargaHoraria], requiresApproval: true }));
-
-      await noveltiesService.create(createInput(), cargaUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", cargaUser.id, expect.anything());
-    });
-
-    it("requiresApproval ausente (undefined) sigue tratandose como true — sin cambio de comportamiento", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.supervision] }));
-
-      await noveltiesService.create(createInput(), supervisionUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "PENDIENTE", supervisionUser.id, expect.anything());
-    });
-
-    it("RRHH crea APROBADO sin importar requiresApproval, incluso si el tipo tiene requiresApproval=false", async () => {
-      repo.findNoveltyType.mockResolvedValue(noveltyType({ requiresApproval: false }));
-
-      await noveltiesService.create(createInput(), rrhhUser);
-
-      expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", rrhhUser.id, expect.anything());
-    });
+    expect(repo.createMany).toHaveBeenCalledWith(expect.anything(), "APROBADO", user().id, expect.anything());
+    const { notifyRrhh } = await import("../workforce-management/workforce.service");
+    expect(notifyRrhh).not.toHaveBeenCalled();
   });
 
   // Etapa 15L.2B.1 (corrección puntual, docs/decisions/
@@ -798,7 +688,7 @@ describe("noveltiesService.create — Etapa 15G.3 (duplicado/solapamiento del mi
     const items = await noveltiesService.create(createInput({ employeeIds: ["emp-2"] }), rrhhUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
-    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-2"], "type-1", expect.any(Date), null);
+    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-2"], "type-1", expect.any(Date), null, undefined);
   });
 
   it("5. mismo empleado + distinto tipo -> permite (la regla sólo compara contra el mismo noveltyTypeId, no inventa incompatibilidad cruzada)", async () => {
@@ -807,7 +697,7 @@ describe("noveltiesService.create — Etapa 15G.3 (duplicado/solapamiento del mi
     const items = await noveltiesService.create(createInput({ noveltyTypeId: "type-2" }), rrhhUser);
 
     expect(items).toEqual([{ id: "novelty-new" }]);
-    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-1"], "type-2", expect.any(Date), null);
+    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-1"], "type-2", expect.any(Date), null, undefined);
   });
 
   it("6. mismo empleado + mismo tipo + rango identico -> bloquea (NOVELTY_DUPLICATE)", async () => {
@@ -920,7 +810,7 @@ describe("createNoveltySchema — fechas invalidas", () => {
 describe("noveltiesService.previewCoverage — trabajo real y estado inicial", () => {
   const type = (overrides: Record<string, unknown> = {}) => ({
     id: "type-1", code: "TB", name: "Trámite bancario", status: "ACTIVO", allowsDateRange: false, allowsHours: false,
-    requiresApproval: true, requiresObservation: false, coverageMode: "FIXED_MINUTES", allowedLoadRoles: [roles.rrhh, roles.supervision, roles.cargaHoraria],
+    requiresObservation: false, coverageMode: "FIXED_MINUTES", allowedLoadRoles: [roles.rrhh, roles.supervision, roles.cargaHoraria],
     ...overrides,
   });
   const day = (overrides: Record<string, unknown> = {}) => ({
@@ -945,7 +835,7 @@ describe("noveltiesService.previewCoverage — trabajo real y estado inicial", (
 
     const result = await noveltiesService.previewCoverage(input(), cargaUser);
 
-    expect(result.initialStatus).toBe("PENDIENTE");
+    expect(result.initialStatus).toBe("APROBADO");
     expect(result.employees[0]!.days[0]).toMatchObject({ date: "2026-11-16", baseMinutes: 240, workedMinutes: 300, stateWhenApproved: "REVIEW_REQUIRED", reviewReasons: ["REAL_WORK_ON_INCOMPATIBLE"] });
     expect(loadRealWorkedMinutesByDay).toHaveBeenCalledWith(prisma, ["5b1a8a52-8f1f-4b8f-9d63-2a4b9d1c6e01"], "2026-11-16", "2026-11-16");
   });
@@ -956,7 +846,7 @@ describe("noveltiesService.previewCoverage — trabajo real y estado inicial", (
     expect(counted.initialStatus).toBe("APROBADO");
     expect(counted.employees[0]!.days[0]).toMatchObject({ workedMinutes: 0, stateWhenApproved: "COUNTED", reviewReasons: [] });
 
-    arrange({ coverageMode: "MANUAL_MINUTES", requiresApproval: false, allowsHours: true }, [day({ countsTowardTotal: false, realWorkCompatibility: "COMPATIBLE", baseMinutes: 60, effectiveBaseMinutes: 60, computedMinutes: 60 })], { "2026-11-16": 480 });
+    arrange({ coverageMode: "MANUAL_MINUTES", allowsHours: true }, [day({ countsTowardTotal: false, realWorkCompatibility: "COMPATIBLE", baseMinutes: 60, effectiveBaseMinutes: 60, computedMinutes: 60 })], { "2026-11-16": 480 });
     const informative = await noveltiesService.previewCoverage(input({ quantityHours: 1 }), cargaUser);
     expect(informative.initialStatus).toBe("APROBADO");
     expect(informative.employees[0]!.days[0]).toMatchObject({ workedMinutes: 480, stateWhenApproved: "INFORMATIVE", reviewReasons: [] });
@@ -1102,5 +992,54 @@ describe("noveltiesService — tamaño del lote con documento", () => {
     await noveltiesService.create(createInput({ employeeIds: ids(250) }), rrhhUser);
     expect(repo.createMany).toHaveBeenCalledWith(expect.objectContaining({ employeeIds: ids(250) }), "APROBADO", rrhhUser.id, expect.anything());
     expect(storage.uploadManagedObject).not.toHaveBeenCalled();
+  });
+});
+
+// Simplificación operativa: corregir una novedad la deja efectiva al guardar,
+// respeta el alcance por empleado y un período CERRADO la rechaza para todos.
+describe("noveltiesService.update", () => {
+  const existing = () => novelty({
+    employeeId: "emp-1",
+    noveltyTypeId: "type-1",
+    fromDate: new Date("2026-11-16T00:00:00.000Z"),
+    toDate: null,
+    quantityHours: null,
+    quantityDays: null,
+    observation: null,
+    targetHourConceptId: null,
+    status: "APROBADO",
+  });
+
+  it("fuera de alcance (o inexistente) → 404 sin escribir", async () => {
+    repo.findById.mockResolvedValue(null);
+
+    await expect(noveltiesService.update("novelty-1", { observation: "x" }, cargaUser)).rejects.toMatchObject({ statusCode: 404, code: "NOVELTY_NOT_FOUND" });
+    expect(repo.findById).toHaveBeenCalledWith("novelty-1", expect.objectContaining({ assignments: expect.anything() }));
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("Nivel 3 corrige una novedad de su alcance: recalcula cobertura, excluye la propia fila del solapamiento y audita", async () => {
+    repo.findById.mockResolvedValue(existing());
+    repo.findNoveltyType.mockResolvedValue(noveltyType({ allowedLoadRoles: [roles.cargaHoraria] }));
+    repo.findOverlapping.mockResolvedValue([]);
+    repo.update.mockResolvedValue({ id: "novelty-1", status: "APROBADO", noveltyType: { code: "VAC" }, employee: { legajo: "100" } });
+
+    await noveltiesService.update("novelty-1", { observation: "Fecha corregida" }, cargaUser);
+
+    expect(repo.findOverlapping).toHaveBeenCalledWith(["emp-1"], "type-1", expect.any(Date), null, "novelty-1");
+    expect(repo.update).toHaveBeenCalledWith("novelty-1", expect.objectContaining({ observation: "Fecha corregida" }), txStub);
+    expect(persistNoveltyCoverageWithin).toHaveBeenCalledWith(txStub, ["novelty-1"], { protectedPeriods: "REJECT" });
+    expect(auditService.register).toHaveBeenCalledWith(expect.objectContaining({ action: "UPDATE", entity: "Novelty", entityId: "novelty-1" }));
+  });
+
+  it("período CERRADO → PERIOD_CLOSED para todos los roles, sin escribir", async () => {
+    repo.findById.mockResolvedValue(existing());
+    repo.findNoveltyType.mockResolvedValue(noveltyType());
+    repo.findOverlapping.mockResolvedValue([]);
+    vi.mocked(assertNoveltyCoverageWritableWithin).mockRejectedValueOnce(Object.assign(new Error("cerrado"), { statusCode: 409, code: "PERIOD_CLOSED" }));
+
+    await expect(noveltiesService.update("novelty-1", { observation: "x" }, rrhhUser)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+    expect(repo.update).not.toHaveBeenCalled();
+    expect(auditService.register).not.toHaveBeenCalled();
   });
 });

@@ -92,8 +92,8 @@ beforeEach(() => {
   vi.mocked(rebuildClosureSnapshots).mockResolvedValue([]);
 });
 
-const save = (employees: Array<{ employeeId: string; status: "ACTIVO" | "CANCELADO"; notes?: string | null }>, user = rrhh, correctionReason?: string) =>
-  employeeDayOffService.save({ date: DATE, employees, ...(correctionReason ? { correctionReason } : {}) }, user, { userId: user.id, ipAddress: "1.1.1.1" });
+const save = (employees: Array<{ employeeId: string; status: "ACTIVO" | "CANCELADO"; notes?: string | null }>, user = rrhh) =>
+  employeeDayOffService.save({ date: DATE, employees }, user, { userId: user.id, ipAddress: "1.1.1.1" });
 
 describe("employeeDayOffService.save — selección múltiple, auditoría e idempotencia", () => {
   it("asigna franco a varias personas de una vez, cada una con su auditoría humana (before/after, usuario, empleado, fecha)", async () => {
@@ -186,30 +186,22 @@ describe("employeeDayOffService.save — permisos por alcance (backend, nunca s�
 });
 
 describe("employeeDayOffService.save — períodos cerrados (EMPLOYEE_DAY_OFF.md §12)", () => {
-  const closed = () => vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([[`${EMP_1}:2026-11`, "APROBADO"]]));
+  const closed = () => vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([[`${EMP_1}:2026-11`, "CERRADO" as const]]));
 
-  it.each([["Nivel 2", supervision], ["Nivel 3", carga]])("%s no puede modificar un franco de un período enviado/aprobado → 409 PERIOD_CLOSED", async (_label, user) => {
+  it.each([["Nivel 2", supervision], ["Nivel 3", carga]])("%s no puede modificar un franco de un período CERRADO → 409 PERIOD_CLOSED", async (_label, user) => {
     closed();
     await expect(save([{ employeeId: EMP_1, status: "ACTIVO" }], user)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     expect(repo.create).not.toHaveBeenCalled();
   });
 
-  it("RRHH sin motivo → 400; con motivo → guarda, audita el motivo y NO reconstruye el snapshot del cierre protegido", async () => {
+  it("RRHH tampoco modifica un período CERRADO → 409 PERIOD_CLOSED", async () => {
     closed();
-    await expect(save([{ employeeId: EMP_1, status: "ACTIVO" }], rrhh)).rejects.toMatchObject({ statusCode: 400, code: "DAY_OFF_CORRECTION_REASON_REQUIRED" });
-
-    vi.mocked(findClosuresForEmployeePeriods).mockResolvedValue([{ id: "closure-1", employeeId: EMP_1, period: "2026-11", snapshot: {} }]);
-    await save([{ employeeId: EMP_1, status: "ACTIVO" }], rrhh, "Franco acordado y omitido");
-
-    expect(repo.create).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(auditService.register).mock.calls[0]![0]).toMatchObject({
-      description: "Se asignó franco a Pérez, Ana · Legajo 10 para el 05/11/2026. Motivo: Franco acordado y omitido",
-      after: expect.objectContaining({ correctionReason: "Franco acordado y omitido" }),
-    });
-    expect(rebuildClosureSnapshots).toHaveBeenCalledWith(TX, [], { reason: "EMPLOYEE_DAY_OFF_CHANGED", date: DATE });
+    await expect(save([{ employeeId: EMP_1, status: "ACTIVO" }], rrhh)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(auditService.register).not.toHaveBeenCalled();
   });
 
-  it("período no protegido con snapshot (DEVUELTO): se reconstruye y se audita el recálculo", async () => {
+  it("período ABIERTO con snapshot (reabierto): se reconstruye y se audita el recálculo", async () => {
     const closure = { id: "closure-1", employeeId: EMP_1, period: "2026-11", snapshot: {} };
     vi.mocked(findClosuresForEmployeePeriods).mockResolvedValue([closure]);
     vi.mocked(rebuildClosureSnapshots).mockResolvedValue([{ ...closure, before: {}, after: {} }]);
@@ -269,7 +261,7 @@ describe("employeeDayOffService.save — feriado y actividad ya registrada", () 
 describe("employeeDayOffService.byDate", () => {
   it("devuelve personas del alcance con franco, convocatoria y período cerrado de esa fecha", async () => {
     repo.findCandidatesByDate.mockResolvedValue([[
-      { ...people[EMP_1], dayOffs: [{ id: "d1", status: "ACTIVO", notes: null, updatedAt: new Date("2026-11-01T00:00:00.000Z") }], holidayWorkAssignments: [], monthlyClosures: [{ status: "APROBADO" }] },
+      { ...people[EMP_1], dayOffs: [{ id: "d1", status: "ACTIVO", notes: null, updatedAt: new Date("2026-11-01T00:00:00.000Z") }], holidayWorkAssignments: [], monthlyClosures: [{ status: "CERRADO" }] },
       { ...people[EMP_2], dayOffs: [], holidayWorkAssignments: [{ id: "h1" }], monthlyClosures: [] },
     ], 2]);
 

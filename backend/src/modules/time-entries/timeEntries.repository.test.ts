@@ -275,7 +275,7 @@ describe("create/update TimeEntry — aplicación directa por rol (Etapa 6L.3)",
   it("corregir las horas a mano (cualquier rol) fija source ADMIN: la fila pasa a ser horas reconocidas por una persona (EMPLOYEE_DAY_OFF.md §7.1)", async () => {
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
-    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8, correctionReason: "Trabajó en su franco" } as never);
+    await timeEntriesRepository.update("entry-1", { employeeId: "employee-1", hourConceptId: "concept-normal", date }, { hours: 8 } as never);
 
     const call = mockedPrisma.__tx.timeEntry.update.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ hours: 8, source: "ADMIN" });
@@ -1594,9 +1594,9 @@ describe("closeOpenWorkShift — Etapa 13F (menos trabajo dentro del tx crítico
     await timeEntriesRepository.closeOpenWorkShift(closeInput());
 
     expect(mockedPrisma.employeePositionPeriod.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ employeeId }) }));
-    // Motor único (§16): reglas en alcance + reglas FERIADO + convocatorias.
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
-    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
+    // Motor único (§20): sólo reglas en alcance; la convocatoria no interviene.
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.hourConcept.findMany).toHaveBeenCalledTimes(1);
     // Ninguna corrió contra el `tx` mockeado -- confirma que no compiten por
     // el timeout de la transacción.
@@ -2262,6 +2262,102 @@ describe("rolloverExpiredOpenWorkShift — regresión de atribución de día/per
   });
 });
 
+// R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): qué guarda HOY el
+// cierre técnico de una jornada sin salida (Juanjo ficha un sábado y no
+// registra la salida; José olvida la salida de un bloque). Requisito vigente
+// que estos tests congelan: nunca se inventa una salida real (sin endAt ni
+// endPunchId); la jornada queda en FALTA_SALIDA con 0 h para revisión.
+describe("R1.1-C — cierre técnico sin salida: qué se guarda", () => {
+  const SATURDAY_0700 = new Date("2026-11-07T07:00:00.000-03:00");
+  const after = (minutes: number) => new Date(SATURDAY_0700.getTime() + minutes * 60_000);
+  const openShift = (extra: Record<string, unknown> = {}) => ({
+    id: "shift-sat",
+    employeeId: "employee-juanjo",
+    startAt: SATURDAY_0700,
+    maxAllowedMinutes: 1200,
+    source: "KIOSK",
+    hourConcept: { id: "concept-normal", name: "Hora normal" },
+    ...extra,
+  });
+
+  beforeEach(() => {
+    mockedPrisma.employeeWorkRegime.findFirst.mockResolvedValue(null);
+    mockedPrisma.__tx.workShift.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.__tx.timeEntry.create.mockResolvedValue({});
+  });
+
+  it("expireOpenWorkShifts: FALTA_SALIDA con 0 h y closedAt = momento del cierre; NO escribe endAt, endPunchId ni reviewStatus", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift()]);
+    const now = after(1201);
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(now);
+
+    expect(result.count).toBe(1);
+    const update = mockedPrisma.__tx.workShift.updateMany.mock.calls[0]![0] as { where: Record<string, unknown>; data: Record<string, unknown> };
+    expect(update.where).toEqual({ id: "shift-sat", status: "ABIERTO", endAt: null });
+    expect(update.data).toEqual({
+      status: "FALTA_SALIDA",
+      totalMinutes: 0,
+      hourConceptId: "concept-normal",
+      hourConceptName: "Hora normal",
+      observation: "0 h — Falta registrar la salida. La jornada venció y requiere revisión del encargado.",
+      closedAt: now,
+    });
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["endAt"]));
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["endPunchId"]));
+    expect(Object.keys(update.data)).not.toEqual(expect.arrayContaining(["reviewStatus"]));
+  });
+
+  it("expireOpenWorkShifts: un único TimeEntry de 0 h APROBADO con el source de la jornada; sin tramos (TimeSegment)", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift()]);
+
+    await timeEntriesRepository.expireOpenWorkShifts(after(1201));
+
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.create.mock.calls[0]![0]).toMatchObject({
+      data: { employeeId: "employee-juanjo", workShiftId: "shift-sat", hours: 0, totalMinutes: 0, status: "APROBADO", source: "KIOSK", segmentStartAt: SATURDAY_0700, period: "2026-11", day: 7 },
+    });
+    expect(mockedPrisma.__tx.timeSegment.create).not.toHaveBeenCalled();
+  });
+
+  it("expireOpenWorkShifts respeta `maxAllowedMinutes` de la jornada: 720 → no vence a los 720 min, vence a los 721", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift({ maxAllowedMinutes: 720 })]);
+
+    expect((await timeEntriesRepository.expireOpenWorkShifts(after(720))).count).toBe(0);
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+    expect((await timeEntriesRepository.expireOpenWorkShifts(after(721))).count).toBe(1);
+  });
+
+  it("COMPORTAMIENTO ACTUAL: sin concepto de hora resoluble (ni en la jornada ni NORMAL del legajo), la jornada vencida no se cierra y queda ABIERTA", async () => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([openShift({ hourConcept: null })]);
+    mockedPrisma.employeeHourConcept.findFirst.mockResolvedValue(null);
+
+    const result = await timeEntriesRepository.expireOpenWorkShifts(after(1201));
+
+    expect(result.count).toBe(0);
+    expect(mockedPrisma.__tx.workShift.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("COMPORTAMIENTO ACTUAL: el rollover deja la jornada vieja en FALTA_SALIDA sólo con estado + observación (sin endAt, closedAt ni totalMinutes) y le crea su TimeEntry de 0 h", async () => {
+    mockedPrisma.__tx.workShift.findFirst.mockResolvedValue({ id: "shift-0700", startAt: new Date("2026-11-06T07:00:00.000-03:00"), source: "KIOSK", hourConcept: { id: "concept-normal", name: "Hora normal" } });
+    mockedPrisma.__tx.attendancePunch.create.mockResolvedValue({ id: "punch-new" });
+    mockedPrisma.__tx.workShift.create.mockResolvedValue({ id: "shift-new" });
+
+    await timeEntriesRepository.rolloverExpiredOpenWorkShift({
+      openWorkShiftId: "shift-0700",
+      employeeId: "employee-jose",
+      source: "KIOSK" as never,
+      startAt: new Date("2026-11-07T04:01:00.000-03:00"),
+      missingOutObservation: "Olvido de salida.",
+    });
+
+    const claim = mockedPrisma.__tx.workShift.updateMany.mock.calls.map((call) => call[0] as { where: { id: string }; data: Record<string, unknown> }).find((call) => call.where.id === "shift-0700")!;
+    expect(claim.data).toEqual({ status: "FALTA_SALIDA", observation: "Olvido de salida." });
+    expect(mockedPrisma.__tx.timeEntry.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ workShiftId: "shift-0700", hours: 0, totalMinutes: 0 }) }));
+  });
+});
+
 // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: "Horas contables" = total
 // trabajado = Horas base + conceptos ADDITIVE_TO_WORKED_TOTAL (nunca WITHIN_BASE).
 describe("summary — horas contables = total trabajado (base + horas adicionales)", () => {
@@ -2301,30 +2397,29 @@ describe("summary — horas contables = total trabajado (base + horas adicionale
 
   // Etapa 14C.2: ver docs/decisions/TIME_ENTRIES_PERFORMANCE_14C2.md — las
   // queries pasaron de `prisma.$transaction([...])` a `Promise.all([...])`.
-  it("usa Promise.all (no $transaction) — las 6 queries son independientes entre sí", async () => {
+  it("usa Promise.all (no $transaction) — las consultas son independientes entre sí", async () => {
     await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
 
     expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockedPrisma.employee.count).toHaveBeenCalledTimes(3);
-    expect(mockedPrisma.timeEntry.groupBy).toHaveBeenCalledTimes(1);
+    // Sin conteo de cargas EN_REVISION: el circuito de aprobación fue retirado.
+    expect(mockedPrisma.timeEntry.groupBy).not.toHaveBeenCalled();
     expect(mockedPrisma.timeEntry.aggregate).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.hourConceptBreakdown.aggregate).toHaveBeenCalledTimes(1);
   });
 
-  it("mantiene el mismo cálculo de activeEmployees/coverage/reviewEmployees/pendingEmployees", async () => {
+  it("mantiene el mismo cálculo de activeEmployees/coverage/pendingEmployees y ya no informa reviewEmployees", async () => {
     mockedPrisma.employee.count.mockReset();
     mockedPrisma.employee.count.mockResolvedValueOnce(10).mockResolvedValueOnce(4).mockResolvedValueOnce(6);
-    mockedPrisma.timeEntry.groupBy.mockResolvedValue([{ employeeId: "e1" }, { employeeId: "e2" }]);
-
     const result = await timeEntriesRepository.summary("2026-08", employeeAccessWhere);
 
     expect(result).toMatchObject({
       activeEmployees: 10,
       employeesWithEntries: 4,
       pendingEmployees: 6,
-      reviewEmployees: 2,
       coverage: 40,
     });
+    expect(result).not.toHaveProperty("reviewEmployees");
   });
 });
 
@@ -3168,58 +3263,57 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
     expect(Number(result.get("2026-08-15"))).toBe(1);
     expect(Number(result.get("2026-08-16"))).toBe(2);
     // Consultas fijas sin importar cuántas fechas: historia del rango (una por
-    // dimensión), reglas candidatas, reglas FERIADO y convocatorias (§16, §19).
+    // dimensión) y reglas candidatas (§20, §19). Nunca convocatorias.
     expect(mockedPrisma.employeePositionPeriod.findMany).toHaveBeenCalledTimes(1);
-    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(2);
-    expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ status: "ACTIVO", fromDate: { lte: sunday }, OR: [{ toDate: null }, { toDate: { gte: saturday } }] }),
     }));
   });
 
-  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16: FERIADO + convocatoria.
-  describe("FERIADO + convocatoria (HolidayWorkAssignment ACTIVA)", () => {
+  // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20 (reemplaza §16): el
+  // FERIADO aplica según SU alcance a quien trabaje; la convocatoria sólo
+  // define la obligación y el motor ni siquiera la consulta.
+  describe("FERIADO §20: alcance de la regla, nunca la convocatoria", () => {
     const holiday = new Date("2026-10-05T00:00:00.000Z");
     const feriado = { ...sundayRule, id: "rule-feriado", kind: "FERIADO", recurrenceType: "FECHA", weekdays: [], fromDate: holiday, toDate: holiday, dates: [{ date: holiday, isActive: true }] };
     const domingo = { ...sundayRule, kind: "DOMINGO", fromDate: new Date("2026-01-01T00:00:00.000Z") };
-    // La consulta "en alcance" y la de reglas FERIADO (sin filtro de alcance) se distinguen por `kind`.
-    function rules({ inScope, feriadoAll }: { inScope: unknown[]; feriadoAll: unknown[] }) {
-      mockedPrisma.doubleHourRule.findMany.mockImplementation(async ({ where }: { where: { kind?: string } }) => (where.kind === "FERIADO" ? feriadoAll : inScope));
-    }
     const convoked = (...employeeIds: string[]) => mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue(employeeIds.map((employeeId) => ({ date: holiday, employeeId })));
     const multiplier = async (employeeId: string, date = holiday) => Number((await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(date.toISOString().slice(0, 10)));
 
-    it("CASO 1 — convocado + feriado x2 → x2, aunque la regla tenga otro alcance", async () => {
-      rules({ inScope: [], feriadoAll: [feriado] });
+    it("convocado fuera del alcance de la regla → x1 (la convocatoria no lo alcanza)", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([]);
       convoked("employee-31");
-      expect(await multiplier("employee-31")).toBe(2);
+      expect(await multiplier("employee-31")).toBe(1);
     });
 
-    it("CASO 5 — la fecha tiene convocados: quien no está convocado queda en x1 aunque la regla sea global", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
+    it("no convocado alcanzado por la regla → x2 aunque la fecha tenga otros convocados", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       convoked("employee-31");
       expect(await multiplier("employee-31")).toBe(2);
-      expect(await multiplier("employee-30")).toBe(1);
+      expect(await multiplier("employee-30")).toBe(2);
     });
 
-    it("sin ninguna convocatoria en la fecha, la regla usa su alcance como hasta hoy (feriado global no se rompe)", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
+    it("sin ninguna convocatoria en la fecha, igual: la regla usa su alcance", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       convoked();
       expect(await multiplier("employee-30")).toBe(2);
     });
 
-    it("CASO 6 — DOMINGO no depende de la convocatoria", async () => {
+    it("DOMINGO tampoco depende de la convocatoria", async () => {
       const sunday = new Date("2026-10-04T00:00:00.000Z");
-      rules({ inScope: [domingo], feriadoAll: [] });
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([domingo]);
       mockedPrisma.holidayWorkAssignment.findMany.mockResolvedValue([{ date: sunday, employeeId: "otro" }]);
       expect(await multiplier("employee-30", sunday)).toBe(2);
     });
 
-    it("sólo cuentan convocatorias ACTIVAS del rango", async () => {
-      rules({ inScope: [feriado], feriadoAll: [feriado] });
-      convoked();
+    it("el motor no consulta convocatorias ni reglas FERIADO fuera del alcance", async () => {
+      mockedPrisma.doubleHourRule.findMany.mockResolvedValue([feriado]);
       await multiplier("employee-30");
-      expect(mockedPrisma.holidayWorkAssignment.findMany).toHaveBeenCalledWith({ where: { status: "ACTIVA", date: { gte: holiday, lte: holiday } }, select: { date: true, employeeId: true } });
+      expect(mockedPrisma.holidayWorkAssignment.findMany).not.toHaveBeenCalled();
+      expect(mockedPrisma.doubleHourRule.findMany).toHaveBeenCalledTimes(1);
+      expect(mockedPrisma.doubleHourRule.findMany.mock.calls[0]![0]).not.toHaveProperty("where.kind");
     });
   });
 
@@ -3232,9 +3326,9 @@ describe("resolveDoubleHourMultipliersByDate — batch por empleado", () => {
 // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): las escrituras verifican el
 // cierre DENTRO de su transacción, después de tomar el lock compartido.
 describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
-  const protectedClosure = (period: string) => [{ employeeId: "employee-1", period, status: "APROBADO" }];
+  const protectedClosure = (period: string) => [{ employeeId: "employee-1", period, status: "CERRADO" }];
 
-  it("create toma el lock compartido y rechaza un período aprobado sin escribir", async () => {
+  it("create toma el lock compartido y rechaza un período CERRADO sin escribir", async () => {
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValueOnce(protectedClosure("2026-09"));
 
     await expect(timeEntriesRepository.create({ employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z"), hours: 8 } as never, "user-1"))
@@ -3243,15 +3337,14 @@ describe("timeEntriesRepository — períodos protegidos (D-5)", () => {
     expect(mockedPrisma.__tx.timeEntry.create).not.toHaveBeenCalled();
   });
 
-  it("update en período protegido sólo pasa como corrección explícita de RRHH con motivo", async () => {
+  it("update en período CERRADO se rechaza para todos, también RRHH", async () => {
     const before = { employeeId: "employee-1", hourConceptId: "concept-1", date: new Date("2026-09-10T00:00:00.000Z") };
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue(protectedClosure("2026-09"));
     mockedPrisma.__tx.timeEntry.update.mockResolvedValue({ id: "entry-1" });
 
     await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, null)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
     await expect(timeEntriesRepository.update("entry-1", before, { hours: 7 } as never, "user-rrhh")).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
-    await timeEntriesRepository.update("entry-1", before, { hours: 7, correctionReason: "Error de carga" } as never, "user-rrhh");
-    expect(mockedPrisma.__tx.timeEntry.update).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.__tx.timeEntry.update).not.toHaveBeenCalled();
     mockedPrisma.__tx.monthlyTimeClosure.findMany.mockResolvedValue([]);
   });
 });

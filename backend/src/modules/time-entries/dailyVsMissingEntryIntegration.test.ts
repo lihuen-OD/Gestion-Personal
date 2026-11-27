@@ -19,6 +19,9 @@ import { detectAttendanceInactivity } from "./attendanceInactivity.service";
  */
 vi.mock("../../shared/prisma/client", () => ({
   prisma: {
+    clockPunchAttempt: { findMany: vi.fn(async () => []) },
+    // R4.3b: sin membresías de rotación (camino legacy).
+    shiftRotationCrewMember: { findMany: vi.fn(async () => []) },
     employee: { findMany: vi.fn() },
     attendancePunch: { findMany: vi.fn() },
     workShift: { findMany: vi.fn() },
@@ -34,6 +37,7 @@ vi.mock("../../shared/prisma/client", () => ({
 
 vi.mock("../shifts/workObligation.service", () => ({
   resolveWorkObligationCandidates: vi.fn(),
+  resolveRotationBlockCandidates: vi.fn(async () => ({ rotation: new Map(), candidates: [] })),
 }));
 
 const mockedPrisma = prisma as unknown as {
@@ -72,7 +76,7 @@ beforeEach(() => {
   mockedPrisma.attendanceInactivityIncident.findMany.mockResolvedValue([]);
   mockedPrisma.attendanceInactivityIncident.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.user.findMany.mockResolvedValue([{ id: "user-rrhh" }]);
-  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn() } };
+  const tx = { systemNotification: { createMany: vi.fn() }, attendanceInactivityIncident: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) } };
   mockedPrisma.$transaction.mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
 });
 

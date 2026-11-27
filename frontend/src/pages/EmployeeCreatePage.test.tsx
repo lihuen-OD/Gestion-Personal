@@ -14,6 +14,7 @@ vi.mock("../services/api/employeeApiService", () => ({
   employeeApiService: { getOptions: vi.fn().mockResolvedValue({ items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } }), create: vi.fn() },
 }));
 
+vi.mock("../services/api/userApiService", () => ({ userApiService: { getAll: vi.fn().mockResolvedValue([]) } }));
 vi.mock("../services/api/orgStructureApiService", () => ({
   orgStructureApiService: { getCatalog: vi.fn().mockResolvedValue({ companies: [], businessUnits: [], establishments: [], areas: [], sectors: [], costCenters: [] }) },
 }));
@@ -42,7 +43,8 @@ describe("EmployeeCreatePage — alta de legajo sin selector de Rol en Responsab
     expect(await screen.findByText("Responsables de carga horaria")).toBeInTheDocument();
     expect(screen.queryByLabelText("Rol")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: /rol/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Nivel \d/)).not.toBeInTheDocument();
+    // El único "Nivel" visible es la regla del selector (usuarios Nivel 2), no un selector de rol.
+    expect(screen.getByText(/Usuarios Nivel 2 que acceden a este legajo/)).toBeInTheDocument();
   });
 });
 

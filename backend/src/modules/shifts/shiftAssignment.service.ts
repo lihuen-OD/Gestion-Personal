@@ -7,7 +7,11 @@ import { auditNoveltyCoverageRecalculation, coverageWindowOf, recalculateNovelty
 import { auditService } from "../audit/audit.service";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { shiftAssignmentRepository } from "./shiftAssignment.repository";
+import { shiftTemplateWhereForScope, type ShiftGroupScope } from "./shiftGroupAccess";
+import { assertEmployeesWritable, canManageShiftGroup, employeesOutsideScope, isGlobalActor, withShiftActorErrors, type ShiftActor } from "./shiftWriteAccess";
 import type { CreateShiftAssignmentInput, ListShiftAssignmentsQuery, UpdateShiftAssignmentInput } from "./shiftAssignment.schemas";
+import { assertFixedAssignmentsCompatibleWithRotations } from "./shiftRotationTransitions";
+import { formatEmployeeReference } from "../../shared/audit/employeeReference";
 
 // La asignación y el recálculo de la cobertura de novedades van juntos.
 const SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS = { timeout: 30_000 };
@@ -34,9 +38,26 @@ async function execute<T>(operation: () => Promise<T>) {
   }
 }
 
+/**
+ * R8.3: asignación por id para una escritura. Si su plantilla no es de un
+ * grupo administrable, o el legajo está fuera del alcance, responde igual que
+ * inexistente (404).
+ */
+async function requireActorAssignment(id: string, actor: ShiftActor) {
+  const before = await shiftAssignmentRepository.findById(id);
+  const notFound = () => new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
+  if (!before) throw notFound();
+  if (!isGlobalActor(actor)) {
+    const template = await prisma.shiftTemplate.findUnique({ where: { id: before.shiftTemplateId }, select: { shiftGroupId: true } });
+    if (!canManageShiftGroup(actor, template?.shiftGroupId) || (await employeesOutsideScope(actor, [before.employeeId]))) throw notFound();
+  }
+  return before;
+}
+
 export const shiftAssignmentService = {
-  async summary(user: Express.AuthUser) {
-    const rows = await shiftAssignmentRepository.countByTemplateAndStatus(employeeAccessWhere(user));
+  /** R8: sólo plantillas de grupos administrables, y sólo legajos del alcance. */
+  async summary(user: Express.AuthUser, scope: ShiftGroupScope) {
+    const rows = await shiftAssignmentRepository.countByTemplateAndStatus(employeeAccessWhere(user), shiftTemplateWhereForScope(scope));
     const byTemplate = new Map<string, { shiftTemplateId: string; total: number; enabled: number; disabled: number; other: number }>();
     for (const row of rows) {
       const count = row._count._all;
@@ -50,8 +71,15 @@ export const shiftAssignmentService = {
     return Array.from(byTemplate.values());
   },
 
-  list(query: ListShiftAssignmentsQuery, user: Express.AuthUser) {
-    return shiftAssignmentRepository.findMany(query, employeeAccessWhere(user));
+  /**
+   * Siempre dentro del alcance de legajos. R8: filtrar por una plantilla exige
+   * que sea administrable (una ajena devuelve lista vacía, igual que una
+   * inexistente). Sin filtro de plantilla es la vista del legajo: muestra
+   * todos sus turnos fijos, también los de otros grupos (sólo lectura en la UI;
+   * §26 del ADR).
+   */
+  list(query: ListShiftAssignmentsQuery, user: Express.AuthUser, scope: ShiftGroupScope) {
+    return shiftAssignmentRepository.findMany(query, employeeAccessWhere(user), query.shiftTemplateId ? shiftTemplateWhereForScope(scope) : {});
   },
 
   /**
@@ -60,23 +88,42 @@ export const shiftAssignmentService = {
    * esperada; la cobertura de novedades de esos legajos se recalcula en la
    * MISMA transacción, sólo dentro de la vigencia anterior y la nueva.
    */
-  async assign(input: CreateShiftAssignmentInput, user: Express.AuthUser, audit?: AuditContext) {
+  /**
+   * R8.3: la plantilla tiene que ser de un grupo administrable (si no, 404
+   * igual que inexistente) y todos los legajos del alcance (si no, 403 sin
+   * escribir nada: todo o nada).
+   */
+  async assign(input: CreateShiftAssignmentInput, actor: ShiftActor, audit?: AuditContext) {
+    const user = actor.user;
     const template = await prisma.shiftTemplate.findUnique({ where: { id: input.shiftTemplateId } });
-    if (!template) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+    if (!template || !canManageShiftGroup(actor, template.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
 
     const employeeIds = Array.from(new Set(input.employeeIds));
-    const existingEmployees = await prisma.employee.count({ where: { id: { in: employeeIds } } });
-    if (existingEmployees !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
+    await assertEmployeesWritable(actor, employeeIds);
+    const employees = await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true, legajo: true, firstName: true, lastName: true } });
+    if (employees.length !== employeeIds.length) throw new AppError("Uno o más empleados no existen", 404, "EMPLOYEE_NOT_FOUND");
+    const employeeLabels = new Map(employees.map((employee) => [employee.id, formatEmployeeReference(employee)]));
 
     const vigency = { observation: input.observation, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo, weekdays: input.weekdays };
-    const outcome = await execute(() => prisma.$transaction(async (tx) => {
+    const outcome = await withShiftActorErrors(actor, () => execute(() => prisma.$transaction(async (tx) => {
       await lockEmployeeCoverage(tx, employeeIds);
       const results = [];
       const audits: RegisterAuditInput[] = [];
       const ranges: Array<{ from: Date; to: Date | null }> = [];
       const changedEmployees: string[] = [];
+      const existingRows = await shiftAssignmentRepository.findExistingMany(employeeIds, input.shiftTemplateId, tx);
+      const existingByEmployee = new Map(existingRows.map((row) => [row.employeeId, row]));
+      const affectedIds = employeeIds.filter((employeeId) => existingByEmployee.get(employeeId)?.status !== "HABILITADO");
+      await assertFixedAssignmentsCompatibleWithRotations(tx, affectedIds.map((employeeId) => ({
+        employeeId,
+        employee: employeeLabels.get(employeeId)!,
+        effectiveFrom: input.effectiveFrom.toISOString().slice(0, 10),
+        effectiveTo: input.effectiveTo?.toISOString().slice(0, 10) ?? null,
+        weekdays: input.weekdays,
+        template,
+      })));
       for (const employeeId of employeeIds) {
-        const existing = await shiftAssignmentRepository.findExisting(employeeId, input.shiftTemplateId, tx);
+        const existing = existingByEmployee.get(employeeId) ?? null;
 
         if (!existing) {
           const created = await shiftAssignmentRepository.create(employeeId, input.shiftTemplateId, vigency, user.id, tx);
@@ -121,7 +168,7 @@ export const shiftAssignmentService = {
         ? await recalculateNoveltyCoverage(tx, { employeeIds: changedEmployees, ...window }, { source: "SHIFT_ASSIGNMENT_CHANGED", label: `asignación del turno ${describeShift(template)}` })
         : null;
       return { results, audits, coverage };
-    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS));
+    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS)));
 
     // La auditoría se registra recién cuando la transacción confirmó.
     for (const entry of outcome.audits) await auditService.register({ ...audit, ...entry });
@@ -129,9 +176,9 @@ export const shiftAssignmentService = {
     return outcome.results;
   },
 
-  async update(id: string, input: UpdateShiftAssignmentInput, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await shiftAssignmentRepository.findById(id);
-    if (!before) throw new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
+  async update(id: string, input: UpdateShiftAssignmentInput, actor: ShiftActor, audit?: AuditContext) {
+    const user = actor.user;
+    const before = await requireActorAssignment(id, actor);
 
     const data: Prisma.ShiftAssignmentUncheckedUpdateInput = {};
     if (input.observation !== undefined) data.observation = input.observation;
@@ -166,15 +213,26 @@ export const shiftAssignmentService = {
 
     // Sólo la observación no cambia la jornada esperada.
     const affectsWorkday = data.status !== undefined || data.effectiveFrom !== undefined || data.effectiveTo !== undefined || data.weekdays !== undefined;
-    const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
+    const { item, coverage } = await withShiftActorErrors(actor, () => execute(() => prisma.$transaction(async (tx) => {
       if (affectsWorkday) await lockEmployeeCoverage(tx, [before.employeeId]);
+      const resultingStatus = input.status ?? before.status;
+      if (affectsWorkday && resultingStatus === "HABILITADO") {
+        await assertFixedAssignmentsCompatibleWithRotations(tx, [{
+          employeeId: before.employeeId,
+          employee: formatEmployeeReference(before.employee),
+          effectiveFrom: effectiveFrom.toISOString().slice(0, 10),
+          effectiveTo: effectiveTo?.toISOString().slice(0, 10) ?? null,
+          weekdays: input.weekdays ?? before.weekdays,
+          template: before.shiftTemplate,
+        }]);
+      }
       const updated = await shiftAssignmentRepository.update(id, data, tx);
       const window = affectsWorkday ? coverageWindowOf([{ from: before.effectiveFrom, to: before.effectiveTo }, { from: updated.effectiveFrom, to: updated.effectiveTo }]) : null;
       const recalculated = window
         ? await recalculateNoveltyCoverage(tx, { employeeIds: [before.employeeId], ...window }, { source: "SHIFT_ASSIGNMENT_CHANGED", label: `cambio del turno ${describeShift(updated.shiftTemplate)} del legajo ${updated.employee.legajo}` })
         : null;
       return { item: updated, coverage: recalculated };
-    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS));
+    }, SHIFT_ASSIGNMENT_TRANSACTION_OPTIONS)));
     // Etapa 10B: entityId=employeeId (no id, el id de la asignación), mismo
     // criterio que assign() arriba.
     await auditService.register({
@@ -190,9 +248,8 @@ export const shiftAssignmentService = {
     return item;
   },
 
-  async remove(id: string, audit?: AuditContext) {
-    const before = await shiftAssignmentRepository.findById(id);
-    if (!before) throw new AppError("No encontramos la asignación solicitada", 404, "SHIFT_ASSIGNMENT_NOT_FOUND");
+  async remove(id: string, actor: ShiftActor, audit?: AuditContext) {
+    const before = await requireActorAssignment(id, actor);
     const coverage = await execute(() => prisma.$transaction(async (tx) => {
       await lockEmployeeCoverage(tx, [before.employeeId]);
       await shiftAssignmentRepository.remove(id, tx);

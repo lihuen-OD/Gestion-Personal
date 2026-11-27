@@ -7,7 +7,7 @@ import type { NoveltyType } from "../../types/noveltyType.types";
 import { defaultNoveltyTypeCoverage } from "../../utils/noveltyTypeCoverage";
 
 const type = (id: string, code: string, name: string, status: NoveltyType["status"]) =>
-  ({ id, code, name, description: "", kind: "AUSENCIA", status, rules: { exportsToFinnegans: false, requiresApproval: false }, coverage: defaultNoveltyTypeCoverage() }) as NoveltyType;
+  ({ id, code, name, description: "", kind: "AUSENCIA", status, rules: { exportsToFinnegans: false }, coverage: defaultNoveltyTypeCoverage() }) as NoveltyType;
 
 const items = [type("1", "NOV-10", "vacaciones", "ACTIVO"), type("2", "NOV-2", "Ausencia", "INACTIVO"), type("3", "NOV-1", "Licencia", "ACTIVO")];
 

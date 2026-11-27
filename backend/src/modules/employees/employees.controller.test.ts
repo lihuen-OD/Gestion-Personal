@@ -10,8 +10,6 @@ import { invalidateEmployeeScopeCaches } from "./employeeScopeCaches";
 vi.mock("./employees.service", () => ({
   employeesService: {
     upsertManualHourConceptBreakdown: vi.fn(),
-    approveManualHourConceptBreakdown: vi.fn(),
-    rejectManualHourConceptBreakdown: vi.fn(),
     returnManualHourConceptBreakdown: vi.fn(),
     replaceAssignments: vi.fn(),
   },
@@ -35,8 +33,6 @@ vi.mock("../documents/documents.cache", () => ({
 
 const mockedService = employeesService as unknown as {
   upsertManualHourConceptBreakdown: Mock;
-  approveManualHourConceptBreakdown: Mock;
-  rejectManualHourConceptBreakdown: Mock;
   returnManualHourConceptBreakdown: Mock;
 };
 const mockedRecalculate = automaticHourConceptBreakdownsService.recalculate as unknown as Mock;
@@ -63,9 +59,6 @@ function fakeRes(): Response {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedService.upsertManualHourConceptBreakdown.mockResolvedValue({ id: "brk-1", status: "EN_REVISION" });
-  mockedService.approveManualHourConceptBreakdown.mockResolvedValue({ id: "brk-1", status: "APROBADO" });
-  mockedService.rejectManualHourConceptBreakdown.mockResolvedValue({ id: "brk-1", status: "RECHAZADO" });
-  mockedService.returnManualHourConceptBreakdown.mockResolvedValue({ id: "brk-1", status: "DEVUELTO" });
   mockedRecalculate.mockResolvedValue({ period: "2026-08", items: [] });
 });
 
@@ -81,30 +74,9 @@ describe("employeesController — invalidación de timeEntriesPeriodEmployeesCac
     expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
   });
 
-  it("approveManualHourConceptBreakdown limpia las cachés de lectura de time-entries", async () => {
-    await employeesController.approveManualHourConceptBreakdown(fakeReq(), fakeRes());
-    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejectManualHourConceptBreakdown limpia las cachés de lectura de time-entries", async () => {
-    await employeesController.rejectManualHourConceptBreakdown(fakeReq(), fakeRes());
-    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("returnManualHourConceptBreakdown limpia las cachés de lectura de time-entries", async () => {
-    await employeesController.returnManualHourConceptBreakdown(fakeReq(), fakeRes());
-    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-  });
-
   it("recalculateAutomaticHourConceptBreakdowns limpia las cachés de lectura de time-entries", async () => {
     await employeesController.recalculateAutomaticHourConceptBreakdowns(fakeReq(), fakeRes());
     expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("sigue devolviendo el desglose resuelto en el body (la UI lo usa para refrescar)", async () => {
-    const res = fakeRes();
-    await employeesController.approveManualHourConceptBreakdown(fakeReq(), res);
-    expect(res.json).toHaveBeenCalledWith({ data: { id: "brk-1", status: "APROBADO" } });
   });
 });
 

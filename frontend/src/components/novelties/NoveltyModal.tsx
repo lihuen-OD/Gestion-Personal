@@ -34,7 +34,7 @@ import { useNoveltyCoveragePreview } from "./useNoveltyCoveragePreview";
 // el backend. Las cantidades que se envían están documentadas en
 // utils/noveltyLoad.ts. Etapa 15L.5: quantityDays lo calcula sólo el backend.
 
-const PERIOD_CLOSED_MESSAGE = "No se puede cargar esta novedad porque el período ya está cerrado. Pedile a RRHH que la corrija si hace falta.";
+const PERIOD_CLOSED_MESSAGE = "No se puede cargar esta novedad porque el período está cerrado. Reabrilo desde Cierres mensuales para modificarlo.";
 
 function saveErrorMessage(error: unknown) {
   if (error instanceof ApiError && error.code === "PERIOD_CLOSED") return PERIOD_CLOSED_MESSAGE;
@@ -78,8 +78,6 @@ export function NoveltyModal({
   const [typeId, setTypeId] = useState("");
   const [values, setValues] = useState<NoveltyLoadValues>(() => initialNoveltyLoadValues(undefined, { fromDate: defaultDate, observation: initialObservation }));
   const [targetHour, setTargetHour] = useState("Hora normal");
-  const [correctionReason, setCorrectionReason] = useState("");
-  const [needsCorrectionReason, setNeedsCorrectionReason] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const [error, setError] = useState("");
@@ -143,15 +141,11 @@ export function NoveltyModal({
       setShowIssues(true);
       return setFocusRequest((value) => value + 1);
     }
-    if (needsCorrectionReason && correctionReason.trim().length < 5) {
-      return setError("Indicá el motivo de la corrección (al menos 5 caracteres).");
-    }
     setError("");
     const targetConcept = hourConcepts.find((concept) => concept.name === normalizedTargetHour);
     let created: Novelty[];
     const input = buildNoveltyCreateInput(selectedType, values, employeeIds, {
       targetHourConceptId: requiresTargetHour ? targetConcept?.id || null : null,
-      correctionReason: needsCorrectionReason ? correctionReason : null,
     });
     try {
       // Con documento, un único pedido: si el archivo no se guarda, la novedad
@@ -160,11 +154,6 @@ export function NoveltyModal({
         ? await noveltyApiService.createWithDocument(input, values.file, values.observation.trim() || null)
         : await noveltyApiService.create(input);
     } catch (apiError) {
-      // Período ya enviado a cierre: RRHH puede corregir indicando el motivo (etapa 3).
-      if (apiError instanceof ApiError && apiError.code === "NOVELTY_CORRECTION_REASON_REQUIRED") {
-        setNeedsCorrectionReason(true);
-        return setError("El período ya fue enviado a cierre. Indicá el motivo de la corrección para guardar la novedad.");
-      }
       return setError(saveErrorMessage(apiError));
     }
     saved(created);
@@ -217,7 +206,7 @@ export function NoveltyModal({
               </label>
 
               {selectedType ? <NoveltyTypeLoadSummary type={selectedType} /> : null}
-              {selectedType ? <NoveltyLoadFields type={selectedType} values={values} onChange={setValues} issues={formIssues} isRrhh={isRrhh} /> : null}
+              {selectedType ? <NoveltyLoadFields type={selectedType} values={values} onChange={setValues} issues={formIssues} /> : null}
 
               {requiresTargetHour ? (
                 <label>
@@ -228,12 +217,6 @@ export function NoveltyModal({
                 </label>
               ) : null}
 
-              {needsCorrectionReason ? (
-                <label>
-                  Motivo de la corrección *
-                  <textarea value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Quedará registrado en auditoría" />
-                </label>
-              ) : null}
             </div>
 
             <NoveltyCoveragePreviewPanel state={preview.state} layout={layout} employeeCount={employeeIds.length} missingHint={missingHint} onRetry={preview.retry} />

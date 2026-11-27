@@ -17,7 +17,6 @@ import {
   createWorkShiftSchema,
   listTimeEntriesQuerySchema,
   previewWorkShiftSchema,
-  rejectTimeEntrySchema,
   timeEntriesExportQuerySchema,
   timeEntriesPeriodEmployeesQuerySchema,
   timeEntriesSummaryQuerySchema,
@@ -44,7 +43,7 @@ const operationalRoles = [roles.rrhh, roles.supervision, roles.cargaHoraria];
 timeEntriesRouter.get("/home-summary", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.homeSummary));
 timeEntriesRouter.get("/attendance", requireAnyRole(operationalRoles), validateQuery(attendanceSummaryQuerySchema), asyncHandler(timeEntriesController.attendanceSummary));
 timeEntriesRouter.get("/attendance/observations", requireAnyRole(operationalRoles), validateQuery(attendanceObservationsQuerySchema), asyncHandler(timeEntriesController.attendanceObservations));
-timeEntriesRouter.post("/attendance/observations/:kind/:id/resolve", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(resolveAttendanceObservationSchema), asyncHandler(timeEntriesController.resolveAttendanceObservation));
+timeEntriesRouter.post("/attendance/observations/:kind/:id/resolve", requireAnyRole(operationalRoles), validateBody(resolveAttendanceObservationSchema), asyncHandler(timeEntriesController.resolveAttendanceObservation));
 timeEntriesRouter.get("/attendance/punches/:id/photo", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.attendancePunchPhoto));
 timeEntriesRouter.get("/", requireAnyRole(operationalRoles), validateQuery(listTimeEntriesQuerySchema), asyncHandler(timeEntriesController.list));
 timeEntriesRouter.get("/summary", requireAnyRole(operationalRoles), validateQuery(timeEntriesSummaryQuerySchema), asyncHandler(timeEntriesController.summary));
@@ -55,16 +54,10 @@ timeEntriesRouter.get("/manual-hours-conflicts", requireAnyRole(operationalRoles
 timeEntriesRouter.post("/manual-hours-conflicts/:id/resolve", requireAnyRole(operationalRoles), validateBody(resolveManualHoursConflictSchema), asyncHandler(timeEntriesController.resolveManualHoursConflict));
 timeEntriesRouter.post("/work-shifts/preview", requireAnyRole(operationalRoles), validateBody(previewWorkShiftSchema), asyncHandler(timeEntriesController.previewWorkShift));
 timeEntriesRouter.post("/work-shifts", requireAnyRole(operationalRoles), validateBody(createWorkShiftSchema), asyncHandler(timeEntriesController.createWorkShift));
-timeEntriesRouter.post("/work-shifts/:id/close-manual", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminCloseWorkShiftSchema), asyncHandler(timeEntriesController.closeWorkShiftManually));
-timeEntriesRouter.post("/work-shifts/:id/missing-out", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.markMissingOut));
-timeEntriesRouter.post("/work-shifts/:id/observe", requireAnyRole([roles.rrhh, roles.supervision]), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.observeWorkShift));
+timeEntriesRouter.post("/work-shifts/:id/close-manual", requireAnyRole(operationalRoles), validateBody(adminCloseWorkShiftSchema), asyncHandler(timeEntriesController.closeWorkShiftManually));
+timeEntriesRouter.post("/work-shifts/:id/missing-out", requireAnyRole(operationalRoles), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.markMissingOut));
+timeEntriesRouter.post("/work-shifts/:id/observe", requireAnyRole(operationalRoles), validateBody(adminWorkShiftReasonSchema), asyncHandler(timeEntriesController.observeWorkShift));
 timeEntriesRouter.post("/", requireAnyRole(operationalRoles), validateBody(createTimeEntrySchema), asyncHandler(timeEntriesController.create));
 timeEntriesRouter.get("/export", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportJson));
 timeEntriesRouter.get("/export.csv", requireAnyRole([roles.rrhh, roles.supervision]), validateQuery(timeEntriesExportQuerySchema), asyncHandler(timeEntriesController.exportCsv));
 timeEntriesRouter.patch("/:id", requireAnyRole(operationalRoles), validateBody(updateTimeEntrySchema), asyncHandler(timeEntriesController.update));
-timeEntriesRouter.post("/:id/submit", requireAnyRole(operationalRoles), asyncHandler(timeEntriesController.submit));
-// Etapa 6L.3 (ajuste): la aprobación final es exclusiva de RRHH — Supervisión
-// ya no integra este guard (antes sí, ver timeEntriesService.assertCanApprove).
-timeEntriesRouter.post("/:id/approve", requireAnyRole([roles.rrhh]), asyncHandler(timeEntriesController.approve));
-timeEntriesRouter.post("/:id/reject", requireAnyRole([roles.rrhh]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.reject));
-timeEntriesRouter.post("/:id/return", requireAnyRole([roles.rrhh]), validateBody(rejectTimeEntrySchema), asyncHandler(timeEntriesController.returnForCorrection));

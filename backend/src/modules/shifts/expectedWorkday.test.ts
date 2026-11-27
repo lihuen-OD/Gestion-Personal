@@ -3,7 +3,8 @@ import {
   evaluateEmployeeWorkday,
   expectedMinutesForTemplates,
   loadEmployeeWorkdayContext,
-  resolveEmployeeHolidayStatus,
+  resolveCalendarHolidayDates,
+  resolveEmployeeExpectedShift,
   resolveExpectedWorkdays,
   shiftTemplateExpectedMinutes,
   workdayDateKeys,
@@ -59,6 +60,21 @@ const regime = (kind: WorkdayRegimePeriod["kind"], from = "2026-01-01", to: stri
 const convocation = (overrides: Partial<WorkdayConvocation> = {}): WorkdayConvocation => ({ template: null, expectedStartTime: null, expectedEndTime: null, ...overrides });
 
 describe("evaluateEmployeeWorkday — jornada normal", () => {
+  it("proyecta la misma resolución central que expone para consumidores de sólo lectura", () => {
+    const ctx = context({ assignments: [assignment()] });
+    const resolution = resolveEmployeeExpectedShift(ctx, MONDAY, "EXPECTED_WORKDAY");
+
+    expect(resolution).toMatchObject({ obligation: "SHIFT", source: "FIXED_ASSIGNMENT", reason: null });
+    expect(evaluateEmployeeWorkday(ctx, MONDAY)).toMatchObject({ obligation: "WORKDAY", source: "SHIFT_PLAN", expectedMinutes: 480 });
+  });
+
+  it("expone sin mezclar las políticas operativa y de Novedades", () => {
+    const ctx = context({ assignments: [assignment()], regimes: [regime("SIN_TURNO")] });
+
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "WORK_OBLIGATION")).toMatchObject({ obligation: "NO_OBLIGATION", source: "REGIME", reason: "REGIME_SIN_TURNO" });
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "EXPECTED_WORKDAY")).toMatchObject({ obligation: "UNRESOLVED", source: "REGIME", reason: "REGIME_SIN_TURNO" });
+  });
+
   it("turno L–V, lunes → WORKDAY con los minutos del turno", () => {
     expect(evaluateEmployeeWorkday(context({ assignments: [assignment()] }), MONDAY)).toEqual({
       dateKey: MONDAY,
@@ -193,11 +209,17 @@ describe("evaluateEmployeeWorkday — feriados", () => {
     expect(evaluateEmployeeWorkday(ctx, MONDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 480, minutesSource: "SHIFT_ASSIGNMENT" });
   });
 
-  it("feriado convocado sólo con horario explícito → WORKDAY con esos minutos (también cruzando medianoche)", () => {
+  // CAMBIO §20 (D9): el horario libre ya no define la jornada; antes daba
+  // WORKDAY con esos minutos (CONVOCATION_TIMES).
+  it("§20 — feriado convocado sólo con horario libre → UNRESOLVED (el horario libre no es fuente de minutos)", () => {
     const daytime = context({ holidays: { [SUNDAY]: "IN_SCOPE" }, convocations: { [SUNDAY]: convocation({ expectedStartTime: "06:00", expectedEndTime: "12:30" }) } });
-    const night = context({ holidays: { [SUNDAY]: "IN_SCOPE" }, convocations: { [SUNDAY]: convocation({ expectedStartTime: "22:00", expectedEndTime: "06:00" }) } });
-    expect(evaluateEmployeeWorkday(daytime, SUNDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 390, minutesSource: "CONVOCATION_TIMES" });
-    expect(evaluateEmployeeWorkday(night, SUNDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 480 });
+    expect(evaluateEmployeeWorkday(daytime, SUNDAY)).toMatchObject({ obligation: "UNRESOLVED", unresolvedReason: "EXPECTED_MINUTES_UNKNOWN", expectedMinutes: null, convoked: true });
+  });
+
+  it("§20 — feriado convocado con plantilla: reemplaza al turno habitual aunque tenga asignación aplicable (P8)", () => {
+    const ctx = context({ assignments: [assignment()], holidays: { [MONDAY]: "IN_SCOPE" }, convocations: { [MONDAY]: convocation({ template: template({ id: "tpl-holiday", code: "FER", startTime: "14:00", endTime: "18:00", expectedMinutes: 240 }) }) } });
+    expect(evaluateEmployeeWorkday(ctx, MONDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 240, shiftTemplateIds: ["tpl-holiday"], minutesSource: "CONVOCATION_SHIFT_TEMPLATE" });
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "WORK_OBLIGATION").blocks.map((block) => block.template.id)).toEqual(["tpl-holiday"]);
   });
 
   it.each([
@@ -210,9 +232,10 @@ describe("evaluateEmployeeWorkday — feriados", () => {
     expect(evaluateEmployeeWorkday(ctx, SUNDAY)).toMatchObject({ obligation: "UNRESOLVED", unresolvedReason: "EXPECTED_MINUTES_UNKNOWN", expectedMinutes: null, convoked: true });
   });
 
-  it("convocado gana sobre SIN_TURNO", () => {
-    const ctx = context({ regimes: [regime("SIN_TURNO")], holidays: { [MONDAY]: "IN_SCOPE" }, convocations: { [MONDAY]: convocation({ expectedStartTime: "08:00", expectedEndTime: "12:00" }) } });
+  it("convocado con plantilla gana sobre SIN_TURNO (también en la obligación de asistencia, §20)", () => {
+    const ctx = context({ regimes: [regime("SIN_TURNO")], holidays: { [MONDAY]: "IN_SCOPE" }, convocations: { [MONDAY]: convocation({ template: template({ id: "tpl-holiday", code: "FER", startTime: "08:00", endTime: "12:00", expectedMinutes: 240 }) }) } });
     expect(evaluateEmployeeWorkday(ctx, MONDAY)).toMatchObject({ obligation: "WORKDAY", expectedMinutes: 240 });
+    expect(resolveEmployeeExpectedShift(ctx, MONDAY, "WORK_OBLIGATION")).toMatchObject({ obligation: "SHIFT", source: "HOLIDAY_CONVOCATION" });
   });
 
   it("convocado a un FERIADO cuyo alcance no lo incluye → igual es feriado convocado (§16: la convocatoria decide)", () => {
@@ -327,30 +350,24 @@ describe("expectedMinutesForTemplates — varias asignaciones el mismo día (P3)
   });
 });
 
-describe("resolveEmployeeHolidayStatus — feriado con el alcance de la regla", () => {
+// P7 resuelto (WORKED_TIME_ACCOUNTING_MODEL.md §20): para la obligación, un
+// feriado del calendario es feriado para todos; el alcance sólo decide el
+// multiplicador. Reemplaza a resolveEmployeeHolidayStatus (alcance por legajo).
+describe("resolveCalendarHolidayDates — feriado de la obligación por calendario", () => {
   function feriado(overrides: Partial<FeriadoRuleForWorkday> = {}): FeriadoRuleForWorkday {
     return {
       id: "rule-1",
-      name: "Feriados",
       recurrenceType: "FECHA",
       fromDate: day("2026-01-01"),
       toDate: day("2026-12-31"),
       weekdays: [],
       dates: [{ date: day(MONDAY), isActive: true }],
-      companyId: null,
-      sectorId: null,
-      costCenterId: null,
-      positionId: null,
-      sector: null,
-      employees: [],
       ...overrides,
     };
   }
-  const emptyHistory = (overrides: Partial<EngineScopeHistory> = {}): EngineScopeHistory => ({ position: [], costCenter: [], legacySector: [], employer: [], scopes: new Map(), ...overrides }) as EngineScopeHistory;
-  const resolve = (rules: FeriadoRuleForWorkday[], history: EngineScopeHistory | null = null, dateKeys = [MONDAY, SUNDAY]) =>
-    resolveEmployeeHolidayStatus({ employeeId: "emp-1", dateKeys, feriadoRules: rules, history });
+  const resolve = (rules: FeriadoRuleForWorkday[], dateKeys = [MONDAY, SUNDAY]) => resolveCalendarHolidayDates(dateKeys, rules);
 
-  it("regla global FECHA → IN_SCOPE sólo en sus fechas activas", () => {
+  it("regla FECHA → feriado (IN_SCOPE) sólo en sus fechas activas", () => {
     expect(resolve([feriado()])).toEqual(new Map([[MONDAY, "IN_SCOPE"]]));
   });
 
@@ -362,36 +379,13 @@ describe("resolveEmployeeHolidayStatus — feriado con el alcance de la regla", 
     expect(resolve([feriado({ toDate: day("2026-11-01") })]).size).toBe(0);
   });
 
-  it("lista explícita de legajos que no incluye al legajo → OUT_OF_SCOPE", () => {
-    expect(resolve([feriado({ employees: [{ employeeId: "otro" }] })]).get(MONDAY)).toBe("OUT_OF_SCOPE");
-    expect(resolve([feriado({ employees: [{ employeeId: "emp-1" }] })]).get(MONDAY)).toBe("IN_SCOPE");
-  });
-
-  it("regla por empresa: la empresa empleadora vigente decide", () => {
-    const rule = feriado({ companyId: "company-a" });
-    const inCompany = emptyHistory({ employer: [{ id: "period", effectiveFrom: "2026-01-01", effectiveTo: null, value: ["company-a"] }] as EngineScopeHistory["employer"] });
-    const otherCompany = emptyHistory({ employer: [{ id: "period", effectiveFrom: "2026-01-01", effectiveTo: null, value: ["company-b"] }] as EngineScopeHistory["employer"] });
-    expect(resolve([rule], inCompany).get(MONDAY)).toBe("IN_SCOPE");
-    expect(resolve([rule], otherCompany).get(MONDAY)).toBe("OUT_OF_SCOPE");
-  });
-
-  it("legajo mínimo sin empresa vigente registrada → OUT_OF_SCOPE (historia conocida y vacía)", () => {
-    const minimal = emptyHistory({ employer: [{ id: "period", effectiveFrom: "2026-01-01", effectiveTo: null, value: [] }] as EngineScopeHistory["employer"] });
-    expect(resolve([feriado({ companyId: "company-a" })], minimal).get(MONDAY)).toBe("OUT_OF_SCOPE");
-  });
-
-  it("regla con alcance y fecha sin historia registrada → SCOPE_HISTORY_MISSING", () => {
-    const afterMonday = emptyHistory({ employer: [{ id: "period", effectiveFrom: "2026-11-20", effectiveTo: null, value: ["company-a"] }] as EngineScopeHistory["employer"] });
-    expect(resolve([feriado({ companyId: "company-a" })], afterMonday).get(MONDAY)).toBe("SCOPE_HISTORY_MISSING");
-  });
-
-  it("una regla global en la misma fecha gana sobre otra con historia faltante", () => {
-    expect(resolve([feriado({ id: "scoped", companyId: "company-a" }), feriado({ id: "global" })], emptyHistory()).get(MONDAY)).toBe("IN_SCOPE");
-  });
-
   it("regla SEMANAL / RANGO también por calendario", () => {
     expect(resolve([feriado({ recurrenceType: "SEMANAL", weekdays: [0], dates: [] })]).get(SUNDAY)).toBe("IN_SCOPE");
     expect(resolve([feriado({ recurrenceType: "RANGO", fromDate: day(SUNDAY), toDate: day(SUNDAY), dates: [] })]).get(MONDAY)).toBeUndefined();
+  });
+
+  it("sin reglas no hay feriados", () => {
+    expect(resolve([]).size).toBe(0);
   });
 });
 
@@ -407,11 +401,13 @@ describe("loadEmployeeWorkdayContext — consultas fijas, sin N+1", () => {
       holidayWorkAssignment: { findMany: vi.fn().mockResolvedValue([]) },
       employeeWorkRegime: { findMany: vi.fn().mockResolvedValue([{ employeeId: "emp-3", effectiveFrom: day("2026-01-01"), effectiveTo: null, workRegime: { kind: "SIN_TURNO" } }]) },
       doubleHourRule: { findMany: vi.fn().mockResolvedValue(rows.feriadoRules ?? []) },
+      // R4.3b: sin membresías de rotación (camino legacy).
+      shiftRotationCrewMember: { findMany: vi.fn().mockResolvedValue([]) },
     };
     return db as unknown as WorkdayContextReader & typeof db;
   }
 
-  it("una consulta por tabla para todos los legajos y todo el rango, sin historia si ningún FERIADO tiene alcance", async () => {
+  it("una consulta por tabla para todos los legajos y todo el rango, sin historia laboral", async () => {
     const { laborHistoryService } = await import("../labor-history/laborHistory.service");
     const db = fakeDb();
 
@@ -438,19 +434,21 @@ describe("loadEmployeeWorkdayContext — consultas fijas, sin N+1", () => {
     expect(db.doubleHourRule.findMany.mock.calls[0]![0].where).toMatchObject({ kind: "FERIADO", status: "ACTIVO" });
   });
 
-  it("carga la historia laboral una sola vez para todos si algún FERIADO restringe alcance", async () => {
+  // CAMBIO §20 (P7): antes cargaba la historia laboral y, sin historia, daba
+  // HOLIDAY_SCOPE_HISTORY_MISSING. Ahora el feriado de la obligación es por
+  // calendario: igual para todos, sin historia.
+  it("§20 — un FERIADO con alcance es feriado para todos en la obligación y nunca carga historia laboral", async () => {
     const { laborHistoryService } = await import("../labor-history/laborHistory.service");
-    vi.mocked(laborHistoryService.loadEngineScopeHistoryByEmployee).mockResolvedValue(new Map());
     const db = fakeDb({
-      feriadoRules: [{ id: "r", name: "Feriado planta", recurrenceType: "FECHA", fromDate: day("2026-01-01"), toDate: null, weekdays: [], companyId: "company-a", sectorId: null, costCenterId: null, positionId: null, dates: [{ date: day(MONDAY), isActive: true }], sector: null, employees: [] }],
+      feriadoRules: [{ id: "r", recurrenceType: "FECHA", fromDate: day("2026-01-01"), toDate: null, weekdays: [], dates: [{ date: day(MONDAY), isActive: true }] }],
     });
 
     const result = await resolveExpectedWorkdays(["emp-1", "emp-2"], day("2026-11-01"), day("2026-11-30"), db);
 
-    expect(laborHistoryService.loadEngineScopeHistoryByEmployee).toHaveBeenCalledTimes(1);
-    expect(laborHistoryService.loadEngineScopeHistoryByEmployee).toHaveBeenCalledWith(db, ["emp-1", "emp-2"], { fromKey: "2026-11-01", toKey: "2026-11-30" });
-    // Sin historia registrada para la fecha: nunca se asume que el FERIADO no lo alcanza.
-    expect(result.get("emp-1")!.get(MONDAY)).toMatchObject({ unresolvedReason: "HOLIDAY_SCOPE_HISTORY_MISSING" });
+    expect(laborHistoryService.loadEngineScopeHistoryByEmployee).not.toHaveBeenCalled();
+    expect(db.doubleHourRule.findMany.mock.calls[0]![0].select).not.toHaveProperty("companyId");
+    expect(result.get("emp-1")!.get(MONDAY)).toMatchObject({ obligation: "HOLIDAY_NOT_CONVOKED", isHoliday: true, expectedMinutes: 0 });
+    expect(result.get("emp-2")!.get(MONDAY)).toMatchObject({ obligation: "DAY_OFF" });
   });
 
   it("sin legajos no consulta nada", async () => {

@@ -3,49 +3,40 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   BarChart3,
+  CalendarCheck,
   CalendarOff,
-  CheckCircle2,
-  ClipboardList,
   Clock3,
   Eye,
   FileBarChart,
-  RefreshCcw,
   ShieldPlus,
   Calculator,
   Users,
-  X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { ApiError } from "../services/api/apiClient";
-import { employeeApiService } from "../services/api/employeeApiService";
 import { orgStructureApiService } from "../services/api/orgStructureApiService";
-import { pendingApiService, type PendingItem } from "../services/api/pendingApiService";
-import { timeEntryApiService, type EmployeePeriodDay, type EmployeeRowSortKey, type TimeEntryListSortKey } from "../services/api/timeEntryApiService";
-import type { DayAccounting, PeriodAccounting, PeriodAccountingSummary } from "../types/workedTimeAccounting.types";
+import { timeEntryApiService, type EmployeePeriodDay, type EmployeeRowSortKey } from "../services/api/timeEntryApiService";
+import type { DayAccounting, PeriodAccounting } from "../types/workedTimeAccounting.types";
 import { emptyPeriodAccounting } from "../utils/workedTimeAccounting";
-import type { ListMeta } from "../services/api/listQuery";
-import { useSortState, type SortState } from "../utils/sort";
-import { noveltyApiService } from "../services/api/noveltyApiService";
+import { useSortState } from "../utils/sort";
 import { formatMultiplier } from "../components/attendance/segmentDisplay";
-import type { Employee, TimeEntry } from "../types";
+import type { Employee } from "../types";
 import { displayLegajo, fullName } from "../utils/employee";
-import { currentMonthPeriod, formatPeriodDay, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
+import { currentMonthPeriod, getMonthDays, getWeekdayAbbr, monthDate } from "../utils/period";
 import { argentinaDateKey } from "../utils/argentinaDateKey";
 import { roleLevel } from "../utils/roles";
 import { DayOffManagerDialog } from "../components/hours/DayOffManagerDialog";
+import { HolidayWorkAssignmentDialog } from "../components/hours/HolidayWorkAssignmentDialog";
 import { DayOffMark, dayOffDescription } from "../components/hours/DayOffMark";
 import { ManualHoursConflictDialog, manualHoursDecisionText } from "../components/hours/ManualHoursConflictDialog";
 import { ManualHoursConflictsPanel } from "../components/hours/ManualHoursConflictsPanel";
 import { manualHoursConflictApiService, type ManualHoursConflict } from "../services/api/manualHoursConflictApiService";
-import { formatCompactDurationMinutes, formatDecimalHoursDuration, formatDurationMinutes, hoursDecimalToMinutes } from "../utils/hours";
-import { formatTimeEntryObservation } from "../utils/userFacingText";
-import { statusTone } from "../utils/status";
+import { formatDecimalHoursDuration, formatDurationMinutes } from "../utils/hours";
 import { useDebouncedValue } from "../utils/useDebouncedValue";
 import { uniqueOptions } from "../components/employees/options/sharedOptions";
 import { OverflowCell } from "../components/ui/OverflowCell";
 import { FilterPanel } from "../components/ui/FilterPanel";
 import { TableShell } from "../components/ui/TableShell";
-import { Modal } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Section } from "../components/ui/Section";
 import { StatCard } from "../components/ui/StatCard";
@@ -63,7 +54,6 @@ import {
 } from "../components/hours/NoveltyCoverage";
 import { Pagination } from "../components/ui/Pagination";
 import { SortableHeader } from "../components/ui/SortableHeader";
-import { Tabs } from "../components/ui/Tabs";
 
 const DAY_POPOVER_WIDTH = 340;
 const DAY_VIEWPORT_PADDING = 16;
@@ -291,60 +281,15 @@ const emptyHoursSummary = {
   activeEmployees: 0,
   employeesWithEntries: 0,
   pendingEmployees: 0,
-  reviewEmployees: 0,
   countableHours: 0,
   coveredHours: 0,
   computableHours: 0,
   coverage: 0,
 };
 
-// Etapa 6L.5: PendingItem.date ya viene recortado a "YYYY-MM-DD"
-// (pendingApiService.mapItem) — se reusa formatPeriodDay para mostrarlo
-// igual que la tabla de Horas en revisión (mismo formato en toda la bandeja).
-function pendingItemDayLabel(item: PendingItem) {
-  return formatPeriodDay(item.date.slice(0, 7), Number(item.date.slice(8, 10)));
-}
-
-function breakdownResolveErrorMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.code === "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE") {
-      return "Esta carga ya fue resuelta por otra persona. Actualizá la bandeja e intentá de nuevo.";
-    }
-    if (error.code === "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND") {
-      return "No encontramos esta carga. Puede que ya no exista o esté fuera de tu alcance.";
-    }
-    if (error.code === "FORBIDDEN") {
-      return "No tenés permiso para resolver esta carga.";
-    }
-    return "No pudimos resolver la carga del concepto. Actualizá la bandeja e intentá nuevamente.";
-  }
-  return "No pudimos resolver la carga del concepto. Intentá nuevamente.";
-}
-
-// Etapa 7A: aprobar/rechazar/devolver una carga horaria o una novedad no tenía
-// ningún manejo de error — si el endpoint fallaba, la promesa quedaba
-// rechazada sin capturar: la bandeja no mostraba nada, el modal se cerraba
-// igual y parecía que la acción había funcionado. Se les da el mismo
-// tratamiento que ya tenían los desgloses manuales desde 6L.5.
-function reviewActionErrorMessage(error: unknown) {
-  if (error instanceof ApiError) {
-    if (error.code === "FORBIDDEN") {
-      return "No tenés permiso para resolver este registro.";
-    }
-    return "No pudimos completar la acción. Actualizá la bandeja e intentá nuevamente.";
-  }
-  return "No pudimos completar la acción. Intentá nuevamente.";
-}
 const pageSize = 25;
-const emptyListMeta: ListMeta = { total: 0, page: 1, pageSize, hasMore: false };
 
-// "Por persona" pagina empleados: sólo legajo/empleado se ordenan en el
-// backend; con otra columna elegida en "Por registro" se usa el orden default.
-function employeeRowSort(sort: SortState<TimeEntryListSortKey>): SortState<EmployeeRowSortKey> {
-  return sort && (sort.key === "legajo" || sort.key === "employee") ? { key: sort.key, direction: sort.direction } : null;
-}
-
-export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
+export function HoursPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
@@ -356,21 +301,20 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   const resetGridPage = useCallback(() => setPage(1), []);
   const { sort: gridSort, toggleSort: toggleGridSort } = useSortState<EmployeeRowSortKey>(resetGridPage);
   const [refresh, setRefresh] = useState(0);
-  const [review, setReview] = useState<{ entry: TimeEntry; action: "reject" | "return" }>();
-  const [noveltyReject, setNoveltyReject] = useState<PendingItem>();
-  // Etapa 6L.5: mismo patrón que review/noveltyReject, para desgloses manuales.
-  const [breakdownReview, setBreakdownReview] = useState<{ item: PendingItem; action: "reject" | "return" }>();
-  const [resolvingBreakdownId, setResolvingBreakdownId] = useState<string | null>(null);
-  const [breakdownActionError, setBreakdownActionError] = useState("");
-  // Etapa 7A: error de las acciones de revisión de cargas horarias y novedades
-  // (antes fallaban en silencio). Se muestra en la cabecera de la página y,
-  // cuando la acción salió de un modal, también adentro del modal.
-  const [reviewActionError, setReviewActionError] = useState("");
-  const [reviewReason, setReviewReason] = useState("");
-  const [groupByPerson, setGroupByPerson] = useState(false);
   // "Gestionar francos": abierto desde el encabezado (fecha sugerida) o desde
   // el detalle de un día (esa fecha y esa persona preseleccionada).
   const [dayOffDialog, setDayOffDialog] = useState<{ date: string; search?: string; employeeId?: string } | null>(null);
+  // "Gestionar feriados" (convocatorias): también se abre desde la dirección
+  // anterior de Configuración, que redirige con ?gestionar=feriados.
+  const holidayDialogOpen = searchParams.get("gestionar") === "feriados";
+  const setHolidayDialogOpen = (open: boolean) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (open) next.set("gestionar", "feriados");
+      else next.delete("gestionar");
+      return next;
+    }, { replace: true });
+  };
   // Fichadas sobre horas cargadas a mano del período (MANUAL_HOURS_VS_CLOCK_PUNCH.md).
   const [manualConflicts, setManualConflicts] = useState<ManualHoursConflict[]>([]);
   const [manualConflictsError, setManualConflictsError] = useState("");
@@ -388,59 +332,22 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     }>
   >([]);
   const [periodRowsMeta, setPeriodRowsMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
-  const [reviewPage, setReviewPage] = useState(1);
-  const resetReviewPage = useCallback(() => setReviewPage(1), []);
-  const { sort: reviewSort, toggleSort: toggleReviewSort } = useSortState<TimeEntryListSortKey>(resetReviewPage);
-  const [reviewEntriesMeta, setReviewEntriesMeta] = useState({ total: 0, page: 1, pageSize, hasMore: false });
-  const [reviewEntries, setReviewEntries] = useState<TimeEntry[]>([]);
-  const [reviewByPerson, setReviewByPerson] = useState<Array<{
-    employee: Employee;
-    summary: {
-      status: string;
-      // Misma contabilidad que la grilla, el cierre y el export
-      // (docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md).
-      accounting: PeriodAccountingSummary;
-      specialHourRuleNames: string[];
-      specialHourConflict: boolean;
-    };
-  }>>([]);
   const [costCenterOptions, setCostCenterOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [hoursSummary, setHoursSummary] = useState(emptyHoursSummary);
-  // Novedades y desgloses pendientes paginan por separado contra /pending
-  // (kind=novelties / kind=hourConceptBreakdowns): antes una sola carga
-  // kind=all&take=300 cortaba en silencio y el subtítulo contaba sólo lo traído.
-  const [pendingNovelties, setPendingNovelties] = useState<PendingItem[]>([]);
-  const [pendingNoveltiesMeta, setPendingNoveltiesMeta] = useState<ListMeta>(emptyListMeta);
-  const [pendingNoveltyPage, setPendingNoveltyPage] = useState(1);
-  const [pendingBreakdowns, setPendingBreakdowns] = useState<PendingItem[]>([]);
-  const [pendingBreakdownsMeta, setPendingBreakdownsMeta] = useState<ListMeta>(emptyListMeta);
-  const [pendingBreakdownPage, setPendingBreakdownPage] = useState(1);
-  const [usesBackend, setUsesBackend] = useState(false);
-  // Etapa 9F: el mega-efecto original tenía 10 dependencias en un único
-  // Promise.all — cambiar `reviewPage`, `groupByPerson`, `debouncedSearch` o
-  // `costCenter` volvía a pedir getSummary/pendingApiService.getAll aunque
-  // ninguno de los dos acepta esos parámetros (siempre iban a devolver lo
-  // mismo), y `pendingOnly` (que nunca cambia dentro de un mismo montaje —
-  // /horas y /pendientes son rutas separadas) igual quedaba en el array. Se
-  // separó en 3 efectos por dependencia real (ver más abajo), cada uno con su
-  // propio loading/error para no blanquear ni bloquear secciones que no
-  // dependen de lo que cambió. loadError se deriva de los 2 que sí pueden
-  // fallar "duro" (grid/review) — getSummary y pendingApiService.getAll ya
-  // hacían catch a un default antes de esta etapa, eso no se tocó.
+  // Etapa 9F: la carga se separa en efectos por dependencia real (ver más
+  // abajo), cada uno con su propio loading/error para no blanquear ni
+  // bloquear secciones que no dependen de lo que cambió. getSummary hace
+  // catch a un default; sólo la grilla puede fallar "duro".
   const [gridLoading, setGridLoading] = useState(true);
   const [gridError, setGridError] = useState("");
-  const [reviewLoading, setReviewLoading] = useState(true);
-  const [reviewError, setReviewError] = useState("");
-  const [pendingLoading, setPendingLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
-  const loadError = gridError || reviewError;
+  const loadError = gridError;
 
   const costCenterId = costCenterOptions.find((item) => item.name === costCenter)?.id;
 
-  // A) Grilla "Personas habilitadas para carga" — sólo existe cuando
-  // !pendingOnly. Depende de período/búsqueda/centro de costo/página; no
-  // depende de reviewPage/groupByPerson (esos son de la Bandeja).
+  // A) Grilla "Personas habilitadas para carga". Depende de
+  // período/búsqueda/centro de costo/página/orden.
   // Etapa 14G.4: antes esperaba a `costCenterOptionsReady` (catálogo de
   // org-structure) para arrancar — una dependencia artificial: `costCenterId`
   // ya sale de `costCenterOptions.find(...)`, que es `undefined` mientras el
@@ -449,7 +356,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   // de bloquear la grilla detrás de GET /org-structure. Ver docs/decisions/
   // WORKFORCE_MANAGEMENT_HOURS_ENTRY_PERFORMANCE_14G4.md.
   useEffect(() => {
-    if (pendingOnly) return;
     if (!user) return;
     let cancelled = false;
     if (!periodRows.length) setGridLoading(true);
@@ -459,13 +365,11 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         if (cancelled) return;
         setPeriodRows(result.items);
         setPeriodRowsMeta(result.meta);
-        setUsesBackend(true);
       })
       .catch(() => {
         if (cancelled) return;
         setPeriodRows([]);
         setPeriodRowsMeta({ total: 0, page, pageSize, hasMore: false });
-        setUsesBackend(false);
         setGridError("No pudimos cargar la información horaria. Intentá nuevamente.");
       })
       .finally(() => {
@@ -474,91 +378,22 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [costCenterId, debouncedSearch, gridSort, page, pendingOnly, period, refresh, user]);
+  }, [costCenterId, debouncedSearch, gridSort, page, period, refresh, user]);
 
-  // B) Bandeja de revisión (Horas enviadas a revisión) — sólo existe cuando
-  // pendingOnly. Depende de período/búsqueda/centro de costo/reviewPage/
-  // groupByPerson (cambia de endpoint: listByEmployee vs list). Etapa 14G.4:
-  // mismo criterio que la grilla (A) — sin gate de `costCenterOptionsReady`.
-  useEffect(() => {
-    if (!pendingOnly) return;
-    if (!user) return;
-    let cancelled = false;
-    if (!reviewEntries.length && !reviewByPerson.length) setReviewLoading(true);
-    setReviewError("");
-    const reviewFilters = { period, status: "En revisión" as const, search: debouncedSearch, costCenterId, page: reviewPage, take: pageSize };
-    const request = groupByPerson
-      ? timeEntryApiService.listByEmployee({ ...reviewFilters, sort: employeeRowSort(reviewSort) })
-      : timeEntryApiService.list({ ...reviewFilters, sort: reviewSort });
-    request
-      .then((result) => {
-        if (cancelled) return;
-        if (groupByPerson) {
-          setReviewByPerson(result.items as typeof reviewByPerson);
-          setReviewEntries([]);
-        } else {
-          setReviewEntries(result.items as TimeEntry[]);
-          setReviewByPerson([]);
-        }
-        setReviewEntriesMeta(result.meta);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setReviewEntries([]);
-        setReviewByPerson([]);
-        setReviewEntriesMeta({ total: 0, page: reviewPage, pageSize, hasMore: false });
-        setReviewError("No pudimos cargar la información horaria. Intentá nuevamente.");
-      })
-      .finally(() => {
-        if (!cancelled) setReviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [costCenterId, debouncedSearch, groupByPerson, pendingOnly, period, refresh, reviewPage, reviewSort, user]);
-
-  // C) Resumen (tarjetas, ambos modos) + pendientes de novedades/desgloses
-  // (sólo pendingOnly) — ninguno de los dos endpoints acepta
-  // búsqueda/centro/página, así que no dependen de esos filtros; ya cargaba
-  // en paralelo al catálogo de centros de costo antes de 14G.4 (A/B ahora
-  // también, ver más arriba).
+  // C) Resumen (tarjetas): el endpoint no acepta búsqueda/centro/página, así
+  // que no depende de esos filtros.
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
-    if (pendingOnly && !pendingNovelties.length && !pendingBreakdowns.length) setPendingLoading(true);
     timeEntryApiService.getSummary(period)
       .then((result) => { if (!cancelled) setHoursSummary(result); })
       .catch(() => { if (!cancelled) setHoursSummary(emptyHoursSummary); });
-    if (!pendingOnly) return () => { cancelled = true; };
-    Promise.all([
-      pendingApiService.getAll({ period, kind: "novelties", page: pendingNoveltyPage, take: pageSize }),
-      pendingApiService.getAll({ period, kind: "hourConceptBreakdowns", page: pendingBreakdownPage, take: pageSize }),
-    ])
-      .then(([novelties, breakdowns]) => {
-        if (cancelled) return;
-        setPendingNovelties(novelties.data);
-        setPendingNoveltiesMeta(novelties.meta);
-        setPendingBreakdowns(breakdowns.data);
-        setPendingBreakdownsMeta(breakdowns.meta);
-        setUsesBackend(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setPendingNovelties([]);
-        setPendingNoveltiesMeta(emptyListMeta);
-        setPendingBreakdowns([]);
-        setPendingBreakdownsMeta(emptyListMeta);
-        setUsesBackend(false);
-      })
-      .finally(() => {
-        if (!cancelled) setPendingLoading(false);
-      });
     return () => {
       cancelled = true;
     };
-  }, [pendingBreakdownPage, pendingNoveltyPage, pendingOnly, period, refresh, user]);
+  }, [period, refresh, user]);
 
-  // D) Fichadas sobre horas cargadas a mano del período (ambos modos): no
+  // D) Fichadas sobre horas cargadas a mano del período: no
   // depende de búsqueda/centro/página. Sin loading propio: la sección sólo
   // aparece si hay revisiones y, en un refresh, conserva las que ya mostraba.
   useEffect(() => {
@@ -578,8 +413,8 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
     };
   }, [manualConflictsReload, period, refresh, user]);
 
-  // Etapa 14G.4: catálogo de centros de costo para el filtro — ya no bloquea
-  // A/B (ver más arriba), así que corre en paralelo a la grilla/bandeja.
+  // Etapa 14G.4: catálogo de centros de costo para el filtro — no bloquea la
+  // grilla (ver más arriba), así que corre en paralelo.
   useEffect(() => {
     let mounted = true;
     orgStructureApiService
@@ -597,13 +432,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
 
   const costCenters = uniqueOptions(costCenterOptions.map((item) => item.name));
   const employees = periodRows.map((row) => row.employee);
-  const pendingNoveltyItems = pendingNovelties;
-  // Etapa 6L.5: desgloses manuales EN_REVISION (kind: "hourConceptBreakdown").
-  const pendingBreakdownItems = pendingBreakdowns;
-  const canReview = user ? timeEntryApiService.canReview(user) : false;
-  // Etapa 6L.3 (ajuste): aprobar/rechazar/devolver cargas horarias es
-  // exclusivo de RRHH. canReview sigue igual para novedades (sin cambios).
-  const canApprove = user ? timeEntryApiService.canApprove(user) : false;
   const summary = (employeeId: string) =>
     periodRows.find((row) => row.employee.id === employeeId)?.summary
     ?? { incidents: 0, status: "Pendiente", accounting: emptyPeriodAccounting(), dailyBreakdown: [] as EmployeePeriodDay[] };
@@ -621,9 +449,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
   };
   const setPeriodValue = (value: string) => {
     setPage(1);
-    setReviewPage(1);
-    setPendingNoveltyPage(1);
-    setPendingBreakdownPage(1);
     setSearchParams(value ? { period: value } : {});
   };
   // docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md: el export sale sólo del
@@ -653,148 +478,41 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
       setExporting(false);
     }
   };
-  const approve = async (entry: TimeEntry) => {
-    if (!user) return;
-    setReviewActionError("");
-    try {
-      await timeEntryApiService.approve(entry.id);
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setReviewActionError(reviewActionErrorMessage(error));
-    }
-  };
-  const openReview = (entry: TimeEntry, action: "reject" | "return") => {
-    setReview({ entry, action });
-    setReviewActionError("");
-    setReviewReason("");
-  };
-  const confirmReview = async () => {
-    if (!reviewReason.trim() || !review) return;
-    if (!user) return;
-    setReviewActionError("");
-    try {
-      if (review.action === "reject") {
-        await timeEntryApiService.reject(review.entry.id, reviewReason.trim());
-      } else {
-        await timeEntryApiService.returnForCorrection(review.entry.id, reviewReason.trim());
-      }
-      setReview(undefined);
-      setReviewReason("");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      // el modal queda abierto a propósito, para poder reintentar sin
-      // volver a escribir la observación
-      setReviewActionError(reviewActionErrorMessage(error));
-    }
-  };
-  const approveNovelty = async (item: PendingItem) => {
-    if (!user) return;
-    setReviewActionError("");
-    try {
-      await noveltyApiService.approve(item.sourceId);
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setReviewActionError(reviewActionErrorMessage(error));
-    }
-  };
-  const confirmNoveltyReject = async () => {
-    if (!noveltyReject || !reviewReason.trim()) return;
-    setReviewActionError("");
-    try {
-      await noveltyApiService.reject(noveltyReject.sourceId, reviewReason.trim());
-      setNoveltyReject(undefined);
-      setReviewReason("");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setReviewActionError(reviewActionErrorMessage(error));
-    }
-  };
-  // Etapa 6L.5: aprobar/rechazar/devolver un desglose manual pendiente
-  // (HourConceptBreakdown) desde la bandeja — mismo patrón que TimeEntry
-  // arriba, pero contra los endpoints de employeeApiService agregados en 6L.3.
-  const approveBreakdown = async (item: PendingItem) => {
-    if (!user) return;
-    setBreakdownActionError("");
-    setResolvingBreakdownId(item.sourceId);
-    try {
-      await employeeApiService.approveManualHourConceptBreakdown(item.employeeId, item.sourceId);
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setBreakdownActionError(breakdownResolveErrorMessage(error));
-    } finally {
-      setResolvingBreakdownId(null);
-    }
-  };
-  const openBreakdownReview = (item: PendingItem, action: "reject" | "return") => {
-    setBreakdownReview({ item, action });
-    setBreakdownActionError("");
-    setReviewReason("");
-  };
-  const confirmBreakdownReview = async () => {
-    if (!reviewReason.trim() || !breakdownReview) return;
-    if (!user) return;
-    setBreakdownActionError("");
-    setResolvingBreakdownId(breakdownReview.item.sourceId);
-    try {
-      if (breakdownReview.action === "reject") {
-        await employeeApiService.rejectManualHourConceptBreakdown(breakdownReview.item.employeeId, breakdownReview.item.sourceId, reviewReason.trim());
-      } else {
-        await employeeApiService.returnManualHourConceptBreakdown(breakdownReview.item.employeeId, breakdownReview.item.sourceId, reviewReason.trim());
-      }
-      setBreakdownReview(undefined);
-      setReviewReason("");
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      setBreakdownActionError(breakdownResolveErrorMessage(error));
-    } finally {
-      setResolvingBreakdownId(null);
-    }
-  };
   return (
     <>
       <PageHeader
         eyebrow="CONTROL HORARIO"
-        title={pendingOnly ? "Bandeja de revisión" : "Carga de horas"}
-        description={
-          pendingOnly
-            ? "Revisá, aprobá, rechazá o devolvé las horas enviadas a revisión."
-            : "Las fichadas correctas se contabilizan automáticamente. Las horas especiales se muestran separadas y sólo las incidencias requieren revisión."
-        }
+        title="Carga de horas"
+        description="Las fichadas correctas se contabilizan automáticamente. Las horas especiales se muestran separadas y sólo las incidencias requieren revisión."
         action={
-          !pendingOnly ? (
-            <>
-              <Button variant="subtle" icon={CalendarOff} onClick={() => setDayOffDialog({ date: defaultDayOffDate })}>
-                Gestionar francos
-              </Button>
-              <Button
-                variant="subtle"
-                icon={FileBarChart}
-                disabled={exporting}
-                onClick={exportHours}
-              >
-                {exporting ? "Exportando..." : "Exportar horas"}
-              </Button>
-            </>
-          ) : undefined
+          <>
+            <Button variant="subtle" icon={CalendarOff} onClick={() => setDayOffDialog({ date: defaultDayOffDate })}>
+              Gestionar francos
+            </Button>
+            <Button variant="subtle" icon={CalendarCheck} onClick={() => setHolidayDialogOpen(true)}>
+              Gestionar feriados
+            </Button>
+            <Button
+              variant="subtle"
+              icon={FileBarChart}
+              disabled={exporting}
+              onClick={exportHours}
+            >
+              {exporting ? "Exportando..." : "Exportar horas"}
+            </Button>
+          </>
         }
       />
       {loadError ? <div className="form-error">{loadError}</div> : null}
       {exportError ? <div className="form-error">{exportError}</div> : null}
-      {reviewActionError ? <div className="form-error">{reviewActionError}</div> : null}
 
       <div className="stat-grid">
         <StatCard label="Personas activas" value={hoursSummary.activeEmployees} icon={Users} />
         <StatCard
-          label="Pendientes"
+          label="Sin horas cargadas"
           value={hoursSummary.pendingEmployees}
           icon={Clock3}
           tone="orange"
-        />
-        <StatCard
-          label="En revisión"
-          value={hoursSummary.reviewEmployees}
-          icon={ClipboardList}
-          tone="purple"
         />
         <StatCard
           label="Total trabajado"
@@ -806,413 +524,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         <StatCard label="Total computable" value={formatDecimalHoursDuration(hoursSummary.computableHours)} icon={Calculator} tone="blue" />
       </div>
 
-      {pendingOnly ? (
-        <>
-          <Section
-            title="Novedades pendientes"
-            subtitle={`${pendingNoveltiesMeta.total} novedades requieren revisión o aprobación`}
-          >
-            {pendingLoading ? (
-              <LoadingState variant="table" rows={4} columns={7} />
-            ) : pendingNoveltyItems.length ? (
-              <TableShell minWidth={980}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Legajo / Persona</th>
-                      <th>Novedad</th>
-                      <th>Detalle</th>
-                      <th>Cantidad</th>
-                      <th>Estado</th>
-                      <th>Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingNoveltyItems.map((item) => (
-                      <tr key={`${item.kind}-${item.sourceId}`}>
-                        <td>{pendingItemDayLabel(item)}</td>
-                        <td>
-                          <OverflowCell value={item.employeeLabel} />
-                        </td>
-                        <td>
-                          <OverflowCell value={item.title} />
-                        </td>
-                        <td>
-                          <OverflowCell value={item.subtitle || "-"} />
-                        </td>
-                        <td>{item.quantity || "-"}</td>
-                        <td>
-                          <Badge tone={statusTone(item.status)}>{item.status}</Badge>
-                        </td>
-                        <td>
-                          {canReview ? (
-                            <div className="table-actions">
-                              <button
-                                className="table-icon-action"
-                                title="Aprobar novedad"
-                                aria-label="Aprobar novedad"
-                                onClick={() => approveNovelty(item)}
-                              >
-                                <CheckCircle2 size={14} />
-                                <span>Aprobar</span>
-                              </button>
-                              <button
-                                className="table-icon-action danger-link"
-                                title="Rechazar novedad"
-                                aria-label="Rechazar novedad"
-                                onClick={() => {
-                                  setNoveltyReject(item);
-                                  setReviewActionError("");
-                                  setReviewReason("");
-                                }}
-                              >
-                                <X size={14} />
-                                <span>Rechazar</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="table-sub">Solo lectura</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </TableShell>
-            ) : (
-              <EmptyState text={usesBackend ? "No hay novedades pendientes para este período." : "Las novedades pendientes no están disponibles temporalmente."} />
-            )}
-            {!pendingLoading && pendingNoveltiesMeta.total > 0 ? (
-              <Pagination page={pendingNoveltiesMeta.page} pageSize={pendingNoveltiesMeta.pageSize} total={pendingNoveltiesMeta.total} hasMore={pendingNoveltiesMeta.hasMore} onPageChange={setPendingNoveltyPage} itemLabel="novedades" />
-            ) : null}
-          </Section>
-
-          <Section
-            title="Horas enviadas a revisión"
-            subtitle={groupByPerson ? `${reviewEntriesMeta.total} personas con registros en revisión` : `${reviewEntriesMeta.total} registros de Hora normal pendientes de resolución — afectan el total trabajado.`}
-            action={
-              <Tabs
-                tabs={[
-                  { key: "flat", label: "Por registro" },
-                  { key: "person", label: "Por persona" },
-                ]}
-                active={groupByPerson ? "person" : "flat"}
-                onChange={(key) => {
-                  setGroupByPerson(key === "person");
-                  setReviewPage(1);
-                }}
-              />
-            }
-          >
-          <FilterPanel
-            search={{
-              placeholder: "Buscar por legajo, DNI, CUIL, apellido o nombre",
-              value: search,
-              onChange: (value) => {
-                setSearch(value);
-                setReviewPage(1);
-              },
-            }}
-          >
-            <label>
-              Período
-              <input
-                type="month"
-                value={period}
-                onChange={(event) => setPeriodValue(event.target.value)}
-              />
-            </label>
-            <label>
-              Centro de costo
-              <select
-                value={costCenter}
-                onChange={(event) => {
-                  setCostCenter(event.target.value);
-                  setReviewPage(1);
-                }}
-              >
-                <option value="">Todos los centros de costo</option>
-                {costCenters.map((center) => (
-                  <option key={center} value={center}>
-                    {center}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </FilterPanel>
-
-          {reviewLoading ? (
-            <LoadingState variant="table" rows={5} columns={8} />
-          ) : groupByPerson ? (
-            reviewByPerson.length ? (
-              <TableShell minWidth={1120}>
-                <table>
-                  <thead>
-                    <tr>
-                      <SortableHeader label="Legajo" sortKey="legajo" sort={employeeRowSort(reviewSort)} onSort={toggleReviewSort} />
-                      <SortableHeader label="Empleado" sortKey="employee" sort={employeeRowSort(reviewSort)} onSort={toggleReviewSort} />
-                      <th>Empresa</th>
-                      <th>Centro de costo</th>
-                      <th>Responsable de carga</th>
-                      <th>Total en revisión</th>
-                      <th>Estado</th>
-                      <th>Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reviewByPerson.map(({ employee, summary: personSummary }) => (
-                      <tr key={employee.id}>
-                        <td>
-                          <b>{displayLegajo(employee)}</b>
-                        </td>
-                        <td>
-                          <OverflowCell value={fullName(employee)} />
-                        </td>
-                        <td>
-                          <OverflowCell value={employee.company} />
-                        </td>
-                        <td>
-                          <OverflowCell value={employee.costCenter} />
-                        </td>
-                        <td>
-                          <OverflowCell
-                            value={
-                              (employee.timeResponsibles?.length
-                                ? employee.timeResponsibles
-                                : [employee.timeResponsible]
-                              )
-                                .filter(Boolean)
-                                .join(", ") || "-"
-                            }
-                          />
-                        </td>
-                        <td>
-                          <span className="total-hours-cell">
-                            <span title={personSummary.accounting.additiveMinutes > 0 ? `Base ${formatDurationMinutes(personSummary.accounting.baseMinutes)} + adicionales ${formatDurationMinutes(personSummary.accounting.additiveMinutes)}` : undefined}>
-                              {formatDurationMinutes(personSummary.accounting.totalWorkedMinutes)}
-                            </span>
-                            {personSummary.accounting.hasSpecialMultiplier ? (
-                              <Badge tone={personSummary.specialHourConflict ? "danger" : "warning"}>
-                                <span
-                                  title={`Hora especial aplicada${personSummary.specialHourRuleNames.length ? `: ${personSummary.specialHourRuleNames.join(", ")}` : ""}${personSummary.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""} · Total de control: el detalle por concepto está en el legajo.`}
-                                >
-                                  Para liquidación: {formatDurationMinutes(personSummary.accounting.settlement.totalMinutes)}
-                                </span>
-                              </Badge>
-                            ) : null}
-                          </span>
-                        </td>
-                        <td>
-                          <Badge tone={statusTone(personSummary.status)}>{personSummary.status}</Badge>
-                        </td>
-                        <td>
-                          <Link
-                            className="table-icon-action"
-                            title="Ver detalle"
-                            aria-label="Ver detalle"
-                            to={`/horas/${employee.id}?period=${period}`}
-                          >
-                            <Eye size={14} />
-                            <span>Ver detalle</span>
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </TableShell>
-            ) : (
-              <EmptyState text="No hay personas con registros en revisión para los filtros seleccionados." />
-            )
-          ) : reviewEntries.length ? (
-            <TableShell minWidth={1080}>
-              <table>
-                <thead>
-                  <tr>
-                    <SortableHeader label="Legajo" sortKey="legajo" sort={reviewSort} onSort={toggleReviewSort} />
-                    <SortableHeader label="Empleado" sortKey="employee" sort={reviewSort} onSort={toggleReviewSort} />
-                    <SortableHeader label="Día" sortKey="date" sort={reviewSort} onSort={toggleReviewSort} />
-                    <SortableHeader label="Concepto" sortKey="hourConcept" sort={reviewSort} onSort={toggleReviewSort} />
-                    <SortableHeader label="Horas" sortKey="hours" sort={reviewSort} onSort={toggleReviewSort} />
-                    <th>Observación</th>
-                    <SortableHeader label="Estado" sortKey="status" sort={reviewSort} onSort={toggleReviewSort} />
-                    <th>Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reviewEntries.map((entry) => (
-                    <tr key={entry.id}>
-                      <td>
-                        <b>{entry.employeeLegajo || "-"}</b>
-                      </td>
-                      <td>
-                        <OverflowCell value={entry.employeeName || "-"} />
-                      </td>
-                      <td>{formatPeriodDay(entry.period, entry.day)}</td>
-                      <td>
-                        <OverflowCell value={entry.type} />
-                      </td>
-                      <td>
-                        <span className="total-hours-cell">
-                          <b>{formatDurationMinutes(entry.totalMinutes ?? hoursDecimalToMinutes(entry.hours))}</b>
-                          {(entry.specialHourMultiplier || 1) > 1 ? (
-                            <Badge tone={entry.specialHourConflict ? "danger" : "warning"}>
-                              <span
-                                title={`Hora especial aplicada — Multiplicador ${formatMultiplier(entry.specialHourMultiplier)}${entry.specialHourRuleNames?.length ? `: ${entry.specialHourRuleNames.join(", ")}` : ""}${entry.specialHourConflict ? " — Conflicto de reglas: se aplicó la de mayor prioridad" : ""}`}
-                              >
-                                {formatMultiplier(entry.specialHourMultiplier)}
-                              </span>
-                            </Badge>
-                          ) : null}
-                        </span>
-                      </td>
-                      <td className="observation-cell">
-                        <OverflowCell value={formatTimeEntryObservation(entry.notes) || "-"} />
-                      </td>
-                      <td>
-                        <Badge tone={statusTone(entry.status)}>{entry.status}</Badge>
-                      </td>
-                      <td>
-                        {canApprove ? (
-                          <div className="table-actions">
-                            <button
-                              className="table-icon-action"
-                              title="Aprobar"
-                              aria-label="Aprobar"
-                              onClick={() => approve(entry)}
-                            >
-                              <CheckCircle2 size={14} />
-                              <span>Aprobar</span>
-                            </button>
-                            <button
-                              className="table-icon-action danger-link"
-                              title="Rechazar"
-                              aria-label="Rechazar"
-                              onClick={() => openReview(entry, "reject")}
-                            >
-                              <X size={14} />
-                              <span>Rechazar</span>
-                            </button>
-                            <button
-                              className="table-icon-action"
-                              title="Devolver"
-                              aria-label="Devolver"
-                              onClick={() => openReview(entry, "return")}
-                            >
-                              <RefreshCcw size={14} />
-                              <span>Devolver</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="table-sub">Solo lectura</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableShell>
-          ) : (
-            <EmptyState text="No hay horas en revisión para los filtros seleccionados." />
-          )}
-          <Pagination page={reviewEntriesMeta.page} pageSize={reviewEntriesMeta.pageSize} total={reviewEntriesMeta.total} hasMore={reviewEntriesMeta.hasMore} onPageChange={setReviewPage} itemLabel={groupByPerson ? "personas" : "registros"} />
-          </Section>
-
-          <Section
-            title="Conceptos horarios pendientes"
-            subtitle={`${pendingBreakdownsMeta.total} cargas de conceptos pendientes de resolución — las de horas adicionales suman al total trabajado al aprobarse; las de dentro de la jornada no.`}
-          >
-            {breakdownActionError ? <div className="form-error">{breakdownActionError}</div> : null}
-            {pendingLoading ? (
-              <LoadingState variant="table" rows={3} columns={7} />
-            ) : pendingBreakdownItems.length ? (
-              <TableShell minWidth={980}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Legajo / Persona</th>
-                      <th>Concepto adicional</th>
-                      <th>Observación</th>
-                      <th>Horas</th>
-                      <th>Estado</th>
-                      <th>Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingBreakdownItems.map((item) => {
-                      const isResolving = resolvingBreakdownId === item.sourceId;
-                      return (
-                        <tr key={`${item.kind}-${item.sourceId}`}>
-                          <td>{pendingItemDayLabel(item)}</td>
-                          <td>
-                            <OverflowCell value={item.employeeLabel} />
-                          </td>
-                          <td>
-                            <OverflowCell value={item.title} />
-                          </td>
-                          <td className="observation-cell">
-                            <OverflowCell value={item.subtitle || "-"} />
-                          </td>
-                          <td>{item.quantity ? `${item.quantity} h` : "-"}</td>
-                          <td>
-                            <Badge tone={statusTone(item.status)}>{item.status}</Badge>
-                          </td>
-                          <td>
-                            {canApprove ? (
-                              <div className="table-actions">
-                                <button
-                                  className="table-icon-action"
-                                  title="Aprobar carga del concepto"
-                                  aria-label="Aprobar carga del concepto"
-                                  disabled={isResolving}
-                                  onClick={() => approveBreakdown(item)}
-                                >
-                                  <CheckCircle2 size={14} />
-                                  <span>{isResolving ? "Aprobando..." : "Aprobar"}</span>
-                                </button>
-                                <button
-                                  className="table-icon-action danger-link"
-                                  title="Rechazar carga del concepto"
-                                  aria-label="Rechazar carga del concepto"
-                                  disabled={isResolving}
-                                  onClick={() => openBreakdownReview(item, "reject")}
-                                >
-                                  <X size={14} />
-                                  <span>Rechazar</span>
-                                </button>
-                                <button
-                                  className="table-icon-action"
-                                  title="Devolver carga del concepto"
-                                  aria-label="Devolver carga del concepto"
-                                  disabled={isResolving}
-                                  onClick={() => openBreakdownReview(item, "return")}
-                                >
-                                  <RefreshCcw size={14} />
-                                  <span>Devolver</span>
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="table-sub">Solo lectura</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </TableShell>
-            ) : (
-              <EmptyState text="No hay cargas de conceptos pendientes de revisión." />
-            )}
-            {!pendingLoading && pendingBreakdownsMeta.total > 0 ? (
-              <Pagination page={pendingBreakdownsMeta.page} pageSize={pendingBreakdownsMeta.pageSize} total={pendingBreakdownsMeta.total} hasMore={pendingBreakdownsMeta.hasMore} onPageChange={setPendingBreakdownPage} itemLabel="cargas" />
-            ) : null}
-          </Section>
-        </>
-      ) : null}
-
       <ManualHoursConflictsPanel
         conflicts={manualConflicts}
         error={manualConflictsError}
@@ -1220,7 +531,6 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         onOpen={setManualConflictDialog}
       />
 
-      {!pendingOnly ? (
       <Section
         title="Personas habilitadas para carga"
         subtitle="La asignación del responsable y del encargado directo determina quién aparece en este listado."
@@ -1374,143 +684,7 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
         )}
         <Pagination page={periodRowsMeta.page} pageSize={periodRowsMeta.pageSize} total={periodRowsMeta.total} hasMore={periodRowsMeta.hasMore} onPageChange={setPage} itemLabel="legajos" />
       </Section>
-      ) : null}
 
-      {review ? (
-        <Modal
-          title={
-            review.action === "reject"
-              ? "Rechazar carga horaria"
-              : "Devolver carga horaria"
-          }
-          close={() => setReview(undefined)}
-        >
-          <div className="form-stack">
-            <div className="info-note compact">
-              <b>
-                {review.entry.type} · {formatPeriodDay(review.entry.period, review.entry.day)}
-              </b>
-              <p>
-                {review.action === "reject"
-                  ? "El registro quedará rechazado y se conservará para auditoría."
-                  : "El registro queda en estado Devuelto para que puedas corregirlo y volver a enviarlo."}
-              </p>
-            </div>
-            <label>
-              Observación obligatoria
-              <textarea
-                spellCheck
-                lang="es-AR"
-                value={reviewReason}
-                onChange={(event) => setReviewReason(event.target.value)}
-                placeholder="Indicá el motivo para dejar trazabilidad"
-              />
-            </label>
-            {!reviewReason.trim() ? (
-              <p className="error">La observación es obligatoria.</p>
-            ) : null}
-            {reviewActionError ? <p className="error">{reviewActionError}</p> : null}
-            <div className="form-actions">
-              <Button variant="subtle" onClick={() => setReview(undefined)}>
-                Cancelar
-              </Button>
-              <Button
-                variant={review.action === "reject" ? "danger" : "primary"}
-                onClick={confirmReview}
-              >
-                {review.action === "reject" ? "Rechazar" : "Devolver"}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {breakdownReview ? (
-        <Modal
-          title={
-            breakdownReview.action === "reject"
-              ? "Rechazar carga del concepto"
-              : "Devolver carga del concepto"
-          }
-          close={() => setBreakdownReview(undefined)}
-        >
-          <div className="form-stack">
-            <div className="info-note compact">
-              <b>
-                {breakdownReview.item.title} · {pendingItemDayLabel(breakdownReview.item)}
-              </b>
-              <p>
-                {breakdownReview.action === "reject"
-                  ? "La carga quedará rechazada y se conservará para auditoría. No se cuenta en las horas del período."
-                  : "La carga queda en estado Devuelto para que Nivel 2/3 la corrija y la vuelva a enviar."}
-              </p>
-            </div>
-            <label>
-              Observación obligatoria
-              <textarea
-                spellCheck
-                lang="es-AR"
-                value={reviewReason}
-                onChange={(event) => setReviewReason(event.target.value)}
-                placeholder="Indicá el motivo para dejar trazabilidad"
-              />
-            </label>
-            {!reviewReason.trim() ? (
-              <p className="error">La observación es obligatoria.</p>
-            ) : null}
-            {breakdownActionError ? <p className="error">{breakdownActionError}</p> : null}
-            <div className="form-actions">
-              <Button variant="subtle" onClick={() => setBreakdownReview(undefined)}>
-                Cancelar
-              </Button>
-              <Button
-                variant={breakdownReview.action === "reject" ? "danger" : "primary"}
-                disabled={resolvingBreakdownId === breakdownReview.item.sourceId}
-                onClick={confirmBreakdownReview}
-              >
-                {resolvingBreakdownId === breakdownReview.item.sourceId
-                  ? "Guardando..."
-                  : breakdownReview.action === "reject"
-                    ? "Rechazar"
-                    : "Devolver"}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {noveltyReject ? (
-        <Modal title="Rechazar novedad" close={() => setNoveltyReject(undefined)}>
-          <div className="form-stack">
-            <div className="info-note compact">
-              <b>{noveltyReject.title}</b>
-              <p>{noveltyReject.employeeLabel}</p>
-            </div>
-            <label>
-              Observación obligatoria
-              <textarea
-                spellCheck
-                lang="es-AR"
-                value={reviewReason}
-                onChange={(event) => setReviewReason(event.target.value)}
-                placeholder="Indicá el motivo para dejar trazabilidad"
-              />
-            </label>
-            {!reviewReason.trim() ? (
-              <p className="error">La observación es obligatoria.</p>
-            ) : null}
-            {reviewActionError ? <p className="error">{reviewActionError}</p> : null}
-            <div className="form-actions">
-              <Button variant="subtle" onClick={() => setNoveltyReject(undefined)}>
-                Cancelar
-              </Button>
-              <Button variant="danger" onClick={confirmNoveltyReject}>
-                Rechazar
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
 
       {manualConflictDialog ? (
         <ManualHoursConflictDialog
@@ -1531,10 +705,19 @@ export function HoursPage({ pendingOnly = false }: { pendingOnly?: boolean }) {
           initialDate={dayOffDialog.date}
           initialSearch={dayOffDialog.search}
           initialSelectedEmployeeId={dayOffDialog.employeeId}
-          canCorrectClosedPeriods={Boolean(user && roleLevel(user.role) === 1)}
           close={() => setDayOffDialog(null)}
           // El servicio ya invalidó las cachés derivadas: la grilla y el
           // resumen se vuelven a pedir sin recargar la página.
+          onSaved={() => setRefresh((value) => value + 1)}
+        />
+      ) : null}
+
+      {holidayDialogOpen ? (
+        <HolidayWorkAssignmentDialog
+          initialMonth={period}
+          close={() => setHolidayDialogOpen(false)}
+          // La convocatoria cambia la obligación del día (cobertura de
+          // novedades): la grilla y el resumen se vuelven a pedir.
           onSaved={() => setRefresh((value) => value + 1)}
         />
       ) : null}

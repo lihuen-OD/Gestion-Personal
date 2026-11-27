@@ -57,8 +57,8 @@ function buildWorkRegimeWhere(query: ListWorkRegimesQuery): Prisma.WorkRegimeWhe
 // bTo] (con null = sin límite) se solapan sii aFrom <= (bTo ?? +inf) Y
 // (aTo ?? +inf) >= bFrom. excludeId sirve para re-chequear al editar una
 // asignación existente sin que se choque contra sí misma.
-function findOverlappingAssignment(employeeId: string, effectiveFrom: Date, effectiveTo: Date | null | undefined, excludeId?: string) {
-  return prisma.employeeWorkRegime.findFirst({
+function findOverlappingAssignment(employeeId: string, effectiveFrom: Date, effectiveTo: Date | null | undefined, excludeId?: string, db: PrismaTransactionClient = prisma) {
+  return db.employeeWorkRegime.findFirst({
     where: {
       employeeId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
@@ -117,8 +117,8 @@ export const workRegimesRepository = {
     return [items, total] as const;
   },
 
-  findById(id: string) {
-    return prisma.workRegime.findUniqueOrThrow({ where: { id } });
+  findById(id: string, db: PrismaTransactionClient = prisma) {
+    return db.workRegime.findUniqueOrThrow({ where: { id } });
   },
 
   create(data: CreateWorkRegimeInput, createdByUserId?: string | null) {

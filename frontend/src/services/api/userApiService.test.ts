@@ -51,3 +51,32 @@ describe("userApiService — supervisión Nivel 2 → Nivel 3", () => {
     expect(vi.mocked(apiRequest).mock.calls[0]![1]!.body).not.toHaveProperty("password");
   });
 });
+
+describe("userApiService — grupos de turnos (R8)", () => {
+  it("mapea grupos asignados y heredados con estado legible", async () => {
+    vi.mocked(apiRequest).mockResolvedValue({ data: {
+      ...apiUser,
+      shiftGroups: [{ id: "g-planta", code: "PLANTA", name: "Planta", status: "ACTIVO", sortOrder: 10 }],
+      inheritedShiftGroups: [{ group: { id: "g-taller", code: "TALLER", name: "Taller", status: "INACTIVO", sortOrder: 20 }, viaSupervisors: [{ id: "n2-e", name: "Eugenia", email: "e@test.com" }] }],
+    } });
+    const user = await userApiService.getById("n2");
+    expect(user.shiftGroups).toEqual([{ id: "g-planta", code: "PLANTA", name: "Planta", status: "Activo" }]);
+    expect(user.inheritedShiftGroups).toEqual([{ group: { id: "g-taller", code: "TALLER", name: "Taller", status: "Inactivo" }, viaSupervisors: [{ id: "n2-e", name: "Eugenia", email: "e@test.com" }] }]);
+    // Nunca viene precargado: sólo existe si la pantalla tocó el selector.
+    expect(user.shiftGroupIds).toBeUndefined();
+  });
+
+  it("un Nivel 2 sólo envía shiftGroupIds si se tocaron: sin definir los conserva; [] los quita", async () => {
+    await userApiService.update(draft());
+    expect(vi.mocked(apiRequest).mock.calls[0]![1]!.body).not.toHaveProperty("shiftGroupIds");
+    await userApiService.update(draft({ shiftGroupIds: [] }));
+    expect(vi.mocked(apiRequest).mock.calls[1]![1]).toMatchObject({ body: { shiftGroupIds: [] } });
+    await userApiService.create(draft({ shiftGroupIds: ["g-planta"] }));
+    expect(vi.mocked(apiRequest).mock.calls[2]![1]).toMatchObject({ method: "POST", body: { shiftGroupIds: ["g-planta"] } });
+  });
+
+  it("otro rol nunca envía grupos (el backend los quita a quien deja de ser Nivel 2)", async () => {
+    await userApiService.update(draft({ role: "Nivel 3 - Administrativo de Carga Horaria", shiftGroupIds: ["g-planta"] }));
+    expect(vi.mocked(apiRequest).mock.calls[0]![1]!.body).not.toHaveProperty("shiftGroupIds");
+  });
+});

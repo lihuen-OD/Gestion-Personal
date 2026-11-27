@@ -5,12 +5,9 @@ import type { MonthlyClosure } from "../services/api/workforceApiService";
 // sin duplicar el mapeo ni crear un import circular página↔componente.
 export const monthlyClosureStatusText: Record<MonthlyClosure["status"], string> = {
   ABIERTO: "Abierto",
-  ENVIADO: "Esperando a RH",
-  APROBADO: "Aprobado por RH",
-  DEVUELTO: "Devuelto para corregir",
-  CORRECCION_PENDIENTE: "Corrección pendiente",
+  CERRADO: "Cerrado",
 };
 
 export function monthlyClosureStatusTone(status: MonthlyClosure["status"]) {
-  return status === "APROBADO" ? "success" : status === "DEVUELTO" ? "danger" : status === "ABIERTO" ? "neutral" : "warning";
+  return status === "CERRADO" ? "success" : "neutral";
 }

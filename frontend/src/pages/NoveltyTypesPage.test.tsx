@@ -48,8 +48,7 @@ function buildNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyType {
     finnegansName: null,
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: [],
-    approvalRoles: [],
-    rules: { exportsToFinnegans: false, requiresApproval: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false, requiresObservation: false },
+    rules: { exportsToFinnegans: false, requiresDocumentation: false, allowsHours: false, timeEntryBehavior: "NO_BLOQUEA", allowsDateRange: false, finnegansValueUnit: null, finnegansRequiresValidity: false, requiresObservation: false },
     createdAt: "",
     updatedAt: "",
     createdBy: "",
@@ -129,14 +128,15 @@ describe("NoveltyTypesPage — Etapa 15L.2B (listado)", () => {
     expect(screen.queryByText("Origen")).not.toBeInTheDocument();
   });
 
-  it("muestra las columnas Codigo/Novedad/Categoria/Estado/Finnegans/Aprobacion/Acciones", async () => {
+  it("muestra las columnas Codigo/Novedad/Categoria/Estado/Finnegans/Acciones, sin la columna ni el filtro de Aprobacion retirados", async () => {
     vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
     render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
     await screen.findByText("Licencia médica");
 
-    ["Codigo", "Novedad", "Categoria", "Estado", "Finnegans", "Aprobacion", "Acciones"].forEach((header) => {
+    ["Codigo", "Novedad", "Categoria", "Estado", "Finnegans", "Acciones"].forEach((header) => {
       expect(screen.getAllByText(header).length).toBeGreaterThan(0);
     });
+    expect(screen.queryByText("Aprobacion")).not.toBeInTheDocument();
   });
 
   it("no queda ningun filtro con la etiqueta legacy Tipo (ahora Categoria)", async () => {
@@ -148,7 +148,7 @@ describe("NoveltyTypesPage — Etapa 15L.2B (listado)", () => {
     expect(screen.getAllByText("Categoria").length).toBeGreaterThan(0);
   });
 
-  it("las tarjetas de resumen muestran Total/Activos/Exportables a Finnegans/Requieren aprobacion", async () => {
+  it("las tarjetas de resumen muestran Total/Activos/Exportables a Finnegans, sin Requieren aprobacion", async () => {
     vi.mocked(noveltyTypeApiService.getAll).mockResolvedValue([buildNoveltyType()]);
     render(<MemoryRouter><NoveltyTypesPage /></MemoryRouter>);
     await screen.findByText("Licencia médica");
@@ -156,6 +156,6 @@ describe("NoveltyTypesPage — Etapa 15L.2B (listado)", () => {
     expect(screen.getByText("Total de tipos")).toBeInTheDocument();
     expect(screen.getByText("Activos")).toBeInTheDocument();
     expect(screen.getByText("Exportables a Finnegans")).toBeInTheDocument();
-    expect(screen.getByText("Requieren aprobación")).toBeInTheDocument();
+    expect(screen.queryByText("Requieren aprobación")).not.toBeInTheDocument();
   });
 });

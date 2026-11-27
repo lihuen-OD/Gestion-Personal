@@ -1,4 +1,4 @@
-import { CheckCircle2, Trash2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { noveltyApiService } from "../../services/api/noveltyApiService";
 import type { Employee, Novelty, User } from "../../types";
@@ -6,8 +6,6 @@ import { displayLegajo, fullName } from "../../utils/employee";
 import { statusTone } from "../../utils/status";
 import { formatCalendarDate } from "../../utils/date";
 import { Badge } from "../ui/Badge";
-import { Button } from "../ui/Button";
-import { Modal } from "../ui/Modal";
 import { OverflowCell } from "../ui/OverflowCell";
 import { TableShell } from "../ui/TableShell";
 import { SortableHeader } from "../ui/SortableHeader";
@@ -40,32 +38,7 @@ export function NoveltyTable({
   onSort?: (key: NoveltyListSortKey) => void;
 }) {
   const header = (label: string, key: NoveltyListSortKey) => (onSort ? <SortableHeader label={label} sortKey={key} sort={sort ?? null} onSort={onSort} /> : <th>{label}</th>);
-  const [rejecting, setRejecting] = useState<Novelty | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
   const [actionError, setActionError] = useState("");
-
-  const approve = async (id: string) => {
-    try {
-      const updated = await noveltyApiService.approve(id);
-      setActionError("");
-      onChanged(updated);
-    } catch (error) {
-      setActionError("No pudimos aprobar la novedad. Intentá nuevamente.");
-    }
-  };
-
-  const reject = async () => {
-    if (!rejecting || !rejectReason.trim()) return;
-    try {
-      const updated = await noveltyApiService.reject(rejecting.id, rejectReason.trim());
-      setActionError("");
-      onChanged(updated);
-    } catch (error) {
-      setActionError("No pudimos rechazar la novedad. Intentá nuevamente.");
-    }
-    setRejecting(null);
-    setRejectReason("");
-  };
 
   const remove = async (novelty: Novelty) => {
     const confirmed = await confirmAction(
@@ -110,10 +83,6 @@ export function NoveltyTable({
             const employeeLegajo = employee ? displayLegajo(employee) : novelty.employeeLegajo || "-";
             const employeeName = employee ? fullName(employee) : novelty.employeeName || "-";
             const code = novelty.finnegansCode || "-";
-            const canApprove =
-              novelty.status === "Pendiente" &&
-              noveltyApiService.canApprove(novelty, currentUser);
-
             return (
               <tr key={novelty.id}>
                 <td>{employeeLegajo}</td>
@@ -156,37 +125,9 @@ export function NoveltyTable({
                   <Badge tone={statusTone(novelty.status)}>{novelty.status}</Badge>
                 </td>
                 <td>
-                  {canApprove ? (
-                    <div className="table-actions">
-                      <button
-                        className="table-icon-action"
-                        title="Aprobar"
-                        aria-label="Aprobar"
-                        onClick={() => approve(novelty.id)}
-                      >
-                        <CheckCircle2 size={14} />
-                        <span>Aprobar</span>
-                      </button>
-                      <button
-                        className="table-icon-action danger-link"
-                        title="Rechazar"
-                        aria-label="Rechazar"
-                        onClick={() => {
-                          setRejecting(novelty);
-                          setRejectReason("");
-                        }}
-                      >
-                        <X size={14} />
-                        <span>Rechazar</span>
-                      </button>
-                    </div>
-                  ) : null}
-                  {currentUser.role === "Nivel 1 - RRHH" ? (
-                    <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar novedad" onClick={() => void remove(novelty)}>
-                      <Trash2 size={14} /><span>Eliminar</span>
-                    </button>
-                  ) : null}
-                  {!canApprove && currentUser.role !== "Nivel 1 - RRHH" ? "-" : null}
+                  <button className="table-icon-action danger-link" title="Eliminar" aria-label="Eliminar novedad" onClick={() => void remove(novelty)}>
+                    <Trash2 size={14} /><span>Eliminar</span>
+                  </button>
                 </td>
               </tr>
             );
@@ -195,35 +136,6 @@ export function NoveltyTable({
         </table>
       </TableShell>
       {actionError ? <p className="error">{actionError}</p> : null}
-      {rejecting ? (
-        <Modal title="Rechazar novedad" close={() => setRejecting(null)}>
-          <div className="form-stack">
-            <div className="info-note compact">
-              <b>{rejecting.type}</b>
-              <p>El registro queda rechazado y se conserva para historial, auditoria y trazabilidad.</p>
-            </div>
-            <label>
-              Motivo del rechazo *
-              <textarea
-                spellCheck
-                lang="es-AR"
-                value={rejectReason}
-                onChange={(event) => setRejectReason(event.target.value)}
-                placeholder="Indicá el motivo para dejar trazabilidad"
-              />
-            </label>
-            {!rejectReason.trim() ? <p className="error">El motivo es obligatorio.</p> : null}
-            <div className="form-actions">
-              <Button variant="subtle" onClick={() => setRejecting(null)}>
-                Cancelar
-              </Button>
-              <Button variant="danger" disabled={!rejectReason.trim()} onClick={reject}>
-                Rechazar novedad
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
     </>
   );
 }

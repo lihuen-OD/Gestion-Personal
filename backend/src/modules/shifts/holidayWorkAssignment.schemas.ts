@@ -17,6 +17,8 @@ export const holidayWorkAssignmentsByDateQuerySchema = z.object({ date: z.coerce
 // día del feriado). M2 retiró el filtro por sector anterior del legajo.
 export const holidayWorkCandidatesQuerySchema = z.object({
   ...employeeStructureQueryShape,
+  // Feriado que se está convocando: marca a quien tiene franco ese día.
+  date: z.coerce.date().optional(),
   shiftTemplateId: z.string().uuid().optional(),
   withoutShift: queryBoolean().optional(),
   search: z.string().trim().optional(),
@@ -46,6 +48,7 @@ const holidayWorkAssignmentItemSchema = z.object({
 export const saveHolidayWorkAssignmentsSchema = z.object({
   date: z.coerce.date(),
   assignments: z.array(holidayWorkAssignmentItemSchema).min(1).max(500),
+  // Período enviado/aprobado: sólo RRHH y con motivo (mismo criterio que francos).
 });
 
 export type HolidayDatesQuery = z.infer<typeof holidayDatesQuerySchema>;

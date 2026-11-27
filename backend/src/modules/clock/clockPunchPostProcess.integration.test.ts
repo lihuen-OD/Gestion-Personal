@@ -318,13 +318,13 @@ describe.skipIf(!url)("PERF-5D — post-proceso durable de fichadas contra Postg
     expect(await holder.clockPunchPostProcessJob.findUniqueOrThrow({ where: { id: exitJob.id } })).toMatchObject({ status: "FAILED", attemptCount: 12 });
 
     const settle = (scope: { employeeIds: string[] }) => m.worker.drainClockPunchPostProcess(scope, { waitMs: 300 });
-    await expect(m.workforce.submitClosures(period, [employeeId("exhausted")], supervisor, undefined, { settleClockPunchPostProcess: settle })).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_POSTPROCESS_PENDING" });
+    await expect(m.workforce.closeClosures(period, [employeeId("exhausted")], supervisor, undefined, { settleClockPunchPostProcess: settle })).rejects.toMatchObject({ statusCode: 409, code: "CLOCK_POSTPROCESS_PENDING" });
     expect(await holder.monthlyTimeClosure.count({ where: { employeeId: employeeId("exhausted") } })).toBe(0);
     expect(await holder.clockPunchPostProcessJob.findUniqueOrThrow({ where: { id: exitJob.id } })).toMatchObject({ status: "FAILED", attemptCount: 13 });
 
     await dropFailures();
-    const [closure] = await m.workforce.submitClosures(period, [employeeId("exhausted")], supervisor, undefined, { settleClockPunchPostProcess: settle });
-    expect(closure).toMatchObject({ status: "ENVIADO", period });
+    const [closure] = await m.workforce.closeClosures(period, [employeeId("exhausted")], supervisor, undefined, { settleClockPunchPostProcess: settle });
+    expect(closure).toMatchObject({ status: "CERRADO", period });
     expect(await holder.clockPunchPostProcessJob.findUniqueOrThrow({ where: { id: exitJob.id } })).toMatchObject({ status: "COMPLETED" });
     expect(await holder.hourConceptBreakdown.count({ where: { workShiftId } })).toBeGreaterThan(0);
     // El snapshot del cierre ya incluye los desgloses de Motor B de esa salida.
@@ -337,7 +337,7 @@ describe.skipIf(!url)("PERF-5D — post-proceso durable de fichadas contra Postg
     expect(held?.id).toBe(exitJob.id);
 
     const started = Date.now();
-    await expect(m.workforce.submitClosures(exitJob.periods[0]!, [employeeId("busy")], supervisor, undefined, { settleClockPunchPostProcess: (scope) => m.worker.drainClockPunchPostProcess(scope, { waitMs: 300 }) })).rejects.toMatchObject({ code: "CLOCK_POSTPROCESS_PENDING" });
+    await expect(m.workforce.closeClosures(exitJob.periods[0]!, [employeeId("busy")], supervisor, undefined, { settleClockPunchPostProcess: (scope: { employeeIds: string[] }) => m.worker.drainClockPunchPostProcess(scope, { waitMs: 300 }) })).rejects.toMatchObject({ code: "CLOCK_POSTPROCESS_PENDING" });
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(await holder.monthlyTimeClosure.count({ where: { employeeId: employeeId("busy") } })).toBe(0);
   });

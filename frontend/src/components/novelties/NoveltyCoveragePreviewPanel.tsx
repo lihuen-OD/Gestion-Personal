@@ -94,9 +94,6 @@ export function NoveltyCoveragePreviewPanel({
     const conflicts = summary.conflictDays;
     announcement = `Vista previa actualizada: ${summary.days === 1 ? "1 día" : `${summary.days} días`}${summary.reviewDays ? `, ${summary.reviewDays} para revisar` : ""}.`;
     body = <>
-      {preview.initialStatus === "PENDIENTE" && layout.quantity !== "NONE" ? (
-        <p className="info-note compact">Estas horas se muestran como vista previa. No sumarán hasta que la novedad sea aprobada.</p>
-      ) : null}
       {layout.quantity === "NONE" ? <p className="novelty-preview-none">Sin horas de cobertura</p> : null}
       <Summary preview={preview} layout={layout} />
       {conflicts ? (

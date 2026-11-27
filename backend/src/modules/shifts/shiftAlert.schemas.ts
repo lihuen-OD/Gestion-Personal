@@ -24,6 +24,10 @@ export const shiftAlertTypeSchema = z.enum([
   "ACTIVIDAD_EN_FRANCO",
   // docs/decisions/MANUAL_HOURS_VS_CLOCK_PUNCH.md: fichada sobre horas cargadas a mano.
   "ACTIVIDAD_SOBRE_CARGA_MANUAL",
+  // R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): trabajo sin turno programado
+  // (informativa, ya resuelta) e ingreso antes de la ventana de un bloque.
+  "TRABAJO_NO_PROGRAMADO",
+  "INGRESO_FUERA_DE_VENTANA",
 ]);
 
 export const shiftAlertSeveritySchema = z.enum(["INFO", "ADVERTENCIA", "CRITICA"]);

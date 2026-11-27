@@ -15,17 +15,18 @@ export type ShiftAssignmentVigencyData = {
 };
 
 export const shiftAssignmentRepository = {
-  countByTemplateAndStatus(employeeScope: Prisma.EmployeeWhereInput) {
+  countByTemplateAndStatus(employeeScope: Prisma.EmployeeWhereInput, templateScope: Prisma.ShiftTemplateWhereInput = {}) {
     return prisma.shiftAssignment.groupBy({
       by: ["shiftTemplateId", "status"],
-      where: { employee: employeeScope },
+      where: { employee: employeeScope, ...(Object.keys(templateScope).length ? { shiftTemplate: templateScope } : {}) },
       _count: { _all: true },
     });
   },
 
-  findMany(query: ListShiftAssignmentsQuery, employeeScope: Prisma.EmployeeWhereInput) {
+  findMany(query: ListShiftAssignmentsQuery, employeeScope: Prisma.EmployeeWhereInput, templateScope: Prisma.ShiftTemplateWhereInput = {}) {
     return prisma.shiftAssignment.findMany({
       where: {
+        ...(Object.keys(templateScope).length ? { shiftTemplate: templateScope } : {}),
         ...(query.employeeId ? { employeeId: query.employeeId } : {}),
         ...(query.shiftTemplateId ? { shiftTemplateId: query.shiftTemplateId } : {}),
         ...(query.status ? { status: query.status } : {}),
@@ -53,6 +54,10 @@ export const shiftAssignmentRepository = {
 
   findExisting(employeeId: string, shiftTemplateId: string, db: Db = prisma) {
     return db.shiftAssignment.findUnique({ where: { employeeId_shiftTemplateId: { employeeId, shiftTemplateId } } });
+  },
+
+  findExistingMany(employeeIds: string[], shiftTemplateId: string, db: Db = prisma) {
+    return db.shiftAssignment.findMany({ where: { employeeId: { in: employeeIds }, shiftTemplateId } });
   },
 
   create(employeeId: string, shiftTemplateId: string, data: ShiftAssignmentVigencyData, userId: string | null, db: Db = prisma) {

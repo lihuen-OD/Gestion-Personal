@@ -28,7 +28,7 @@ function buildClosure(overrides: Partial<MonthlyClosure> = {}): MonthlyClosure {
     id: "closure-1",
     employeeId: "employee-1",
     period: "2026-08",
-    status: "ENVIADO",
+    status: "CERRADO",
     employee: { id: "employee-1", legajo: "100", firstName: "Ana", lastName: "Gomez" },
     ...overrides,
   };

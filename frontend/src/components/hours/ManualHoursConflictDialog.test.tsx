@@ -63,7 +63,7 @@ describe("ManualHoursConflictDialog", () => {
 
     expect(await screen.findByRole("heading", { name: "Revisión resuelta" })).toBeInTheDocument();
     expect(manualHoursConflictApiService.resolve).toHaveBeenCalledTimes(1);
-    expect(manualHoursConflictApiService.resolve).toHaveBeenCalledWith("alert-1", "KEEP_MANUAL", undefined);
+    expect(manualHoursConflictApiService.resolve).toHaveBeenCalledWith("alert-1", "KEEP_MANUAL");
     expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ decision: "KEEP_MANUAL" }));
     expect(screen.getByRole("status")).toHaveTextContent("Se mantuvo la carga manual. Decidió Carga Horaria el 31/10/2026 · 09:00.");
     expect(screen.queryByRole("button", { name: "Usar horas fichadas" })).toBeNull();
@@ -80,23 +80,15 @@ describe("ManualHoursConflictDialog", () => {
     expect(screen.getByRole("button", { name: "Usar horas fichadas" })).toBeEnabled();
   });
 
-  it("período cerrado (RRHH): pide el motivo y lo envía al reintentar", async () => {
-    vi.mocked(manualHoursConflictApiService.resolve)
-      .mockRejectedValueOnce(new ApiError("El período ya fue enviado o aprobado: indicá el motivo de la corrección.", "MANUAL_HOURS_CORRECTION_REASON_REQUIRED", 400))
-      .mockResolvedValueOnce({ ...pending, status: "RESUELTA", decision: "USE_CLOCK" });
+  it("período CERRADO: muestra el bloqueo y no pide motivo de corrección", async () => {
+    vi.mocked(manualHoursConflictApiService.resolve).mockRejectedValueOnce(new ApiError("El período está cerrado. Reabrilo antes de usar las horas fichadas.", "PERIOD_CLOSED", 409));
     renderDialog();
 
     fireEvent.click(screen.getByRole("button", { name: "Usar horas fichadas" }));
-    const reason = await screen.findByLabelText("Motivo de la corrección *");
-    fireEvent.click(screen.getByRole("button", { name: "Usar horas fichadas" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Indicá el motivo de la corrección.");
-    expect(manualHoursConflictApiService.resolve).toHaveBeenCalledTimes(1);
 
-    fireEvent.change(reason, { target: { value: "Se verificó con el encargado" } });
-    fireEvent.click(screen.getByRole("button", { name: "Usar horas fichadas" }));
-
-    await waitFor(() => expect(manualHoursConflictApiService.resolve).toHaveBeenLastCalledWith("alert-1", "USE_CLOCK", "Se verificó con el encargado"));
-    expect(await screen.findByRole("heading", { name: "Revisión resuelta" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Motivo de la corrección/)).not.toBeInTheDocument();
+    expect(manualHoursConflictApiService.resolve).toHaveBeenCalledWith("alert-1", "USE_CLOCK");
   });
 
   it("jornada nocturna: una sola revisión con el detalle por fecha", () => {

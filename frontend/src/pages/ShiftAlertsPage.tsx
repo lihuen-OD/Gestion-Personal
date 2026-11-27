@@ -45,7 +45,17 @@ const TYPE_LABELS: Record<ShiftAlertType, string> = {
   ACTIVIDAD_EN_FRANCO: "Actividad en día de franco",
   // Se decide en Carga de horas (MANUAL_HOURS_VS_CLOCK_PUNCH.md), nunca un incumplimiento.
   ACTIVIDAD_SOBRE_CARGA_MANUAL: "Fichada sobre horas cargadas manualmente",
+  // R4.5: informativa (llega ya resuelta), nunca un incumplimiento.
+  TRABAJO_NO_PROGRAMADO: "Trabajo no programado",
+  INGRESO_FUERA_DE_VENTANA: "Ingreso fuera del horario del turno",
 };
+
+// R4.5 (SHIFT_ROTATION_AUDIT_PLAN.md §25.7): clasificaciones informativas. Se
+// registran ya resueltas por el sistema: no piden acción, no cambian el estado
+// del grupo de su jornada y se muestran como "No requiere revisión" (la
+// severidad INFO ya se muestra "Informativa"), nunca como "Resuelta".
+const INFORMATIVE_ALERT_TYPES = new Set<ShiftAlertType>(["TRABAJO_NO_PROGRAMADO"]);
+const isInformative = (alert: ShiftAlert) => INFORMATIVE_ALERT_TYPES.has(alert.type);
 
 // Período de Carga de horas donde se decide una fichada sobre horas cargadas a mano.
 function hoursPeriodOf(alert: ShiftAlert) {
@@ -118,11 +128,14 @@ const GROUP_MAIN_ALERT_PRIORITY: ShiftAlertType[] = [
   "JORNADA_INSUFICIENTE",
   "SEGMENTO_SIN_CLASIFICAR",
   "TURNO_NO_IDENTIFICADO",
+  "INGRESO_FUERA_DE_VENTANA",
   "SHIFT_NOT_ENABLED_FOR_EMPLOYEE",
   "INGRESO_TARDE",
   "INGRESO_ANTICIPADO",
   "DESCANSO_INSUFICIENTE",
   "POSSIBLE_SHIFT_CONFIGURATION_MISSING",
+  // Informativa: nunca es la alerta principal si la jornada tiene otra.
+  "TRABAJO_NO_PROGRAMADO",
 ];
 const alertPriorityRank = new Map(GROUP_MAIN_ALERT_PRIORITY.map((type, index) => [type, index]));
 
@@ -130,22 +143,26 @@ type AlertGroup = {
   workShiftId: string;
   mainAlert: ShiftAlert;
   secondaryAlerts: ShiftAlert[];
-  status: "PENDIENTE" | "PARCIAL" | "RESUELTA";
+  status: "PENDIENTE" | "PARCIAL" | "RESUELTA" | "INFORMATIVA";
   severity: ShiftAlertSeverity;
 };
 
 // La jornada queda pendiente mientras todas sus alertas lo estén, pasa a
 // resolución parcial cuando conviven alertas pendientes y revisadas, y queda
 // resuelta cuando ya no tiene alertas pendientes.
-function computeGroupStatus(members: ShiftAlert[]): AlertGroup["status"] {
+// R4.5: las clasificaciones informativas no cuentan; una jornada que sólo
+// tiene clasificaciones informativas "No requiere revisión".
+function computeGroupStatus(allMembers: ShiftAlert[]): AlertGroup["status"] {
+  const members = allMembers.filter((alert) => !isInformative(alert));
+  if (!members.length) return "INFORMATIVA";
   const pending = members.filter((alert) => alert.status === "PENDIENTE").length;
   if (pending === members.length) return "PENDIENTE";
   if (pending > 0) return "PARCIAL";
   return "RESUELTA";
 }
 
-const GROUP_STATUS_LABELS: Record<AlertGroup["status"], string> = { PENDIENTE: "Pendiente", PARCIAL: "Parcialmente resuelta", RESUELTA: "Resuelta" };
-const GROUP_STATUS_TONE: Record<AlertGroup["status"], "warning" | "success" | "neutral"> = { PENDIENTE: "warning", PARCIAL: "neutral", RESUELTA: "success" };
+const GROUP_STATUS_LABELS: Record<AlertGroup["status"], string> = { PENDIENTE: "Pendiente", PARCIAL: "Parcialmente resuelta", RESUELTA: "Resuelta", INFORMATIVA: "No requiere revisión" };
+const GROUP_STATUS_TONE: Record<AlertGroup["status"], "warning" | "success" | "neutral"> = { PENDIENTE: "warning", PARCIAL: "neutral", RESUELTA: "success", INFORMATIVA: "neutral" };
 
 function maximumGroupSeverity(members: ShiftAlert[]): ShiftAlertSeverity {
   const candidates = members.some((alert) => alert.status === "PENDIENTE") ? members.filter((alert) => alert.status === "PENDIENTE") : members;
@@ -332,7 +349,7 @@ export function ShiftAlertsPage() {
                           <span>{countLabel(members.length, "alerta", "alertas")}{warningCount ? ` · ${countLabel(warningCount, "advertencia", "advertencias")}` : ""}{infoCount ? ` · ${countLabel(infoCount, "informativa", "informativas")}` : ""}</span>
                           <button type="button" className="shift-alert-toggle" onClick={() => toggleGroup(group.workShiftId)} aria-expanded={expanded} aria-controls={`shift-alert-detail-${group.workShiftId}`}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span>{expanded ? "Ocultar detalles" : `Ver ${countLabel(members.length, "alerta", "alertas")}`}</span></button>
                         </div>
-                        {expanded ? <div className="shift-alert-group-detail" id={`shift-alert-detail-${group.workShiftId}`}><p>Alertas de esta jornada</p><ul>{members.map((member, index) => <li key={member.id} className={index === 0 ? "is-primary" : ""}><div className="shift-alert-detail-name"><span>{TYPE_LABELS[member.type]}</span>{index === 0 ? <small>Principal</small> : null}{LEGACY_ALERT_TYPES.has(member.type) ? <small>Registro anterior</small> : null}</div><span className="shift-alert-difference">{differenceLabel(member)}</span><Badge tone={SEVERITY_TONE[member.severity]}>{SEVERITY_LABELS[member.severity]}</Badge><Badge tone={STATUS_TONE[member.status]}>{STATUS_LABELS[member.status]}</Badge>{member.status === "PENDIENTE" && member.type === "ACTIVIDAD_SOBRE_CARGA_MANUAL" ? <Link className="table-link" to={`/horas?period=${hoursPeriodOf(member)}`}><CheckCircle2 size={13} />Revisar en Carga de horas</Link> : member.status === "PENDIENTE" ? <button type="button" className="table-link" aria-label={`Resolver ${TYPE_LABELS[member.type]}`} onClick={() => openResolve(member)}><CheckCircle2 size={13} />Resolver</button> : <span />}</li>)}</ul></div> : null}
+                        {expanded ? <div className="shift-alert-group-detail" id={`shift-alert-detail-${group.workShiftId}`}><p>Alertas de esta jornada</p><ul>{members.map((member, index) => <li key={member.id} className={index === 0 ? "is-primary" : ""}><div className="shift-alert-detail-name"><span>{TYPE_LABELS[member.type]}</span>{index === 0 ? <small>Principal</small> : null}{LEGACY_ALERT_TYPES.has(member.type) ? <small>Registro anterior</small> : null}</div><span className="shift-alert-difference">{differenceLabel(member)}</span><Badge tone={SEVERITY_TONE[member.severity]}>{SEVERITY_LABELS[member.severity]}</Badge><Badge tone={isInformative(member) ? "neutral" : STATUS_TONE[member.status]}>{isInformative(member) ? "No requiere revisión" : STATUS_LABELS[member.status]}</Badge>{member.status === "PENDIENTE" && member.type === "ACTIVIDAD_SOBRE_CARGA_MANUAL" ? <Link className="table-link" to={`/horas?period=${hoursPeriodOf(member)}`}><CheckCircle2 size={13} />Revisar en Carga de horas</Link> : member.status === "PENDIENTE" ? <button type="button" className="table-link" aria-label={`Resolver ${TYPE_LABELS[member.type]}`} onClick={() => openResolve(member)}><CheckCircle2 size={13} />Resolver</button> : <span />}</li>)}</ul></div> : null}
                       </article>
                     );
                   })}

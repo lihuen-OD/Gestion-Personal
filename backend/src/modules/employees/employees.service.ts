@@ -37,7 +37,6 @@ import type {
   ListEmployeesQuery,
   ReplaceEmployeeAssignmentsInput,
   ReplaceEmployeeHourConceptsInput,
-  ResolveManualHourConceptBreakdownInput,
   UpdateEmployeeContactInput,
   UpdateEmployeeInput,
   UpsertEmployeeAddressInput,
@@ -270,7 +269,6 @@ async function validateManualBreakdownContext(
   hourConceptId: string,
   period: string,
   user: Express.AuthUser,
-  correctionReason?: string | null,
 ) {
   const employee = await employeesRepository.findEmployeeForManualBreakdown(employeeId, employeeAccessWhere(user));
   if (!employee) throw new AppError("Employee not found", 404, "EMPLOYEE_NOT_FOUND");
@@ -295,16 +293,7 @@ async function validateManualBreakdownContext(
   // sin excepción, igual que antes.
   const closure = await employeesRepository.findMonthlyClosure(employeeId, period);
   if (isMonthlyClosureLocked(closure)) {
-    if (user.role !== roles.rrhh) {
-      throw new AppError("The period is closed for direct editing", 409, "PERIOD_CLOSED");
-    }
-    if (!correctionReason || !correctionReason.trim()) {
-      throw new AppError(
-        "Indicá el motivo de la corrección del desglose manual.",
-        400,
-        "HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED",
-      );
-    }
+    throw new AppError("El período está cerrado. Reabrilo antes de modificar conceptos horarios.", 409, "PERIOD_CLOSED");
   }
   return { employee, concept };
 }
@@ -340,26 +329,6 @@ async function assertWithinBaseFits(employeeId: string, date: Date, concept: { i
       "WITHIN_BASE_EXCEEDS_BASE_HOURS",
     );
   }
-}
-
-// Etapa 6L.3 (ajuste): igual que TimeEntry, la aprobación final de un
-// desglose manual es exclusiva de RRHH — Nivel 2/3 pueden cargarlo pero no
-// resolverlo (aprobar/rechazar/devolver), ni propio ni ajeno.
-function assertCanResolveManualBreakdown(user: Express.AuthUser) {
-  if (user.role !== roles.rrhh) {
-    throw new AppError("Sólo RRHH puede aprobar, rechazar o devolver desgloses manuales.", 403, "FORBIDDEN");
-  }
-}
-
-async function findResolvableManualBreakdown(employeeId: string, breakdownId: string, user: Express.AuthUser) {
-  const before = await employeesRepository.findManualBreakdownById(breakdownId, employeeAccessWhere(user));
-  if (!before || before.employeeId !== employeeId) {
-    throw new AppError("Desglose manual no encontrado", 404, "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND");
-  }
-  if (before.status !== "EN_REVISION") {
-    throw new AppError("Sólo se pueden resolver desgloses manuales en revisión.", 400, "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE");
-  }
-  return before;
 }
 
 function isManualBreakdownConcurrencyError(error: unknown) {
@@ -749,7 +718,7 @@ export const employeesService = {
     const period = input.date.slice(0, 7);
     const date = new Date(`${input.date}T00:00:00.000Z`);
     const day = Number(input.date.slice(8, 10));
-    const { employee, concept } = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user, input.observation);
+    const { employee, concept } = await validateManualBreakdownContext(employeeId, input.hourConceptId, period, user);
     if (input.minutes > 0 && concept.workTreatment === "WITHIN_BASE") {
       await assertWithinBaseFits(employeeId, date, concept, input.minutes, input.date);
     }
@@ -759,9 +728,6 @@ export const employeesService = {
     const appliedMultiplier = input.minutes > 0
       ? (await resolveDoubleHourMultipliersByDate(employeeId, [date])).get(input.date) ?? 1
       : 1;
-    // Etapa 6L.3: mismo criterio que TimeEntry — RRHH aplica el desglose
-    // directo (APROBADO); Nivel 2/3 lo dejan pendiente de revisión.
-    const autoApprovedByUserId = user.role === roles.rrhh ? user.id : null;
     const result = await saveManualBreakdownWithRetry({
       employeeId,
       hourConceptId: input.hourConceptId,
@@ -772,69 +738,18 @@ export const employeesService = {
       appliedMultiplier,
       observation: input.observation,
       createdByUserId: user.id,
-      approvedByUserId: autoApprovedByUserId,
+      approvedByUserId: user.id,
     });
     await auditService.register({
       ...audit,
       action: result.operation,
       entity: "HourConceptBreakdown",
       entityId: result.item?.id || null,
-      description: `${result.operation === "DELETE" ? "Se eliminó" : autoApprovedByUserId ? "Se guardó y aplicó (RRHH)" : "Se guardó"} ` +
+      description: `${result.operation === "DELETE" ? "Se eliminó" : "Se guardó y aplicó"} ` +
         `el desglose manual ${concept.name} del ${formatArgentinaDate(input.date)} para ${formatEmployeeReference(employee)}.`,
       after: result.item as Prisma.InputJsonValue | undefined,
     });
     return result.item;
-  },
-
-  // Etapa 6L.3 (ajuste): approve/reject/return para HourConceptBreakdown
-  // manual EN_REVISION — mismo patrón que timeEntriesService.approve/reject/
-  // returnForCorrection, exclusivo de RRHH.
-  async approveManualHourConceptBreakdown(employeeId: string, breakdownId: string, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanResolveManualBreakdown(user);
-    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
-    const item = await employeesRepository.approveManualHourConceptBreakdown(breakdownId, user.id);
-    await auditService.register({
-      ...audit,
-      action: "APPROVE",
-      entity: "HourConceptBreakdown",
-      entityId: item.id,
-      description: `Se aprobó el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}.`,
-      before: before as Prisma.InputJsonValue,
-      after: item as Prisma.InputJsonValue,
-    });
-    return item;
-  },
-
-  async rejectManualHourConceptBreakdown(employeeId: string, breakdownId: string, input: ResolveManualHourConceptBreakdownInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanResolveManualBreakdown(user);
-    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
-    const item = await employeesRepository.rejectManualHourConceptBreakdown(breakdownId);
-    await auditService.register({
-      ...audit,
-      action: "REJECT",
-      entity: "HourConceptBreakdown",
-      entityId: item.id,
-      description: `Se rechazó el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
-    });
-    return item;
-  },
-
-  async returnManualHourConceptBreakdown(employeeId: string, breakdownId: string, input: ResolveManualHourConceptBreakdownInput, user: Express.AuthUser, audit?: AuditContext) {
-    assertCanResolveManualBreakdown(user);
-    const before = await findResolvableManualBreakdown(employeeId, breakdownId, user);
-    const item = await employeesRepository.returnManualHourConceptBreakdown(breakdownId);
-    await auditService.register({
-      ...audit,
-      action: "RETURN",
-      entity: "HourConceptBreakdown",
-      entityId: item.id,
-      description: `Se devolvió el desglose manual ${item.hourConcept.name} de ${formatEmployeeReference(item.employee)}. Motivo: ${input.reason}`,
-      before: before as Prisma.InputJsonValue,
-      after: { item, reason: input.reason } as Prisma.InputJsonValue,
-    });
-    return item;
   },
 
   // Etapa 14D.2: `getById` (detalle completo — núcleo con cadena
@@ -1058,6 +973,16 @@ export const employeesService = {
   },
 
   async replaceAssignments(id: string, input: ReplaceEmployeeAssignmentsInput, audit?: AuditContext) {
+    // Responsable de carga = usuario Nivel 2 ACTIVO referenciado por userId.
+    // Un nombre sin usuario, un Nivel 1/3 o un usuario inactivo no abrirían
+    // alcance a nadie (employeeAccessWhere), así que se rechazan.
+    const responsibleIds = input.assignments.filter((assignment) => assignment.type === "TIME_RESPONSIBLE").map((assignment) => assignment.userId);
+    if (responsibleIds.length) {
+      const valid = await execute(() => employeesRepository.findActiveSupervisionUserIds(responsibleIds.filter((userId): userId is string => Boolean(userId))));
+      if (responsibleIds.some((userId) => !userId || !valid.has(userId))) {
+        throw new AppError("El responsable de carga horaria debe ser un usuario Nivel 2 activo.", 422, "TIME_RESPONSIBLE_REQUIRES_N2_USER");
+      }
+    }
     const before = await execute(() => employeesRepository.findAssignmentsAuditSnapshot(id));
     const employee = await execute(() => employeesRepository.replaceAssignments(id, input.assignments));
     await auditService.register({

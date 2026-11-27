@@ -89,7 +89,6 @@ export const createNoveltyTypeSchema = z.object({
   description: z.string().trim().max(600).optional().nullable(),
   notes: z.string().trim().max(600).optional().nullable(),
   exportsToFinnegans: z.boolean().default(false),
-  requiresApproval: z.boolean().default(true),
   requiresDocumentation: z.boolean().default(false),
   allowsHours: z.boolean().default(false),
   // Etapa 15L.6: antes opcional (sin default real, sincronizado por
@@ -108,7 +107,6 @@ export const createNoveltyTypeSchema = z.object({
     "Nivel 2 - Supervisión / Gestión",
     "Nivel 3 - Administrativo de Carga Horaria",
   ]),
-  approvalRoles: z.array(roleSchema).default(["Nivel 1 - RRHH"]),
   // Cobertura horaria: defaults neutros (no registra tiempo, no suma).
   coverageMode: noveltyCoverageModeSchema.default("NONE"),
   coverageFixedMinutes: z.number().int().min(1).max(1440).optional().nullable(),

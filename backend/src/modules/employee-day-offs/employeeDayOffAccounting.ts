@@ -91,6 +91,7 @@ export async function loadDayOffAccounting(scope: DayOffAccountingScope, db: Db 
       startAt: true,
       status: true,
       shiftTemplate: { select: { startTime: true, endTime: true, crossesMidnight: true } },
+      scheduledStartAt: true,
       timeSegments: { select: { date: true, minutes: true } },
     },
   });
@@ -98,7 +99,7 @@ export async function loadDayOffAccounting(scope: DayOffAccountingScope, db: Db 
   const excludedBaseMinutes = new Map<string, number>();
   const excludedWorkShiftIds = new Set<string>();
   for (const shift of shifts) {
-    const dayOff = dayOffs.get(dayOffKey(shift.employeeId, workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate)));
+    const dayOff = dayOffs.get(dayOffKey(shift.employeeId, workShiftOperationalDateKey(shift.startAt, shift.shiftTemplate, shift.scheduledStartAt)));
     if (!dayOff) continue;
     const loaded = LOADED_SHIFT_STATUSES.has(shift.status);
     dayOff.activityShifts += 1;

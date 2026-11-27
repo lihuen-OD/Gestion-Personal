@@ -3,7 +3,7 @@ import type { Mock } from "vitest";
 import type { PrismaTransactionClient } from "../../shared/prisma/client";
 import { accountDay, toAccountingBaseEntry, toAccountingBreakdown } from "../time-entries/workedTimeAccounting";
 import { evaluateSpecialHourRulesForEmployees } from "../time-entries/timeEntries.repository";
-import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, specialHourRulesForEmployeeOnDate } from "./doubleHourRuleMatching";
+import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate } from "./doubleHourRuleMatching";
 import { rebuildClosureSnapshots } from "./closureSnapshot";
 import { affectedWindow, reinterpretSpecialHours, reinterpretSpecialHoursOnDates, type RuleCalendar } from "./specialHourReinterpretation";
 
@@ -83,23 +83,18 @@ function feriado(overrides: Partial<Rule> = {}): Rule {
 }
 
 // Motor en memoria: reglas ACTIVAS, vigentes, del alcance del empleado,
-// política FERIADO + convocatoria, matcheadas por calendario y resueltas por
-// prioridad (las piezas reales de doubleHourRuleMatching).
+// matcheadas por calendario y resueltas por prioridad (las piezas reales de
+// doubleHourRuleMatching). FERIADO incluido: la convocatoria no interviene
+// (WORKED_TIME_ACCOUNTING_MODEL.md §20). `world.convocations` existe sólo para
+// probar que su presencia no cambia nada.
 function engine(employeeId: string, dates: Date[]) {
   const result = new Map<string, { multiplier: number; matchedRules: Rule[]; winners: Rule[]; conflicting: boolean }>();
   const active = world.rules.filter((rule) => rule.status === "ACTIVO");
   const inScope = active.filter((rule) => !rule.employeeIds.length || rule.employeeIds.includes(employeeId));
   const activeDates = buildActiveDatesByRule(active);
   for (const date of dates) {
-    const key = date.toISOString().slice(0, 10);
     const vigentOn = (rules: Rule[]) => rules.filter((rule) => rule.fromDate <= date && (!rule.toDate || rule.toDate >= date));
-    const candidates = specialHourRulesForEmployeeOnDate({
-      employeeId,
-      rulesInEmployeeScope: vigentOn(inScope),
-      feriadoRules: vigentOn(active.filter((rule) => rule.kind === "FERIADO")),
-      convokedEmployeeIds: new Set(world.convocations.filter((item) => item.status === "ACTIVA" && item.date.toISOString().slice(0, 10) === key).map((item) => item.employeeId)),
-    });
-    const matchedRules = candidates.filter((rule) => ruleMatchesDate(rule, date, activeDates));
+    const matchedRules = vigentOn(inScope).filter((rule) => ruleMatchesDate(rule, date, activeDates));
     const { winners, multiplier, conflicting } = resolveWinningRules(matchedRules);
     result.set(date.toISOString().slice(0, 10), { multiplier, matchedRules, winners, conflicting });
   }
@@ -288,17 +283,17 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(hours(dayAccounting(JUAN, OCT_3).totalWorkedMinutes)).toBe(9);
   });
 
-  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): un período enviado o aprobado
+  // D-5 (ORG_LOCATION_REORGANIZATION.md §18.1): un período CERRADO
   // queda protegido — ni sus filas ni su snapshot se modifican; se informa
   // cuánto diferiría. Un cierre DEVUELTO (reabierto por RRHH) sí se recalcula.
-  it("CASO G — período ENVIADO/APROBADO protegido: filas y snapshot intactos, diferencia informada; DEVUELTO se recalcula", async () => {
+  it("CASO G — período CERRADO protegido: filas y snapshot intactos, diferencia informada; ABIERTO (reabierto) se recalcula", async () => {
     loadHours(JUAN, OCT_3, 8);
     loadHours(ANA, OCT_3, 8);
     loadHours(PEDRO, OCT_3, 8);
     world.closures.push(
-      { id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 480 } } } },
-      { id: "closure-ana", employeeId: ANA, period: "2026-10", status: "ENVIADO", snapshot: { accounting: {} } },
-      { id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "DEVUELTO", snapshot: { accounting: {} } },
+      { id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: { settlement: { totalMinutes: 480 } } } },
+      { id: "closure-ana", employeeId: ANA, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } },
+      { id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "ABIERTO", snapshot: { accounting: {} } },
     );
 
     world.rules.push(feriado());
@@ -311,10 +306,10 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
     expect(closures.map((closure: Closure) => closure.id)).toEqual(["closure-pedro"]);
     expect(recalculation).toEqual({ reason: "SPECIAL_HOUR_RULE_CHANGED", doubleHourRuleId: "rule-feriado", doubleHourRuleName: "Feriado 3 de octubre" });
     expect(result.protectedPeriods).toEqual([
-      { employeeId: ANA, period: "2026-10", status: "ENVIADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
-      { employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
+      { employeeId: ANA, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
+      { employeeId: JUAN, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 },
     ].sort((a, b) => `${a.employeeId}:${a.period}`.localeCompare(`${b.employeeId}:${b.period}`)));
-    expect(world.closures.map((closure) => closure.status)).toEqual(["APROBADO", "ENVIADO", "DEVUELTO"]);
+    expect(world.closures.map((closure) => closure.status)).toEqual(["CERRADO", "CERRADO", "ABIERTO"]);
     expect(db.$executeRaw).toHaveBeenCalled();
   });
 
@@ -421,11 +416,11 @@ describe("Hora Especial reinterpreta las horas ya cargadas (orden indistinto)", 
   });
 });
 
-// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §16: la regla FERIADO define
-// cuánto vale trabajar el día; la convocatoria define quién fue convocado. Si
-// la fecha tiene convocados, el FERIADO aplica sólo a ellos; si no tiene
-// ninguno, cada regla usa su alcance.
-describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas", () => {
+// docs/decisions/WORKED_TIME_ACCOUNTING_MODEL.md §20 (reemplaza §16): la regla
+// FERIADO define cuánto vale trabajar el día según SU alcance, para quien
+// trabaje, convocado o no. La convocatoria sólo define la obligación de
+// asistir: nunca cambia el multiplicador ni dispara una reinterpretación.
+describe("FERIADO §20: el multiplicador sale del alcance de la regla, nunca de la convocatoria", () => {
   const OCT_5 = new Date("2026-10-05T00:00:00.000Z"); // lunes
   const L31 = "employee-31";
   const L30 = "employee-30";
@@ -433,135 +428,75 @@ describe("FERIADO + convocatoria (HolidayWorkAssignment) reinterpreta las horas"
   const convoke = (employeeId: string, status: Convocation["status"] = "ACTIVA") => {
     world.convocations = [...world.convocations.filter((item) => item.employeeId !== employeeId), { employeeId, date: OCT_5, status }];
   };
-  const saveConvocation = () => reinterpretSpecialHoursOnDates(db as unknown as PrismaTransactionClient, [OCT_5], { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: "2026-10-05" });
   const minutes = (employeeId: string) => dayAccounting(employeeId, OCT_5);
+  const reinterpretDate = () => reinterpretSpecialHoursOnDates(db as unknown as PrismaTransactionClient, [OCT_5], { reason: "SPECIAL_HOUR_RECONCILIATION" });
 
-  it("CASO 1 — el caso real: L31 2 h 26 min, feriado x2, convocado → real 2 h 26 min, liquidación 4 h 52 min", async () => {
+  it("el caso real L31: 2 h 26 min en un feriado x2 global → liquidación 4 h 52 min, haya o no convocatoria", async () => {
     world.rules.push(feriado5());
-    world.entries.push({ id: "entry-31", employeeId: L31, date: OCT_5, day: 5, period: "2026-10", hours: 146 / 60, totalMinutes: 146, actualMinutes: 146, status: "APROBADO", appliedMultiplier: 1 });
-    convoke(L31);
-
-    await saveConvocation();
-
+    loadHours(L31, OCT_5, 146 / 60);
     expect(minutes(L31).totalWorkedMinutes).toBe(146);
     expect(minutes(L31).settlement.totalMinutes).toBe(292);
-    expect(world.entries[0]!.appliedMultiplier).toBe(2);
+    convoke(L31);
+    loadHours(L30, OCT_5, 146 / 60);
+    expect(minutes(L30).settlement.totalMinutes).toBe(292);
   });
 
-  it("CASO 2 ≡ CASO 3 — horas primero y convocatoria después da lo mismo que convocatoria primero y horas después", async () => {
-    world.rules.push(feriado5());
-    loadHours(L31, OCT_5, 8);
-    convoke(L31);
-    await saveConvocation();
-    const hoursFirst = { entries: structuredClone(world.entries), accounting: minutes(L31) };
-
-    world = { ...emptyWorld(), rules: [feriado5()] };
-    db = fakeDb();
-    convoke(L31);
-    await saveConvocation();
-    loadHours(L31, OCT_5, 8);
-
-    expect(world.entries).toEqual(hoursFirst.entries);
-    expect(minutes(L31)).toEqual(hoursFirst.accounting);
-    expect(hours(minutes(L31).settlement.totalMinutes)).toBe(16);
-  });
-
-  it("CASO 4 — quitar al convocado: queda en x1 mientras haya otros convocados; sin ninguno, vuelve el alcance de la regla", async () => {
+  it("no convocado alcanzado por la regla cobra x2 aunque la fecha tenga otros convocados", async () => {
     world.rules.push(feriado5());
     convoke(L31);
-    convoke(L30);
     loadHours(L31, OCT_5, 8);
     loadHours(L30, OCT_5, 8);
     expect(hours(minutes(L31).settlement.totalMinutes)).toBe(16);
+    expect(hours(minutes(L30).settlement.totalMinutes)).toBe(16);
+  });
 
-    convoke(L31, "CANCELADA");
-    await saveConvocation();
+  it("convocado fuera del alcance de la regla cobra x1: la convocatoria no lo alcanza", async () => {
+    world.rules.push({ ...feriado5(), employeeIds: [L30] });
+    convoke(L31);
+    loadHours(L31, OCT_5, 8);
+    loadHours(L30, OCT_5, 8);
     expect(hours(minutes(L31).settlement.totalMinutes)).toBe(8);
     expect(hours(minutes(L30).settlement.totalMinutes)).toBe(16);
-
-    convoke(L30, "CANCELADA");
-    await saveConvocation();
-    // Sin convocatoria la fecha vuelve a la regla global (feriados sin convocatoria no se rompen).
-    expect(hours(minutes(L31).settlement.totalMinutes)).toBe(16);
-    expect(hours(minutes(L30).settlement.totalMinutes)).toBe(16);
   });
 
-  it("CASO 5 — dos empleados con horas y sólo uno convocado: sólo el convocado cobra el feriado", async () => {
+  it("agregar, cancelar o quitar convocatorias no cambia ninguna carga al reinterpretar la fecha", async () => {
     world.rules.push(feriado5());
     loadHours(L31, OCT_5, 8);
     loadHours(L30, OCT_5, 8);
-    expect(hours(minutes(L30).settlement.totalMinutes)).toBe(16); // sin convocatoria: regla global
+    const before = structuredClone(world.entries);
 
     convoke(L31);
-    const result = await saveConvocation();
-
-    expect(hours(minutes(L31).settlement.totalMinutes)).toBe(16);
-    expect(hours(minutes(L30).settlement.totalMinutes)).toBe(8);
-    expect(result).toMatchObject({ timeEntries: 1, employees: 1 });
+    expect((await reinterpretDate()).timeEntries).toBe(0);
+    convoke(L31, "CANCELADA");
+    convoke(L30);
+    expect((await reinterpretDate()).timeEntries).toBe(0);
+    world.convocations = [];
+    expect((await reinterpretDate()).timeEntries).toBe(0);
+    expect(world.entries).toEqual(before);
   });
 
-  it("el convocado queda alcanzado aunque la regla FERIADO tenga otro alcance", async () => {
-    world.rules.push({ ...feriado5(), employeeIds: [L30] });
-    loadHours(L31, OCT_5, 8);
-    convoke(L31);
-
-    await saveConvocation();
-
-    expect(hours(minutes(L31).settlement.totalMinutes)).toBe(16);
-  });
-
-  it("CASO 6 — regla DOMINGO: una convocatoria accidental no cambia nada", async () => {
-    const domingo = feriado({ id: "rule-domingo", kind: "DOMINGO", recurrenceType: "SEMANAL", fromDate: new Date("2026-01-01T00:00:00.000Z"), toDate: null, weekdays: [0], dates: [] });
-    world.rules.push(domingo);
-    loadHours(L30, OCT_4, 8);
-    world.convocations.push({ employeeId: L31, date: OCT_4, status: "ACTIVA" });
-
-    const result = await reinterpretSpecialHoursOnDates(db as unknown as PrismaTransactionClient, [OCT_4], { reason: "HOLIDAY_WORK_ASSIGNMENT_CHANGED", date: "2026-10-04" });
-
-    expect(hours(dayAccounting(L30, OCT_4).settlement.totalMinutes)).toBe(16);
-    expect(result.timeEntries).toBe(0);
-  });
-
-  it("CASO 7 — base 8 + Sereno 3 (dentro) + Colectivo 1 (adicional) en feriado convocado → residual 5, total 9, equivalencia 18", async () => {
+  it("base 8 + Sereno 3 (dentro) + Colectivo 1 (adicional) en feriado x2 sin convocatoria → residual 5, total 9, equivalencia 18", async () => {
     world.rules.push(feriado5());
-    world.convocations.push({ employeeId: "other", date: OCT_5, status: "ACTIVA" }); // la fecha ya tenía convocatoria: L31 en x1
     loadHours(L31, OCT_5, 8);
     loadConcept(L31, OCT_5, "sereno", 180, "WITHIN_BASE");
     loadConcept(L31, OCT_5, "colectivo", 60, "ADDITIVE_TO_WORKED_TOTAL");
-    expect(hours(minutes(L31).settlement.totalMinutes)).toBe(9);
-
-    convoke(L31);
-    await saveConvocation();
 
     expect(hours(minutes(L31).normalResidualMinutes)).toBe(5);
     expect(hours(minutes(L31).totalWorkedMinutes)).toBe(9);
     expect(minutes(L31).settlement).toEqual({ normalMinutes: 600, withinBaseMinutes: 360, additiveMinutes: 120, noveltyMinutes: 0, totalMinutes: 1080 });
   });
 
-  it("CASO 8 — convocatoria sobre un período APROBADO: no modifica horas ni snapshot (D-5) y lo informa", async () => {
+  it("historia previa a §20 (no convocado guardado x1 en un feriado global) se corrige al reinterpretar, salvo período CERRADO", async () => {
     world.rules.push(feriado5());
-    world.convocations.push({ employeeId: "other", date: OCT_5, status: "ACTIVA" });
-    loadHours(L31, OCT_5, 8);
-    world.closures.push({ id: "closure-31", employeeId: L31, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
-    const before = world.entries[0]!.appliedMultiplier;
-
-    convoke(L31);
-    const result = await saveConvocation();
-
-    expect(world.entries[0]!.appliedMultiplier).toBe(before);
-    expect(result.rebuiltClosures).toHaveLength(0);
-    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
-    expect(world.closures[0]!.status).toBe("APROBADO");
-  });
-
-  it("devuelve el detalle antes → después para backup/reporte", async () => {
-    world.rules.push(feriado5());
+    world.entries.push({ id: "entry-30", employeeId: L30, date: OCT_5, day: 5, period: "2026-10", hours: 8, totalMinutes: 480, actualMinutes: 480, status: "APROBADO", appliedMultiplier: 1 });
     world.entries.push({ id: "entry-31", employeeId: L31, date: OCT_5, day: 5, period: "2026-10", hours: 8, totalMinutes: 480, actualMinutes: 480, status: "APROBADO", appliedMultiplier: 1 });
-    convoke(L31);
+    world.closures.push({ id: "closure-31", employeeId: L31, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
 
-    const result = await saveConvocation();
+    const result = await reinterpretDate();
 
-    expect(result.changes.timeEntries).toEqual([{ id: "entry-31", employeeId: L31, date: "2026-10-05", from: 1, to: 2 }]);
+    expect(result.changes.timeEntries).toEqual([{ id: "entry-30", employeeId: L30, date: "2026-10-05", from: 1, to: 2 }]);
+    expect(world.entries.find((row) => row.id === "entry-31")!.appliedMultiplier).toBe(1);
+    expect(result.protectedPeriods).toEqual([{ employeeId: L31, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
   });
 });
 
@@ -616,7 +551,7 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     expect(world.segments[0]).toMatchObject({ isSpecial: true, minutes: 480 });
   });
 
-  it("feriado con convocatoria: eliminarlo quita el multiplicador del convocado; la convocatoria sigue existiendo y no da multiplicador por sí sola", async () => {
+  it("feriado con convocatoria: eliminarlo quita el multiplicador; la convocatoria sigue existiendo y no da multiplicador por sí sola", async () => {
     world.rules.push(feriados());
     world.convocations.push({ employeeId: JUAN, date: OCT_5, status: "ACTIVA" });
     loadHours(JUAN, OCT_5, 8);
@@ -634,18 +569,18 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
     expect(world.segments[0]).toMatchObject({ isSpecial: false, minutes: 480 });
   });
 
-  it("feriado ya finalizado con cierre APROBADO: eliminar la regla no toca ese período (D-5)", async () => {
+  it("feriado ya finalizado con cierre CERRADO: eliminar la regla no toca ese período (D-5)", async () => {
     world.rules.push(feriados());
     loadHours(JUAN, OCT_5, 8);
     world.entries[0]!.appliedMultiplier = 2;
-    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: { settlement: { totalMinutes: 960 } } } });
 
     const result = await deleteRule(feriados());
 
     expect(result.rebuiltClosures).toHaveLength(0);
     expect(world.entries[0]!.appliedMultiplier).toBe(2);
-    expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "APROBADO", timeEntries: 1 });
-    expect(world.closures[0]!.status).toBe("APROBADO");
+    expect(result.protectedPeriods[0]).toMatchObject({ employeeId: JUAN, status: "CERRADO", timeEntries: 1 });
+    expect(world.closures[0]!.status).toBe("CERRADO");
   });
 
   // Preview de eliminación de “Feriados” en development (2026-10-13): 17 legajos
@@ -658,14 +593,14 @@ describe("Eliminar definitivamente una regla reinterpreta como si nunca hubiera 
       loadHours(employeeId, OCT_5, 8);
       world.entries.at(-1)!.appliedMultiplier = 2;
     }
-    world.closures.push({ id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.closures.push({ id: "closure-pedro", employeeId: PEDRO, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
 
     const result = await deleteRule(feriados());
 
     expect(evaluateSpecialHourRulesForEmployees).toHaveBeenCalledTimes(1);
     expect([...(evaluateSpecialHourRulesForEmployees as unknown as Mock).mock.calls[0]![0].keys()].sort()).toEqual([ANA, JUAN, PEDRO].sort());
     expect(result).toMatchObject({ timeEntries: 2, employees: 2 });
-    expect(result.protectedPeriods).toEqual([{ employeeId: PEDRO, period: "2026-10", status: "APROBADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: PEDRO, period: "2026-10", status: "CERRADO", timeEntries: 1, breakdowns: 0, segments: 0, missingHistory: 0 }]);
     expect(world.entries.map((row) => [row.employeeId, row.appliedMultiplier])).toEqual([[JUAN, 1], [ANA, 1], [PEDRO, 2]]);
   });
 
@@ -708,15 +643,15 @@ describe("D-5 — historia laboral insuficiente (ORG_LOCATION_REORGANIZATION.md 
 
   it("en un período protegido no rechaza ni escribe: informa cuántas filas no se pudieron evaluar", async () => {
     loadHours(JUAN, OCT_3, 8);
-    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "APROBADO", snapshot: { accounting: {} } });
+    world.closures.push({ id: "closure-juan", employeeId: JUAN, period: "2026-10", status: "CERRADO", snapshot: { accounting: {} } });
     world.missingHistory.add(`${JUAN}|2026-10-03`);
     world.rules.push(feriado());
 
     const result = await reinterpret(null, feriado());
 
-    expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "APROBADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
+    expect(result.protectedPeriods).toEqual([{ employeeId: JUAN, period: "2026-10", status: "CERRADO", timeEntries: 0, breakdowns: 0, segments: 0, missingHistory: 1 }]);
     expect(world.entries[0]!.appliedMultiplier).toBe(1);
-    expect(world.closures[0]!.status).toBe("APROBADO");
+    expect(world.closures[0]!.status).toBe("CERRADO");
   });
 });
 

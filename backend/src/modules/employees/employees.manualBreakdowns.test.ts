@@ -28,21 +28,7 @@ const base = {
 };
 
 describe("manual HourConceptBreakdown persistence", () => {
-  it("crea un registro MANUAL EN_REVISION cuando todavía no existe y no viene de RRHH (Etapa 6L.3)", async () => {
-    const tx = {
-      ...closureGuardMocks(),
-      hourConceptBreakdown: {
-        findFirst: vi.fn().mockResolvedValue(null),
-        create: vi.fn().mockResolvedValue({ id: "breakdown-1", source: "MANUAL", status: "EN_REVISION" }),
-      },
-    };
-    (prisma.$transaction as unknown as Mock).mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
-    await expect(employeesRepository.saveManualHourConceptBreakdown(base)).resolves.toMatchObject({ operation: "CREATE" });
-    expect(tx.hourConceptBreakdown.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source: "MANUAL", status: "EN_REVISION", minutes: 120, appliedMultiplier: 2 }) });
-    expect(tx.hourConceptBreakdown.create).toHaveBeenCalledWith({ data: expect.not.objectContaining({ approvedByUserId: expect.anything() }) });
-  });
-
-  it("crea un registro MANUAL APROBADO cuando lo carga RRHH (approvedByUserId presente)", async () => {
+  it("crea un registro MANUAL efectivo (APROBADO) con su autor", async () => {
     const tx = {
       ...closureGuardMocks(),
       hourConceptBreakdown: {
@@ -57,28 +43,7 @@ describe("manual HourConceptBreakdown persistence", () => {
     });
   });
 
-  it("actualiza el registro existente a EN_REVISION y elimina duplicados defensivamente cuando no viene de RRHH", async () => {
-    const tx = {
-      ...closureGuardMocks(),
-      hourConceptBreakdown: {
-        findFirst: vi.fn().mockResolvedValue({ id: "breakdown-1" }),
-        update: vi.fn().mockResolvedValue({ id: "breakdown-1", minutes: 120 }),
-        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-        create: vi.fn(),
-      },
-    };
-    (prisma.$transaction as unknown as Mock).mockImplementation(async (callback: (client: typeof tx) => unknown) => callback(tx));
-
-    const result = await employeesRepository.saveManualHourConceptBreakdown(base);
-    expect(result.operation).toBe("UPDATE");
-    expect(tx.hourConceptBreakdown.create).not.toHaveBeenCalled();
-    expect(tx.hourConceptBreakdown.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "breakdown-1" },
-      data: expect.objectContaining({ status: "EN_REVISION", minutes: 120, approvedByUserId: null, approvedAt: null }),
-    }));
-  });
-
-  it("actualiza el registro existente a APROBADO cuando lo corrige RRHH", async () => {
+  it("actualiza el registro existente a APROBADO y conserva el autor", async () => {
     const tx = {
       ...closureGuardMocks(),
       hourConceptBreakdown: {
@@ -111,52 +76,6 @@ describe("manual HourConceptBreakdown persistence", () => {
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: -1 }).success).toBe(false);
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: 1441 }).success).toBe(false);
     expect(upsertManualHourConceptBreakdownSchema.safeParse({ date: "2026-08-12", hourConceptId: base.hourConceptId, minutes: 1440 }).success).toBe(true);
-  });
-});
-
-describe("resolución RRHH de HourConceptBreakdown manual — approve/reject/return (Etapa 6L.3, ajuste)", () => {
-  it("findManualBreakdownById filtra por source MANUAL y scope del usuario", () => {
-    mockedPrisma.hourConceptBreakdown.findFirst.mockResolvedValue(null);
-    const accessWhere = { id: "employee-1" };
-
-    employeesRepository.findManualBreakdownById("breakdown-1", accessWhere as never);
-
-    expect(mockedPrisma.hourConceptBreakdown.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "breakdown-1", source: "MANUAL", employee: accessWhere },
-    }));
-  });
-
-  it("approveManualHourConceptBreakdown escribe APROBADO con approvedByUserId/approvedAt", async () => {
-    mockedPrisma.hourConceptBreakdown.update.mockResolvedValue({ id: "breakdown-1", status: "APROBADO" });
-
-    await employeesRepository.approveManualHourConceptBreakdown("breakdown-1", "user-rrhh");
-
-    expect(mockedPrisma.hourConceptBreakdown.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "breakdown-1" },
-      data: expect.objectContaining({ status: "APROBADO", approvedByUserId: "user-rrhh", approvedAt: expect.any(Date) }),
-    }));
-  });
-
-  it("rejectManualHourConceptBreakdown escribe RECHAZADO y limpia el aprobador", async () => {
-    mockedPrisma.hourConceptBreakdown.update.mockResolvedValue({ id: "breakdown-1", status: "RECHAZADO" });
-
-    await employeesRepository.rejectManualHourConceptBreakdown("breakdown-1");
-
-    expect(mockedPrisma.hourConceptBreakdown.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "breakdown-1" },
-      data: { status: "RECHAZADO", approvedByUserId: null, approvedAt: null },
-    }));
-  });
-
-  it("returnManualHourConceptBreakdown escribe DEVUELTO y limpia el aprobador", async () => {
-    mockedPrisma.hourConceptBreakdown.update.mockResolvedValue({ id: "breakdown-1", status: "DEVUELTO" });
-
-    await employeesRepository.returnManualHourConceptBreakdown("breakdown-1");
-
-    expect(mockedPrisma.hourConceptBreakdown.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "breakdown-1" },
-      data: { status: "DEVUELTO", approvedByUserId: null, approvedAt: null },
-    }));
   });
 });
 

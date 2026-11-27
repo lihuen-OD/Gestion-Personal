@@ -129,7 +129,7 @@ describe("recalculateNoveltyCoverage — resumen y snapshots", () => {
   });
 
   it("nunca reconstruye un cierre protegido ni los pares que el evento ya reconstruyó", async () => {
-    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["emp-1:2026-11", "APROBADO"]]));
+    vi.mocked(findProtectedClosurePeriods).mockResolvedValue(new Map([["emp-1:2026-11", "CERRADO" as const]]));
     vi.mocked(findClosuresForEmployeePeriods).mockResolvedValue([{ id: "c-1", employeeId: "emp-1", period: "2026-11", snapshot: {} }]);
     await rebuildNoveltyCoverageSnapshots(db, [{ employeeId: "emp-1", period: "2026-11" }], reason);
     expect(rebuildClosureSnapshots).toHaveBeenCalledWith(db, [], expect.anything());

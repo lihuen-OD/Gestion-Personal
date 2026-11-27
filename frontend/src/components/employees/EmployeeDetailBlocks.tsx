@@ -14,6 +14,7 @@ import { Button } from "../ui/Button";
 import { Field, Select } from "../ui/FormControls";
 import { Modal } from "../ui/Modal";
 import { BlockHistoryTimeline } from "./FieldHistoryControls";
+import { TimeResponsibleUsersSelector } from "./TimeResponsibleUsersSelector";
 import { PeopleMultiSearch } from "./PeopleMultiSearch";
 import { useHourConceptOptions } from "./options/roleHourOptions";
 
@@ -292,6 +293,8 @@ export function AssignmentBlock({
   const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [names, setNames] = useState<string[]>(currentList);
+  const currentResponsibleIds = employee.timeResponsibleUserIds || [];
+  const [responsibleIds, setResponsibleIds] = useState<string[]>(currentResponsibleIds);
   const [from, setFrom] = useState(fromValue || argentinaDateKey(new Date()));
   const [notes, setNotes] = useState(notesValue || "");
   const [reason, setReason] = useState("");
@@ -317,6 +320,7 @@ export function AssignmentBlock({
       : {
           ...employee,
           timeResponsibles: clean,
+          timeResponsibleUserIds: responsibleIds,
           timeResponsible: clean[0] || "",
           timeResponsibleFrom: from,
           timeResponsibleTo: "",
@@ -369,6 +373,7 @@ export function AssignmentBlock({
               variant="primary"
               onClick={() => {
                 setNames(currentList);
+                setResponsibleIds(currentResponsibleIds);
                 setEditing(true);
               }}
             >
@@ -394,12 +399,17 @@ export function AssignmentBlock({
       {editing ? (
         <Modal title={title} close={() => setEditing(false)}>
           <div className="form-stack">
-            <PeopleMultiSearch
-              label={isManager ? "Encargados directos" : "Responsables de carga horaria"}
-              selected={names}
-              onChange={setNames}
-              excludeId={employee.id}
-            />
+            {isManager ? (
+              <PeopleMultiSearch label="Encargados directos" selected={names} onChange={setNames} excludeId={employee.id} />
+            ) : (
+              <TimeResponsibleUsersSelector
+                selectedIds={responsibleIds}
+                onChange={(selection) => {
+                  setResponsibleIds(selection.ids);
+                  setNames(selection.names);
+                }}
+              />
+            )}
             <Field label="Fecha desde" type="date" value={from} set={setFrom} />
             <Field label="Observacion" value={notes} set={setNotes} spellCheck />
             <Field label="Motivo del cambio" value={reason} set={setReason} spellCheck />

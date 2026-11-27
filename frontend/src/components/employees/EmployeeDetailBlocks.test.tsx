@@ -99,13 +99,20 @@ function buildEmployee(overrides: Partial<Employee> = {}): Employee {
 
 const rrhhUser: User = { id: "user-1", name: "RRHH", email: "rrhh@test.com", password: "", role: "Nivel 1 - RRHH", status: "Activo" };
 
+const N2 = "Nivel 2 - Supervisión / Gestión";
+const n2Users = [
+  { id: "u-planta", name: "Planta", email: "planta@test.com", role: N2, status: "Activo", employeeName: "Wicky Stefania" },
+  { id: "u-carga", name: "Carga Demo", email: "carga@test.com", role: "Nivel 3 - Administrativo de Carga Horaria", status: "Activo", employeeName: "" },
+  { id: "u-viejo", name: "N2 Inactivo", email: "viejo@test.com", role: N2, status: "Inactivo", employeeName: "" },
+];
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(userApiService.getAll).mockResolvedValue(n2Users as never);
   vi.mocked(employeeApiService.getOptions).mockResolvedValue({
     items: [],
     meta: { total: 0, page: 1, pageSize: 25, hasMore: false },
   });
-  vi.mocked(userApiService.getAll).mockResolvedValue([]);
   vi.mocked(employeeHistoryApiService.getBlockHistory).mockResolvedValue([]);
 });
 
@@ -128,35 +135,30 @@ describe("AssignmentBlock (Responsable de carga horaria) — sin selector de Rol
     expect(screen.getByLabelText("Motivo del cambio")).toBeInTheDocument();
   });
 
-  it("abrir y editar la asignación no consulta usuarios (userApiService.getAll) — el rol ya no se resuelve por nombre", async () => {
+  it("el selector lista sólo usuarios Nivel 2 activos (por usuario, no por nombre de legajo)", async () => {
     render(<AssignmentBlock employee={buildEmployee()} user={rrhhUser} canEdit onSaved={vi.fn()} kind="TIME" />);
     await openEditModal();
 
-    expect(screen.queryByText(/Nivel \d/)).not.toBeInTheDocument();
-    expect(userApiService.getAll).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: /Planta/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Carga Demo/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /N2 Inactivo/ })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Buscar por nombre, apellido, DNI, CUIL o legajo")).not.toBeInTheDocument();
   });
 
-  it("permite agregar un nuevo responsable mediante la búsqueda de personas", async () => {
-    vi.mocked(employeeApiService.getOptions).mockImplementation(async (filters) => {
-      if (filters?.search?.trim() === "Carlos") {
-        return {
-          items: [buildEmployee({ id: "employee-9", firstName: "Carlos", lastName: "Nuevo", timeResponsibles: [], timeResponsible: "" })],
-          meta: { total: 1, page: 1, pageSize: 25, hasMore: false },
-        };
-      }
-      return { items: [], meta: { total: 0, page: 1, pageSize: 25, hasMore: false } };
-    });
-
-    render(<AssignmentBlock employee={buildEmployee()} user={rrhhUser} canEdit onSaved={vi.fn()} kind="TIME" />);
+  it("al elegir un Nivel 2 guarda su userId (nunca sólo el nombre)", async () => {
+    const employee = buildEmployee();
+    vi.mocked(employeeApiService.replaceAssignments).mockResolvedValue(employee);
+    render(<AssignmentBlock employee={employee} user={rrhhUser} canEdit onSaved={vi.fn()} kind="TIME" />);
     await openEditModal();
 
-    await userEvent.type(screen.getByPlaceholderText("Buscar por nombre, apellido, DNI, CUIL o legajo"), "Carlos");
+    await userEvent.click(await screen.findByRole("button", { name: /Planta/ }));
+    await userEvent.type(screen.getByLabelText("Motivo del cambio"), "Responsable Planta");
+    await userEvent.click(screen.getByRole("button", { name: "Guardar asignacion" }));
 
-    const candidate = await screen.findByRole("button", { name: /Carlos Nuevo/ }, { timeout: 2000 });
-    await userEvent.click(candidate);
-
-    expect(await screen.findAllByText("Carlos Nuevo")).not.toHaveLength(0);
-    expect(userApiService.getAll).not.toHaveBeenCalled();
+    await waitFor(() => expect(employeeApiService.replaceAssignments).toHaveBeenCalledTimes(1));
+    const saved = vi.mocked(employeeApiService.replaceAssignments).mock.calls[0][0];
+    expect(saved.timeResponsibleUserIds).toEqual(["u-planta"]);
+    expect(saved.timeResponsibles).toEqual(["Planta"]);
   });
 
   it("exige Fecha desde para guardar la asignación", async () => {
@@ -198,6 +200,5 @@ describe("AssignmentBlock (Responsable de carga horaria) — sin selector de Rol
     expect(historyCall.oldValue).not.toMatch(/Nivel/);
 
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(employee));
-    expect(userApiService.getAll).not.toHaveBeenCalled();
   });
 });

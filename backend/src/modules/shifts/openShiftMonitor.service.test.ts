@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import { prisma } from "../../shared/prisma/client";
 import { checkMissingOutRisk } from "./openShiftMonitor.service";
-import { createShiftAlert } from "./workShiftEvaluationRunner";
+import { createShiftAlertIfAbsent } from "./workShiftEvaluationRunner";
 
 // Etapa 10C: cierra el hueco de cobertura señalado por 10A/10B — hasta acá
 // sólo `evaluateOpenShiftRisk` (función pura) tenía tests; `checkMissingOutRisk`
@@ -21,7 +21,7 @@ vi.mock("../../shared/prisma/client", () => ({
 }));
 
 vi.mock("./workShiftEvaluationRunner", () => ({
-  createShiftAlert: vi.fn().mockResolvedValue({ id: "alert-1" }),
+  createShiftAlertIfAbsent: vi.fn().mockResolvedValue({ id: "alert-1" }),
   toTemplateRef: (template: Record<string, unknown>) => template,
 }));
 
@@ -30,7 +30,7 @@ const mockedPrisma = prisma as unknown as {
   shiftAlert: { findUnique: Mock };
   employeeWorkRegime: { findFirst: Mock };
 };
-const mockedCreateShiftAlert = createShiftAlert as unknown as Mock;
+const mockedCreateShiftAlert = createShiftAlertIfAbsent as unknown as Mock;
 
 function at(hours: number, minutes: number, day = 10) {
   return new Date(2026, 6, day, hours, minutes, 0, 0);
@@ -86,6 +86,20 @@ describe("checkMissingOutRisk", () => {
     expect(mockedCreateShiftAlert).toHaveBeenCalledWith(
       expect.objectContaining({ employeeId: "emp-1", workShiftId: "shift-risk", type: "POSIBLE_OLVIDO_SALIDA" }),
     );
+  });
+
+  it("R4.9C.2: si otro tick paralelo ya insertó la alerta (inserción atómica → null), no la cuenta como creada", async () => {
+    const dayTemplate = { ...nightTemplate, id: "dia", startTime: "07:00", endTime: "15:30", crossesMidnight: false, missingOutAlertAfterMinutes: 60, exitToleranceAfterMinutes: 20 };
+    mockedPrisma.workShift.findMany.mockResolvedValue([
+      { id: "shift-race", employeeId: "emp-1", startAt: at(7, 0), shiftTemplate: dayTemplate },
+    ]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+    mockedCreateShiftAlert.mockResolvedValueOnce(null);
+
+    const result = await checkMissingOutRisk(at(17, 50));
+
+    expect(result.created).toBe(0);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledTimes(1);
   });
 
   it("nunca evalúa una jornada EXPIRED — ese caso queda exclusivamente a cargo de expireOpenWorkShifts (evita la doble notificación)", async () => {
@@ -214,5 +228,41 @@ describe("checkMissingOutRisk — Etapa 10E (hallazgo central: empleado sin turn
 
     expect(result.created).toBe(0);
     expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
+  });
+});
+
+// R1.1 (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.1): olvido de salida
+// de un bloque nocturno real de Planta (José, viernes A 19:00 → sábado 07:00).
+// El umbral se mide desde el ingreso real: (salida esperada − ingreso) +
+// tolerancia de salida + aviso; el nivel pasa a MISSING_OUT al alcanzarlo (>=).
+describe("R1.1-C — olvido de salida del bloque 19:00–07:00", () => {
+  const block19to07 = {
+    ...nightTemplate,
+    id: "planta-19-07",
+    code: "PLANTA-19-07",
+    startTime: "19:00",
+    endTime: "07:00",
+    crossesMidnight: true,
+    exitToleranceAfterMinutes: 20,
+    missingOutAlertAfterMinutes: 60,
+  };
+  const startAt = new Date("2026-11-06T19:00:00.000-03:00");
+  const after = (minutes: number) => new Date(startAt.getTime() + minutes * 60_000);
+
+  beforeEach(() => {
+    mockedPrisma.workShift.findMany.mockResolvedValue([{ id: "shift-19", employeeId: "emp-jose", startAt, shiftTemplate: block19to07 }]);
+    mockedPrisma.shiftAlert.findUnique.mockResolvedValue(null);
+  });
+
+  it("sábado 07:00 (720 min, salida esperada) y hasta 799 min: sin alerta", async () => {
+    expect((await checkMissingOutRisk(after(720))).created).toBe(0);
+    expect((await checkMissingOutRisk(after(799))).created).toBe(0);
+    expect(mockedCreateShiftAlert).not.toHaveBeenCalled();
+  });
+
+  it("a los 800 min (720 + 20 de tolerancia + 60 de aviso = sábado 08:20) genera POSIBLE_OLVIDO_SALIDA", async () => {
+    const result = await checkMissingOutRisk(after(800));
+    expect(result.created).toBe(1);
+    expect(mockedCreateShiftAlert).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "emp-jose", workShiftId: "shift-19", type: "POSIBLE_OLVIDO_SALIDA" }));
   });
 });

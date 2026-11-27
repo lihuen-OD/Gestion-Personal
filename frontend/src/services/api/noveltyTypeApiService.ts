@@ -37,7 +37,6 @@ export type ApiNoveltyType = {
   description?: string | null;
   notes?: string | null;
   exportsToFinnegans: boolean;
-  requiresApproval: boolean;
   requiresDocumentation: boolean;
   allowsHours: boolean;
   timeEntryBehavior: NoveltyTimeEntryBehavior;
@@ -48,7 +47,6 @@ export type ApiNoveltyType = {
   finnegansCode?: string | null;
   finnegansName?: string | null;
   allowedLoadRoles?: Role[];
-  approvalRoles?: Role[];
   // Motor de cobertura (docs/decisions/NOVELTY_COVERAGE_ENGINE.md §4).
   coverageMode: NoveltyCoverageMode;
   coverageFixedMinutes: number | null;
@@ -67,7 +65,6 @@ export type ApiNoveltyType = {
 type ApiListResponse = { data: ApiNoveltyType[] };
 type ApiItemResponse = { data: ApiNoveltyType };
 
-const fallbackApprovalRoles: Role[] = ["Nivel 1 - RRHH"];
 const fallbackAllowedLoadRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 const validRoles: Role[] = ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"];
 
@@ -79,7 +76,6 @@ function normalizeRoles(value: unknown, fallback: Role[]): Role[] {
 
 export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
   const allowedLoadRoles = normalizeRoles(item.allowedLoadRoles, fallbackAllowedLoadRoles);
-  const approvalRoles = normalizeRoles(item.approvalRoles, fallbackApprovalRoles);
   return {
     id: item.id,
     code: item.code,
@@ -90,7 +86,6 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
     status: item.status,
     rules: {
       exportsToFinnegans: item.exportsToFinnegans,
-      requiresApproval: item.requiresApproval,
       requiresDocumentation: item.requiresDocumentation,
       allowsHours: item.allowsHours,
       timeEntryBehavior: item.timeEntryBehavior,
@@ -111,7 +106,6 @@ export function mapNoveltyTypeFromApi(item: ApiNoveltyType): NoveltyType {
       realWorkCompatibility: item.realWorkCompatibility ?? "COMPATIBLE",
     },
     allowedLoadRoles,
-    approvalRoles,
     finnegansCode: item.finnegansCode || null,
     finnegansName: item.finnegansName || null,
     // Etapa 15L.2A: antes se hardcodeaba "" y el texto editado se perdía
@@ -138,7 +132,6 @@ export function mapNoveltyTypeToApi(item: NoveltyType) {
     description: item.description || null,
     notes: item.notes?.trim() || null,
     exportsToFinnegans: item.rules.exportsToFinnegans,
-    requiresApproval: item.rules.requiresApproval,
     requiresDocumentation: item.rules.requiresDocumentation,
     allowsHours: item.rules.allowsHours,
     timeEntryBehavior: item.rules.timeEntryBehavior,
@@ -148,7 +141,6 @@ export function mapNoveltyTypeToApi(item: NoveltyType) {
     finnegansCode: item.finnegansCode?.trim() || null,
     finnegansName: item.finnegansName?.trim() || null,
     allowedLoadRoles: item.allowedLoadRoles,
-    approvalRoles: item.approvalRoles,
     requiresObservation: item.rules.requiresObservation,
     // Se envía el estado completo: el backend valida la combinación
     // resultante y sólo recalcula si alguno de estos campos cambió de verdad.

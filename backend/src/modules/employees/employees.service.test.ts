@@ -34,10 +34,6 @@ vi.mock("./employees.repository", () => ({
     isHourConceptEnabled: vi.fn(),
     findMonthlyClosure: vi.fn(),
     saveManualHourConceptBreakdown: vi.fn(),
-    findManualBreakdownById: vi.fn(),
-    approveManualHourConceptBreakdown: vi.fn(),
-    rejectManualHourConceptBreakdown: vi.fn(),
-    returnManualHourConceptBreakdown: vi.fn(),
     findLaborAuditSnapshot: vi.fn(),
     createLaborMovement: vi.fn(),
   },
@@ -67,10 +63,6 @@ const repo = employeesRepository as unknown as {
   isHourConceptEnabled: Mock;
   findMonthlyClosure: Mock;
   saveManualHourConceptBreakdown: Mock;
-  findManualBreakdownById: Mock;
-  approveManualHourConceptBreakdown: Mock;
-  rejectManualHourConceptBreakdown: Mock;
-  returnManualHourConceptBreakdown: Mock;
   findLaborAuditSnapshot: Mock;
   createLaborMovement: Mock;
 };
@@ -328,18 +320,9 @@ describe("employeesService manual hour concept breakdowns", () => {
     expect(repo.findEmployeeForManualBreakdown).toHaveBeenCalledWith("emp-1", expect.any(Object));
   });
 
-  it("RRHH corrige un período cerrado directo, siempre que mande motivo (Etapa 15E) — input.observation ya viene con 'Traslado'", async () => {
-    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
-    const result = await employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser);
-    expect(result).toMatchObject({ id: "breakdown-1" });
-    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: rrhhUser.id }));
-  });
-
-  it("RRHH sin motivo en un período cerrado queda bloqueado con un error propio (Etapa 15E)", async () => {
-    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
-    await expect(
-      employeesService.upsertManualHourConceptBreakdown("emp-1", { ...input, observation: undefined }, rrhhUser),
-    ).rejects.toMatchObject({ statusCode: 400, code: "HOUR_CONCEPT_BREAKDOWN_CORRECTION_REASON_REQUIRED" });
+  it("un período CERRADO bloquea también a RRHH, aun con motivo, hasta reabrirlo", async () => {
+    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "CERRADO" });
+    await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, rrhhUser)).rejects.toMatchObject({ statusCode: 409, code: "PERIOD_CLOSED" });
     expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
   });
 
@@ -389,20 +372,20 @@ describe("employeesService manual hour concept breakdowns — flujo de aprobaci�
     expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: rrhhUser.id }));
   });
 
-  it("Nivel 2 carga un desglose manual y queda pendiente/en revisión: no pasa approvedByUserId", async () => {
+  it("Nivel 2 carga un desglose manual efectivo al guardar: queda aplicado con su autor", async () => {
     await employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel2User);
 
-    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: null }));
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: nivel2User.id }));
   });
 
-  it("Nivel 3 carga un desglose manual y queda pendiente/en revisión: no pasa approvedByUserId", async () => {
+  it("Nivel 3 carga un desglose manual efectivo al guardar: queda aplicado con su autor", async () => {
     await employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel3User);
 
-    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: null }));
+    expect(repo.saveManualHourConceptBreakdown).toHaveBeenCalledWith(expect.objectContaining({ approvedByUserId: nivel3User.id }));
   });
 
-  it("un período cerrado sigue bloqueando la carga de Nivel 2/3 (no se rompe el bloqueo de cierre)", async () => {
-    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "APROBADO" });
+  it("un período CERRADO bloquea la carga de Nivel 2/3", async () => {
+    repo.findMonthlyClosure.mockResolvedValue({ id: "closure-1", status: "CERRADO" });
 
     await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel2User)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
     expect(repo.saveManualHourConceptBreakdown).not.toHaveBeenCalled();
@@ -412,84 +395,6 @@ describe("employeesService manual hour concept breakdowns — flujo de aprobaci�
     repo.isHourConceptEnabled.mockResolvedValue(false);
 
     await expect(employeesService.upsertManualHourConceptBreakdown("emp-1", input, nivel3User)).rejects.toMatchObject({ code: "HOUR_CONCEPT_NOT_ENABLED" });
-  });
-});
-
-describe("employeesService — approve/reject/return de HourConceptBreakdown manual (Etapa 6L.3, ajuste)", () => {
-  const nivel2User = { id: "user-n2", role: roles.supervision } as unknown as Express.AuthUser;
-  const nivel3User = { id: "user-n3", role: roles.cargaHoraria } as unknown as Express.AuthUser;
-  const breakdownInReview = {
-    id: "breakdown-1",
-    employeeId: "emp-1",
-    status: "EN_REVISION",
-    createdByUserId: "user-n2",
-    employee: { id: "emp-1", legajo: "100" },
-    hourConcept: { id: "colectivo", name: "Colectivo" },
-  };
-
-  beforeEach(() => {
-    repo.findManualBreakdownById.mockResolvedValue(breakdownInReview);
-  });
-
-  it("RRHH aprueba un desglose manual EN_REVISION de Nivel 2/3", async () => {
-    repo.approveManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "APROBADO", approvedByUserId: rrhhUser.id });
-
-    const result = await employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", rrhhUser);
-
-    expect(result).toMatchObject({ status: "APROBADO" });
-    expect(repo.approveManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1", rrhhUser.id);
-  });
-
-  it("RRHH rechaza un desglose manual EN_REVISION", async () => {
-    repo.rejectManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "RECHAZADO" });
-
-    const result = await employeesService.rejectManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "Sin comprobante" }, rrhhUser);
-
-    expect(result).toMatchObject({ status: "RECHAZADO" });
-    expect(repo.rejectManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1");
-  });
-
-  it("RRHH devuelve un desglose manual EN_REVISION", async () => {
-    repo.returnManualHourConceptBreakdown.mockResolvedValue({ ...breakdownInReview, status: "DEVUELTO" });
-
-    const result = await employeesService.returnManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "Falta el destino" }, rrhhUser);
-
-    expect(result).toMatchObject({ status: "DEVUELTO" });
-    expect(repo.returnManualHourConceptBreakdown).toHaveBeenCalledWith("breakdown-1");
-  });
-
-  it("Nivel 2 no puede aprobar un desglose manual (ni propio ni ajeno)", async () => {
-    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", nivel2User)).rejects.toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
-    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
-    expect(repo.findManualBreakdownById).not.toHaveBeenCalled();
-  });
-
-  it("Nivel 3 no puede aprobar/rechazar/devolver un desglose manual", async () => {
-    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(employeesService.rejectManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "x" }, nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(employeesService.returnManualHourConceptBreakdown("emp-1", "breakdown-1", { reason: "x" }, nivel3User)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
-    expect(repo.rejectManualHourConceptBreakdown).not.toHaveBeenCalled();
-    expect(repo.returnManualHourConceptBreakdown).not.toHaveBeenCalled();
-  });
-
-  it("no permite aprobar un desglose que ya no está EN_REVISION", async () => {
-    repo.findManualBreakdownById.mockResolvedValue({ ...breakdownInReview, status: "APROBADO" });
-
-    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-1", rrhhUser)).rejects.toMatchObject({
-      code: "HOUR_CONCEPT_BREAKDOWN_STATUS_NOT_RESOLVABLE",
-      statusCode: 400,
-    });
-    expect(repo.approveManualHourConceptBreakdown).not.toHaveBeenCalled();
-  });
-
-  it("responde 404 si el desglose no existe o está fuera de scope", async () => {
-    repo.findManualBreakdownById.mockResolvedValue(null);
-
-    await expect(employeesService.approveManualHourConceptBreakdown("emp-1", "breakdown-404", rrhhUser)).rejects.toMatchObject({
-      code: "HOUR_CONCEPT_BREAKDOWN_NOT_FOUND",
-      statusCode: 404,
-    });
   });
 });
 
@@ -826,7 +731,7 @@ describe("employeesService — auditoría del desglose manual con identidad huma
 
     await employeesService.upsertManualHourConceptBreakdown(employeeUuid, input, rrhhUser);
 
-    expect(audited()).toEqual(["Se guardó y aplicó (RRHH) el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30."]);
+    expect(audited()).toEqual(["Se guardó y aplicó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30."]);
     expect(repo.findEmployeeForManualBreakdown).toHaveBeenCalledTimes(1);
   });
 
@@ -837,28 +742,9 @@ describe("employeesService — auditoría del desglose manual con identidad huma
     await employeesService.upsertManualHourConceptBreakdown(employeeUuid, { ...input, minutes: 0 }, rrhhUser);
 
     expect(audited()).toEqual([
-      "Se guardó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.",
+      "Se guardó y aplicó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.",
       "Se eliminó el desglose manual Colectivo del 03/10/2026 para Pérez, Juan · Legajo 30.",
     ]);
-  });
-
-  it("aprobar/rechazar/devolver describen a la persona con nombre y legajo", async () => {
-    const resolved = { id: "breakdown-1", employeeId: employeeUuid, status: "EN_REVISION", employee: juan, hourConcept: { id: colectivo.id, name: "Colectivo" } };
-    repo.findManualBreakdownById.mockResolvedValue(resolved);
-    repo.approveManualHourConceptBreakdown.mockResolvedValue(resolved);
-    repo.rejectManualHourConceptBreakdown.mockResolvedValue(resolved);
-    repo.returnManualHourConceptBreakdown.mockResolvedValue(resolved);
-
-    await employeesService.approveManualHourConceptBreakdown(employeeUuid, "breakdown-1", rrhhUser);
-    await employeesService.rejectManualHourConceptBreakdown(employeeUuid, "breakdown-1", { reason: "Sin comprobante" }, rrhhUser);
-    await employeesService.returnManualHourConceptBreakdown(employeeUuid, "breakdown-1", { reason: "Falta el destino" }, rrhhUser);
-
-    expect(audited()).toEqual([
-      "Se aprobó el desglose manual Colectivo de Pérez, Juan · Legajo 30.",
-      "Se rechazó el desglose manual Colectivo de Pérez, Juan · Legajo 30. Motivo: Sin comprobante",
-      "Se devolvió el desglose manual Colectivo de Pérez, Juan · Legajo 30. Motivo: Falta el destino",
-    ]);
-    for (const description of audited()) expect(description).not.toContain(employeeUuid);
   });
 });
 

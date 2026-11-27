@@ -35,25 +35,14 @@ export const noveltiesController = {
     res.status(201).json({ data: items });
   }) satisfies RequestHandler,
 
-  approve: (async (req, res) => {
-    const item = await noveltiesService.approve(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
-    clearNoveltyCoverageReadCaches();
-    res.json({ data: item });
-  }) satisfies RequestHandler,
-
-  approveMany: (async (req, res) => {
-    const items = await noveltiesService.approveMany(req.body.ids, req.user!, requestAuditContext(req));
-    clearNoveltyCoverageReadCaches(); res.json({ data: items });
-  }) satisfies RequestHandler,
-
-  reject: (async (req, res) => {
-    const item = await noveltiesService.reject(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
+  update: (async (req, res) => {
+    const item = await noveltiesService.update(requireParam(req, "id"), req.body, req.user!, requestAuditContext(req));
     clearNoveltyCoverageReadCaches();
     res.json({ data: item });
   }) satisfies RequestHandler,
 
   remove: (async (req, res) => {
-    const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req), req.body);
+    const result = await noveltiesService.remove(requireParam(req, "id"), req.user!, requestAuditContext(req));
     clearNoveltyCoverageReadCaches();
     res.json({ data: result });
   }) satisfies RequestHandler,

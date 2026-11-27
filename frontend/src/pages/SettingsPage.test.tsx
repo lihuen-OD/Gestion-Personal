@@ -38,13 +38,20 @@ describe("SettingsPage — Etapa 15M.17 (sin duplicar el acceso operativo de Exp
     expect(screen.queryByRole("link", { name: /Administrar.*liquidacion/i })).not.toBeInTheDocument();
   });
 
+  it("no incluye las convocatorias a feriado: se gestionan desde Gestión horaria (Gestionar feriados)", () => {
+    authAs("Nivel 1 - RRHH");
+    renderPage();
+
+    expect(screen.queryByText("Asignaciones de feriados")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /turnos-asignaciones-feriados/i })).not.toBeInTheDocument();
+  });
+
   it("conserva el resto de las cards de catálogos/parámetros, cada una con su ruta", () => {
     authAs("Nivel 1 - RRHH");
     renderPage();
 
     const expectedCards: Array<[string, string]> = [
       ["Turnos", "/configuracion/turnos"],
-      ["Asignaciones de feriados", "/configuracion/turnos-asignaciones-feriados"],
       ["Horas especiales", "/configuracion/turnos-horas-especiales"],
       ["Regímenes laborales", "/configuracion/regimenes-laborales"],
       ["Empresas y estructura", "/configuracion/empresas-estructura"],

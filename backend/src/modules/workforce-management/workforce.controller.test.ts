@@ -5,11 +5,10 @@ import { workforceController } from "./workforce.controller";
 import { workforceService } from "./workforce.service";
 import { clearTimeEntriesReadCaches } from "../time-entries/timeEntries.cache";
 import { clearEmployeeReadCaches, clearEmployeeTimeGridCache } from "../employees/employees.controller";
-import { closuresCache, correctionsCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
+import { closuresCache, doubleRulesCache, notificationsListCache, shiftTemplatesCache } from "./workforce.cache";
 
 vi.mock("./workforce.service", () => ({
   workforceService: {
-    approveCorrection: vi.fn(),
     notifications: vi.fn(),
     markNotificationRead: vi.fn(),
     shiftTemplates: vi.fn(),
@@ -21,12 +20,8 @@ vi.mock("./workforce.service", () => ({
     updateDoubleRule: vi.fn(),
     removeDoubleRule: vi.fn(),
     closures: vi.fn(),
-    submitClosures: vi.fn(),
-    approveClosures: vi.fn(),
-    returnClosure: vi.fn(),
-    corrections: vi.fn(),
-    createCorrection: vi.fn(),
-    rejectCorrection: vi.fn(),
+    closeClosures: vi.fn(),
+    reopenClosure: vi.fn(),
   },
 }));
 
@@ -43,22 +38,18 @@ vi.mock("../employees/employees.controller", () => ({
 // verifican el comportamiento real del cache (hit/miss/invalidación), no
 // sólo que se llamen ciertas funciones.
 const mockedService = workforceService as unknown as {
-  approveCorrection: Mock;
   notifications: Mock;
   markNotificationRead: Mock;
   shiftTemplates: Mock; createShiftTemplate: Mock; updateShiftTemplate: Mock; removeShiftTemplate: Mock;
   doubleRules: Mock; createDoubleRule: Mock; updateDoubleRule: Mock; removeDoubleRule: Mock;
-  closures: Mock; submitClosures: Mock; approveClosures: Mock; returnClosure: Mock;
-  corrections: Mock; createCorrection: Mock; rejectCorrection: Mock;
+  closures: Mock; closeClosures: Mock; reopenClosure: Mock;
 };
-const mockedClearTimeEntriesReadCaches = clearTimeEntriesReadCaches as unknown as Mock;
-const mockedClearEmployeeReadCaches = clearEmployeeReadCaches as unknown as Mock;
 
 function fakeReq(overrides: Partial<Request> = {}): Request {
   return {
     body: {},
     query: {},
-    params: { id: "correction-1" },
+    params: { id: "closure-1" },
     originalUrl: "/workforce/closures",
     user: { id: "user-1", role: "NIVEL_1_RRHH" },
     ip: "127.0.0.1",
@@ -80,40 +71,6 @@ beforeEach(() => {
   doubleRulesCache.clear();
   notificationsListCache.clear();
   closuresCache.clear();
-  correctionsCache.clear();
-  mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
-});
-
-describe("workforceController.approveCorrection — invalidación de cache (Etapa 9B)", () => {
-  it("limpia el cache de lectura de time-entries tras aprobar la corrección", async () => {
-    await workforceController.approveCorrection(fakeReq(), fakeRes());
-    expect(mockedClearTimeEntriesReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("limpia el cache de lectura de legajos (grilla) tras aprobar la corrección", async () => {
-    await workforceController.approveCorrection(fakeReq(), fakeRes());
-    expect(mockedClearEmployeeReadCaches).toHaveBeenCalledTimes(1);
-  });
-
-  it("invalida ambos caches sólo después de que el service haya terminado (no antes de confirmar la corrección)", async () => {
-    const callOrder: string[] = [];
-    mockedService.approveCorrection.mockImplementationOnce(async () => {
-      callOrder.push("service");
-      return { id: "correction-1", status: "APROBADA" };
-    });
-    mockedClearTimeEntriesReadCaches.mockImplementationOnce(() => callOrder.push("clearTimeEntries"));
-    mockedClearEmployeeReadCaches.mockImplementationOnce(() => callOrder.push("clearEmployees"));
-
-    await workforceController.approveCorrection(fakeReq(), fakeRes());
-
-    expect(callOrder).toEqual(["service", "clearTimeEntries", "clearEmployees"]);
-  });
-
-  it("sigue devolviendo el registro de la corrección aprobada (sin cambiar el contrato de la respuesta)", async () => {
-    const res = fakeRes();
-    await workforceController.approveCorrection(fakeReq(), res);
-    expect(res.json).toHaveBeenCalledWith({ data: { id: "correction-1", status: "APROBADA" } });
-  });
 });
 
 describe("workforceController.shiftTemplates — cache de lectura TTL (Etapa 9C)", () => {
@@ -389,11 +346,11 @@ describe("workforceController.notifications — cache backend (Etapa 14G.6)", ()
   });
 });
 
-// Etapa 14G.8: cache de lectura TTL corto (15s) para closures/corrections --
+// Etapa 14G.8: cache de lectura TTL corto (15s) para closures --
 // mismo patrón que shiftTemplates/doubleRules/notifications, cache real sin
 // mockear.
 describe("workforceController.closures — cache backend (Etapa 14G.8)", () => {
-  const closures = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "ENVIADO" }];
+  const closures = [{ id: "closure-1", employeeId: "emp-1", period: "2026-08", status: "CERRADO" }];
 
   it("la primera llamada lee del service", async () => {
     mockedService.closures.mockResolvedValue(closures);
@@ -445,9 +402,8 @@ describe("workforceController.closures — cache backend (Etapa 14G.8)", () => {
   });
 
   it.each([
-    ["submit", () => workforceController.submit(fakeReq({ originalUrl: "/workforce/closures/submit", body: { period: "2026-08", employeeIds: ["emp-1"] } }), fakeRes())],
-    ["approve", () => workforceController.approve(fakeReq({ originalUrl: "/workforce/closures/approve", body: { ids: ["closure-1"] } }), fakeRes())],
-    ["returnClosure", () => workforceController.returnClosure(fakeReq({ originalUrl: "/workforce/closures/closure-1/return", params: { id: "closure-1" }, body: { reason: "falta revisar" } }), fakeRes())],
+    ["close", () => workforceController.close(fakeReq({ originalUrl: "/workforce/closures/close", body: { period: "2026-08", employeeIds: ["emp-1"] } }), fakeRes())],
+    ["reopen", () => workforceController.reopen(fakeReq({ originalUrl: "/workforce/closures/closure-1/reopen", params: { id: "closure-1" }, body: { reason: "falta revisar", acknowledgeExportedHistory: false } }), fakeRes())],
   ])("%s invalida la cache — la siguiente lectura vuelve a golpear el service", async (_name, mutate) => {
     mockedService.closures.mockResolvedValue(closures);
     const req = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
@@ -455,98 +411,16 @@ describe("workforceController.closures — cache backend (Etapa 14G.8)", () => {
     await workforceController.closures(req, fakeRes());
     expect(mockedService.closures).toHaveBeenCalledTimes(1);
 
-    mockedService.submitClosures.mockResolvedValue([]);
-    mockedService.approveClosures.mockResolvedValue({ count: 1 });
-    mockedService.returnClosure.mockResolvedValue({ id: "closure-1", status: "DEVUELTO" });
+    mockedService.closeClosures.mockResolvedValue([]);
+    mockedService.reopenClosure.mockResolvedValue({ id: "closure-1", status: "ABIERTO" });
     await mutate();
 
-    mockedService.closures.mockResolvedValue([{ ...closures[0], status: "APROBADO" }]);
+    mockedService.closures.mockResolvedValue([{ ...closures[0], status: "CERRADO" }]);
     const res = fakeRes();
     await workforceController.closures(req, res);
 
     expect(mockedService.closures).toHaveBeenCalledTimes(2);
-    expect(res.json).toHaveBeenCalledWith({ data: [{ ...closures[0], status: "APROBADO" }] });
-  });
-});
-
-describe("workforceController.corrections — cache backend (Etapa 14G.8)", () => {
-  const corrections = [{ id: "correction-1", status: "PENDIENTE" }];
-
-  it("la primera llamada lee del service", async () => {
-    mockedService.corrections.mockResolvedValue(corrections);
-    const req = fakeReq({ originalUrl: "/workforce/corrections" });
-    const res = fakeRes();
-
-    await workforceController.corrections(req, res);
-
-    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
-    expect(res.json).toHaveBeenCalledWith({ data: corrections });
-  });
-
-  it("la segunda llamada (mismo usuario, sin filtros) usa el cache, sin volver a golpear el service", async () => {
-    mockedService.corrections.mockResolvedValue(corrections);
-    const req = fakeReq({ originalUrl: "/workforce/corrections" });
-
-    await workforceController.corrections(req, fakeRes());
-    const res2 = fakeRes();
-    await workforceController.corrections(req, res2);
-
-    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
-    expect(res2.json).toHaveBeenCalledWith({ data: corrections });
-  });
-
-  it("key scopeada por usuario: dos usuarios nunca comparten el resultado cacheado del otro", async () => {
-    mockedService.corrections
-      .mockResolvedValueOnce(corrections)
-      .mockResolvedValueOnce([{ id: "correction-2", status: "PENDIENTE" }]);
-
-    const resA = fakeRes();
-    await workforceController.corrections(fakeReq({ originalUrl: "/workforce/corrections", user: { id: "user-a", role: "NIVEL_1_RRHH" } } as Partial<Request>), resA);
-    const resB = fakeRes();
-    await workforceController.corrections(fakeReq({ originalUrl: "/workforce/corrections", user: { id: "user-b", role: "NIVEL_2_SUPERVISION" } } as Partial<Request>), resB);
-
-    expect(mockedService.corrections).toHaveBeenCalledTimes(2);
-    expect(resA.json).toHaveBeenCalledWith({ data: corrections });
-    expect(resB.json).toHaveBeenCalledWith({ data: [{ id: "correction-2", status: "PENDIENTE" }] });
-  });
-
-  it.each([
-    ["createCorrection", () => workforceController.createCorrection(fakeReq({ originalUrl: "/workforce/corrections", body: { timeEntryId: "entry-1", proposedHours: 9, reason: "olvido" } }), fakeRes())],
-    ["approveCorrection", () => workforceController.approveCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/approve", params: { id: "correction-1" } }), fakeRes())],
-    ["rejectCorrection", () => workforceController.rejectCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/reject", params: { id: "correction-1" }, body: { note: "no corresponde" } }), fakeRes())],
-  ])("%s invalida la cache — la siguiente lectura vuelve a golpear el service", async (_name, mutate) => {
-    mockedService.corrections.mockResolvedValue(corrections);
-    const req = fakeReq({ originalUrl: "/workforce/corrections" });
-    await workforceController.corrections(req, fakeRes());
-    await workforceController.corrections(req, fakeRes());
-    expect(mockedService.corrections).toHaveBeenCalledTimes(1);
-
-    mockedService.createCorrection.mockResolvedValue({ id: "correction-2" });
-    mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
-    mockedService.rejectCorrection.mockResolvedValue({ id: "correction-1", status: "RECHAZADA" });
-    await mutate();
-
-    mockedService.corrections.mockResolvedValue([{ id: "correction-1", status: "RECHAZADA" }]);
-    const res = fakeRes();
-    await workforceController.corrections(req, res);
-
-    expect(mockedService.corrections).toHaveBeenCalledTimes(2);
-    expect(res.json).toHaveBeenCalledWith({ data: [{ id: "correction-1", status: "RECHAZADA" }] });
-  });
-
-  it("approveCorrection también invalida closuresCache (una corrección aprobada puede reabrir/cerrar el cierre del legajo)", async () => {
-    mockedService.closures.mockResolvedValue([{ id: "closure-1", status: "CORRECCION_PENDIENTE" }]);
-    const closuresReq = fakeReq({ originalUrl: "/workforce/closures?period=2026-08", query: { period: "2026-08" } });
-    await workforceController.closures(closuresReq, fakeRes());
-    expect(mockedService.closures).toHaveBeenCalledTimes(1);
-
-    mockedService.approveCorrection.mockResolvedValue({ id: "correction-1", status: "APROBADA" });
-    await workforceController.approveCorrection(fakeReq({ originalUrl: "/workforce/corrections/correction-1/approve", params: { id: "correction-1" } }), fakeRes());
-
-    mockedService.closures.mockResolvedValue([{ id: "closure-1", status: "APROBADO" }]);
-    await workforceController.closures(closuresReq, fakeRes());
-
-    expect(mockedService.closures).toHaveBeenCalledTimes(2);
+    expect(res.json).toHaveBeenCalledWith({ data: [{ ...closures[0], status: "CERRADO" }] });
   });
 });
 

@@ -70,7 +70,7 @@ async function renderTree() {
 
 async function renderTable() {
   await renderTree();
-  await userEvent.click(screen.getByRole("button", { name: "Vista tabla" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Vista tabla" }));
   await screen.findByRole("table");
 }
 
@@ -104,7 +104,7 @@ describe("OrgStructurePage — secciones separadas", () => {
 
   it("Ubicaciones muestra Provincia → Zona → Establecimiento → Unidad, con zonas sin provincia y establecimientos anteriores aparte", async () => {
     await renderTree();
-    await userEvent.click(screen.getByRole("button", { name: "Ubicaciones" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Ubicaciones" }));
     expect(await screen.findByRole("tree", { name: "Ubicaciones" })).toBeInTheDocument();
     expect(treeItem(/^Provincia Santa Fe/)).toHaveAttribute("aria-level", "1");
     expect(treeItem(/^Zona Litoral/)).toHaveAttribute("aria-level", "2");
@@ -122,7 +122,7 @@ describe("OrgStructurePage — secciones separadas", () => {
 
   it("Centros de costo se administra en su propia sección, en tabla", async () => {
     await renderTree();
-    await userEvent.click(screen.getByRole("button", { name: "Centros de costo" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Centros de costo" }));
     expect(await screen.findByRole("table")).toBeInTheDocument();
     expect(screen.queryByRole("tree")).toBeNull();
     expect(screen.getByText("Cocina central")).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("OrgStructurePage — padres del modelo nuevo y restricciones de transi
 
   it("un área nueva sin sector no se guarda y se explica qué falta", async () => {
     await renderTable();
-    await userEvent.click(screen.getByRole("button", { name: "Áreas" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Áreas" }));
     await userEvent.click(screen.getByRole("button", { name: "Nueva área" }));
     await userEvent.type(await screen.findByLabelText("Nombre *"), "Barra");
     await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
@@ -150,7 +150,7 @@ describe("OrgStructurePage — padres del modelo nuevo y restricciones de transi
 
   it("el selector de sector sólo ofrece sectores de la estructura nueva", async () => {
     await renderTable();
-    await userEvent.click(screen.getByRole("button", { name: "Áreas" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Áreas" }));
     await userEvent.click(screen.getByRole("button", { name: "Nueva área" }));
     const options = within(await screen.findByLabelText("Sector *")).getAllByRole("option").map((option) => option.textContent);
     expect(options).toEqual(["Seleccioná un sector", "Restaurantes · Cocina", "Restaurantes · Salón"]);
@@ -202,7 +202,7 @@ describe("OrgStructurePage — padres del modelo nuevo y restricciones de transi
 
   it("centros de costo: los registros anteriores sólo aparecen si ya estaban vinculados, marcados", async () => {
     await renderTree();
-    await userEvent.click(screen.getByRole("button", { name: "Centros de costo" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Centros de costo" }));
     await userEvent.click(await screen.findByRole("button", { name: "Editar Cocina central" }));
     const sectorsBlock = (await screen.findByText("Sectores")).closest(".catalog-check-block") as HTMLElement;
     expect(within(sectorsBlock).getByLabelText("Depósito anterior (estructura anterior)")).toBeChecked();
@@ -225,7 +225,7 @@ describe("OrgStructurePage — tabla y ordenamiento", () => {
 
   it("Sectores: relación con la unidad de negocio; los anteriores llevan la marca y quedan sin padre al final", async () => {
     await renderTable();
-    await userEvent.click(screen.getByRole("button", { name: "Sectores" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Sectores" }));
     await screen.findByText("SEC-1");
     await userEvent.click(screen.getByRole("button", { name: "Unidad de negocio" }));
     expect(column(2)).toEqual(["Restaurantes", "Restaurantes", "-"]);

@@ -339,17 +339,17 @@ describe("buildMarkdownReport", () => {
 describe("matrices de documentación (Parte 2 del pedido)", () => {
   // 2026-11-17: "A. Inicio" (/gestion-horaria) se retiró del sistema; las
   // letras B-J se conservan para que los reportes históricos sigan comparables.
-  it("SUBMODULE_INVENTORY cubre los 9 submódulos B-J, ninguno inventado fuera de la navegación real", () => {
-    expect(SUBMODULE_INVENTORY).toHaveLength(9);
+  it("SUBMODULE_INVENTORY cubre los 8 submódulos B-J (sin la Bandeja F retirada), ninguno inventado fuera de la navegación real", () => {
+    expect(SUBMODULE_INVENTORY).toHaveLength(8);
     const letters = SUBMODULE_INVENTORY.map((row) => row.submodule[0]);
-    expect(letters).toEqual(["B", "C", "D", "E", "F", "G", "H", "I", "J"]);
+    expect(letters).toEqual(["B", "C", "D", "E", "G", "H", "I", "J"]);
     expect(SUBMODULE_INVENTORY.map((row) => row.route)).not.toContain("/gestion-horaria");
   });
 
-  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 9 zonas B-J más Login", () => {
+  it("COVERAGE_MATRIX tiene al menos una fila por cada una de las 8 zonas B-J más Login", () => {
     const zones = new Set(COVERAGE_MATRIX.map((row) => row.zone));
     expect(zones.has("A. Inicio")).toBe(false);
-    for (const letter of ["Login", "B. Asistencia", "C. Alertas de turnos", "D. Carga de horas", "E. Cierres mensuales", "F. Bandeja de revisión", "G. Novedades", "H. Notificaciones", "I. Fichador", "J. Exportación"]) {
+    for (const letter of ["Login", "B. Asistencia", "C. Alertas de turnos", "D. Carga de horas", "E. Cierres mensuales", "G. Novedades", "H. Notificaciones", "I. Fichador", "J. Exportación"]) {
       expect(zones.has(letter)).toBe(true);
     }
   });

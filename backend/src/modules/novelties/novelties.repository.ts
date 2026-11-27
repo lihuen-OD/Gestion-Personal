@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { periodCalendarBounds } from "../../shared/datetime/argentinaTime";
-import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys } from "./novelties.schemas";
+import type { CreateNoveltyCommand, ListNoveltiesQuery, noveltyListSortKeys, UpdateNoveltyInput } from "./novelties.schemas";
 import { resolveOrderBy, type SortOrderByMap } from "../../shared/validation/listSort";
 import { noveltyOverlapsRangeWhere } from "./novelties.dateRange";
 
@@ -27,7 +27,6 @@ const noveltyInclude = {
       finnegansRequiresValidity: true,
       finnegansCode: true,
       finnegansName: true,
-      approvalRoles: true,
       // Motor de cobertura (etapa 3): el guard de cierres necesita saber si
       // el tipo registra tiempo.
       coverageMode: true,
@@ -106,14 +105,14 @@ function buildWhere(query: ListNoveltiesQuery, employeeAccessWhere: Prisma.Emplo
   return { AND: conditions };
 }
 
-async function createManyWithin(tx: PrismaTransactionClient, input: CreateNoveltyCommand, status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
+async function createManyWithin(tx: PrismaTransactionClient, input: CreateNoveltyCommand, _status: "PENDIENTE" | "APROBADO", createdByUserId?: string | null) {
   const created = await Promise.all(
     input.employeeIds.map((employeeId) =>
       tx.novelty.create({
         data: {
           employeeId,
           noveltyTypeId: input.noveltyTypeId,
-          status,
+          status: "APROBADO",
           fromDate: input.fromDate,
           toDate: input.toDate || null,
           quantityHours: input.quantityHours || null,
@@ -239,17 +238,36 @@ export const noveltiesRepository = {
   // Sólo compara contra el MISMO noveltyTypeId: la incompatibilidad entre
   // tipos distintos (p. ej. Vacaciones + Licencia médica) no está resuelta
   // hoy por ninguna regla de negocio existente y queda fuera de alcance.
-  findOverlapping(employeeIds: string[], noveltyTypeId: string, fromDate: Date, toDate: Date | null) {
+  findOverlapping(employeeIds: string[], noveltyTypeId: string, fromDate: Date, toDate: Date | null, excludeId?: string) {
     const rangeEnd = toDate || fromDate;
     return prisma.novelty.findMany({
       where: {
         employeeId: { in: employeeIds },
         noveltyTypeId,
         status: { not: "RECHAZADO" },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
         fromDate: { lte: rangeEnd },
         OR: [{ toDate: null, fromDate: { gte: fromDate } }, { toDate: { gte: fromDate } }],
       },
       select: { id: true, fromDate: true, toDate: true, employee: { select: { legajo: true } } },
+    });
+  },
+
+  update(id: string, input: UpdateNoveltyInput & { quantityMinutes?: number | null }, db: PrismaTransactionClient = prisma) {
+    return db.novelty.update({
+      where: { id },
+      data: {
+        ...(input.noveltyTypeId !== undefined ? { noveltyTypeId: input.noveltyTypeId } : {}),
+        ...(input.fromDate !== undefined ? { fromDate: input.fromDate } : {}),
+        ...(input.toDate !== undefined ? { toDate: input.toDate } : {}),
+        ...(input.quantityHours !== undefined ? { quantityHours: input.quantityHours } : {}),
+        ...(input.quantityDays !== undefined ? { quantityDays: input.quantityDays } : {}),
+        ...(input.quantityMinutes !== undefined ? { quantityMinutes: input.quantityMinutes } : {}),
+        ...(input.observation !== undefined ? { observation: input.observation } : {}),
+        ...(input.targetHourConceptId !== undefined ? { targetHourConceptId: input.targetHourConceptId } : {}),
+        status: "APROBADO",
+      },
+      include: noveltyInclude,
     });
   },
 

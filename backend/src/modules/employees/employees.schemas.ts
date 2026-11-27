@@ -295,12 +295,6 @@ export const recalculateAutomaticHourConceptBreakdownsSchema = z.object({
   period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
 });
 
-// Etapa 6L.3 (ajuste): motivo obligatorio para rechazar/devolver un desglose
-// manual EN_REVISION — mismo shape que rejectTimeEntrySchema (time-entries).
-export const resolveManualHourConceptBreakdownSchema = z.object({
-  reason: z.string().trim().min(2).max(600),
-});
-
 
 export const createEmployeeFieldHistorySchema = z.object({
   section: employeeHistorySectionSchema,
@@ -339,7 +333,6 @@ export type ListEmployeeHistoryQuery = z.infer<typeof listEmployeeHistoryQuerySc
 export type PositionValidationQuery = z.infer<typeof positionValidationQuerySchema>;
 export type EmployeeTimeGridQuery = z.infer<typeof employeeTimeGridQuerySchema>;
 export type UpsertManualHourConceptBreakdownInput = z.infer<typeof upsertManualHourConceptBreakdownSchema>;
-export type ResolveManualHourConceptBreakdownInput = z.infer<typeof resolveManualHourConceptBreakdownSchema>;
 export type WorkLocationEstablishmentSelection = z.infer<typeof workLocationEstablishmentSelectionSchema>;
 export type CreateEmployeeWorkLocationInput = z.infer<typeof createEmployeeWorkLocationSchema>;
 export type ChangeEmployeeWorkLocationInput = z.infer<typeof changeEmployeeWorkLocationSchema>;

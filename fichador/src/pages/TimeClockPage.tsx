@@ -24,6 +24,8 @@ import { employeeDisplayName, employeeIdentity } from "../features/clock/employe
 import { useOnlineStatus } from "../features/clock/useOnlineStatus";
 import { useIdleTimeout } from "../features/clock/useIdleTimeout";
 import { createEmployeeSearchCache } from "../features/clock/employeeSearchCache";
+import { ExitDecisionDialog, type ExitDecisionAction } from "../features/clock/ExitDecisionDialog";
+import type { ClockGuidance } from "../services/api/clockGuidance";
 
 const FaceCaptureModal = lazy(() =>
   import("../components/time-clock/FaceCaptureModal").then((module) => ({ default: module.FaceCaptureModal })),
@@ -61,7 +63,9 @@ export const UNCONFIRMED_MESSAGE = "No pudimos confirmar el estado de esta ficha
 
 // Errores de negocio que indican que la jornada cambió: antes de habilitar
 // el siguiente intento se vuelve a consultar el estado real del legajo.
-const SHIFT_STATE_CODES = new Set(["CLOCK_ALREADY_OPEN", "CLOCK_NO_OPEN_SHIFT", "CLOCK_ALREADY_CLOSED", "CLOCK_SHIFT_CHANGED"]);
+const SHIFT_STATE_CODES = new Set(["CLOCK_ALREADY_OPEN", "CLOCK_NO_OPEN_SHIFT", "CLOCK_ALREADY_CLOSED", "CLOCK_SHIFT_CHANGED", "CLOCK_SHIFT_LIMIT_EXCEEDED"]);
+// R4.4: salida dudosa — el backend no registró nada y devuelve una guía para decidir.
+const EXIT_DECISION_CODES = new Set(["CLOCK_EXIT_CONFIRMATION_REQUIRED", "CLOCK_SHIFT_LIMIT_EXCEEDED"]);
 
 const STATUS_ERROR_FALLBACK = "No pudimos consultar el estado del legajo seleccionado.";
 
@@ -134,6 +138,10 @@ export function TimeClockPage() {
   const [loading, setLoading] = useState(false);
   const [punch, setPunch] = useState<PunchFlow | null>(null);
   const [view, setView] = useState<PunchView | null>(null);
+  // R4.4: decisión pendiente tras una salida dudosa. La foto ya capturada se
+  // conserva sólo en memoria hasta que la persona elige (no se vuelve a abrir
+  // la cámara) y se descarta al cerrar el diálogo.
+  const [decision, setDecision] = useState<{ guidance: ClockGuidance; employee: ClockEmployee; capture: FaceCaptureResult; busy: ExitDecisionAction | null; error?: string } | null>(null);
   // P3 (sólo vista): texto para el que ya llegó la respuesta de la búsqueda.
   // Distingue "buscando" de "sin resultados" sin cambiar la consulta.
   const [searchedFor, setSearchedFor] = useState("");
@@ -239,6 +247,7 @@ export function TimeClockPage() {
     setError("");
     setView(null);
     setPunch(null);
+    setDecision(null);
     intentLock.current = false;
     submitLock.current = false;
   }, [searchCache]);
@@ -251,7 +260,7 @@ export function TimeClockPage() {
   // propio retorno. Al vencer, el kiosco vuelve al inicio: la intención y su
   // requestId se descartan sin enviar nada, la cámara se apaga al desmontarse
   // y las consultas pendientes quedan sin efecto (statusQuery = null).
-  const kioskIdle = !punch && view?.kind !== "success" && Boolean(search.trim() || selected || view);
+  const kioskIdle = !punch && !decision && view?.kind !== "success" && Boolean(search.trim() || selected || view);
   useIdleTimeout(kioskIdle, KIOSK_IDLE_MS, () => {
     if (!punch && !submitLock.current) resetKiosk();
   });
@@ -485,7 +494,60 @@ export function TimeClockPage() {
     console.info(JSON.stringify({ level: "info", event: "clock_punch_timing", requestId, phase: "total_perceived", durationMs: Number((performance.now() - perceivedStartedAt).toFixed(1)), bytes: payloadBytes, result: outcome.kind === "success" ? "success" : "error" }));
     if (!alive.current) return;
     finishIntent();
+    if (outcome.kind === "failed" && EXIT_DECISION_CODES.has(outcome.error.code) && outcome.error.clockGuidance) {
+      // Nada se registró: la persona decide sin volver a fotografiarse.
+      intentLock.current = true;
+      setDecision({ guidance: outcome.error.clockGuidance, employee, capture, busy: null });
+      return;
+    }
     showOutcome(outcome, punchType, employee);
+  };
+
+  // R4.4: la elección de la persona es una fichada NUEVA (otro requestId) con
+  // la misma foto: ENTRADA al turno siguiente, o la SALIDA confirmada (ligada
+  // a esa jornada y ese turno; el servidor revalida todo y aplica sus límites).
+  const resolveDecision = async (action: ExitDecisionAction) => {
+    if (!decision || decision.busy || submitLock.current) return;
+    if (!navigator.onLine) {
+      setDecision((current) => (current ? { ...current, error: OFFLINE_MESSAGE } : current));
+      return;
+    }
+    const { guidance, employee, capture } = decision;
+    const punchType: PunchType = action === "entry" ? "IN" : "OUT";
+    submitLock.current = true;
+    setDecision({ ...decision, busy: action, error: undefined });
+    const outcome = await submitPunch(
+      {
+        requestId: crypto.randomUUID(),
+        employeeId: employee.id,
+        punchType,
+        photo: capture.photo,
+        thumbnail: capture.thumbnail,
+        faceValidationStatus: capture.faceValidationStatus,
+        faceDetectionScore: capture.faceDetectionScore,
+        device: capture.device,
+        ...(action === "exit" && guidance.nextBlock ? { exitConfirmation: { openShiftId: guidance.openShiftId, nextBlockKey: guidance.nextBlock.key } } : {}),
+      },
+      { api: timeClockApiService, sleep, isCancelled: () => !alive.current },
+    );
+    submitLock.current = false;
+    if (!alive.current) return;
+    if (outcome.kind === "failed" && EXIT_DECISION_CODES.has(outcome.error.code) && outcome.error.clockGuidance) {
+      // El contexto cambió (otro turno siguiente, o el límite): se vuelve a preguntar con la guía nueva.
+      setDecision({ guidance: outcome.error.clockGuidance, employee, capture, busy: null });
+      return;
+    }
+    setDecision(null);
+    intentLock.current = false;
+    showOutcome(outcome, punchType, employee);
+  };
+
+  const cancelDecision = () => {
+    if (decision?.busy) return;
+    const employee = decision?.employee;
+    setDecision(null);
+    intentLock.current = false;
+    if (employee) void refreshStatusQuietly(employee.id);
   };
 
   const success = view?.kind === "success" ? view : null;
@@ -598,6 +660,16 @@ export function TimeClockPage() {
           )}
         </div>
       </section>
+
+      {decision ? (
+        <ExitDecisionDialog
+          guidance={decision.guidance}
+          busy={decision.busy}
+          error={decision.error}
+          onChoose={(action) => void resolveDecision(action)}
+          onCancel={cancelDecision}
+        />
+      ) : null}
 
       {punch ? (
         <Suspense fallback={<div className="kiosk-loading"><LoadingState text="Preparando cámara..." /></div>}>

@@ -93,7 +93,6 @@ export function emptyNoveltyType(): NoveltyType {
     status: "ACTIVO",
     rules: {
       exportsToFinnegans: false,
-      requiresApproval: true,
       requiresDocumentation: false,
       allowsHours: false,
       timeEntryBehavior: "NO_BLOQUEA",
@@ -104,7 +103,6 @@ export function emptyNoveltyType(): NoveltyType {
     },
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"],
-    approvalRoles: ["Nivel 1 - RRHH", "Nivel 2 - Supervisión / Gestión"],
     finnegansCode: null,
     finnegansName: null,
     notes: "",

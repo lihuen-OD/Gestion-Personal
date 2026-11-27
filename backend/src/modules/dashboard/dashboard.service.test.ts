@@ -22,9 +22,9 @@ vi.mock("./dashboard.repository", () => ({
     countTransported: vi.fn(),
     sumLoadedHours: vi.fn(),
     countEmployeesWithEntries: vi.fn(),
-    countEmployeesInReview: vi.fn(),
+    countPendingShiftAlerts: vi.fn(),
     findPeriodAbsenceDateRanges: vi.fn(),
-    countPendingNovelties: vi.fn(),
+    countNoveltyCoverageDaysInReview: vi.fn(),
     countExpiredDocuments: vi.fn(),
     countExpiringDocuments: vi.fn(),
     countMissingTimeResponsible: vi.fn(),
@@ -39,9 +39,9 @@ const repo = dashboardRepository as unknown as {
   countTransported: Mock;
   sumLoadedHours: Mock;
   countEmployeesWithEntries: Mock;
-  countEmployeesInReview: Mock;
+  countPendingShiftAlerts: Mock;
   findPeriodAbsenceDateRanges: Mock;
-  countPendingNovelties: Mock;
+  countNoveltyCoverageDaysInReview: Mock;
   countExpiredDocuments: Mock;
   countExpiringDocuments: Mock;
   countMissingTimeResponsible: Mock;
@@ -62,9 +62,9 @@ function mockAllDefaults() {
   repo.countTransported.mockResolvedValue(3);
   repo.sumLoadedHours.mockResolvedValue({ baseHours: 40, additiveMinutes: 0 });
   repo.countEmployeesWithEntries.mockResolvedValue(5);
-  repo.countEmployeesInReview.mockResolvedValue(1);
+  repo.countPendingShiftAlerts.mockResolvedValue(1);
   repo.findPeriodAbsenceDateRanges.mockResolvedValue([]);
-  repo.countPendingNovelties.mockResolvedValue(4);
+  repo.countNoveltyCoverageDaysInReview.mockResolvedValue(4);
   repo.countExpiredDocuments.mockResolvedValue(1);
   repo.countExpiringDocuments.mockResolvedValue(2);
   repo.countMissingTimeResponsible.mockResolvedValue(0);
@@ -78,9 +78,9 @@ const repoFnNames = [
   "countTransported",
   "sumLoadedHours",
   "countEmployeesWithEntries",
-  "countEmployeesInReview",
+  "countPendingShiftAlerts",
   "findPeriodAbsenceDateRanges",
-  "countPendingNovelties",
+  "countNoveltyCoverageDaysInReview",
   "countExpiredDocuments",
   "countExpiringDocuments",
   "countMissingTimeResponsible",
@@ -145,9 +145,9 @@ describe("dashboardService.metrics — 13 queries en lotes, no 15 en un unico Pr
       countTransported: 0,
       sumLoadedHours: { baseHours: 0, additiveMinutes: 0 },
       countEmployeesWithEntries: 0,
-      countEmployeesInReview: 0,
+      countPendingShiftAlerts: 0,
       findPeriodAbsenceDateRanges: [],
-      countPendingNovelties: 0,
+      countNoveltyCoverageDaysInReview: 0,
       countExpiredDocuments: 0,
       countExpiringDocuments: 0,
       countMissingTimeResponsible: 0,
@@ -206,8 +206,8 @@ describe("dashboardService.metrics — cálculo de métricas (Etapa 14E.1: total
     repo.countExitsThisYear.mockResolvedValue(7);
     repo.countTransported.mockResolvedValue(11);
     repo.countEmployeesWithEntries.mockResolvedValue(6);
-    repo.countEmployeesInReview.mockResolvedValue(13);
-    repo.countPendingNovelties.mockResolvedValue(17);
+    repo.countPendingShiftAlerts.mockResolvedValue(13);
+    repo.countNoveltyCoverageDaysInReview.mockResolvedValue(17);
     repo.countExpiredDocuments.mockResolvedValue(19);
     repo.countExpiringDocuments.mockResolvedValue(23);
     repo.countMissingTimeResponsible.mockResolvedValue(29);
@@ -218,8 +218,8 @@ describe("dashboardService.metrics — cálculo de métricas (Etapa 14E.1: total
     expect(result.transported).toBe(11);
     // active=8 (default de mockAllDefaults) - withEntries=6 = 2.
     expect(result.pendingLoads).toBe(2);
-    expect(result.reviewLoads).toBe(13);
-    expect(result.pendingNovelties).toBe(17);
+    expect(result.pendingShiftAlerts).toBe(13);
+    expect(result.noveltyReviewDays).toBe(17);
     expect(result.expiredDocuments).toBe(19);
     expect(result.expiringDocuments).toBe(23);
     expect(result.missingResponsible).toBe(29);

@@ -310,43 +310,28 @@ describe("EmployeeHoursPage — flujo de aprobación por rol en carga manual (Et
   });
 
   it.each(["Nivel 2 - Supervisión / Gestión", "Nivel 3 - Administrativo de Carga Horaria"])(
-    "%s sigue viendo 'Guardar borrador' y 'Enviar a revisión' en el modal de Hora normal",
+    "%s guarda Hora normal efectiva con un único 'Guardar', sin borrador ni envío a revisión",
     async (role) => {
       const user = userEvent.setup();
       authAs(role);
       vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
+      vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
+        id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "Aprobado", conceptId: "normal",
+      });
       renderPage();
       await waitForGridLoaded();
 
       const normalDay1 = within(rowFor("Horas base")).getAllByRole("button")[0]!;
       await user.click(normalDay1);
 
-      expect(screen.getByRole("button", { name: /Guardar borrador/i })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Enviar a revisión/i })).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Guardar" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Guardar borrador/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Enviar a revisión/i })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+      await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
+      expect(timeEntryApiService.save).toHaveBeenCalledWith(expect.objectContaining({ status: "Aprobado" }), { knownExistingId: null });
     },
   );
-
-  it("Nivel 2/3 al enviar Hora normal a revisión sigue mandando status 'En revisión' (flujo sin cambios)", async () => {
-    const user = userEvent.setup();
-    authAs("Nivel 2 - Supervisión / Gestión");
-    vi.mocked(employeeApiService.getTimeGrid).mockResolvedValue(buildNormalOnlyGrid());
-    vi.mocked(timeEntryApiService.save).mockResolvedValueOnce({
-      id: "entry-1", employeeId: "employee-1", period: "2026-08", day: 1, type: "Hora normal", hours: 8, status: "En revisión", conceptId: "normal",
-    });
-    renderPage();
-    await waitForGridLoaded();
-
-    const normalDay1 = within(rowFor("Horas base")).getAllByRole("button")[0]!;
-    await user.click(normalDay1);
-    await user.click(screen.getByRole("button", { name: /Enviar a revisión/i }));
-
-    await waitFor(() => expect(timeEntryApiService.save).toHaveBeenCalledTimes(1));
-    expect(timeEntryApiService.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "En revisión" }),
-      { knownExistingId: null },
-    );
-  });
 });
 
 describe("EmployeeHoursPage — el botón 'Recalcular automáticos' ya no se expone en la grilla (Etapa 6L.4)", () => {
@@ -627,7 +612,7 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(screen.getByText(/Horas normales ese día: 5 h reales → 10 h para liquidación \(total trabajado 9 h\)/)).toBeInTheDocument();
   });
 
-  it("humaniza observaciones históricas y mantiene compacto el aviso administrativo", async () => {
+  it("humaniza observaciones históricas y permite editar directo una carga aprobada de un período abierto", async () => {
     const user = userEvent.setup();
     const uuid = "a90b1c2d-3456-4789-8abc-def012345678";
     const grid = buildGrid([dayAccounting(1, { multiplier: 2 })]);
@@ -652,7 +637,9 @@ describe("EmployeeHoursPage — composición del período y Hora Especial", () =
     expect(await screen.findByDisplayValue(/Generado automáticamente a partir de la fichada/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/2 h 26 min trabajadas/)).toBeInTheDocument();
     expect(screen.queryByDisplayValue(new RegExp(uuid))).not.toBeInTheDocument();
-    expect(screen.getByText("Corrección administrativa").closest(".administrative-correction-callout")).toBeInTheDocument();
+    // Una carga aprobada de un período abierto se edita directo: sin aviso de corrección administrativa.
+    expect(screen.queryByText("Corrección administrativa")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeInTheDocument();
     expect(screen.getByText(/Horas normales ese día: 5 h reales → 10 h para liquidación/)).toBeInTheDocument();
     expect(document.querySelector(".time-entry-modal-summary .context-hour-card")).toBeInTheDocument();
     expect(document.querySelector(".time-entry-modal-summary .special-hour")).toBeInTheDocument();
@@ -742,7 +729,6 @@ function buildHourlyNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyTy
     status: "ACTIVO",
     rules: {
       exportsToFinnegans: false,
-      requiresApproval: false,
       requiresDocumentation: false,
       allowsHours: true,
       timeEntryBehavior: "NO_BLOQUEA",
@@ -753,7 +739,6 @@ function buildHourlyNoveltyType(overrides: Partial<NoveltyType> = {}): NoveltyTy
     },
     coverage: defaultNoveltyTypeCoverage(),
     allowedLoadRoles: ["Nivel 1 - RRHH"],
-    approvalRoles: ["Nivel 1 - RRHH"],
     finnegansCode: null,
     finnegansName: null,
     createdAt: "2026-01-01",

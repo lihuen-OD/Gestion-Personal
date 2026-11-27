@@ -37,7 +37,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
   const users = { rrhh: "", sup: "", carga: "" };
   const employees = { a: "", b: "", minimal: "", late: "" };
   let normalConceptId = "";
-  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", vacacionesJornada: "", vacacionesFijas: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "" };
+  const types = { tramite: "", maternidadCover: "", maternidadNoCoverage: "", vacaciones: "", vacacionesJornada: "", vacacionesFijas: "", llegadaTarde: "", faltaSinAviso: "", licenciaAbierta: "", conCertificado: "", conCertificadoFeriado: "" };
 
   const as = (role: "rrhh" | "sup" | "carga") =>
     ({ id: users[role], email: `${role}@example.com`, name: role, role: { rrhh: "NIVEL_1_RRHH", sup: "NIVEL_2_SUPERVISION", carga: "NIVEL_3_CARGA_HORARIA" }[role] }) as Express.AuthUser;
@@ -125,6 +125,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     types.licenciaAbierta = await createType({ name: "Licencia abierta", kind: "LICENCIA" });
     // Etapa 8: documentación obligatoria (misma cobertura que Maternidad sin feriados).
     types.conCertificado = await createType({ name: "Licencia con certificado", kind: "LICENCIA", requiresDocumentation: true, ...maternidad, coverageOnHoliday: "NO_COVERAGE" });
+    // §20: cubre feriados y aplica el multiplicador (que sí depende del alcance de la regla y su historia).
+    types.conCertificadoFeriado = await createType({ name: "Licencia con certificado (feriado ×)", kind: "LICENCIA", requiresDocumentation: true, ...maternidad, coverageOnHoliday: "COVER", coverageAppliesSpecialHours: true });
     await holder.documentCategory.create({ data: { code: "DOC-NOV-IT", name: "Respaldo de novedad", kind: "NOVEDAD", scopes: ["NOVEDAD"], uploadRoles: ["Nivel 1 - RRHH"] } });
   });
 
@@ -290,9 +292,18 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     expect(await coverageRows(excluded!.id)).toEqual([expect.objectContaining({ outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 })]);
   });
 
-  it("feriado con alcance sin historia laboral → 409 SPECIAL_HOUR_SCOPE_HISTORY_MISSING y no se crea nada", async () => {
+  // CAMBIO §20 (P7, WORKED_TIME_ACCOUNTING_MODEL.md): para la obligación, un
+  // feriado del calendario es feriado para todos (antes: 409 por no poder
+  // evaluar el alcance). El alcance sólo decide el multiplicador, que sí sigue
+  // exigiendo la historia del día.
+  it("§20 P7: feriado con alcance sin historia — la obligación no necesita historia (sin cobertura ese día); el multiplicador sí (409)", async () => {
+    const [created] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-25", toDate: "2026-11-25" });
+    expect(await coverageRows(created!.id)).toEqual([expect.objectContaining({ date: day("2026-11-25"), outcome: "HOLIDAY_EXCLUDED", baseMinutes: 0 })]);
+    await holder.novelty.delete({ where: { id: created!.id } });
+
     const before = await holder.novelty.count();
-    await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.maternidadNoCoverage, fromDate: "2026-11-25", toDate: "2026-11-25" })).rejects.toMatchObject({
+    const document = { fileName: "certificado.pdf", fileMimeType: "application/pdf", fileSizeBytes: 23, fileBase64: Buffer.from("%PDF-1.4\n%%EOF\n trailer").toString("base64") };
+    await expect(m.novelties.createWithDocument(m.noveltySchemas.createNoveltyWithDocumentSchema.parse({ employeeIds: [employees.a], noveltyTypeId: types.conCertificadoFeriado, fromDate: "2026-11-25", document }), as("rrhh"), { userId: users.rrhh } as never)).rejects.toMatchObject({
       statusCode: 409,
       code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING",
     });
@@ -309,8 +320,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     await expect(create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-16" })).rejects.toMatchObject({ statusCode: 400, code: "NOVELTY_DOCUMENTATION_REQUIRED" });
     expect(await counts()).toEqual(before);
 
-    // El alta falla dentro de la transacción (feriado con alcance sin historia): el archivo ya subido se borra.
-    await expect(withDocument({ employeeIds: [employees.a], noveltyTypeId: types.conCertificado, fromDate: "2026-11-25" })).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
+    // El alta falla dentro de la transacción (multiplicador de un feriado con alcance sin historia): el archivo ya subido se borra.
+    await expect(withDocument({ employeeIds: [employees.a], noveltyTypeId: types.conCertificadoFeriado, fromDate: "2026-11-25" })).rejects.toMatchObject({ code: "SPECIAL_HOUR_SCOPE_HISTORY_MISSING" });
     expect(await counts()).toEqual(before);
 
     const created = await withDocument({ employeeIds: [employees.a, employees.b], noveltyTypeId: types.conCertificado, fromDate: "2026-12-01" });
@@ -344,44 +355,32 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     expect(await coverageRows(same!.id)).toHaveLength(1);
   });
 
-  it("rechazo elimina la cobertura derivada; la supervisión sólo aprueba dentro de su alcance", async () => {
-    const [pending] = await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-26" });
-    expect(pending!.status).toBe("PENDIENTE");
-    expect(await coverageRows(pending!.id)).toHaveLength(1);
-    await m.novelties.reject(pending!.id, { reason: "No corresponde" }, as("rrhh"));
-    expect(await coverageRows(pending!.id)).toHaveLength(0);
-    expect(await holder.novelty.findUniqueOrThrow({ where: { id: pending!.id } })).toMatchObject({ status: "RECHAZADO" });
+  it("Nivel 2 carga efectivo al guardar y sólo borra dentro de su alcance; borrar elimina la cobertura derivada", async () => {
+    const [effective] = await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-26" });
+    expect(effective!.status).toBe("APROBADO");
+    expect(await coverageRows(effective!.id)).toHaveLength(1);
+    await m.novelties.remove(effective!.id, as("sup"));
+    expect(await coverageRows(effective!.id)).toHaveLength(0);
 
     const [outside] = await create("rrhh", { employeeIds: [employees.b], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-26" });
-    await holder.novelty.update({ where: { id: outside!.id }, data: { status: "PENDIENTE" } });
-    await expect(m.novelties.approve(outside!.id, as("sup"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
-    await expect(m.novelties.reject(outside!.id, { reason: "Fuera de alcance" }, as("sup"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+    await expect(m.novelties.remove(outside!.id, as("sup"))).rejects.toMatchObject({ code: "NOVELTY_NOT_FOUND" });
+    expect(await holder.novelty.findUnique({ where: { id: outside!.id } })).not.toBeNull();
   });
 
-  it("aprobación masiva atómica: si una falla, no se aprueba ninguna", async () => {
-    const [first] = await create("sup", { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-11-27" });
-    const [second] = await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: types.faltaSinAviso, fromDate: "2026-11-27" });
-    // second ya está APROBADO (lo cargó RRHH): el lote falla y first sigue pendiente.
-    await expect(m.novelties.approveMany([first!.id, second!.id], as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_STATUS_NOT_APPROVABLE" });
-    expect(await holder.novelty.findUniqueOrThrow({ where: { id: first!.id } })).toMatchObject({ status: "PENDIENTE" });
-  });
-
-  it("período ya enviado a cierre: supervisión → 409; RRHH sin motivo → 400; RRHH con motivo → corrige", async () => {
-    await holder.monthlyTimeClosure.create({ data: { employeeId: employees.a, period: "2026-12", status: "ENVIADO" } });
+  it("período CERRADO: nadie carga ni borra novedades con tiempo hasta reabrirlo; el recálculo automático no lo toca", async () => {
     const payload = { employeeIds: [employees.a], noveltyTypeId: types.tramite, fromDate: "2026-12-01" };
-    await expect(create("sup", payload)).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
-    await expect(create("rrhh", payload)).rejects.toMatchObject({ code: "NOVELTY_CORRECTION_REASON_REQUIRED" });
-    const [corrected] = await create("rrhh", { ...payload, correctionReason: "Trámite informado tarde" });
-    expect(await coverageRows(corrected!.id)).toHaveLength(1);
+    const [existing] = await create("rrhh", payload);
+    await holder.monthlyTimeClosure.create({ data: { employeeId: employees.a, period: "2026-12", status: "CERRADO" } });
+    await expect(create("sup", { ...payload, fromDate: "2026-12-03" })).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    await expect(create("rrhh", { ...payload, fromDate: "2026-12-03" })).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
 
     // Un tipo sin tiempo no tiene nada que proteger.
     await expect(create("sup", { ...payload, noveltyTypeId: types.faltaSinAviso, fromDate: "2026-12-02" })).resolves.toHaveLength(1);
-    // Borrar la corrección también exige motivo; el recálculo automático no toca el período protegido.
-    await expect(m.novelties.remove(corrected!.id, as("rrhh"))).rejects.toMatchObject({ code: "NOVELTY_CORRECTION_REASON_REQUIRED" });
-    const summary = await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [corrected!.id], { protectedPeriods: "SKIP" }));
+    await expect(m.novelties.remove(existing!.id, as("rrhh"))).rejects.toMatchObject({ code: "PERIOD_CLOSED" });
+    const summary = await m.prisma.$transaction((tx) => m.coverage.persistNoveltyCoverageWithin(tx, [existing!.id], { protectedPeriods: "SKIP" }));
     expect(summary.protectedPeriods).toEqual([{ employeeId: employees.a, period: "2026-12" }]);
     expect(summary.days).toBe(0);
-    expect(await coverageRows(corrected!.id)).toHaveLength(1);
+    expect(await coverageRows(existing!.id)).toHaveLength(1);
   });
 
   it("vista previa: mismos permisos que la carga y no escribe nada", async () => {
@@ -490,7 +489,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
     beforeAll(async () => {
       // A (turno L–V): lunes 8 trabajó 8 h + Trámite (conflicto); martes 9
       // trabajó 7 h + Llegada tarde 1 h; miércoles 10 Trámite sin trabajo +
-      // Llegada tarde 1 h; jueves 11 Trámite PENDIENTE; viernes 12 Falta sin
+      // Llegada tarde 1 h; jueves 11 Trámite cargado por Nivel 2 (efectivo al
+      // guardar, sin aprobación posterior); viernes 12 Falta sin
       // aviso sin trabajo. B (turno todos los días): Vacaciones 1–7 (domingo ×2).
       await worked(employees.a, "2027-02-08", 8);
       await worked(employees.a, "2027-02-09", 7);
@@ -507,9 +507,11 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
 
     it("grilla por legajo: trabajado real, cobertura que cuenta, computable, estados y filas por tipo", async () => {
       const grid = await gridOf(employees.a, true);
-      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
-      expect(grid).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140 });
-      expect(grid.accounting.novelty).toMatchObject({ heldMinutes: 240, pendingApprovalMinutes: 240, informativeMinutes: 120, reviewDays: 1, reviewDates: ["2027-02-08"] });
+      expect(grid.accounting).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380 });
+      expect(grid).toMatchObject({ totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380 });
+      // Sin aprobación administrativa no hay minutos "pendientes de aprobación";
+      // los 240 retenidos son del día 8, en revisión por trabajo real.
+      expect(grid.accounting.novelty).toMatchObject({ heldMinutes: 240, pendingApprovalMinutes: 0, informativeMinutes: 120, reviewDays: 1, reviewDates: ["2027-02-08"] });
       expect(grid.accounting.days["8"]).toMatchObject({ totalWorkedMinutes: 480, computableMinutes: 480 });
       expect(grid.noveltiesByDay["8"]).toEqual([expect.objectContaining({ label: "Trámite bancario", state: "REVIEW_REQUIRED", minutes: 240 })]);
       // Dos tipos el mismo día: Trámite cuenta y Llegada tarde informa.
@@ -518,7 +520,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       );
       const tramiteRow = grid.noveltyCoverageRows.find((row) => row.noveltyType.name === "Trámite bancario")!;
       expect(tramiteRow.minutesByDay).toEqual({ "8": 240, "10": 240, "11": 240 });
-      expect(tramiteRow.stateByDay).toEqual({ "8": "REVIEW_REQUIRED", "10": "COUNTED", "11": "PENDING_APPROVAL" });
+      expect(tramiteRow.stateByDay).toEqual({ "8": "REVIEW_REQUIRED", "10": "COUNTED", "11": "COUNTED" });
       expect(grid.noveltyCoverageRows.map((row) => row.noveltyType.name)).toEqual(["Falta sin aviso", "Llegada tarde", "Trámite bancario"]);
       // toDate nulo es un día: la novedad del 20/01 no aparece en febrero.
       expect(grid.novelties.map((novelty) => novelty.id)).not.toContain((await holder.novelty.findFirstOrThrow({ where: { employeeId: employees.a, fromDate: day("2027-01-20") } })).id);
@@ -538,14 +540,14 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect(dayOf(10)).toMatchObject({ totalWorkedMinutes: 0, noveltyCoveredMinutes: 240, computableMinutes: 240 });
       expect(dayOf(8)).toMatchObject({ totalWorkedMinutes: 480, noveltyCoveredMinutes: 0, computableMinutes: 480, novelties: [expect.objectContaining({ reviewRequired: true })] });
       expect(dayOf(12)!.novelties).toEqual([expect.objectContaining({ label: "Falta sin aviso", minutes: 0, state: "INFORMATIVE" })]);
-      expect(rowA.summary.accounting).toMatchObject({ computableMinutes: 1140 });
+      expect(rowA.summary.accounting).toMatchObject({ computableMinutes: 1380 });
       // La novedad de enero sin fecha hasta no marca ningún día de febrero.
       expect(rowA.summary.dailyBreakdown.some((item) => item.novelty?.label === "Licencia abierta")).toBe(false);
     });
 
     it("resumen: \"Total trabajado\" sigue siendo trabajo real; cubierto y computable van aparte", async () => {
       const summary = await m.timeEntriesRepository.summary("2027-02", {});
-      expect(summary).toMatchObject({ countableHours: 15, coveredHours: 60, computableHours: 75 });
+      expect(summary).toMatchObject({ countableHours: 15, coveredHours: 64, computableHours: 79 });
     });
 
     it("export de horas: columnas de cobertura y quien sólo tiene vacaciones también se exporta", async () => {
@@ -591,8 +593,8 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect((await marchGrid()).accounting.novelty).toMatchObject({ reviewDays: 0 });
     });
 
-    it("cierre: rechaza el envío con días en revisión; resolver el conflicto (\"no cubre este día\") lo permite y congela el snapshot V2", async () => {
-      await expect(m.workforce.submitClosures("2027-02", [employees.a], as("sup"))).rejects.toMatchObject({
+    it("cierre: rechaza cerrar con días en revisión; resolver el conflicto (\"no cubre este día\") lo permite y congela el snapshot V2", async () => {
+      await expect(m.workforce.closeClosures("2027-02", [employees.a], as("sup"))).rejects.toMatchObject({
         statusCode: 409,
         code: "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
         details: { employees: [expect.objectContaining({ employeeId: employees.a, reviewDays: 1, reviewDates: ["2027-02-08"] })] },
@@ -603,10 +605,10 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       const zero = m.noveltySchemas.noveltyCoverageResolutionSchema.parse({ resolution: "CONFIRMED_ZERO", note: "Trabajó: el trámite no corresponde" });
       await m.novelties.resolveCoverageDay(tramiteConflictId, "2027-02-08", zero, as("rrhh"));
 
-      const [closure] = await m.workforce.submitClosures("2027-02", [employees.a], as("sup"));
+      const [closure] = await m.workforce.closeClosures("2027-02", [employees.a], as("sup"));
       const snapshot = closure!.snapshot as { accounting: { model: string; totalWorkedMinutes: number; noveltyCoveredMinutes: number; computableMinutes: number; novelty: { reviewDays: number; types: Array<{ name: string }> } } };
-      expect(closure).toMatchObject({ status: "ENVIADO" });
-      expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 240, computableMinutes: 1140, novelty: expect.objectContaining({ reviewDays: 0 }) });
+      expect(closure).toMatchObject({ status: "CERRADO" });
+      expect(snapshot.accounting).toMatchObject({ model: "WORKED_TIME_ACCOUNTING_V2", totalWorkedMinutes: 900, noveltyCoveredMinutes: 480, computableMinutes: 1380, novelty: expect.objectContaining({ reviewDays: 0 }) });
       expect(snapshot.accounting.novelty.types.map((type) => type.name)).toEqual(expect.arrayContaining(["Trámite bancario", "Llegada tarde"]));
     });
 
@@ -648,16 +650,15 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
         name: "Trámite Finnegans", exportsToFinnegans: true, finnegansCode: "TBF", finnegansName: "Trámite", finnegansValueUnit: "HOURS", allowsDateRange: false,
         coverageMode: "FIXED_MINUTES", coverageFixedMinutes: 240, coverageOnDayOff: "NO_COVERAGE", coverageOnHoliday: "NO_COVERAGE", coverageCountsTowardTotal: true, realWorkCompatibility: "INCOMPATIBLE",
       });
-      const closeAndApprove = async (period: string) => {
-        const [closure] = await m.workforce.submitClosures(period, [employees.a], as("sup"));
-        await m.workforce.approveClosures([closure!.id], undefined, as("rrhh"));
+      const closePeriod = async (period: string) => {
+        const [closure] = await m.workforce.closeClosures(period, [employees.a], as("sup"));
         return closure!;
       };
       const visible = (rows: Array<Record<string, unknown>>) => rows.map(({ estado: _estado, sourceId: _sourceId, employeeId: _employeeId, ...cells }) => cells);
 
-      // Junio: TBF en horas, cierre aprobado. Después el tipo cambia a NUEVO en días.
+      // Junio: TBF en horas, cierre CERRADO. Después el tipo cambia a NUEVO en días.
       await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: tramiteFinnegans, fromDate: "2027-06-14" });
-      const june = await closeAndApprove("2027-06");
+      const june = await closePeriod("2027-06");
       expect((await holder.monthlyTimeClosure.findUniqueOrThrow({ where: { id: june.id } })).snapshot).toMatchObject({
         finnegans: { model: "FINNEGANS_CONFIG_V1", types: [expect.objectContaining({ noveltyTypeId: tramiteFinnegans, finnegansCode: "TBF", finnegansValueUnit: "HOURS", name: "Trámite Finnegans" })] },
       });
@@ -681,7 +682,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
 
       // Julio: el cierre nuevo congela la configuración nueva.
       await create("rrhh", { employeeIds: [employees.a], noveltyTypeId: tramiteFinnegans, fromDate: "2027-07-12" });
-      await closeAndApprove("2027-07");
+      await closePeriod("2027-07");
       const july = await finnegansExportService.exportDefinitive({ period: "2027-07", format: "CSV", idempotencyKey: randomUUID() });
       expect(july.rows).toEqual([expect.objectContaining({ Novedad: "NUEVO", "Valor 1": "1", "Fecha Aplicación": "12/07/2027", detail: "Trámite renombrado" })]);
 
@@ -723,7 +724,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect(before.novelty).toMatchObject({ reviewDays: 2, reviewDates: ["2027-08-02", "2027-08-03"] });
 
       // Cierre y Finnegans bloqueados.
-      await expect(m.workforce.submitClosures("2027-08", [employees.a], as("sup"))).rejects.toMatchObject({ code: "CLOSURE_HAS_PENDING_NOVELTY_REVIEW" });
+      await expect(m.workforce.closeClosures("2027-08", [employees.a], as("sup"))).rejects.toMatchObject({ code: "CLOSURE_HAS_PENDING_NOVELTY_REVIEW" });
       const preview = await finnegansExportService.getPreview({ period: "2027-08" });
       expect(preview.rows.filter((row) => ["VP5", "TP5"].includes(row.Novedad)).map((row) => [row.Novedad, row["Valor 1"], row.estado])).toEqual(
         expect.arrayContaining([["VP5", "", "REVISION_PENDIENTE"], ["TP5", "", "REVISION_PENDIENTE"]]),
@@ -742,8 +743,7 @@ describe.skipIf(!url)("Cobertura de novedades contra PostgreSQL local", () => {
       expect(after.days["2"]).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
       expect(after.days["3"]).toMatchObject({ noveltyCoveredMinutes: 480, computableMinutes: 480 });
       expect(after.novelty).toMatchObject({ reviewDays: 0, heldMinutes: 0 });
-      const [closure] = await m.workforce.submitClosures("2027-08", [employees.a], as("sup"));
-      await m.workforce.approveClosures([closure!.id], undefined, as("rrhh"));
+      await m.workforce.closeClosures("2027-08", [employees.a], as("sup"));
       const exported = await finnegansExportService.exportDefinitive({ period: "2027-08", format: "CSV", idempotencyKey: randomUUID() });
       expect(exported.rows.filter((row) => row.Legajo === "101").map((row) => [row.Novedad, row["Valor 1"]])).toEqual([["VP5", "16"]]);
     });

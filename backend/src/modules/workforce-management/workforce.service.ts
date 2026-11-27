@@ -1,18 +1,20 @@
 import { Prisma, type DoubleHourRuleKind } from "@prisma/client";
+import { shiftTemplateWhereForScope, type ShiftGroupScope } from "../shifts/shiftGroupAccess";
+import { assertEmployeesWritable, assertShiftGroupWritable, canManageShiftGroup, isGlobalActor, type ShiftActor } from "../shifts/shiftWriteAccess";
 import { prisma, type PrismaTransactionClient } from "../../shared/prisma/client";
 import { AppError } from "../../shared/errors/AppError";
 import { lockClosurePeriods } from "../../shared/monthlyClosure/closurePeriodGuard";
 import { employeeAccessWhere } from "../employees/employeeAccess";
 import { roles } from "../../shared/security/roles";
-import { isMonthlyClosureLocked } from "../../shared/monthlyClosure/closureLock";
 import type { AuditContext } from "../audit/audit.service";
 import { auditService } from "../audit/audit.service";
-import { argentinaDateKey, humanizePeriodEs } from "../../shared/datetime/argentinaTime";
+import { argentinaDateKey, argentinaDayRange, calendarDateKey, humanizePeriodEs, nextCalendarDateKey, periodCalendarBounds, todayArgentinaDateKey } from "../../shared/datetime/argentinaTime";
 import { resolveEmployeeNotificationRecipients, type RecipientsReader } from "./employeeNotificationRecipients";
 import { assertActorAuthorizedWithin, assertConfirmedPlan, DeletionPlanBuilder, type DeletionConfirmation, type DeletionPreview } from "../../shared/deletion/deletionPlan";
 import { buildActiveDatesByRule, resolveWinningRules, ruleMatchesDate, scopesCouldOverlap } from "./doubleHourRuleMatching";
-import type { CorrectionsQuery, ListNotificationsQuery } from "./workforce.schemas";
+import type { ListNotificationsQuery } from "./workforce.schemas";
 import { buildClosureSnapshots, confirmedClosureResult, pendingNoveltyReviewOf } from "./closureSnapshot";
+import { findOperationalClosureBlockers, groupClosureBlockers, noveltyReviewBlockers, type ClosureBlocker } from "./closureBlockers";
 import { employeeReferenceSelect, formatEmployeeReference, loadEmployeeReferences } from "../../shared/audit/employeeReference";
 import { formatArgentinaDate } from "../../shared/datetime/argentinaTime";
 import { auditClosureRecalculations } from "./closureRecalculationAudit";
@@ -23,6 +25,9 @@ import { describeReinterpretation, reinterpretationMetadata } from "./specialHou
 import { afterNotificationCursor, formatNotificationCursor, NOTIFICATION_ORDER_BY, notificationEventDateWhere, throughNotificationCursor } from "./notificationListing";
 import { assertClockPunchPostProcessSettled } from "../clock/clockPunchPostProcess.guard";
 import { computeExpectedMinutes } from "../shifts/shiftTemplateTime";
+import { assertShiftGroupAssignable, describeShiftGroup } from "../shifts/shiftGroup.service";
+import { shiftGroupSummarySelect } from "../shifts/shiftGroup.repository";
+import { pendingFixedEntryJobs, shiftTemplateHistory, shiftTemplateScheduleService, type ReplaceShiftTemplateScheduleInput } from "./shiftTemplateSchedule.service";
 
 // Identidad humana para la descripción de auditoría (nunca el employeeId).
 const employeeReferenceInclude = { employee: { select: employeeReferenceSelect } } as const;
@@ -69,7 +74,7 @@ export async function notifyRrhh(input: Parameters<typeof notifyUsers>[1]) {
 
 /**
  * Destinatarios de un aviso operativo del legajo: RRHH + responsables
- * directos + supervisores Nivel 2 heredados de responsables Nivel 3
+ * directos Nivel 2 + Nivel 3 heredados
  * (employeeNotificationRecipients.ts). `eventAt`: instante del hecho que
  * origina el aviso; la vigencia de TIME_RESPONSIBLE se evalúa en su día
  * Argentina, no en el momento en que se procesa o reintenta.
@@ -93,6 +98,15 @@ function fechaVigencyFromDates(dates: Array<{ date: Date }>) {
 
 // ── Turnos: cobertura de novedades de quienes usan la plantilla (etapa 5) ──
 const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
+// R3.1: cada plantilla del catálogo trae su grupo (`shiftGroup: null` = sin
+// grupo). Es clasificación: no participa de ningún cálculo de jornada.
+const SHIFT_TEMPLATE_GROUP_INCLUDE = { shiftGroup: { select: shiftGroupSummarySelect } } as const;
+
+/** Frase de auditoría del grupo de una plantilla, con nombres (nunca ids). */
+function shiftGroupAuditPhrase(before: { code: string; name: string } | null | undefined, after: { code: string; name: string } | null | undefined): string {
+  const label = (group: { code: string; name: string } | null | undefined) => (group ? describeShiftGroup(group) : "sin grupo");
+  return ` Grupo: ${label(before)} → ${label(after)}.`;
+}
 
 /**
  * Cambio de horario/minutos/estado de una plantilla: recalcula sólo los
@@ -101,15 +115,85 @@ const SHIFT_TEMPLATE_TRANSACTION_OPTIONS = { timeout: 30_000 };
  * ventana de esas vigencias/fechas (NOVELTY_COVERAGE_ENGINE.md §13.2). Quien
  * llama ya tomó el lock global de cobertura.
  */
+type CoverageRange = { employeeId: string; from: Date; to: Date | null };
+
+/**
+ * R4.3b (docs/decisions/SHIFT_ROTATION_AUDIT_PLAN.md §25.5): miembros de
+ * rotación cuyas grillas usan la plantilla, con el período de su membresía
+ * acotado a la vigencia de las versiones que la usan. Sin ninguna membresía
+ * (hoy, todos los entornos) no consulta las tablas de la grilla.
+ */
+async function rotationTemplateCoverageRanges(tx: PrismaTransactionClient, shiftTemplateId: string, options: { activeRotationsOnly?: boolean } = {}): Promise<CoverageRange[]> {
+  if (!(await tx.shiftRotationCrewMember.findFirst({ select: { id: true } }))) return [];
+  const blocks = await tx.shiftRotationBlock.findMany({
+    where: { shiftTemplateId, ...(options.activeRotationsOnly ? { day: { version: { rotation: { status: "ACTIVO" } } } } : {}) },
+    select: { day: { select: { crewId: true, version: { select: { effectiveFrom: true, effectiveTo: true } } } } },
+  });
+  if (!blocks.length) return [];
+  const spanByCrew = new Map<string, { from: Date; to: Date | null }>();
+  for (const { day } of blocks) {
+    const span = spanByCrew.get(day.crewId);
+    const versionTo = day.version.effectiveTo;
+    spanByCrew.set(day.crewId, span
+      ? { from: span.from < day.version.effectiveFrom ? span.from : day.version.effectiveFrom, to: span.to === null || versionTo === null ? null : span.to > versionTo ? span.to : versionTo }
+      : { from: day.version.effectiveFrom, to: versionTo });
+  }
+  const members = await tx.shiftRotationCrewMember.findMany({ where: { crewId: { in: [...spanByCrew.keys()] } }, select: { employeeId: true, crewId: true, effectiveFrom: true, effectiveTo: true } });
+  const ranges: CoverageRange[] = [];
+  for (const member of members) {
+    const span = spanByCrew.get(member.crewId)!;
+    const from = member.effectiveFrom > span.from ? member.effectiveFrom : span.from;
+    const to = member.effectiveTo === null ? span.to : span.to === null ? member.effectiveTo : member.effectiveTo < span.to ? member.effectiveTo : span.to;
+    if (to === null || to >= from) ranges.push({ employeeId: member.employeeId, from, to });
+  }
+  return ranges;
+}
+
+/**
+ * R8.3 (§26): legajos cuyo horario u obligación REAL cambia si cambia esta
+ * plantilla desde hoy: fijos HABILITADOS vigentes o futuros, convocatorias
+ * ACTIVAS futuras y miembros vigentes o futuros de rotaciones ACTIVAS cuyas
+ * versiones la usan. Mismas fuentes que el recálculo de cobertura, sin la
+ * historia ni lo inactivo.
+ */
+async function templateAffectedEmployeeIds(tx: PrismaTransactionClient, shiftTemplateId: string): Promise<string[]> {
+  const today = new Date(`${todayArgentinaDateKey()}T00:00:00.000Z`);
+  const [assignments, convocations, rotationRanges] = await Promise.all([
+    tx.shiftAssignment.findMany({ where: { shiftTemplateId, status: "HABILITADO", OR: [{ effectiveTo: null }, { effectiveTo: { gte: today } }] }, select: { employeeId: true } }),
+    tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId, status: "ACTIVA", date: { gte: today } }, select: { employeeId: true } }),
+    rotationTemplateCoverageRanges(tx, shiftTemplateId, { activeRotationsOnly: true }),
+  ]);
+  return [...new Set([
+    ...assignments.map((row) => row.employeeId),
+    ...convocations.map((row) => row.employeeId),
+    ...rotationRanges.filter((range) => range.to === null || range.to >= today).map((range) => range.employeeId),
+  ])];
+}
+
+/** Campos de una plantilla que no cambian horarios ni obligaciones (clasificación y rótulos). */
+const SHIFT_TEMPLATE_DESCRIPTIVE_FIELDS = new Set(["code", "name", "description", "categoryName", "shiftGroupId"]);
+
+/**
+ * R8.3 (§26): un cambio con efecto real sobre empleados exige, además del
+ * grupo, todos los legajos afectados en el alcance (403 sin escribir). Nivel 1
+ * no consulta nada.
+ */
+async function assertTemplateEffectWritable(tx: PrismaTransactionClient, actor: ShiftActor, shiftTemplateId: string) {
+  if (isGlobalActor(actor)) return;
+  await assertEmployeesWritable(actor, await templateAffectedEmployeeIds(tx, shiftTemplateId), tx);
+}
+
 async function recalculateTemplateCoverage(tx: PrismaTransactionClient, shiftTemplateId: string, label: string) {
-  const [assignments, convocations] = await Promise.all([
+  const [assignments, convocations, rotationRanges] = await Promise.all([
     tx.shiftAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, effectiveFrom: true, effectiveTo: true } }),
     tx.holidayWorkAssignment.findMany({ where: { shiftTemplateId }, select: { employeeId: true, date: true } }),
+    rotationTemplateCoverageRanges(tx, shiftTemplateId),
   ]);
   const reason = { source: "SHIFT_TEMPLATE_CHANGED" as const, label };
-  const ranges = [
+  const ranges: CoverageRange[] = [
     ...assignments.map((row) => ({ employeeId: row.employeeId, from: row.effectiveFrom, to: row.effectiveTo })),
     ...convocations.map((row) => ({ employeeId: row.employeeId, from: row.date, to: row.date as Date | null })),
+    ...rotationRanges,
   ];
   if (!ranges.length) return recalculateNoveltyCoverage(tx, { employeeIds: [] }, reason);
   const from = new Date(Math.min(...ranges.map((range) => range.from.getTime())));
@@ -297,14 +381,58 @@ async function assertRuleDestinationsNotArchived(
   }
 }
 
+const CLOSURE_BLOCKERS_LISTED = 10;
+
+/**
+ * Texto del 409 de cierre (respaldo legible: el errorHandler oculta `details`
+ * en producción). La pantalla no lo interpreta: consulta la vista previa
+ * estructurada `GET /closures/blockers`.
+ */
+export function closureBlockersMessage(blockers: ClosureBlocker[]) {
+  const listed = blockers.slice(0, CLOSURE_BLOCKERS_LISTED).map((item) => `${formatEmployeeReference(item.employee)}: ${item.title} (${formatArgentinaDate(item.date)})`);
+  const rest = blockers.length - listed.length;
+  return `No se puede cerrar: hay ${blockers.length} ${blockers.length === 1 ? "pendiente que puede" : "pendientes que pueden"} cambiar las horas del período. ${listed.join("; ")}${rest > 0 ? `; y ${rest} más` : ""}. Resolvelos desde Asistencia o Carga de horas y volvé a cerrar.`;
+}
+
 export const workforceService = {
   async closures(period: string, user: Express.AuthUser) {
-    return prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, submittedBy: { select: { name: true } }, reviewedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
+    const rows = await prisma.monthlyTimeClosure.findMany({ where: { period, employee: employeeAccessWhere(user) }, include: { employee: { select: { id: true, legajo: true, firstName: true, lastName: true } }, closedBy: { select: { name: true } }, reopenedBy: { select: { name: true } } }, orderBy: { employee: { lastName: "asc" } } });
+    const employeeIds = rows.map((row) => row.employeeId);
+    const batches = employeeIds.length ? await prisma.finnegansExportBatch.findMany({ where: { period, items: { some: { employeeId: { in: employeeIds } } } }, select: { version: true, createdAt: true, items: { where: { employeeId: { in: employeeIds } }, select: { employeeId: true } } }, orderBy: { version: "desc" } }) : [];
+    const exportsByEmployee = new Map<string, { count: number; latestVersion: number; latestExportedAt: Date }>();
+    for (const batch of batches) for (const employeeId of new Set(batch.items.map((item) => item.employeeId))) {
+      const current = exportsByEmployee.get(employeeId);
+      exportsByEmployee.set(employeeId, { count: (current?.count ?? 0) + 1, latestVersion: Math.max(current?.latestVersion ?? 0, batch.version), latestExportedAt: current && current.latestExportedAt > batch.createdAt ? current.latestExportedAt : batch.createdAt });
+    }
+    return rows.map((row) => ({ ...row, exportHistory: exportsByEmployee.get(row.employeeId) ?? null }));
+  },
+  /**
+   * Vista previa de bloqueantes del período, agrupada por legajo, con el mismo
+   * criterio que la validación definitiva de `closeClosures`. Sólo legajos del
+   * alcance del usuario (employeeAccessWhere) y todavía no CERRADO. Los días
+   * de novedades en revisión salen del mismo snapshot del cierre, calculado
+   * sólo para quienes tienen cobertura de novedades en el período.
+   */
+  async closureBlockers(period: string, user: Express.AuthUser) {
+    const employees = await prisma.employee.findMany({
+      where: { ...employeeAccessWhere(user), monthlyClosures: { none: { period, status: "CERRADO" } } },
+      select: { id: true, legajo: true, firstName: true, lastName: true },
+    });
+    const employeeIds = employees.map((employee) => employee.id);
+    const byId = new Map(employees.map((employee) => [employee.id, employee]));
+    const [operational, withCoverage] = await Promise.all([
+      findOperationalClosureBlockers(prisma, employeeIds, period),
+      employeeIds.length ? prisma.noveltyDayCoverage.findMany({ where: { period, employeeId: { in: employeeIds } }, select: { employeeId: true }, distinct: ["employeeId"] }) : Promise.resolve([]),
+    ]);
+    const reviewIds = withCoverage.map((row) => row.employeeId);
+    const snapshots = reviewIds.length ? await buildClosureSnapshots(prisma, reviewIds, period) : new Map();
+    const novelty = reviewIds.flatMap((employeeId) => noveltyReviewBlockers(byId.get(employeeId)!, period, pendingNoveltyReviewOf(snapshots.get(employeeId)).reviewDates));
+    const groups = groupClosureBlockers([...operational, ...novelty]);
+    return { period, employees: groups, totals: { employees: groups.length, blockers: operational.length + novelty.length } };
   },
   // `settleClockPunchPostProcess` (PERF-5D): lo pasa el controller (el worker
   // del post-proceso de fichadas depende de este módulo; así no hay ciclo).
-  async submitClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { employeeIds: string[] }) => Promise<unknown> } = {}) {
-    if (user.role === roles.rrhh) throw new AppError("RH no envía cierres para aprobación", 400, "CLOSURE_SUBMIT_ROLE_INVALID");
+  async closeClosures(period: string, employeeIds: string[], user: Express.AuthUser, audit?: AuditContext, hooks: { settleClockPunchPostProcess?: (scope: { employeeIds: string[] }) => Promise<unknown> } = {}) {
     await ensureVisible(employeeIds, user);
     // PERF-5D (docs/decisions/F12_PERF_5.md): Motor B de una salida corre en
     // el post-proceso durable de la fichada. Antes del snapshot se procesa en
@@ -321,6 +449,13 @@ export const workforceService = {
     const result = await execute(() => prisma.$transaction(async (tx) => {
       await lockClosurePeriods(tx, employeeIds.map((employeeId) => ({ employeeId, period })), "EXCLUSIVE");
       await assertClockPunchPostProcessSettled(tx, employeeIds, period);
+      const alreadyClosed = await tx.monthlyTimeClosure.findMany({ where: { employeeId: { in: employeeIds }, period, status: "CERRADO" }, select: { employeeId: true } });
+      if (alreadyClosed.length) throw new AppError("Uno o más períodos ya están cerrados.", 409, "MONTHLY_CLOSURE_ALREADY_CLOSED", { employeeIds: alreadyClosed.map((row) => row.employeeId) });
+      // Criterio único con la vista previa de Cierres mensuales (closureBlockers.ts).
+      const blockers = await findOperationalClosureBlockers(tx, employeeIds, period);
+      if (blockers.length) {
+        throw new AppError(closureBlockersMessage(blockers), 409, "CLOSURE_HAS_OPERATIONAL_BLOCKERS", { employees: groupClosureBlockers(blockers) });
+      }
       const snapshots = await buildClosureSnapshots(tx, employeeIds, period);
       // NOVELTY_COVERAGE_ENGINE.md §12: un período con cobertura de novedades
       // en revisión no se consolida en silencio — se rechaza el envío completo.
@@ -331,7 +466,7 @@ export const workforceService = {
         const reference = await loadEmployeeReferences(tx, pendingReview.map((item) => item.employeeId));
         const detail = pendingReview.map((item) => `${reference(item.employeeId)}: ${item.reviewDays} día(s) (${item.reviewDates.map((date) => (date.length === 10 ? formatArgentinaDate(date) : date)).join(", ")})`).join("; ");
         throw new AppError(
-          `No se puede enviar el cierre: hay novedades con días para revisar. ${detail}.`,
+          `No se puede cerrar: hay novedades con días para revisar. ${detail}.`,
           409,
           "CLOSURE_HAS_PENDING_NOVELTY_REVIEW",
           { employees: pendingReview.map((item) => ({ employeeId: item.employeeId, reviewDays: item.reviewDays, reviewDates: item.reviewDates })) },
@@ -340,74 +475,31 @@ export const workforceService = {
       const saved = [];
       for (const employeeId of employeeIds) {
         const snapshot = snapshots.get(employeeId)!;
-        saved.push(await tx.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date() }, update: { status: "ENVIADO", snapshot, submittedByUserId: user.id, submittedAt: new Date(), reviewedAt: null, reviewedByUserId: null, reviewNote: null } }));
+        saved.push(await tx.monthlyTimeClosure.upsert({ where: { employeeId_period: { employeeId, period } }, create: { employeeId, period, status: "CERRADO", snapshot, closedByUserId: user.id, closedAt: new Date() }, update: { status: "CERRADO", snapshot, closedByUserId: user.id, closedAt: new Date(), reopenedAt: null, reopenedByUserId: null, reopenReason: null } }));
       }
       return saved;
     }, CLOSURE_TRANSACTION_OPTIONS));
     // Una sola consulta de identidades para todo el lote (no una por legajo).
     const employeeReference = await loadEmployeeReferences(prisma, employeeIds);
-    await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se envió a revisión el cierre de ${humanizePeriodEs(period)} de ${employeeReference(item.employeeId)}.`, after: item as Prisma.InputJsonValue })));
-    await notifyRrhh({ type: "CIERRE_MENSUAL", title: "Cierres mensuales recibidos", message: `${result.length} legajos de ${humanizePeriodEs(period)} esperan aprobación.`, link: `/cierres?period=${period}`, priority: "ALTA" });
+    await Promise.all(result.map((item) => auditService.register({ ...audit, action: "UPDATE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se cerró definitivamente ${humanizePeriodEs(period)} de ${employeeReference(item.employeeId)}.`, after: item as Prisma.InputJsonValue })));
     return result;
   },
-  async approveClosures(ids: string[], note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
-    const { before, result } = await execute(() => prisma.$transaction(async (tx) => {
-      const targets = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids } }, select: { employeeId: true, period: true } });
-      await lockClosurePeriods(tx, targets, "EXCLUSIVE");
-      const pending = await tx.monthlyTimeClosure.findMany({ where: { id: { in: ids }, status: "ENVIADO" }, include: employeeReferenceInclude });
-      const updated = await tx.monthlyTimeClosure.updateMany({ where: { id: { in: ids }, status: "ENVIADO" }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } });
-      return { before: pending, result: updated };
-    }, CLOSURE_TRANSACTION_OPTIONS));
-    await Promise.all(before.map((item) => auditService.register({ ...audit, action: "APPROVE", entity: "MonthlyTimeClosure", entityId: item.id, description: `Se aprobó el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(item.employee)}.`, before: item as Prisma.InputJsonValue })));
-    return result;
-  },
-  async returnClosure(id: string, reason: string, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await prisma.monthlyTimeClosure.findUnique({ where: { id }, include: employeeReferenceInclude });
+  async reopenClosure(id: string, input: { reason: string; acknowledgeExportedHistory: boolean }, user: Express.AuthUser, audit?: AuditContext) {
+    const before = await prisma.monthlyTimeClosure.findFirst({ where: { id, employee: employeeAccessWhere(user) }, include: employeeReferenceInclude });
     if (!before) throw new AppError("No encontramos el cierre solicitado", 404, "MONTHLY_CLOSURE_NOT_FOUND");
-    const item = await execute(() => prisma.$transaction(async (tx) => {
+    if (before.status !== "CERRADO") throw new AppError("El período ya está abierto.", 409, "MONTHLY_CLOSURE_ALREADY_OPEN");
+    const { item, exportedBatches } = await execute(() => prisma.$transaction(async (tx) => {
       await lockClosurePeriods(tx, [before], "EXCLUSIVE");
-      return tx.monthlyTimeClosure.update({ where: { id }, data: { status: "DEVUELTO", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: reason } });
+      const current = await tx.monthlyTimeClosure.findUnique({ where: { id }, select: { status: true } });
+      if (current?.status !== "CERRADO") throw new AppError("El período ya está abierto.", 409, "MONTHLY_CLOSURE_ALREADY_OPEN");
+      const exportedBatches = await tx.finnegansExportBatch.findMany({ where: { period: before.period, items: { some: { employeeId: before.employeeId } } }, select: { id: true, version: true, createdAt: true }, orderBy: { version: "desc" } });
+      if (exportedBatches.length && !input.acknowledgeExportedHistory) {
+        throw new AppError("Este período ya fue exportado. Confirmá que comprendés que la reapertura no modifica las versiones históricas.", 409, "CLOSURE_REOPEN_EXPORTED_CONFIRMATION_REQUIRED", { exports: exportedBatches });
+      }
+      const item = await tx.monthlyTimeClosure.update({ where: { id }, data: { status: "ABIERTO", reopenedByUserId: user.id, reopenedAt: new Date(), reopenReason: input.reason } });
+      return { item, exportedBatches };
     }, CLOSURE_TRANSACTION_OPTIONS));
-    await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se devolvió el cierre de ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(before.employee)} — motivo: ${reason}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
-    return item;
-  },
-  async createCorrection(input: { timeEntryId: string; proposedHours: number; reason: string }, user: Express.AuthUser, audit?: AuditContext) {
-    const entry = await prisma.timeEntry.findFirst({ where: { id: input.timeEntryId, employee: employeeAccessWhere(user) }, include: employeeReferenceInclude });
-    if (!entry) throw new AppError("Carga horaria no encontrada", 404, "TIME_ENTRY_NOT_FOUND");
-    const closure = await prisma.monthlyTimeClosure.findUnique({ where: { employeeId_period: { employeeId: entry.employeeId, period: entry.period } } });
-    if (!closure || !isMonthlyClosureLocked(closure)) throw new AppError("El período todavía permite edición directa", 400, "PERIOD_NOT_CLOSED");
-    const result = await execute(() => prisma.$transaction(async (tx) => {
-      await lockClosurePeriods(tx, [closure], "EXCLUSIVE");
-      const request = await tx.timeCorrectionRequest.create({ data: { employeeId: entry.employeeId, timeEntryId: entry.id, closureId: closure.id, previousHours: entry.hours, proposedHours: input.proposedHours, reason: input.reason, createdByUserId: user.id } });
-      await tx.monthlyTimeClosure.update({ where: { id: closure.id }, data: { status: "CORRECCION_PENDIENTE" } });
-      return request;
-    }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "TimeCorrectionRequest", entityId: result.id, description: `Se solicitó una corrección de carga horaria de ${humanizePeriodEs(entry.period)} para ${formatEmployeeReference(entry.employee)} (de ${entry.hours}h a ${input.proposedHours}h).`, after: result as Prisma.InputJsonValue });
-    await notifyRrhh({ type: "CORRECCION_HORARIA", title: "Corrección posterior al cierre", message: `Se solicitó modificar una carga de ${humanizePeriodEs(entry.period)}.`, entityType: "TimeCorrectionRequest", entityId: result.id, link: "/cierres", priority: "ALTA" });
-    return result;
-  },
-  // Sin `take`: acotado por período (a lo sumo una corrección por carga del mes) — ver correctionsQuerySchema.
-  corrections(user: Express.AuthUser, query: CorrectionsQuery) { return prisma.timeCorrectionRequest.findMany({ where: { employee: employeeAccessWhere(user), timeEntry: { period: query.period }, ...(query.status ? { status: query.status } : {}) }, include: { employee: { select: { legajo: true, firstName: true, lastName: true } }, timeEntry: { include: { hourConcept: true } }, createdBy: { select: { name: true } } }, orderBy: [{ createdAt: "desc" }, { id: "asc" }] }); },
-  async approveCorrection(id: string, user: Express.AuthUser, audit?: AuditContext) {
-    const { before, after } = await execute(() => prisma.$transaction(async (tx) => {
-      const request = await tx.timeCorrectionRequest.findUniqueOrThrow({ where: { id }, include: { ...employeeReferenceInclude, timeEntry: { select: { period: true } } } });
-      if (request.status !== "PENDIENTE") throw new AppError("La corrección ya fue revisada", 400, "CORRECTION_ALREADY_REVIEWED");
-      // Procedimiento explícito y auditado de corrección de un período cerrado (D-5).
-      await lockClosurePeriods(tx, [{ employeeId: request.employeeId, period: request.timeEntry.period }], "EXCLUSIVE");
-      const hours = Number(request.proposedHours);
-      await tx.timeEntry.update({ where: { id: request.timeEntryId }, data: { hours, totalMinutes: Math.round(hours * 60), approvedByUserId: user.id, approvedAt: new Date() } });
-      const updated = await tx.timeCorrectionRequest.update({ where: { id }, data: { status: "APROBADA", reviewedByUserId: user.id, reviewedAt: new Date() } });
-      if (request.closureId) await tx.monthlyTimeClosure.update({ where: { id: request.closureId }, data: { status: "APROBADO", reviewedByUserId: user.id, reviewedAt: new Date() } });
-      return { before: request, after: updated };
-    }));
-    await auditService.register({ ...audit, action: "APPROVE", entity: "TimeCorrectionRequest", entityId: id, description: `Se aprobó la corrección de carga horaria de ${formatEmployeeReference(before.employee)} (de ${before.previousHours}h a ${before.proposedHours}h).`, before: before as Prisma.InputJsonValue, after: after as Prisma.InputJsonValue });
-    return after;
-  },
-  async rejectCorrection(id: string, note: string | undefined, user: Express.AuthUser, audit?: AuditContext) {
-    const before = await prisma.timeCorrectionRequest.findUnique({ where: { id }, include: employeeReferenceInclude });
-    if (!before) throw new AppError("No encontramos la corrección solicitada", 404, "TIME_CORRECTION_NOT_FOUND");
-    const item = await execute(() => prisma.timeCorrectionRequest.update({ where: { id }, data: { status: "RECHAZADA", reviewedByUserId: user.id, reviewedAt: new Date(), reviewNote: note || null } }));
-    await auditService.register({ ...audit, action: "REJECT", entity: "TimeCorrectionRequest", entityId: id, description: `Se rechazó la corrección de carga horaria de ${formatEmployeeReference(before.employee)}.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
+    await auditService.register({ ...audit, action: "RETURN", entity: "MonthlyTimeClosure", entityId: id, description: `Se reabrió ${humanizePeriodEs(item.period)} de ${formatEmployeeReference(before.employee)} — motivo: ${input.reason}.`, before: before as Prisma.InputJsonValue, after: { item, exportedHistoryPreserved: exportedBatches } as unknown as Prisma.InputJsonValue });
     return item;
   },
   // Etapa 9I: antes hacía fetch-all con take:200 fijo, sin paginación real.
@@ -490,9 +582,32 @@ export const workforceService = {
   },
   unreadNotificationCount(user: Express.AuthUser) { return prisma.systemNotification.count({ where: { recipientUserId: user.id, status: "NO_LEIDA" } }); },
   markNotificationRead(id: string, user: Express.AuthUser) { return prisma.systemNotification.updateMany({ where: { id, recipientUserId: user.id }, data: { status: "LEIDA", readAt: new Date() } }); },
-  shiftTemplates() { return prisma.shiftTemplate.findMany({ orderBy: { startTime: "asc" } }); },
-  async createShiftTemplate(input: any, audit?: AuditContext) {
+  /**
+   * R8: sólo plantillas de grupos administrables (`shiftGroupAccess.ts`); una
+   * plantilla sin grupo es sólo de Nivel 1.
+   */
+  async shiftTemplates(scope: ShiftGroupScope) {
+    const tomorrow = new Date(`${nextCalendarDateKey(todayArgentinaDateKey())}T00:00:00.000Z`);
+    const rows = await prisma.shiftTemplate.findMany({
+      ...(scope.all ? {} : { where: shiftTemplateWhereForScope(scope) }),
+      orderBy: { startTime: "asc" },
+      include: {
+        ...SHIFT_TEMPLATE_GROUP_INCLUDE,
+        _count: { select: {
+          assignments: { where: { status: "HABILITADO", OR: [{ effectiveTo: null }, { effectiveTo: { gte: tomorrow } }] } },
+          holidayWorkAssignments: { where: { status: "ACTIVA", date: { gte: tomorrow } } },
+          rotationBlocks: { where: { day: { version: { OR: [{ effectiveTo: null }, { effectiveTo: { gte: tomorrow } }] } } } },
+        } },
+      },
+    });
+    return rows.map(({ _count, ...row }) => ({ ...row, inUseFromTomorrow: (_count?.assignments ?? 0) + (_count?.holidayWorkAssignments ?? 0) + (_count?.rotationBlocks ?? 0) > 0 }));
+  },
+  /** R8.3: el grupo de la plantilla tiene que ser administrable (sin grupo = sólo Nivel 1). */
+  async createShiftTemplate(input: any, actor: ShiftActor, audit?: AuditContext) {
+    assertShiftGroupWritable(actor, input.shiftGroupId ?? null);
     const crossesMidnight = input.endTime <= input.startTime;
+    // R3.1: un grupo nuevo para la plantilla debe existir y estar ACTIVO.
+    const group = await assertShiftGroupAssignable(input.shiftGroupId, null);
     const item = await execute(() => prisma.shiftTemplate.create({
       data: {
         ...input,
@@ -501,22 +616,59 @@ export const workforceService = {
         createdByUserId: audit?.userId || null,
         updatedByUserId: audit?.userId || null,
       },
+      include: SHIFT_TEMPLATE_GROUP_INCLUDE,
     }));
-    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.`, after: item as Prisma.InputJsonValue });
+    const groupPhrase = group ? ` Grupo: ${describeShiftGroup(group)}.` : "";
+    await auditService.register({ ...audit, action: "CREATE", entity: "ShiftTemplate", entityId: item.id, description: `Se creó el turno ${item.code} - ${item.name}.${groupPhrase}`, after: item as Prisma.InputJsonValue });
     return item;
   },
-  async updateShiftTemplate(id: string, input: any, audit?: AuditContext) {
-    const before = await prisma.shiftTemplate.findUnique({ where: { id } });
-    if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
-    const startTime = input.startTime ?? before.startTime;
-    const endTime = input.endTime ?? before.endTime;
-    const crossesMidnight = endTime <= startTime;
-    const expectedMinutes = computeExpectedMinutes(startTime, endTime, crossesMidnight);
-    // Horario, minutos o estado cambian la jornada esperada de quienes usan
-    // el turno: misma transacción que el recálculo de su cobertura (etapa 5).
-    const affectsWorkday = startTime !== before.startTime || endTime !== before.endTime || crossesMidnight !== before.crossesMidnight || expectedMinutes !== before.expectedMinutes || (input.status !== undefined && input.status !== before.status);
-    const { item, coverage } = await execute(() => prisma.$transaction(async (tx) => {
-      if (affectsWorkday) await lockNoveltyCoverageGlobally(tx);
+  /**
+   * R8.3: una plantilla de un grupo no administrable responde 404 (igual que
+   * inexistente); moverla exige administrar también el grupo destino.
+   */
+  async updateShiftTemplate(id: string, input: any, actor: ShiftActor, audit?: AuditContext) {
+    const { item, coverage, before, groupChanged, nextGroup } = await execute(() => prisma.$transaction(async (tx) => {
+      // Mismo orden que el reemplazo fechado: cobertura global → plantilla.
+      // Las ediciones de catálogo son infrecuentes y así no pueden cruzarse
+      // con un plan de reemplazo ni con escritores por legajo.
+      await lockNoveltyCoverageGlobally(tx);
+      await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
+      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: SHIFT_TEMPLATE_GROUP_INCLUDE });
+      if (!before || !canManageShiftGroup(actor, before.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      // R3.1: cambiar el grupo es clasificación, no planificación horaria.
+      const groupChanged = input.shiftGroupId !== undefined && (input.shiftGroupId ?? null) !== (before.shiftGroupId ?? null);
+      if (groupChanged) assertShiftGroupWritable(actor, input.shiftGroupId ?? null);
+      // R8.3: horario, tolerancias, límites o estado cambian lo que rige para
+      // quienes la usan; nombre, código o categoría no.
+      const changesEffect = Object.keys(input).some((field) => !SHIFT_TEMPLATE_DESCRIPTIVE_FIELDS.has(field) && input[field] !== (before as unknown as Record<string, unknown>)[field]);
+      if (changesEffect) await assertTemplateEffectWritable(tx, actor, id);
+      const nextGroup = groupChanged ? await assertShiftGroupAssignable(input.shiftGroupId, before.shiftGroupId ?? null, tx) : null;
+      const startTime = input.startTime ?? before.startTime;
+      const endTime = input.endTime ?? before.endTime;
+      const crossesMidnight = endTime <= startTime;
+      const expectedMinutes = computeExpectedMinutes(startTime, endTime, crossesMidnight);
+      const scheduleChanged = startTime !== before.startTime || endTime !== before.endTime;
+      const retiring = (input.status !== undefined && input.status !== before.status && input.status === "INACTIVO") || groupChanged;
+      if (scheduleChanged || retiring) {
+        const history = await shiftTemplateHistory(id, todayArgentinaDateKey(), tx);
+        if (history.hasRuled) {
+          const code = scheduleChanged ? "SHIFT_TEMPLATE_SCHEDULE_LOCKED" : "SHIFT_TEMPLATE_HISTORY_LOCKED";
+          throw new AppError(scheduleChanged
+            ? "El horario de este turno ya rigió y no se puede reescribir. Usá el reemplazo de horario con fecha para conservar el pasado."
+            : "El turno ya rigió: no se puede inactivar ni cambiar de grupo porque eso alteraría la resolución histórica.", 409, code, history.sources);
+        }
+      }
+      const rulesChanged = [
+        "entryToleranceBeforeMinutes", "entryToleranceAfterMinutes", "exitToleranceBeforeMinutes", "exitToleranceAfterMinutes",
+        "minimumMinutesForCompliance", "maximumInformativeMinutes", "missingOutAlertAfterMinutes", "absoluteOpenShiftLimitMinutes",
+      ].some((field) => input[field] !== undefined && input[field] !== (before as unknown as Record<string, unknown>)[field]);
+      if (rulesChanged) {
+        const pending = await pendingFixedEntryJobs(id, tx);
+        if (pending > 0) throw new AppError(`Hay ${pending} fichada(s) de entrada pendientes de procesar para este turno. Reprocesalas antes de cambiar tolerancias o límites.`, 409, "SHIFT_TEMPLATE_RULES_PENDING_PUNCHES", { pending });
+      }
+      // Horario, minutos o estado cambian la jornada esperada de quienes usan
+      // el turno: misma transacción que el recálculo de su cobertura (etapa 5).
+      const affectsWorkday = scheduleChanged || crossesMidnight !== before.crossesMidnight || expectedMinutes !== before.expectedMinutes || (input.status !== undefined && input.status !== before.status);
       const updated = await tx.shiftTemplate.update({
         where: { id },
         data: {
@@ -525,9 +677,10 @@ export const workforceService = {
           expectedMinutes,
           updatedByUserId: audit?.userId || null,
         },
+        include: SHIFT_TEMPLATE_GROUP_INCLUDE,
       });
       const recalculated = affectsWorkday ? await recalculateTemplateCoverage(tx, id, `cambio del turno ${updated.code} - ${updated.name}`) : null;
-      return { item: updated, coverage: recalculated };
+      return { item: updated, coverage: recalculated, before, groupChanged, nextGroup };
     }, SHIFT_TEMPLATE_TRANSACTION_OPTIONS));
     if (coverage) await auditNoveltyCoverageRecalculation(coverage, audit);
     await auditService.register({
@@ -535,7 +688,7 @@ export const workforceService = {
       action: input.status && input.status !== before.status ? input.status === "ACTIVO" ? "ACTIVATE" : "DEACTIVATE" : "UPDATE",
       entity: "ShiftTemplate",
       entityId: id,
-      description: `Se actualizó el turno ${item.code} - ${item.name}.`,
+      description: `Se actualizó el turno ${item.code} - ${item.name}.${groupChanged ? shiftGroupAuditPhrase(before.shiftGroup, nextGroup) : ""}`,
       before: before as Prisma.InputJsonValue,
       after: item as Prisma.InputJsonValue,
     });
@@ -546,23 +699,16 @@ export const workforceService = {
   // de las dos, nunca se borra en cascada en silencio). Las convocatorias de
   // feriado son historia como las jornadas: con ellas el turno se inactiva,
   // en vez de dejar su referencia en NULL.
-  async removeShiftTemplate(id: string, audit?: AuditContext) {
+  async removeShiftTemplate(id: string, actor: ShiftActor, audit?: AuditContext) {
     return execute(() => prisma.$transaction(async (tx) => {
-      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true } } } });
-      if (!before) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
-      const history = before._count.workShifts + before._count.holidayWorkAssignments;
-      if (history > 0) {
-        if (before.status !== "INACTIVO") await lockNoveltyCoverageGlobally(tx);
-        const item = await tx.shiftTemplate.update({ where: { id }, data: { status: "INACTIVO" } });
-        await auditService.registerWithin(tx, { ...audit, action: "DEACTIVATE", entity: "ShiftTemplate", entityId: id, description: `Se inactivó el turno ${before.code} porque tiene jornadas o convocatorias de feriado históricas asociadas.`, before: before as Prisma.InputJsonValue, after: item as Prisma.InputJsonValue });
-        // Un turno inactivo deja de definir jornada: cobertura de quienes lo usan (etapa 5).
-        if (before.status !== "INACTIVO") {
-          const coverage = await recalculateTemplateCoverage(tx, id, `inactivación del turno ${before.code} - ${before.name}`);
-          const description = describeNoveltyCoverageRecalculation(coverage);
-          if (description) await auditService.registerWithin(tx, { ...audit, action: "UPDATE", entity: "NoveltyDayCoverage", description, after: { source: coverage.source, novelties: coverage.changedNovelties, days: coverage.changedDays, protectedPeriods: coverage.protectedPeriods, droppedResolutions: coverage.droppedResolutions } as unknown as Prisma.InputJsonValue });
-        }
-        return { mode: "INACTIVATED" as const, item, relatedWorkShifts: before._count.workShifts };
-      }
+      await tx.$queryRaw`SELECT id FROM "ShiftTemplate" WHERE id = ${id} FOR UPDATE`;
+      const before = await tx.shiftTemplate.findUnique({ where: { id }, include: { _count: { select: { workShifts: true, assignments: true, holidayWorkAssignments: true, rotationBlocks: true } } } });
+      if (!before || !canManageShiftGroup(actor, before.shiftGroupId)) throw new AppError("No encontramos el turno solicitado", 404, "SHIFT_TEMPLATE_NOT_FOUND");
+      // R8.3: borrarla deja sin turno a sus convocatorias futuras (SetNull).
+      await assertTemplateEffectWritable(tx, actor, id);
+      const history = await shiftTemplateHistory(id, todayArgentinaDateKey(), tx);
+      if (history.hasRuled) throw new AppError("El turno ya rigió y debe conservarse activo para no alterar la historia. Si cambia el horario, usá el reemplazo con fecha.", 409, "SHIFT_TEMPLATE_HISTORY_LOCKED", history.sources);
+      if (before._count.rotationBlocks > 0) throw new AppError("No se puede eliminar el turno porque forma parte de una versión de rotación. Reemplazalo en una versión futura.", 409, "SHIFT_TEMPLATE_IN_ROTATION");
       if (before._count.assignments > 0) {
         throw new AppError("No se puede eliminar el turno porque tiene asignaciones de empleados asociadas", 409, "SHIFT_TEMPLATE_HAS_ASSIGNMENTS");
       }
@@ -570,6 +716,12 @@ export const workforceService = {
       await auditService.registerWithin(tx, { ...audit, action: "DELETE", entity: "ShiftTemplate", entityId: id, description: `Se eliminó el turno sin uso ${before.code} - ${before.name}.`, before: before as Prisma.InputJsonValue });
       return { mode: "DELETED" as const, id, relatedWorkShifts: 0 };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  },
+  previewShiftTemplateScheduleReplacement(id: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor) {
+    return shiftTemplateScheduleService.preview(id, input, actor);
+  },
+  replaceShiftTemplateSchedule(id: string, input: ReplaceShiftTemplateScheduleInput, actor: ShiftActor, audit?: AuditContext) {
+    return shiftTemplateScheduleService.replace(id, input, actor, audit);
   },
   // Etapa 8B: se agregan dates (calendario FECHA) y los 4 nombres de scope
   // (empresa/sector/centro de costo/puesto) para que el frontend no necesite
